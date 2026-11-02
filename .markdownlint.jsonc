@@ -1,0 +1,6 @@
+{
+  // Keep a Changelog repeats "Added", "Fixed", and similar headings under each release.
+  "MD024": { "siblings_only": true },
+  // Long lines are allowed; prose is wrapped by the renderer.
+  "MD013": false
+}
