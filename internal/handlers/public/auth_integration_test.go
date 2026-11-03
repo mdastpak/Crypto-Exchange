@@ -104,9 +104,9 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 	defer cancel()
 	require.NoError(s.T(), s.redisClient.Ping(ctx).Err())
 
-	postgresService, err := db.NewTestPostgresService("localhost", "5432", "postgres", "test", "testdb", "disable")
-	require.NoError(s.T(), err)
-
+	// Sign-in writes to the sessions table, so the suite needs the schema
+	// built by the real migrations.
+	postgresService := migrateRealSchema(s.T())
 	s.postgresService = postgresService
 
 	redisService := &db.RedisService{Client: s.redisClient}
@@ -128,7 +128,7 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 		publicGroup.POST("/auth/:uuid", s.handler.VerifyOTP)
 		publicGroup.POST("/auth/refresh", s.handler.RefreshToken)
 		publicGroup.POST("/auth/logout", func(c *gin.Context) {
-			auth.LogoutHandler(c, auth.NewTokenBlacklist(s.redisClient))
+			auth.LogoutHandler(c, auth.NewTokenBlacklist(s.redisClient), s.handler.Sessions)
 		})
 		publicGroup.GET("/currencies", s.handler.GetActiveCurrencies)
 		publicGroup.GET("/currencies/:hk", s.handler.GetCurrencyByHK)
@@ -138,9 +138,7 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 func (s *PublicHandlerTestSuite) TearDownTest() {
 	ctx := context.Background()
 	s.redisClient.FlushDB(ctx)
-	if s.postgresService != nil {
-		s.postgresService.Close()
-	}
+	// migrateRealSchema closes the database service when the test ends.
 }
 
 func (s *PublicHandlerTestSuite) TearDownSuite() {
@@ -295,7 +293,18 @@ func (s *PublicHandlerTestSuite) TestVerifyOTP_Success() {
 
 	data := resp.Info.(map[string]interface{})
 	assert.NotEmpty(s.T(), data["access_token"])
-	assert.NotEmpty(s.T(), data["refresh_token"])
+	assert.NotContains(s.T(), data, "refresh_token", "the refresh token is only delivered in the cookie")
+	assert.NotEmpty(s.T(), refreshCookieValue(w), "the refresh token cookie must be set")
+}
+
+// refreshCookieValue returns the refresh token set by a response, if any.
+func refreshCookieValue(w *httptest.ResponseRecorder) string {
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == auth.RefreshTokenCookie && cookie.MaxAge >= 0 {
+			return cookie.Value
+		}
+	}
+	return ""
 }
 
 func (s *PublicHandlerTestSuite) TestVerifyOTP_InvalidOTP() {
@@ -405,10 +414,10 @@ func (s *PublicHandlerTestSuite) TestRefreshToken_Success() {
 	err = json.Unmarshal(w.Body.Bytes(), &loginResp)
 	require.NoError(s.T(), err)
 
-	loginData := loginResp.Info.(map[string]interface{})
-	refreshToken := loginData["refresh_token"].(string)
+	refreshToken := refreshCookieValue(w)
+	require.NotEmpty(s.T(), refreshToken)
 
-	w = s.makeRequestWithCookie(http.MethodPost, "/public/auth/refresh", nil, "refresh_token", refreshToken)
+	w = s.makeRequestWithCookie(http.MethodPost, "/public/auth/refresh", nil, auth.RefreshTokenCookie, refreshToken)
 
 	assert.Equal(s.T(), http.StatusOK, w.Code)
 
@@ -459,6 +468,8 @@ func (s *PublicHandlerTestSuite) TestLogout_Success() {
 
 	loginData := loginResp.Info.(map[string]interface{})
 	accessToken := loginData["access_token"].(string)
+	refreshToken := refreshCookieValue(w)
+	require.NotEmpty(s.T(), refreshToken)
 
 	w = s.makeRequest(http.MethodPost, "/public/auth/logout", nil, accessToken)
 
@@ -473,6 +484,9 @@ func (s *PublicHandlerTestSuite) TestLogout_Success() {
 	blacklisted, err := auth.NewTokenBlacklist(s.redisClient).IsTokenBlacklisted(ctx, accessToken)
 	require.NoError(s.T(), err)
 	assert.True(s.T(), blacklisted)
+
+	w = s.makeRequestWithCookie(http.MethodPost, "/public/auth/refresh", nil, auth.RefreshTokenCookie, refreshToken)
+	assert.Equal(s.T(), http.StatusUnauthorized, w.Code, "the refresh token must stop working after logout")
 }
 
 func (s *PublicHandlerTestSuite) TestGetActiveCurrencies_Empty() {

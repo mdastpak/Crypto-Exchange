@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -8,10 +9,12 @@ import (
 	"encrypted-db/internal/helpers"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 )
 
-func LogoutHandler(c *gin.Context, tb *TokenBlacklist) {
+// LogoutHandler ends the session of the access token in the Authorization
+// header: it revokes the session, so its refresh token stops working, and
+// blacklists the access token until it expires.
+func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 	tokenString := c.GetHeader("Authorization")
 	if tokenString == "" {
 		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Token not provided", nil)
@@ -21,17 +24,19 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist) {
 		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
 	}
 
-	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, ErrInvalidSigningAlg
-		}
-		return PublicKey(), nil
-	})
-
-	if err != nil || !token.Valid {
+	claims, err := VerifyAccessToken(tokenString)
+	if err != nil {
 		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
 		return
+	}
+
+	ctx := c.Request.Context()
+	if claims.SessionID != "" && sessions != nil {
+		if err := sessions.Revoke(ctx, claims.SessionID, claims.UUID); err != nil {
+			log.Printf("Error revoking session %s: %v", claims.SessionID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to logout", nil)
+			return
+		}
 	}
 
 	var expiresAt time.Time
@@ -41,11 +46,11 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist) {
 		expiresAt = time.Now().Add(24 * time.Hour)
 	}
 
-	ctx := c.Request.Context()
 	if err := tb.AddTokenToBlacklist(ctx, tokenString, expiresAt); err != nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to logout", nil)
 		return
 	}
 
+	ClearRefreshTokenCookie(c)
 	helpers.SendResponse(c, http.StatusOK, "Logged out successfully", nil)
 }

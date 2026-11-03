@@ -31,14 +31,19 @@ type PublicHandler struct {
 	PostgresDB      *db.PostgresService
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
+	Sessions        auth.SessionStore
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
-	return &PublicHandler{
+	h := &PublicHandler{
 		PostgresDB:      is.Postgres,
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
 	}
+	if is.Postgres != nil {
+		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
+	}
+	return h
 }
 
 type OTPRequest struct {
@@ -176,20 +181,39 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := auth.GenerateAccessToken(userHK.String(), "user")
+	sessionID := uuid.NewString()
+	accessToken, err := auth.GenerateAccessToken(userHK.String(), "user", sessionID)
 	if err != nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
 		return
 	}
-	refreshToken, err := auth.GenerateRefreshToken(userHK.String(), "user")
+	refreshToken, err := auth.GenerateRefreshToken(userHK.String(), "user", sessionID)
 	if err != nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate refresh token", nil)
 		return
 	}
 
+	err = h.Sessions.Create(ctx, auth.Session{
+		ID:               sessionID,
+		UserID:           userHK.String(),
+		AuthMethod:       "OTP",
+		AccessTokenHash:  auth.HashToken(accessToken),
+		RefreshTokenHash: auth.HashToken(refreshToken),
+		UserAgent:        c.Request.UserAgent(),
+		IP:               c.ClientIP(),
+		ExpiresAt:        time.Now().Add(auth.RefreshTokenLifetime()),
+	})
+	if err != nil {
+		log.Printf("Failed to create session: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
+		return
+	}
+
+	// The refresh token is only delivered in the HttpOnly cookie, never in the
+	// body, so scripts running in the page cannot read it.
 	auth.SetRefreshTokenCookie(c, refreshToken)
 
-	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken, "refresh_token": refreshToken})
+	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken})
 }
 
 // contactLookupQueries uses the same expressions as the unique contact indexes
@@ -286,7 +310,7 @@ func (h *PublicHandler) incrementBlacklistAttempts(ctx context.Context, uuidStr 
 }
 
 func (h *PublicHandler) RefreshToken(c *gin.Context) {
-	auth.RefreshTokenHandler(c)
+	auth.RefreshTokenHandler(c, h.Sessions)
 }
 
 func validateUUID(s string) bool {

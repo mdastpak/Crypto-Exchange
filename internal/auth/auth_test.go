@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,6 +114,37 @@ func (m *mockRedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd
 	return redis.NewIntCmd(ctx, int64(count))
 }
 
+// fakeSessionStore records calls and returns preset errors. Rotation and
+// revocation semantics against a real database are tested in the public
+// handler package.
+type fakeSessionStore struct {
+	rotations []SessionRotation
+	revoked   []string
+	rotateErr error
+	revokeErr error
+}
+
+func (f *fakeSessionStore) Create(ctx context.Context, session Session) error { return nil }
+
+func (f *fakeSessionStore) Rotate(ctx context.Context, rotation SessionRotation) error {
+	f.rotations = append(f.rotations, rotation)
+	return f.rotateErr
+}
+
+func (f *fakeSessionStore) Revoke(ctx context.Context, sessionID, userID string) error {
+	f.revoked = append(f.revoked, sessionID+"/"+userID)
+	return f.revokeErr
+}
+
+func refreshCookie(w *httptest.ResponseRecorder) *http.Cookie {
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == RefreshTokenCookie {
+			return cookie
+		}
+	}
+	return nil
+}
+
 func TestTokenBlacklist_AddTokenToBlacklist(t *testing.T) {
 	tb := &TokenBlacklist{
 		RedisClient: (*redis.Client)(nil), // We'll test the logic directly
@@ -144,7 +176,7 @@ func TestGenerateAccessToken(t *testing.T) {
 	uuid := "user-123"
 	role := "user"
 
-	token, err := GenerateAccessToken(uuid, role)
+	token, err := GenerateAccessToken(uuid, role, "test-session")
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
 
@@ -153,6 +185,9 @@ func TestGenerateAccessToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uuid, claims.UUID)
 	assert.Equal(t, role, claims.Role)
+	assert.Equal(t, TokenTypeAccess, claims.Type)
+	assert.Equal(t, "test-session", claims.SessionID)
+	assert.NotEmpty(t, claims.ID)
 	assert.NotNil(t, claims.ExpiresAt)
 	assert.True(t, claims.ExpiresAt.Time.After(time.Now()))
 }
@@ -163,7 +198,7 @@ func TestGenerateRefreshToken(t *testing.T) {
 	uuid := "user-123"
 	role := "user"
 
-	token, err := GenerateRefreshToken(uuid, role)
+	token, err := GenerateRefreshToken(uuid, role, "test-session")
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
 
@@ -172,14 +207,55 @@ func TestGenerateRefreshToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uuid, claims.UUID)
 	assert.Equal(t, role, claims.Role)
+	assert.Equal(t, TokenTypeRefresh, claims.Type)
+	assert.Equal(t, "test-session", claims.SessionID)
 	assert.NotNil(t, claims.ExpiresAt)
 	assert.True(t, claims.ExpiresAt.Time.After(time.Now().Add(6*24*time.Hour))) // ~7 days
+}
+
+func TestGenerateRefreshToken_TokensIssuedTogetherAreDistinct(t *testing.T) {
+	setupTestKeys(t)
+
+	first, err := GenerateRefreshToken("user-123", "user", "test-session")
+	require.NoError(t, err)
+	second, err := GenerateRefreshToken("user-123", "user", "test-session")
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first, second, "rotation needs every refresh token to be unique, even within the same second")
+}
+
+func TestVerifyTokenOfType(t *testing.T) {
+	setupTestKeys(t)
+	access, err := GenerateAccessToken("user-123", "user", "test-session")
+	require.NoError(t, err)
+	refresh, err := GenerateRefreshToken("user-123", "user", "test-session")
+	require.NoError(t, err)
+
+	_, err = VerifyAccessToken(access)
+	assert.NoError(t, err)
+	_, err = VerifyRefreshToken(refresh)
+	assert.NoError(t, err)
+
+	_, err = VerifyAccessToken(refresh)
+	assert.ErrorIs(t, err, ErrWrongTokenType, "a refresh token must not be accepted as an access token")
+	_, err = VerifyRefreshToken(access)
+	assert.ErrorIs(t, err, ErrWrongTokenType, "an access token must not be accepted as a refresh token")
+
+	// Tokens issued before token types existed carry no "typ" claim.
+	untyped := jwt.NewWithClaims(jwt.SigningMethodRS256, Claims{
+		UUID: "user-123", Role: "user",
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	})
+	untypedString, err := untyped.SignedString(PrivateKey())
+	require.NoError(t, err)
+	_, err = VerifyAccessToken(untypedString)
+	assert.ErrorIs(t, err, ErrWrongTokenType)
 }
 
 func TestVerifyRSAToken_ValidToken(t *testing.T) {
 	setupTestKeys(t)
 
-	token, err := GenerateAccessToken("user-123", "user")
+	token, err := GenerateAccessToken("user-123", "user", "test-session")
 	require.NoError(t, err)
 
 	claims, err := VerifyRSAToken(token)
@@ -252,7 +328,7 @@ func TestVerifyRSATokenWithKeys_KeyRotation(t *testing.T) {
 	setupTestKeys(t)
 
 	// Generate access token with current key
-	token, err := GenerateAccessToken("user-123", "user")
+	token, err := GenerateAccessToken("user-123", "user", "test-session")
 	require.NoError(t, err)
 
 	// Verify with current key works
@@ -303,8 +379,8 @@ func TestVerifyRSATokenWithKeys_KeysNotLoaded(t *testing.T) {
 func TestVerifyAdminToken(t *testing.T) {
 	setupTestKeys(t)
 
-	adminToken, _ := GenerateAccessToken("admin-1", "admin")
-	userToken, _ := GenerateAccessToken("user-1", "user")
+	adminToken, _ := GenerateAccessToken("admin-1", "admin", "test-session")
+	userToken, _ := GenerateAccessToken("user-1", "user", "test-session")
 
 	assert.True(t, VerifyAdminToken(adminToken))
 	assert.False(t, VerifyAdminToken(userToken))
@@ -314,8 +390,8 @@ func TestVerifyAdminToken(t *testing.T) {
 func TestVerifyUserToken(t *testing.T) {
 	setupTestKeys(t)
 
-	adminToken, _ := GenerateAccessToken("admin-1", "admin")
-	userToken, _ := GenerateAccessToken("user-1", "user")
+	adminToken, _ := GenerateAccessToken("admin-1", "admin", "test-session")
+	userToken, _ := GenerateAccessToken("user-1", "user", "test-session")
 
 	// VerifyUserToken only allows "user" role (not admin)
 	assert.True(t, VerifyUserToken(userToken), "user token should be valid")
@@ -328,7 +404,7 @@ func TestLogoutHandler(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-	token, _ := GenerateAccessToken("user-123", "user")
+	token, _ := GenerateAccessToken("user-123", "user", "test-session")
 
 	// Test logout with valid token
 	w := httptest.NewRecorder()
@@ -341,10 +417,51 @@ func TestLogoutHandler(t *testing.T) {
 		RedisClient: (*redis.Client)(nil),
 		Prefix:      "test:blacklist:",
 	}
-	LogoutHandler(c, tb)
+	sessions := &fakeSessionStore{}
+	LogoutHandler(c, tb, sessions)
 
 	// With nil Redis, AddTokenToBlacklist is no-op, returns 200
 	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []string{"test-session/user-123"}, sessions.revoked, "logout must revoke the token's session")
+	cookie := refreshCookie(w)
+	require.NotNil(t, cookie, "logout must clear the refresh token cookie")
+	assert.Negative(t, cookie.MaxAge)
+}
+
+func TestLogoutHandler_RejectsRefreshToken(t *testing.T) {
+	setupTestKeys(t)
+	gin.SetMode(gin.TestMode)
+
+	refreshToken, err := GenerateRefreshToken("user-123", "user", "test-session")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	c.Request.Header.Set("Authorization", refreshToken)
+
+	sessions := &fakeSessionStore{}
+	LogoutHandler(c, NewTokenBlacklist((*redis.Client)(nil)), sessions)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Empty(t, sessions.revoked)
+}
+
+func TestLogoutHandler_SessionStoreError(t *testing.T) {
+	setupTestKeys(t)
+	gin.SetMode(gin.TestMode)
+
+	token, err := GenerateAccessToken("user-123", "user", "test-session")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	c.Request.Header.Set("Authorization", token)
+
+	LogoutHandler(c, NewTokenBlacklist((*redis.Client)(nil)), &fakeSessionStore{revokeErr: errors.New("database down")})
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "logout must not report success when the session stays active")
 }
 
 func TestLogoutHandler_MissingToken(t *testing.T) {
@@ -356,7 +473,7 @@ func TestLogoutHandler_MissingToken(t *testing.T) {
 	// No Authorization header
 
 	tb := NewTokenBlacklist((*redis.Client)(nil))
-	LogoutHandler(c, tb)
+	LogoutHandler(c, tb, &fakeSessionStore{})
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
@@ -371,7 +488,7 @@ func TestLogoutHandler_InvalidToken(t *testing.T) {
 	c.Request.Header.Set("Authorization", "invalid.token")
 
 	tb := NewTokenBlacklist((*redis.Client)(nil))
-	LogoutHandler(c, tb)
+	LogoutHandler(c, tb, &fakeSessionStore{})
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
@@ -380,7 +497,7 @@ func TestLogoutHandler_BearerToken(t *testing.T) {
 	setupTestKeys(t)
 	gin.SetMode(gin.TestMode)
 
-	token, err := GenerateAccessToken("user-123", "user")
+	token, err := GenerateAccessToken("user-123", "user", "test-session")
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -388,7 +505,7 @@ func TestLogoutHandler_BearerToken(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	c.Request.Header.Set("Authorization", "Bearer "+token)
 
-	LogoutHandler(c, NewTokenBlacklist((*redis.Client)(nil)))
+	LogoutHandler(c, NewTokenBlacklist((*redis.Client)(nil)), &fakeSessionStore{})
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -397,42 +514,117 @@ func TestRefreshTokenHandler(t *testing.T) {
 	setupTestKeys(t)
 	gin.SetMode(gin.TestMode)
 
-	t.Run("missing cookie", func(t *testing.T) {
+	refresh := func(cookieValue string, sessions *fakeSessionStore) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+		if cookieValue != "" {
+			c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: cookieValue})
+		}
+		RefreshTokenHandler(c, sessions)
+		return w
+	}
 
-		RefreshTokenHandler(c)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	t.Run("missing cookie", func(t *testing.T) {
+		assert.Equal(t, http.StatusUnauthorized, refresh("", &fakeSessionStore{}).Code)
 	})
 
 	t.Run("invalid cookie", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
-		c.Request.AddCookie(&http.Cookie{Name: "refresh_token", Value: "invalid"})
-
-		RefreshTokenHandler(c)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, http.StatusUnauthorized, refresh("invalid", &fakeSessionStore{}).Code)
 	})
 
-	t.Run("valid cookie", func(t *testing.T) {
-		refreshToken, err := GenerateRefreshToken("user-123", "user")
+	t.Run("access token in the cookie", func(t *testing.T) {
+		accessToken, err := GenerateAccessToken("user-123", "user", "test-session")
 		require.NoError(t, err)
+		sessions := &fakeSessionStore{}
 
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
-		c.Request.AddCookie(&http.Cookie{Name: "refresh_token", Value: refreshToken})
+		assert.Equal(t, http.StatusUnauthorized, refresh(accessToken, sessions).Code)
+		assert.Empty(t, sessions.rotations)
+	})
 
-		RefreshTokenHandler(c)
+	t.Run("valid cookie rotates the refresh token", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", "user", "test-session")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{}
+
+		w := refresh(refreshToken, sessions)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Body.String(), "Access token refreshed")
 		assert.Contains(t, w.Body.String(), "access_token")
+		assert.NotContains(t, w.Body.String(), "refresh_token", "the refresh token must only be sent in the cookie")
+
+		require.Len(t, sessions.rotations, 1)
+		rotation := sessions.rotations[0]
+		assert.Equal(t, "test-session", rotation.SessionID)
+		assert.Equal(t, "user-123", rotation.UserID)
+		assert.Equal(t, HashToken(refreshToken), rotation.PresentedRefreshHash)
+
+		cookie := refreshCookie(w)
+		require.NotNil(t, cookie)
+		assert.NotEqual(t, refreshToken, cookie.Value, "the refresh token must be rotated")
+		assert.Equal(t, HashToken(cookie.Value), rotation.NewRefreshHash)
+		claims, err := VerifyRefreshToken(cookie.Value)
+		require.NoError(t, err)
+		assert.Equal(t, "test-session", claims.SessionID)
 	})
+
+	t.Run("reused refresh token", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", "user", "test-session")
+		require.NoError(t, err)
+
+		w := refresh(refreshToken, &fakeSessionStore{rotateErr: ErrRefreshTokenReused})
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		cookie := refreshCookie(w)
+		require.NotNil(t, cookie)
+		assert.Negative(t, cookie.MaxAge, "the cookie of a revoked session must be cleared")
+	})
+
+	t.Run("inactive session", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", "user", "test-session")
+		require.NoError(t, err)
+
+		assert.Equal(t, http.StatusUnauthorized, refresh(refreshToken, &fakeSessionStore{rotateErr: ErrSessionInvalid}).Code)
+	})
+
+	t.Run("session store failure", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", "user", "test-session")
+		require.NoError(t, err)
+
+		w := refresh(refreshToken, &fakeSessionStore{rotateErr: errors.New("database down")})
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Nil(t, refreshCookie(w), "no new refresh token may be issued when the rotation was not stored")
+	})
+}
+
+func TestMiddlewares_RejectRefreshTokens(t *testing.T) {
+	setupTestKeys(t)
+	gin.SetMode(gin.TestMode)
+
+	middlewares := map[string]gin.HandlerFunc{
+		"JWTMiddleware":        JWTMiddleware(nil),
+		"JWTAdminVerification": JWTAdminVerification(nil),
+		"JWTUserVerification":  JWTUserVerification(nil),
+	}
+	for name, middleware := range middlewares {
+		t.Run(name, func(t *testing.T) {
+			for _, role := range []string{"user", "admin"} {
+				refreshToken, err := GenerateRefreshToken("user-123", role, "test-session")
+				require.NoError(t, err)
+
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest(http.MethodGet, "/protected", nil)
+				c.Request.Header.Set("Authorization", refreshToken)
+				middleware(c)
+
+				assert.Equal(t, http.StatusUnauthorized, w.Code, "a %s refresh token must not authorize API requests", role)
+				assert.True(t, c.IsAborted())
+			}
+		})
+	}
 }
 
 func TestSetRefreshTokenCookie(t *testing.T) {
@@ -452,14 +644,16 @@ func TestSetRefreshTokenCookie(t *testing.T) {
 	assert.Equal(t, refreshToken, cookies[0].Value)
 	assert.True(t, cookies[0].HttpOnly)
 	assert.True(t, cookies[0].Secure)
-	assert.Equal(t, "/", cookies[0].Path)
+	assert.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
+	assert.Equal(t, "/public/auth", cookies[0].Path, "the cookie is only sent to the authentication routes")
+	assert.Equal(t, config.Config.JWT.RefreshToken.Expiration*60, cookies[0].MaxAge)
 }
 
 func TestJWTMiddleware_ValidToken(t *testing.T) {
 	setupTestKeys(t)
 	gin.SetMode(gin.TestMode)
 
-	token, _ := GenerateAccessToken("user-123", "user")
+	token, _ := GenerateAccessToken("user-123", "user", "test-session")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -544,7 +738,7 @@ func TestJWTMiddleware_BlacklistedToken(t *testing.T) {
 	setupTestKeys(t)
 	gin.SetMode(gin.TestMode)
 
-	token, _ := GenerateAccessToken("user-123", "user")
+	token, _ := GenerateAccessToken("user-123", "user", "test-session")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -568,8 +762,8 @@ func TestJWTAdminVerification(t *testing.T) {
 	setupTestKeys(t)
 	gin.SetMode(gin.TestMode)
 
-	adminToken, _ := GenerateAccessToken("admin-1", "admin")
-	userToken, _ := GenerateAccessToken("user-1", "user")
+	adminToken, _ := GenerateAccessToken("admin-1", "admin", "test-session")
+	userToken, _ := GenerateAccessToken("user-1", "user", "test-session")
 
 	// Test admin token passes
 	w := httptest.NewRecorder()
@@ -600,8 +794,8 @@ func TestJWTUserVerification(t *testing.T) {
 	setupTestKeys(t)
 	gin.SetMode(gin.TestMode)
 
-	adminToken, _ := GenerateAccessToken("admin-1", "admin")
-	userToken, _ := GenerateAccessToken("user-1", "user")
+	adminToken, _ := GenerateAccessToken("admin-1", "admin", "test-session")
+	userToken, _ := GenerateAccessToken("user-1", "user", "test-session")
 
 	tb := NewTokenBlacklist((*redis.Client)(nil))
 
@@ -687,13 +881,13 @@ func BenchmarkGenerateAccessToken(b *testing.B) {
 	setupTestKeys(nil)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		GenerateAccessToken("user-123", "user")
+		GenerateAccessToken("user-123", "user", "test-session")
 	}
 }
 
 func BenchmarkVerifyRSAToken(b *testing.B) {
 	setupTestKeys(nil)
-	token, _ := GenerateAccessToken("user-123", "user")
+	token, _ := GenerateAccessToken("user-123", "user", "test-session")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		VerifyRSAToken(token)
@@ -702,7 +896,7 @@ func BenchmarkVerifyRSAToken(b *testing.B) {
 
 func BenchmarkVerifyRSATokenWithKeys(b *testing.B) {
 	setupTestKeys(nil)
-	token, _ := GenerateAccessToken("user-123", "user")
+	token, _ := GenerateAccessToken("user-123", "user", "test-session")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		VerifyRSATokenWithKeys(token)
