@@ -16,7 +16,7 @@ Every endpoint except `/system/*` responds with:
 }
 ```
 
-`status` repeats the HTTP status code. `info` holds the payload and is omitted when there is none. Error responses use the same envelope and contain only a message.
+`status` repeats the HTTP status code. `info` holds the payload and is omitted when there is none. Error responses use the same envelope and contain only a fixed message for each error. Internal details, such as database, Redis, or provider errors, are only written to the server log. A panic in a handler returns `500` with the message `Internal server error`.
 
 ### Authentication
 

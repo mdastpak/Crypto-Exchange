@@ -108,7 +108,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create the HTTP engine: %v", err)
 	}
-	r.Use(gin.Recovery())
+	r.Use(middleware.RecoveryMiddleware())
 	r.Use(requestIDMiddleware())
 	r.Use(gin.Logger())
 

@@ -271,8 +271,8 @@ Relevant code: `internal/middleware/security.go:11`, `internal/middleware/valida
 | M-09 | P1 / contract | Nested maps and slices are supplied to sanitization | Only supported string values change; nested structures follow a documented rule | Current `SanitizeMap` handles only the top-level string values |
 | M-10 | P0 / contract | Client supplies a valid `X-Request-ID` | Same value is returned | Passes |
 | M-11 | P0 / contract | Client omits `X-Request-ID` | Server generates a non-empty ID and returns it | Passes |
-| M-12 | P0 / security | Panic in a handler while release mode is active | `500` with no stack trace or internal value | `RecoveryMiddleware` supports this, but the main router currently uses `gin.Recovery()` |
-| M-13 | P0 / security | Error text contains a password, token, connection string, or stack trace | Production response is sanitized | Helper function exists; verify router wiring |
+| M-12 | P0 / security | Panic in a handler, in debug or release mode | `500` with no stack trace or internal value | Passes: the router uses `RecoveryMiddleware`, which never returns panic details ([#16](https://github.com/mdastpak/Crypto-Exchange/issues/16)) |
+| M-13 | P0 / security | Error text contains a password, token, connection string, or stack trace | The response does not contain it | Passes for the OTP endpoints: handlers return fixed messages and only log errors ([#16](https://github.com/mdastpak/Crypto-Exchange/issues/16)). The unused `SanitizeError` helper is tracked in [#56](https://github.com/mdastpak/Crypto-Exchange/issues/56). |
 | M-14 | P0 / contract | Token-bucket request is allowed | Limit and remaining quota are accurate | Current allowed path omits `X-RateLimit-Remaining` |
 | M-15 | P0 / contract | Token-bucket request is rejected | `429`; limit, remaining `0`, and positive `Retry-After` | Current header is `Retry-After`, not `X-RateLimit-Retry-After` |
 | M-16 | P0 / security | Redis script returns an error | Protected request does not silently pass | **Gap:** `consumeToken` returns allowed on error |

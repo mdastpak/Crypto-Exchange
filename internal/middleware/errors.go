@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"net/http"
-	"runtime/debug"
 
 	"encrypted-db/config"
 	"encrypted-db/internal/helpers"
@@ -10,17 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RecoveryMiddleware turns a panic into a 500 response in the standard
+// envelope. Gin logs the panic value and the stack trace on the server; the
+// response never contains them, in any mode, because they reveal internal
+// details to anyone who can trigger the panic.
 func RecoveryMiddleware() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
-		if config.Config.Server.Mode == "release" {
-			helpers.SendResponse(c, http.StatusInternalServerError, "Internal server error", nil)
-		} else {
-			helpers.SendResponse(c, http.StatusInternalServerError, "Internal server error", gin.H{
-				"error": recovered,
-				"stack": string(debug.Stack()),
-			})
-		}
-		c.Abort()
+		helpers.SendResponse(c, http.StatusInternalServerError, "Internal server error", nil)
 	})
 }
 

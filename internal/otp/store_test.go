@@ -303,6 +303,25 @@ func TestStore_RedisHoldsNeitherCodesNorContacts(t *testing.T) {
 	assert.LessOrEqual(t, ttl, 2*time.Minute, "a session lives as long as its code")
 }
 
+func TestStore_ContactsAreEncryptedWithTheSecret(t *testing.T) {
+	store, client := newTestStore(t, Settings{})
+	ctx := context.Background()
+	issued := issue(t, store, "alice@example.com")
+	encrypted, err := client.HGet(ctx, sessionKey(issued.SessionID), fieldContact).Result()
+	require.NoError(t, err)
+
+	contact, err := store.decryptContact(issued.SessionID, encrypted)
+	require.NoError(t, err)
+	assert.Equal(t, "alice@example.com", contact)
+
+	other := NewStore(client, Settings{Secret: strings.Repeat("x", MinSecretLength)})
+	_, err = other.decryptContact(issued.SessionID, encrypted)
+	assert.Error(t, err, "the session ID, which clients know, must not be enough to decrypt the contact")
+
+	_, err = store.decryptContact("5b0c8f0e-58a6-4c3b-9d8e-2f7a1c3e9b10", encrypted)
+	assert.Error(t, err, "a ciphertext cannot be moved to another session")
+}
+
 func TestStore_CodesAreBoundToTheSecret(t *testing.T) {
 	store, client := newTestStore(t, Settings{})
 	issued := issue(t, store, "alice@example.com")
