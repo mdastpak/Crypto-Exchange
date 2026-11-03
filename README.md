@@ -195,6 +195,7 @@ Integration tests need a PostgreSQL instance and a Redis instance on the default
 ```bash
 docker run -d --name ce-test-postgres -e POSTGRES_PASSWORD=test -e POSTGRES_DB=testdb -p 5432:5432 postgres:16-alpine
 docker run -d --name ce-test-redis -p 6379:6379 redis:7-alpine
+docker run -d --name ce-test-rabbitmq -p 5672:5672 rabbitmq:3.13
 go test -p 1 ./...
 ```
 
@@ -202,6 +203,15 @@ go test -p 1 ./...
 > The integration tests drop and recreate tables in `testdb`, `testdb_migrations`, and `testdb_public_real_schema`, and they flush Redis databases 1 and 2. Never point them at an instance that holds real data. Stop the Docker Compose PostgreSQL and Redis services first (`docker compose stop postgres redis`): the test containers use the same ports (5432 and 6379), and the tests expect Redis without a password.
 
 `-p 1` is currently required because packages share the same test databases. Hermetic, parallel-safe tests are tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
+
+The RabbitMQ tests (`internal/rabbitmq`) are skipped when no broker is reachable on port 5672. On some Docker Desktop and WSL 2 setups, RabbitMQ fails at startup with `Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces`. Passing the Erlang cookie on the command line avoids reading that file:
+
+```bash
+docker run -d --name ce-test-rabbitmq -p 5672:5672 \
+  -e RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS="-setcookie local-test-cookie" \
+  -e RABBITMQ_CTL_ERL_ARGS="-setcookie local-test-cookie" \
+  rabbitmq:3.13
+```
 
 The expected behavior of every tested flow is specified in the [test-scenario catalog](docs/testing/test-scenarios.md).
 

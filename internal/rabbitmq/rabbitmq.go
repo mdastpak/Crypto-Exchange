@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -14,15 +15,88 @@ import (
 )
 
 type RabbitMQService struct {
-	conn        *amqp.Connection
-	connMu      sync.RWMutex
-	channel     *amqp.Channel
+	conn    *amqp.Connection
+	connMu  sync.RWMutex
+	channel *amqp.Channel
+	// confirms routes the publisher confirmations of channel to the publishes
+	// waiting for them. It owns the channel's only confirmation listener: the
+	// library delivers every confirmation to every listener with a blocking
+	// send, so a listener per publish stalls the connection after a few
+	// messages.
+	confirms    *confirmTracker
 	chMu        sync.RWMutex
 	closed      atomic.Bool
 	reconnectWg sync.WaitGroup
 	notifyClose chan *amqp.Error
 	url         string
 	exchanges   []string
+}
+
+// confirmBufferSize lets the broker run ahead of the dispatcher goroutine
+// without blocking the connection's reader.
+const confirmBufferSize = 256
+
+const publishConfirmTimeout = 5 * time.Second
+
+var errChannelClosed = errors.New("rabbitmq channel closed before the publish was confirmed")
+
+// confirmTracker matches the confirmations of one channel in confirm mode to
+// the publishes waiting for them, by delivery tag. Delivery tags start at 1 on
+// every channel and follow the order of publishes on it.
+type confirmTracker struct {
+	mu      sync.Mutex
+	lastTag uint64
+	waiters map[uint64]chan bool // delivery tag -> ack (true) or nack (false)
+	closed  bool
+}
+
+func newConfirmTracker(ch *amqp.Channel) *confirmTracker {
+	t := &confirmTracker{waiters: make(map[uint64]chan bool)}
+	go t.dispatch(ch.NotifyPublish(make(chan amqp.Confirmation, confirmBufferSize)))
+	return t
+}
+
+// dispatch runs until the channel closes. The library resequences multiple
+// acknowledgements, so every delivery tag is confirmed individually and in order.
+func (t *confirmTracker) dispatch(confirms <-chan amqp.Confirmation) {
+	for c := range confirms {
+		t.mu.Lock()
+		if w, ok := t.waiters[c.DeliveryTag]; ok {
+			w <- c.Ack
+			delete(t.waiters, c.DeliveryTag)
+		}
+		t.mu.Unlock()
+	}
+	// The listener is closed with the channel, so no outstanding publish will
+	// be confirmed anymore.
+	t.mu.Lock()
+	t.closed = true
+	for tag, w := range t.waiters {
+		close(w)
+		delete(t.waiters, tag)
+	}
+	t.mu.Unlock()
+}
+
+// register reserves the delivery tag of the next publish on the channel. The
+// caller must publish right after, without another publish in between.
+func (t *confirmTracker) register() (uint64, <-chan bool, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return 0, nil, errChannelClosed
+	}
+	t.lastTag++
+	w := make(chan bool, 1)
+	t.waiters[t.lastTag] = w
+	return t.lastTag, w, nil
+}
+
+// forget stops tracking a publish that will not wait for its confirmation.
+func (t *confirmTracker) forget(tag uint64) {
+	t.mu.Lock()
+	delete(t.waiters, tag)
+	t.mu.Unlock()
 }
 
 func NewRabbitMQService(exchanges ...string) (*RabbitMQService, error) {
@@ -68,7 +142,7 @@ func (r *RabbitMQService) connect() error {
 	}
 
 	r.conn = conn
-	r.channel = ch
+	r.useChannel(ch)
 	r.closed.Store(false)
 
 	r.notifyClose = conn.NotifyClose(make(chan *amqp.Error, 1))
@@ -140,9 +214,25 @@ func (r *RabbitMQService) recreateChannel() (*amqp.Channel, error) {
 				return nil, err
 			}
 		}
-		r.channel = ch
+		r.useChannel(ch)
 	}
 	return r.channel, nil
+}
+
+// useChannel makes ch the publishing channel, with its own confirmation tracker.
+func (r *RabbitMQService) useChannel(ch *amqp.Channel) {
+	r.channel = ch
+	r.confirms = newConfirmTracker(ch)
+}
+
+// dropChannel forgets ch, if it is still the current channel, so that the next
+// publish opens a new one.
+func (r *RabbitMQService) dropChannel(ch *amqp.Channel) {
+	r.chMu.Lock()
+	if r.channel == ch {
+		r.channel = nil
+	}
+	r.chMu.Unlock()
 }
 
 func (r *RabbitMQService) reconnectLoop() {
@@ -246,13 +336,28 @@ func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string)
 		return fmt.Errorf("rabbitmq service closed")
 	}
 
-	ch, err := r.GetChannel()
-	if err != nil {
+	if _, err := r.GetChannel(); err != nil {
 		return err
 	}
 
-	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-
+	// Reserve the delivery tag and publish under chMu, so that tags follow the
+	// order of publishes on the channel and a reconnect cannot swap the channel
+	// in between. Waiting for the confirmation happens outside the lock, so
+	// concurrent publishes are pipelined.
+	r.chMu.Lock()
+	ch, tracker := r.channel, r.confirms
+	if ch == nil || tracker == nil {
+		r.chMu.Unlock()
+		return fmt.Errorf("rabbitmq channel is not available")
+	}
+	tag, ack, err := tracker.register()
+	if err != nil {
+		if r.channel == ch {
+			r.channel = nil
+		}
+		r.chMu.Unlock()
+		return err
+	}
 	err = ch.Publish(
 		exchange,
 		"",
@@ -266,24 +371,36 @@ func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string)
 		},
 	)
 	if err != nil {
-		r.chMu.Lock()
+		// The tag was never used, so this channel's tags no longer line up;
+		// the next publish opens a new channel with a new tracker.
+		tracker.forget(tag)
 		r.channel = nil
 		r.chMu.Unlock()
 		return err
 	}
+	r.chMu.Unlock()
 
+	timer := time.NewTimer(publishConfirmTimeout)
+	defer timer.Stop()
 	select {
-	case confirmed := <-confirms:
-		if !confirmed.Ack {
+	case acked, ok := <-ack:
+		if !ok {
+			// The broker closed the channel, for example because the exchange
+			// does not exist.
+			r.dropChannel(ch)
+			return errChannelClosed
+		}
+		if !acked {
 			return fmt.Errorf("message nacked by broker")
 		}
+		return nil
 	case <-ctx.Done():
+		tracker.forget(tag)
 		return ctx.Err()
-	case <-time.After(5 * time.Second):
+	case <-timer.C:
+		tracker.forget(tag)
 		return fmt.Errorf("publish confirm timeout")
 	}
-
-	return nil
 }
 
 func (r *RabbitMQService) PublishWithRetry(ctx context.Context, exchange, message string, retryCount int) error {

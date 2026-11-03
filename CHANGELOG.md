@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - First-time OTP sign-in failed with `500 Failed to create user`, because the `users.info` constraint from migration 2 required `username` and `password` keys that OTP sign-in never writes. Migration 11 requires a contact object in `users.info`, makes each contact value unique (email addresses and usernames case-insensitively), and stops with an actionable message if manually inserted rows conflict with these rules. Concurrent first sign-ins for the same contact now resolve to one user ([#8](https://github.com/mdastpak/Crypto-Exchange/issues/8)).
+- RabbitMQ publishing stalled after about three messages, and graceful shutdown could hang, because every `Publish` call registered a new publisher-confirm listener that was never removed, and the library delivers each confirmation to every listener with a blocking send. Each channel now has a single listener whose confirmations are routed to the waiting publish by delivery tag, so concurrent publishes are pipelined and each one waits only for its own confirmation. A channel closed by the broker is replaced on the next publish ([#9](https://github.com/mdastpak/Crypto-Exchange/issues/9)).
 
 ## 2026-09-16
 
