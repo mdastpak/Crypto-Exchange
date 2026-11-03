@@ -96,7 +96,8 @@ Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.
 > **Two contracts in this section.** Every scenario except U-30 describes the current route, which returns the currency list. U-30 is the target contract, in which `/user/profile` returns the authenticated user's profile ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)). Do not automate both against the same route. Once #27 is implemented:
 >
 > - U-01 and U-02 keep their authentication setup (user and admin token) but assert the caller's profile, as U-30 does.
-> - U-03 to U-10, U-27 to U-29, and U-31 to U-35 (authentication, HTTP methods, CORS, and rate limiting) apply to the profile route unchanged.
+> - U-03 to U-10, U-28, U-29, and U-31 to U-35 (authentication, CORS, and rate limiting) apply to the profile route unchanged.
+> - U-27 changes: #27 adds `PATCH /user/profile`, so only `POST`, `PUT`, and `DELETE` return `405`, and the `Allow` header lists both `GET` and `PATCH`.
 > - U-11 to U-26 (currency listing) move to the shared currency listing used by the public endpoint.
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
