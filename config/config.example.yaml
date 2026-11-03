@@ -17,6 +17,11 @@ server:
     enabled: false
     cert_file: "config/ssl/cert.pem"
     key_file: "config/ssl/key.pem"
+  cors:
+    # Exact browser origins (scheme://host[:port]) allowed to call the API with
+    # credentials, for example "https://app.example.com". Empty: no
+    # cross-origin access. A wildcard ("*") is rejected at startup.
+    allowed_origins: []
 
 postgres:
   host: "localhost"

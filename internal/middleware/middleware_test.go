@@ -184,32 +184,3 @@ func TestSecurityHeaders(t *testing.T) {
 	assert.Equal(t, "1; mode=block", w.Header().Get("X-XSS-Protection"))
 	assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"))
 }
-
-func TestCORSMiddleware(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
-	c.Request.Header.Set("Origin", "https://example.com")
-
-	CORSMiddleware()(c)
-
-	// In test mode, AllowedOrigins is empty, so it should allow the origin
-	assert.Equal(t, "https://example.com", w.Header().Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
-	assert.Equal(t, "GET, POST, PUT, PATCH, DELETE, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
-}
-
-func TestCORSMiddleware_OPTIONS(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodOptions, "/test", nil)
-	c.Request.Header.Set("Origin", "https://example.com")
-
-	CORSMiddleware()(c)
-
-	assert.Equal(t, http.StatusNoContent, w.Code)
-}

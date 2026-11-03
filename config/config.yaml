@@ -1,6 +1,8 @@
 server:
   ip: "127.0.0.1"
   port: "8080"
+  cors:
+    allowed_origins: []
   read_timeout_seconds: 10
   write_timeout_seconds: 10
   idle_timeout_seconds: 120
