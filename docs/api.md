@@ -23,7 +23,7 @@ Every endpoint except `/system/*` responds with:
 Protected routes expect the JWT access token in the `Authorization` header.
 
 > [!NOTE]
-> The `/admin/*` and `/user/*` middleware currently expects the **raw token without a `Bearer` prefix**. Only the logout handlers strip the prefix. Consistent `Bearer` support is tracked in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17).
+> The `/admin/*` and `/user/*` middleware currently expects the **raw token without a `Bearer` prefix**, and rejects a prefixed token with `401` before the handler runs. Only `POST /public/auth/logout`, which has no authentication middleware, accepts both forms. Consistent `Bearer` support is tracked in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17).
 
 Tokens are RS256-signed JWTs with these claims:
 
@@ -124,7 +124,12 @@ Response `200`: `{"info": {"access_token": "<jwt>"}}`. Errors: `401` when the co
 
 ### `POST /public/auth/logout` and `POST /user/logout`
 
-Revokes the access token sent in the `Authorization` header (with or without a `Bearer` prefix) until it expires. The refresh token is not revoked yet ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
+Revokes the access token sent in the `Authorization` header until it expires. The refresh token is not revoked yet ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
+
+| Route | Accepted `Authorization` value |
+| --- | --- |
+| `POST /public/auth/logout` | The raw token, or `Bearer <token>` |
+| `POST /user/logout` | The raw token only. A `Bearer` prefix is rejected with `401` by the user middleware ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)). |
 
 Response `200`. Errors: `401` for a missing or invalid token.
 

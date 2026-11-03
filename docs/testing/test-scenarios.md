@@ -92,6 +92,13 @@ The current middleware reads the JWT directly from `Authorization`; it does not 
 
 Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.go:263`.
 
+> [!IMPORTANT]
+> **Two contracts in this section.** Every scenario except U-30 describes the current route, which returns the currency list. U-30 is the target contract, in which `/user/profile` returns the authenticated user's profile ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)). Do not automate both against the same route. Once #27 is implemented:
+>
+> - U-01 and U-02 keep their authentication setup (user and admin token) but assert the caller's profile, as U-30 does.
+> - U-03 to U-10, U-27 to U-29, and U-31 to U-35 (authentication, HTTP methods, CORS, and rate limiting) apply to the profile route unchanged.
+> - U-11 to U-26 (currency listing) move to the shared currency listing used by the public endpoint.
+
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
 | U-01 | P0 / contract | Valid raw user JWT; Redis contains one approved currency | `200`; `status=200`; `info` contains exactly that currency | Passes when keys and Redis are initialized |
@@ -135,6 +142,9 @@ Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.
 # 2. Public Active Currencies
 
 Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/main.go:241`.
+
+> [!IMPORTANT]
+> **Cache-only reads versus the planned database fallback.** The expectations below assume that Redis is the only source, as it is today. [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) adds a read-through cache backed by PostgreSQL. Once it lands, the cache-miss and Redis-failure scenarios change: C-03 expects an empty list only when the database has no active currency either; H-02 expects `404` only when the database has no matching active row; and U-20 and C-09 (Redis unavailable) expect the data from the database instead of `500`, with `500` only when PostgreSQL is unavailable as well. The same applies to U-11 and U-19 for the shared listing.
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
