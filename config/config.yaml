@@ -58,6 +58,7 @@ otp:
     ttl_seconds: 60
     length: 6
     retry_limit: 3
+    dev_log_codes: false
 
 websocket:
   allowed_origins: []

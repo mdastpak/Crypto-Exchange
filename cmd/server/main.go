@@ -24,6 +24,7 @@ import (
 	"encrypted-db/internal/helpers"
 	"encrypted-db/internal/middleware"
 	"encrypted-db/internal/models"
+	"encrypted-db/internal/notify"
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -66,6 +67,11 @@ func main() {
 		log.Fatalf("Failed to initialize auth keys: %v", err)
 	}
 
+	otpSender, err := notify.NewOTPSender(config.Config.OTP.Auth.DevLogCodes, gin.Mode() == gin.ReleaseMode)
+	if err != nil {
+		log.Fatalf("Invalid OTP delivery configuration: %v", err)
+	}
+
 	services, cleanup, err := initializeServices()
 	if err != nil {
 		log.Fatalf("Failed to initialize services: %v", err)
@@ -73,6 +79,7 @@ func main() {
 	defer cleanup()
 
 	handlers := initializeHandlers(services)
+	handlers.Public.OTPSender = otpSender
 
 	if err := initializeCache(handlers); err != nil {
 		log.Fatalf("Failed to initialize cache: %v", err)

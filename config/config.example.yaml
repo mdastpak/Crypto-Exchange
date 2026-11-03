@@ -66,6 +66,10 @@ otp:
     ttl_seconds: 60
     length: 6
     retry_limit: 3
+    # Development only: write sign-in codes to the log, because email and SMS
+    # delivery is not implemented yet. The server refuses to start with this
+    # enabled in release mode (GIN_MODE=release).
+    dev_log_codes: false
 
 websocket:
   allowed_origins: []

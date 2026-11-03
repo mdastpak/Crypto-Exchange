@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - Refresh tokens were accepted as access tokens, giving seven days of API access, and were never revoked, not even by logout. Tokens now carry a type (`typ`), so protected routes accept only access tokens and the refresh endpoint accepts only refresh tokens. Each sign-in creates a session in the `sessions` table. Refresh tokens are rotated on every use, and presenting an already rotated refresh token revokes the session. Logout revokes the session and clears the cookie ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
+- Every OTP request wrote the sign-in code together with the raw email address, phone number or username to the application log, so anyone with log access could sign in as any user. Codes are now handed to an `OTPSender`, which discards them by default. The new `otp.auth.dev_log_codes` setting writes them to the log with a masked contact for local development only, and the server refuses to start with it in release mode ([#13](https://github.com/mdastpak/Crypto-Exchange/issues/13)).
 
 ## 2026-09-16
 
