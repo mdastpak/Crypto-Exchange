@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Project documentation: `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `docs/architecture.md`, `docs/configuration.md`, and `docs/api.md`.
 - Issue templates and a pull request template.
+- Test-scenario catalog with stable scenario IDs and a finding-status table, in [`docs/testing/test-scenarios.md`](docs/testing/test-scenarios.md) ([#90](https://github.com/mdastpak/Crypto-Exchange/pull/90)).
 
 ### Changed
 

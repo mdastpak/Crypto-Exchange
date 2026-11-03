@@ -90,6 +90,7 @@ docs: document the OTP sign-in flow
 - Unit tests must not depend on external services.
 - Integration tests currently need local PostgreSQL and Redis instances and must run with `go test -p 1 ./...`. See [Testing](README.md#testing). Hermetic tests are tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
 - Run the race detector for concurrent code: `go test -race ./...`.
+- Use the scenario catalog in [docs/testing/test-scenarios.md](docs/testing/test-scenarios.md) as the specification for expected behavior, and reference its scenario IDs (for example `A-27`) in test names or comments.
 
 ## Pull request checklist
 

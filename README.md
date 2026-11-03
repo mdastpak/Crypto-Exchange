@@ -203,6 +203,8 @@ go test -p 1 ./...
 
 `-p 1` is currently required because packages share the same test databases. Hermetic, parallel-safe tests are tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
 
+The expected behavior of every tested flow is specified in the [test-scenario catalog](docs/testing/test-scenarios.md).
+
 ## Project layout
 
 ```text
