@@ -22,6 +22,8 @@ flowchart TB
     admin --> pg
     admin --> redis
     admin -->|publish| mq[[RabbitMQ]]
+    public -->|queue sign-in codes| mq
+    mq -->|consume| notify["notify worker<br/>email (SMTP), SMS (Kavenegar)"]
     mq -.->|consume, not started yet| socket
     system --> pg & redis & mq
 ```
@@ -35,6 +37,7 @@ flowchart TB
 | `internal/auth` | RS256 JWT issuing and verification, key registry for rotation, Redis-backed token blacklist, admin and user middleware |
 | `internal/db` | PostgreSQL connection with startup retries and migrations under an advisory lock, Redis client |
 | `internal/rabbitmq` | Connection, publisher confirms, automatic reconnect |
+| `internal/notify` | Sign-in code delivery: the queue sender used by OTP sign-in, the worker that consumes the queue with retries and a dead-letter queue, and the SMTP and Kavenegar SMS channels |
 | `internal/otp` | Sign-in codes: unbiased generation, Redis sessions with hashed codes and encrypted contacts, atomic attempt limits per code and per contact |
 | `internal/handlers/*` | HTTP and WebSocket handlers. They currently contain the business logic and SQL directly ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). |
 | `internal/middleware` | Security headers, CORS, Redis rate limiters, validation and recovery helpers |
@@ -57,9 +60,10 @@ Middleware is applied in this order: Gin recovery, request ID, Gin logger, secur
 1. Load the configuration and the RSA key pair.
 2. Connect to PostgreSQL with retries, then apply the migrations under a PostgreSQL advisory lock.
 3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges.
-4. Load approved currencies from PostgreSQL into the Redis cache.
-5. Start the HTTP server (with TLS when enabled).
-6. On `SIGINT` or `SIGTERM`: close WebSocket clients, delete the shared currency cache ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)), shut down the HTTP server, then close RabbitMQ, Redis, and PostgreSQL. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
+4. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured.
+5. Load approved currencies from PostgreSQL into the Redis cache.
+6. Start the HTTP server (with TLS when enabled).
+7. On `SIGINT` or `SIGTERM`: close WebSocket clients, delete the shared currency cache ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)), shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
 
 ## Data stores
 
@@ -99,7 +103,10 @@ Two models currently coexist: the legacy JSONB `currencies` and `users` tables u
 | Exchange or queue | Type | Purpose |
 | --- | --- | --- |
 | `price_updates` | Durable fan-out exchange | Currency change events today, price ticks in the future |
-| `trade_events`, `notifications` | Durable fan-out exchanges | Declared at startup for upcoming features |
+| `trade_events` | Durable fan-out exchange | Declared at startup for upcoming features |
+| `notifications` | Durable fan-out exchange | Sign-in code jobs |
+| `notifications.otp` | Durable queue bound to `notifications` | Consumed by the delivery worker. Jobs expire with the code. |
+| `notifications.dead-letter`, `notifications.otp.dead-letter` | Durable fan-out exchange and queue | Records of codes that could not be delivered, without the code or the raw contact, kept for seven days |
 | `ws_price_updates` | Durable queue bound to `price_updates` | WebSocket broadcast consumer ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |
 
 ## Target architecture

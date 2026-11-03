@@ -204,25 +204,24 @@ func TestCheckOrCreateUser_RealSchema_ReusesExistingUser(t *testing.T) {
 	assert.Equal(t, 1, countUsersWithContact(t, conn, "mobile", "09121234567"))
 }
 
-func TestCheckOrCreateUser_RealSchema_EmailAndUsernameIgnoreCase(t *testing.T) {
+func TestCheckOrCreateUser_RealSchema_EmailIgnoresCase(t *testing.T) {
 	handler, _, _ := setupRealSchemaHandler(t)
 	ctx := context.Background()
 
-	cases := []struct {
-		contactType, first, second string
-	}{
-		{"email", "Mixed.Case@Example.COM", "mixed.case@example.com"},
-		{"username", "Alice_2026", "alice_2026"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.contactType, func(t *testing.T) {
-			first, err := handler.checkOrCreateUser(ctx, tc.contactType, tc.first)
-			require.NoError(t, err)
-			second, err := handler.checkOrCreateUser(ctx, tc.contactType, tc.second)
-			require.NoError(t, err)
-			assert.Equal(t, first, second, "%q and %q must resolve to the same user", tc.first, tc.second)
-		})
-	}
+	first, err := handler.checkOrCreateUser(ctx, "email", "Mixed.Case@Example.COM")
+	require.NoError(t, err)
+	second, err := handler.checkOrCreateUser(ctx, "email", "mixed.case@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, first, second, "email addresses that differ only in case must resolve to the same user")
+}
+
+func TestCheckOrCreateUser_RealSchema_UsernameIsNotAContact(t *testing.T) {
+	handler, conn, _ := setupRealSchemaHandler(t)
+
+	_, err := handler.checkOrCreateUser(context.Background(), "username", "alice_2026")
+
+	assert.Error(t, err, "usernames cannot receive codes, so they must not sign in or create users")
+	assert.Equal(t, 0, countUsersWithContact(t, conn, "username", "alice_2026"))
 }
 
 func TestCheckOrCreateUser_RealSchema_ConcurrentFirstSignInCreatesOneUser(t *testing.T) {

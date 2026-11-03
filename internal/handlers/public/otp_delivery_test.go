@@ -18,6 +18,17 @@ import (
 type recordingOTPSender struct {
 	messages []notify.OTPMessage
 	err      error
+	// unsupported lists the contact types the sender refuses.
+	unsupported []string
+}
+
+func (r *recordingOTPSender) Supports(contactType string) bool {
+	for _, t := range r.unsupported {
+		if t == contactType {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *recordingOTPSender) SendOTP(ctx context.Context, msg notify.OTPMessage) error {
@@ -89,6 +100,43 @@ func TestRequestOTP_RealSchema_SenderFailure(t *testing.T) {
 	assert.Equal(t, "Failed to send OTP", resp.Message)
 	assert.Contains(t, logs.String(), "provider unavailable", "the failure must be logged")
 	assert.NotContains(t, logs.String(), contact, "the raw contact must not be logged, even on failure")
+}
+
+func TestRequestOTP_RealSchema_ContactTypeWithoutChannel(t *testing.T) {
+	handler, _, redisClient := setupRealSchemaHandler(t)
+	sender := &recordingOTPSender{unsupported: []string{"mobile"}}
+	handler.OTPSender = sender
+	router := gin.New()
+	router.POST("/public/auth", handler.RequestOTP)
+
+	status, resp := postJSON(t, router, "/public/auth", map[string]string{"username": "09120000077"})
+
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "Sign-in by mobile is not available", resp.Message)
+	assert.Empty(t, sender.messages, "no code may be sent")
+	keys, err := redisClient.Keys(context.Background(), "otp:*").Result()
+	require.NoError(t, err)
+	assert.Empty(t, keys, "no code may be issued for a contact it cannot reach")
+
+	status, resp = postJSON(t, router, "/public/auth", map[string]string{"username": "reachable@example.com"})
+	assert.Equal(t, http.StatusOK, status, resp.Message)
+}
+
+func TestRequestOTP_RealSchema_UsernameIsRejected(t *testing.T) {
+	handler, _, redisClient := setupRealSchemaHandler(t)
+	sender := &recordingOTPSender{}
+	handler.OTPSender = sender
+	router := gin.New()
+	router.POST("/public/auth", handler.RequestOTP)
+
+	status, resp := postJSON(t, router, "/public/auth", map[string]string{"username": "alice_2026"})
+
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "Invalid contact information", resp.Message)
+	assert.Empty(t, sender.messages)
+	keys, err := redisClient.Keys(context.Background(), "otp:*").Result()
+	require.NoError(t, err)
+	assert.Empty(t, keys)
 }
 
 func TestRequestOTP_RealSchema_DefaultSenderLogsNothing(t *testing.T) {

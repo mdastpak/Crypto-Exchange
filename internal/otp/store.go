@@ -61,7 +61,7 @@ type Store struct {
 // a random one, which only works while a single process issues and verifies
 // the codes; Settings.Validate refuses that in release mode.
 func NewStore(client *redis.Client, settings Settings) *Store {
-	settings = settings.withDefaults()
+	settings = settings.WithDefaults()
 	secret := []byte(settings.Secret)
 	if len(secret) == 0 {
 		secret = make([]byte, MinSecretLength)

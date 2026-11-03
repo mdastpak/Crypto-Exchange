@@ -16,11 +16,9 @@ func TestIdentifyInputType(t *testing.T) {
 	}{
 		{"email", "alice@example.com", "email", "ali*****@example.com"},
 		{"mobile", "09123456789", "mobile", "091*****789"},
-		{"username", "alice_123", "username", "al*****123"},
+		{"username", "alice_123", "", ""},
 		{"short username", "abc", "", ""},
 		{"numeric username", "123456", "", ""},
-		{"leading underscore", "_alice1", "", ""},
-		{"double underscore", "alice__1", "", ""},
 		{"invalid email", "alice@", "", ""},
 		{"invalid mobile", "08123456789", "", ""},
 	}

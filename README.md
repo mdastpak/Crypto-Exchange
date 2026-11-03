@@ -24,7 +24,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| OTP sign-in (email, mobile, username) | Implemented, with known defects | Codes are not delivered yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). Codes are stored hashed and limited per code and per contact. |
+| OTP sign-in (email, mobile) | Implemented | Codes are delivered by email (SMTP) and SMS (Kavenegar) through a RabbitMQ queue with retries. Codes are stored hashed, and attempts are limited per code and per contact. |
 | JWT access and refresh tokens, sessions, logout | Implemented, hardening pending | Typed tokens, refresh token rotation with reuse detection, and session revocation on logout. Issuer, key ID, and `Bearer` handling are tracked in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). |
 | Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | There is no admin sign-in flow yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
 | Public currency listing | Implemented | Served from the Redis cache. |
@@ -148,7 +148,7 @@ Once the server is running:
 - Swagger UI: `http://localhost:8080/swagger/index.html`
 - Health check: `http://localhost:8080/system/healthcheck`
 
-Email and SMS delivery of sign-in codes is not implemented yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). To try sign-in locally, set `otp.auth.dev_log_codes: true` in `config/config.local.yaml`; the codes then appear in the server log. Never enable it outside development: the server refuses to start with it in release mode.
+Sign-in codes are delivered by email and SMS once `notifications` is configured (see [docs/configuration.md](docs/configuration.md#notifications)). To try sign-in locally without a provider, set `otp.auth.dev_log_codes: true` in `config/config.local.yaml`; the codes then appear in the server log. Never enable it outside development: the server refuses to start with it in release mode.
 
 ## Configuration
 

@@ -51,7 +51,8 @@ func SettingsFromConfig() Settings {
 	}
 }
 
-func (s Settings) withDefaults() Settings {
+// WithDefaults returns the settings with zero values replaced by the defaults.
+func (s Settings) WithDefaults() Settings {
 	if s.CodeLength == 0 {
 		s.CodeLength = DefaultCodeLength
 	}
@@ -76,7 +77,7 @@ var ErrSecretRequired = errors.New("otp.auth.secret (or OTP_SECRET) is required 
 // Validate checks the settings after defaults are applied. An empty secret is
 // accepted outside release mode, where NewStore uses a random one.
 func (s Settings) Validate(releaseMode bool) error {
-	s = s.withDefaults()
+	s = s.WithDefaults()
 	switch {
 	case s.Secret == "" && releaseMode:
 		return ErrSecretRequired

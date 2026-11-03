@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
@@ -35,7 +34,7 @@ type PublicHandler struct {
 	// OTP issues and verifies sign-in codes.
 	OTP *otp.Store
 	// OTPSender delivers sign-in codes. It discards them unless the server
-	// replaces it (see notify.NewOTPSender).
+	// replaces it with the configured delivery.
 	OTPSender notify.OTPSender
 }
 
@@ -80,13 +79,17 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 
 	var req OTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: Username, Email or Mobile is required", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: Email or Mobile is required", nil)
 		return
 	}
 
 	contactType, maskedContact := IdentifyInputType(req.Username)
 	if contactType == "" {
 		helpers.SendResponse(c, http.StatusBadRequest, "Invalid contact information", nil)
+		return
+	}
+	if !h.OTPSender.Supports(contactType) {
+		helpers.SendResponse(c, http.StatusBadRequest, fmt.Sprintf("Sign-in by %s is not available", contactType), nil)
 		return
 	}
 
@@ -207,13 +210,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 }
 
 // contactLookupQueries uses the same expressions as the unique contact indexes
-// (migration 11), so each lookup is served by an index. Email addresses and
-// usernames match case-insensitively, like the indexes, with ASCII-only case
-// folding that does not depend on the database locale.
+// (migration 11), so each lookup is served by an index. Email addresses match
+// case-insensitively, like the index, with ASCII-only case folding that does
+// not depend on the database locale.
 var contactLookupQueries = map[string]string{
-	"email":    `SELECT hk, status FROM users WHERE lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`,
-	"mobile":   `SELECT hk, status FROM users WHERE info->'contact'->>'mobile' = $1`,
-	"username": `SELECT hk, status FROM users WHERE lower((info->'contact'->>'username') COLLATE "C") = lower($1 COLLATE "C")`,
+	"email":  `SELECT hk, status FROM users WHERE lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`,
+	"mobile": `SELECT hk, status FROM users WHERE info->'contact'->>'mobile' = $1`,
 }
 
 // errUserAlreadyExists reports that another request created a user with the
@@ -297,10 +299,13 @@ func validateUUID(s string) bool {
 	return err == nil
 }
 
+// IdentifyInputType returns the contact type of input ("email" or "mobile")
+// and a masked form that is safe to log and show, or two empty strings when
+// input is neither. Usernames are not accepted: a code cannot be delivered to
+// a username, so it cannot prove who is signing in.
 func IdentifyInputType(input string) (string, string) {
 	emailRegex := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 	mobileRegex := `^09\d{9}$`
-	usernameRegex := `^[a-zA-Z0-9_]{6,20}$`
 
 	mask := func(visibleStart, visibleEnd int, str string) string {
 		if len(str) <= visibleStart+visibleEnd {
@@ -319,23 +324,6 @@ func IdentifyInputType(input string) (string, string) {
 
 	if matched, _ := regexp.MatchString(mobileRegex, input); matched {
 		return "mobile", mask(3, 3, input)
-	}
-
-	if matched, _ := regexp.MatchString(usernameRegex, input); matched {
-		firstChar := rune(input[0])
-		if unicode.IsDigit(firstChar) || firstChar == '_' {
-			return "", ""
-		}
-
-		consecutiveUnderscores := regexp.MustCompile(`__`)
-		if consecutiveUnderscores.MatchString(input) {
-			return "", ""
-		}
-
-		containsAlphanumeric := regexp.MustCompile(`[a-zA-Z0-9]`)
-		if containsAlphanumeric.MatchString(input) {
-			return "username", mask(2, 3, input)
-		}
 	}
 
 	return "", ""

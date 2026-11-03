@@ -68,14 +68,17 @@ func main() {
 		log.Fatalf("Failed to initialize auth keys: %v", err)
 	}
 
+	// Validate the sign-in configuration before connecting to anything.
 	if err := otp.SettingsFromConfig().Validate(gin.Mode() == gin.ReleaseMode); err != nil {
 		log.Fatalf("Invalid OTP configuration: %v", err)
 	}
 	if config.Config.OTP.Auth.Secret == "" {
 		log.Println("WARNING: otp.auth.secret is not set: using a random secret, so sign-in codes can only be verified by this process until it restarts")
 	}
-
-	otpSender, err := notify.NewOTPSender(config.Config.OTP.Auth.DevLogCodes, gin.Mode() == gin.ReleaseMode)
+	if err := notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, gin.Mode() == gin.ReleaseMode); err != nil {
+		log.Fatalf("Invalid OTP delivery configuration: %v", err)
+	}
+	otpChannels, err := notify.NewChannels(config.Config.Notifications, otpTTL())
 	if err != nil {
 		log.Fatalf("Invalid OTP delivery configuration: %v", err)
 	}
@@ -87,7 +90,13 @@ func main() {
 	defer cleanup()
 
 	handlers := initializeHandlers(services)
+	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
 	handlers.Public.OTPSender = otpSender
+	if otpWorker != nil {
+		if err := otpWorker.Start(); err != nil {
+			log.Fatalf("Failed to start the OTP delivery worker: %v", err)
+		}
+	}
 
 	if err := initializeCache(handlers); err != nil {
 		log.Fatalf("Failed to initialize cache: %v", err)
@@ -162,7 +171,51 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
+	// The worker publishes dead-letter records, so it stops before the
+	// deferred cleanup closes RabbitMQ.
+	if otpWorker != nil {
+		if err := otpWorker.Stop(shutdownCtx); err != nil {
+			log.Printf("Error while stopping the OTP delivery worker: %v", err)
+		}
+	}
 	log.Println("Server stopped gracefully")
+}
+
+// otpTTL is the lifetime of sign-in codes, including the default that the OTP
+// store applies when otp.auth.ttl_seconds is not set, so that queued jobs and
+// email templates agree with the store.
+func otpTTL() time.Duration {
+	return otp.SettingsFromConfig().WithDefaults().TTL
+}
+
+// newOTPDelivery selects how sign-in codes are delivered: to the log in
+// development when otp.auth.dev_log_codes is set, and otherwise through the
+// notifications exchange to a worker that sends them over the configured
+// channels. The worker is nil when it is not needed.
+func newOTPDelivery(channels notify.Channels, broker *rabbitmq.RabbitMQService) (notify.OTPSender, *notify.Worker) {
+	if config.Config.OTP.Auth.DevLogCodes {
+		log.Println("WARNING: otp.auth.dev_log_codes is enabled: sign-in codes are written to the log instead of being delivered")
+		return notify.DevLogSender{Logger: log.Default()}, nil
+	}
+
+	exchange := config.Config.RabbitMQ.Exchanges.Notifications
+	sender := notify.NewQueueSender(broker, exchange, channels, otpTTL())
+	if channels.Empty() {
+		log.Println("WARNING: no OTP delivery channel is configured (notifications.email, notifications.sms): sign-in is unavailable")
+		return sender, nil
+	}
+	if channels.Email == nil {
+		log.Println("WARNING: notifications.email is not configured: sign-in by email is unavailable")
+	}
+	if channels.SMS == nil {
+		log.Println("WARNING: notifications.sms is not configured: sign-in by mobile is unavailable")
+	}
+	worker := notify.NewWorker(broker, channels, notify.WorkerOptions{
+		Exchange:    exchange,
+		Concurrency: config.Config.Notifications.Worker.Concurrency,
+		MaxAttempts: config.Config.Notifications.Worker.MaxAttempts,
+	})
+	return sender, worker
 }
 
 // newEngine creates the Gin engine. Gin trusts forwarding headers from every

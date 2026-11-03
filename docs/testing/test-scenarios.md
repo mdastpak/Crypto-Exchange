@@ -200,7 +200,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 |---|---|---|---|---|
 | A-01 | P0 / contract | Valid email, OTP length 6, Redis available | `200`; contact type is `email`; returned contact is masked; encrypted Redis value has the configured TTL | Passes functionally, but assertions must inspect Redis |
 | A-02 | P0 / contract | Valid mobile matching the configured pattern | `200`; type `mobile`; masked value | Passes functionally |
-| A-03 | P0 / contract | Valid username of 6–20 allowed characters | `200`; type `username`; masked value | Passes functionally |
+| A-03 | P0 / security | Username instead of an email address or mobile number | `400 Invalid contact information`; no OTP key is created and no user can be created for a username | Passes ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)) |
 | A-04 | P0 / contract | Empty, overlong, or invalid contact | `400`; no OTP key is created | Current validation occurs after OTP generation but before Redis write |
 | A-05 | P0 / security | Generate many OTPs rapidly | Values are unpredictable, uniformly distributed, and not all identical | Passes: `otp.GenerateCode` uses `crypto/rand` with rejection sampling, checked by a chi-squared test over 100,000 codes ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
 | A-06 | P0 / security | Capture application logs after OTP request | Logs contain neither the plaintext OTP nor the full contact | **Gap:** `RequestOTP` logs both |

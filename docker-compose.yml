@@ -69,6 +69,8 @@ services:
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
       - OTP_SECRET=${OTP_SECRET:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - KAVENEGAR_API_KEY=${KAVENEGAR_API_KEY:-}
     ports:
       - "8080:8080"
     depends_on:

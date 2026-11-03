@@ -130,6 +130,17 @@ func TestSetDefaults_FillsZeroValues(t *testing.T) {
 	assert.Equal(t, 20, Config.RateLimits.Trading.Burst)
 	assert.Equal(t, 5, Config.RateLimits.Auth.LoginAttemptsPerMinute)
 	assert.Equal(t, 10, Config.RateLimits.Auth.OTPRequestsPerHour)
+
+	assert.Equal(t, 587, Config.Notifications.Email.Port)
+	assert.Equal(t, 10, Config.Notifications.Email.Timeout)
+	assert.Equal(t, DefaultOTPEmailSubject, Config.Notifications.Email.OTPSubject)
+	assert.Equal(t, DefaultOTPEmailBody, Config.Notifications.Email.OTPBody)
+	assert.Empty(t, Config.Notifications.Email.Host, "email stays disabled without a host")
+	assert.Empty(t, Config.Notifications.SMS.Provider, "SMS stays disabled without a provider")
+	assert.Equal(t, DefaultKavenegarBaseURL, Config.Notifications.SMS.Kavenegar.BaseURL)
+	assert.Equal(t, 10, Config.Notifications.SMS.Kavenegar.Timeout)
+	assert.Equal(t, 4, Config.Notifications.Worker.Concurrency)
+	assert.Equal(t, 3, Config.Notifications.Worker.MaxAttempts)
 }
 
 func TestSetDefaults_DoesNotOverrideExplicitValues(t *testing.T) {
@@ -171,6 +182,8 @@ func TestOverlayEnvVars(t *testing.T) {
 		"RABBITMQ_PORT":            "5673",
 		"JWT_ISSUER":               "issuer1",
 		"OTP_SECRET":               "otp-secret",
+		"SMTP_PASSWORD":            "smtppass",
+		"KAVENEGAR_API_KEY":        "kavkey",
 		"BINANCE_API_KEY":          "bkey",
 		"BINANCE_API_SECRET":       "bsecret",
 		"FIAT_PROVIDER_API_KEY":    "fkey",
@@ -202,6 +215,8 @@ func TestOverlayEnvVars(t *testing.T) {
 	assert.Equal(t, "5673", Config.RabbitMQ.Port)
 	assert.Equal(t, "issuer1", Config.JWT.Issuer)
 	assert.Equal(t, "otp-secret", Config.OTP.Auth.Secret)
+	assert.Equal(t, "smtppass", Config.Notifications.Email.Password)
+	assert.Equal(t, "kavkey", Config.Notifications.SMS.Kavenegar.APIKey)
 	assert.Equal(t, "bkey", Config.PriceAggregator.Providers[0].APIKey)
 	assert.Equal(t, "bsecret", Config.PriceAggregator.Providers[0].APISecret)
 	assert.Equal(t, "fkey", Config.Fiat.Providers[0].APIKey)
