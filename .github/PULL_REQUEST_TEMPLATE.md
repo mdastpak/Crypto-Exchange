@@ -26,7 +26,7 @@ Fixes #
 ## Checklist
 
 - [ ] `gofmt -l .` is empty, and `go vet ./...` and `go build ./...` pass.
-- [ ] Tests are added or updated, and `go test ./...` passes.
+- [ ] Tests are added or updated, and `go test -p 1 ./...` passes.
 - [ ] New migrations include both up and down files, and no merged migration was modified.
 - [ ] Documentation is updated when behavior or configuration changes.
 - [ ] No secrets, keys, or personal data are included.

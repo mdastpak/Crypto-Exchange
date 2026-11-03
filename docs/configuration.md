@@ -105,7 +105,7 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `allowed_origins` | `[]` | Exact origins accepted by the WebSocket origin check **and** by the HTTP CORS middleware. With an empty list, the WebSocket only accepts same-origin requests, but CORS currently reflects any origin ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)). Always set this list explicitly. |
+| `allowed_origins` | `[]` | Origins accepted by the WebSocket origin check **and** by the HTTP CORS middleware. Entries are matched exactly, except `"*"`, which allows every origin in both checks; with CORS it also allows credentialed requests from any site. With an empty list, the WebSocket only accepts same-origin requests, but CORS currently reflects any origin ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)). Always set this list to explicit origins, and never use `"*"`. |
 | `ping_interval_seconds` | `30` | Parsed, but not used yet. The interval is hard-coded ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)). |
 | `max_message_size_bytes` | `1048576` | Parsed, but not used yet. The read limit is hard-coded to 512 bytes. |
 
@@ -116,7 +116,7 @@ Replace `10` with the version before the failed migration.
 | `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route except `/` and `/swagger/*` ([#32](https://github.com/mdastpak/Crypto-Exchange/issues/32)), as a token bucket per client IP |
 | `ws.messages_per_second`, `ws.burst` | `50`, `100` | The WebSocket upgrade request |
 | `trading.orders_per_second`, `trading.burst` | `10`, `20` | `/admin/*` and `/user/*` |
-| `auth.login_attempts_per_minute` | `5` | Every `/public/*` route, as a fixed one-minute window ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
+| `auth.login_attempts_per_minute` | `5` | Every `/public/*` route ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)). This is not a fixed window: every request, including a rejected one, restarts the counter's one-minute expiry, so a blocked client is only allowed again after a full minute without requests ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)). |
 | `auth.otp_requests_per_hour` | `10` | Parsed, but not applied yet |
 
 ## Settings reserved for roadmap features

@@ -89,14 +89,14 @@ docs: document the OTP sign-in flow
 - Prefer table-driven tests. Use `testify` (`assert` and `require`), as the existing tests do.
 - Unit tests must not depend on external services.
 - Integration tests currently need local PostgreSQL and Redis instances and must run with `go test -p 1 ./...`. See [Testing](README.md#testing). Hermetic tests are tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
-- Run the race detector for concurrent code: `go test -race ./...`.
+- Run the race detector for concurrent code: `go test -race -p 1 ./...`. The race detector needs cgo, so it is not available on every development machine.
 - Use the scenario catalog in [docs/testing/test-scenarios.md](docs/testing/test-scenarios.md) as the specification for expected behavior, and reference its scenario IDs (for example `A-27`) in test names or comments.
 
 ## Pull request checklist
 
 - [ ] The pull request is linked to an issue and has a clear description.
 - [ ] `gofmt -l .` is empty, and `go vet ./...` and `go build ./...` pass.
-- [ ] Tests are added or updated, and `go test ./...` passes.
+- [ ] Tests are added or updated, and `go test -p 1 ./...` passes.
 - [ ] Migrations follow the rules above.
 - [ ] Documentation (README, `docs/`, Swagger annotations) is updated when behavior or configuration changes.
 - [ ] No secrets, keys, or personal data are included.
