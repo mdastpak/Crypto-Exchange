@@ -2,7 +2,6 @@ package public
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"encrypted-db/config"
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/helpers"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/notify"
+	"encrypted-db/internal/otp"
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +31,8 @@ type PublicHandler struct {
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
 	Sessions        auth.SessionStore
+	// OTP issues and verifies sign-in codes.
+	OTP *otp.Store
 	// OTPSender delivers sign-in codes. It discards them unless the server
 	// replaces it with the configured delivery.
 	OTPSender notify.OTPSender
@@ -46,6 +47,9 @@ func NewHandler(is *models.InfraServices) *PublicHandler {
 	}
 	if is.Postgres != nil {
 		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
+	}
+	if is.Redis != nil {
+		h.OTP = otp.NewStore(is.Redis.Client, otp.SettingsFromConfig())
 	}
 	return h
 }
@@ -69,8 +73,6 @@ type User struct {
 	DeletedAt sql.NullTime
 }
 
-const otpKeyPrefix = "otp:auth:"
-
 func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -91,36 +93,19 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		return
 	}
 
-	otpCode := GenerateOTP(config.Config.OTP.Auth.Length)
-	userUUID := uuid.New().String()
-
-	redisKey := otpKeyPrefix + userUUID + ":" + otpCode
-
-	authVal, err := EncryptWithAES(req.Username, userUUID)
-	if err != nil || authVal == "" {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to encrypt OTP data", err)
+	issued, err := h.OTP.Issue(ctx, req.Username)
+	switch {
+	case errors.Is(err, otp.ErrTooManyRequests):
+		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
 		return
-	}
-
-	otpData := map[string]interface{}{
-		"auth": authVal,
-		"uuid": userUUID,
-	}
-
-	otpJSON, err := json.Marshal(otpData)
-	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to marshal OTP data", nil)
+	case errors.Is(err, otp.ErrTooManyAttempts):
+		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
-	}
-
-	ttl := time.Duration(config.Config.OTP.Auth.TTL) * time.Second
-	if err := h.RedisClient.Client.Set(ctx, redisKey, otpJSON, ttl).Err(); err != nil {
+	case err != nil:
+		log.Printf("Failed to issue a sign-in code for %s %s: %v", contactType, maskedContact, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to store OTP", nil)
 		return
 	}
-
-	blacklistKey := "uuid_blacklist:" + userUUID
-	h.RedisClient.Client.Set(ctx, blacklistKey, 0, ttl*2)
 
 	// Never log the code or the raw contact: either one in a log helps an
 	// attacker take over the account.
@@ -128,7 +113,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		ContactType:   contactType,
 		Contact:       req.Username,
 		MaskedContact: maskedContact,
-		Code:          otpCode,
+		Code:          issued.Code,
 	})
 	if err != nil {
 		log.Printf("Failed to send the sign-in code to %s %s: %v", contactType, maskedContact, err)
@@ -136,7 +121,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		return
 	}
 
-	helpers.SendResponse(c, http.StatusOK, "OTP sent to your contact", gin.H{"type": contactType, "username": maskedContact, "uuid": userUUID})
+	helpers.SendResponse(c, http.StatusOK, "OTP sent to your contact", gin.H{"type": contactType, "username": maskedContact, "uuid": issued.SessionID})
 }
 
 func (h *PublicHandler) VerifyOTP(c *gin.Context) {
@@ -155,40 +140,21 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	blacklistKey := "uuid_blacklist:" + reqUUID
-	attempts, _ := h.RedisClient.Client.Get(ctx, blacklistKey).Int()
-	if attempts >= config.Config.OTP.Auth.RetryLimit {
+	// Verify ends the session on success, so a code signs in only once, even
+	// when it is sent in concurrent requests.
+	contact, err := h.OTP.Verify(ctx, reqUUID, req.OTP)
+	switch {
+	case errors.Is(err, otp.ErrTooManyAttempts):
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
-	}
-
-	redisKey := otpKeyPrefix + reqUUID + ":" + req.OTP
-	otpData, err := h.RedisClient.Client.Get(ctx, redisKey).Result()
-	if err != nil {
-		h.incrementBlacklistAttempts(ctx, reqUUID)
+	case errors.Is(err, otp.ErrInvalidCode):
 		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired OTP code", nil)
 		return
-	}
-
-	var otpInfo map[string]interface{}
-	if err := json.Unmarshal([]byte(otpData), &otpInfo); err != nil {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Failed to parse OTP data", nil)
+	case err != nil:
+		log.Printf("Failed to verify a sign-in code: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify OTP", nil)
 		return
 	}
-
-	if otpInfo["uuid"] != reqUUID {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid UUID", nil)
-		return
-	}
-
-	contact, err := DecryptWithAES(otpInfo["auth"].(string), reqUUID)
-	if err != nil || contact == "" {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to decrypt OTP data", nil)
-		return
-	}
-
-	h.RedisClient.Client.Del(ctx, redisKey)
-	h.RedisClient.Client.Del(ctx, blacklistKey)
 
 	contactType, _ := IdentifyInputType(contact)
 	if contactType == "" {
@@ -197,6 +163,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	}
 
 	userHK, err := h.checkOrCreateUser(ctx, contactType, contact)
+	if errors.Is(err, errAccountUnavailable) {
+		// The code was right, so the caller controls the contact and may
+		// learn why the account cannot sign in.
+		helpers.SendResponse(c, http.StatusForbidden, "This account cannot sign in. Please contact support.", nil)
+		return
+	}
 	if err != nil || userHK == uuid.Nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create user", nil)
 		return
@@ -250,6 +222,10 @@ var contactLookupQueries = map[string]string{
 // same contact between the lookup and the insert.
 var errUserAlreadyExists = errors.New("user with this contact already exists")
 
+// errAccountUnavailable reports an account that is disabled, deleted or
+// suspended, and therefore cannot sign in.
+var errAccountUnavailable = errors.New("account cannot sign in")
+
 const uniqueViolationCode = "23505"
 
 func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, contact string) (uuid.UUID, error) {
@@ -279,12 +255,8 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 	}
 
 	switch user.Status {
-	case "disabled":
-		return uuid.Nil, fmt.Errorf("user is disabled. please contact support")
-	case "deleted":
-		return uuid.Nil, fmt.Errorf("user is deleted. please contact support")
-	case "suspend":
-		return uuid.Nil, fmt.Errorf("user is suspended. please contact support")
+	case "disabled", "deleted", "suspend":
+		return uuid.Nil, fmt.Errorf("%w: status %s", errAccountUnavailable, user.Status)
 	}
 
 	log.Printf("User already exists with ID: %s", user.HK.String())
@@ -318,17 +290,6 @@ func (h *PublicHandler) createUser(ctx context.Context, contactType, contact str
 	return userHK, nil
 }
 
-func (h *PublicHandler) incrementBlacklistAttempts(ctx context.Context, uuidStr string) {
-	blacklistKey := "uuid_blacklist:" + uuidStr
-	attempts, _ := h.RedisClient.Client.Get(ctx, blacklistKey).Int()
-	attempts++
-	h.RedisClient.Client.Set(ctx, blacklistKey, attempts, 24*time.Hour)
-
-	if attempts > config.Config.OTP.Auth.RetryLimit {
-		log.Printf("Retry limit exceeded for UUID: %s", uuidStr)
-	}
-}
-
 func (h *PublicHandler) RefreshToken(c *gin.Context) {
 	auth.RefreshTokenHandler(c, h.Sessions)
 }
@@ -336,19 +297,6 @@ func (h *PublicHandler) RefreshToken(c *gin.Context) {
 func validateUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
-}
-
-func GenerateOTP(length int) string {
-	const digits = "0123456789"
-	b := make([]byte, length)
-	randomBytes := make([]byte, length)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return ""
-	}
-	for i := range b {
-		b[i] = digits[int(randomBytes[i])%len(digits)]
-	}
-	return string(b)
 }
 
 // IdentifyInputType returns the contact type of input ("email" or "mobile")

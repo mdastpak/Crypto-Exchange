@@ -24,7 +24,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| OTP sign-in (email, mobile) | Implemented, with known defects | Codes are delivered by email (SMTP) and SMS (Kavenegar) through a RabbitMQ queue with retries. Verification needs hardening ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)). |
+| OTP sign-in (email, mobile) | Implemented | Codes are delivered by email (SMTP) and SMS (Kavenegar) through a RabbitMQ queue with retries. Codes are stored hashed, and attempts are limited per code and per contact. |
 | JWT access and refresh tokens, sessions, logout | Implemented, hardening pending | Typed tokens, refresh token rotation with reuse detection, and session revocation on logout. Issuer, key ID, and `Bearer` handling are tracked in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). |
 | Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | There is no admin sign-in flow yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
 | Public currency listing | Implemented | Served from the Redis cache. |
@@ -200,7 +200,7 @@ go test -p 1 ./...
 ```
 
 > [!CAUTION]
-> The integration tests drop and recreate tables in `testdb`, `testdb_migrations`, and `testdb_public_real_schema`, and they flush Redis databases 1 and 2. Never point them at an instance that holds real data. Stop the Docker Compose PostgreSQL and Redis services first (`docker compose stop postgres redis`): the test containers use the same ports (5432 and 6379), and the tests expect Redis without a password.
+> The integration tests drop and recreate tables in `testdb`, `testdb_migrations`, and `testdb_public_real_schema`, and they flush Redis databases 1 to 4. Never point them at an instance that holds real data. Stop the Docker Compose PostgreSQL and Redis services first (`docker compose stop postgres redis`): the test containers use the same ports (5432 and 6379), and the tests expect Redis without a password.
 
 `-p 1` is currently required because packages share the same test databases. Hermetic, parallel-safe tests are tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
 

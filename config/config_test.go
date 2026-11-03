@@ -181,6 +181,7 @@ func TestOverlayEnvVars(t *testing.T) {
 		"RABBITMQ_HOST":            "mqhost",
 		"RABBITMQ_PORT":            "5673",
 		"JWT_ISSUER":               "issuer1",
+		"OTP_SECRET":               "otp-secret",
 		"SMTP_PASSWORD":            "smtppass",
 		"KAVENEGAR_API_KEY":        "kavkey",
 		"BINANCE_API_KEY":          "bkey",
@@ -213,6 +214,7 @@ func TestOverlayEnvVars(t *testing.T) {
 	assert.Equal(t, "mqhost", Config.RabbitMQ.Host)
 	assert.Equal(t, "5673", Config.RabbitMQ.Port)
 	assert.Equal(t, "issuer1", Config.JWT.Issuer)
+	assert.Equal(t, "otp-secret", Config.OTP.Auth.Secret)
 	assert.Equal(t, "smtppass", Config.Notifications.Email.Password)
 	assert.Equal(t, "kavkey", Config.Notifications.SMS.Kavenegar.APIKey)
 	assert.Equal(t, "bkey", Config.PriceAggregator.Providers[0].APIKey)

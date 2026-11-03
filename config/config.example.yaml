@@ -73,8 +73,15 @@ otp:
   auth:
     name: "AUTH"
     ttl_seconds: 60
-    length: 6
-    retry_limit: 3
+    length: 6                    # 4 to 10 digits
+    retry_limit: 3               # Verification attempts per code
+    # Keys the hashes of sign-in codes and the encryption of contacts in
+    # Redis. At least 32 bytes, shared by every server instance, and required
+    # in release mode. Prefer the OTP_SECRET environment variable, for example
+    # generated with: openssl rand -base64 48
+    secret: ""
+    contact_requests_per_hour: 5   # Codes issued to one email address or mobile number
+    contact_attempts_per_hour: 10  # Verification attempts for one contact across all of its codes
     # Development only: write sign-in codes to the log instead of delivering
     # them. The server refuses to start with this enabled in release mode
     # (GIN_MODE=release).

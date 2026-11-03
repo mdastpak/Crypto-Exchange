@@ -25,6 +25,7 @@ import (
 	"encrypted-db/internal/middleware"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/notify"
+	"encrypted-db/internal/otp"
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -67,7 +68,13 @@ func main() {
 		log.Fatalf("Failed to initialize auth keys: %v", err)
 	}
 
-	// Validate the delivery configuration before connecting to anything.
+	// Validate the sign-in configuration before connecting to anything.
+	if err := otp.SettingsFromConfig().Validate(gin.Mode() == gin.ReleaseMode); err != nil {
+		log.Fatalf("Invalid OTP configuration: %v", err)
+	}
+	if config.Config.OTP.Auth.Secret == "" {
+		log.Println("WARNING: otp.auth.secret is not set: using a random secret, so sign-in codes can only be verified by this process until it restarts")
+	}
 	if err := notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, gin.Mode() == gin.ReleaseMode); err != nil {
 		log.Fatalf("Invalid OTP delivery configuration: %v", err)
 	}
@@ -174,8 +181,11 @@ func main() {
 	log.Println("Server stopped gracefully")
 }
 
+// otpTTL is the lifetime of sign-in codes, including the default that the OTP
+// store applies when otp.auth.ttl_seconds is not set, so that queued jobs and
+// email templates agree with the store.
 func otpTTL() time.Duration {
-	return time.Duration(config.Config.OTP.Auth.TTL) * time.Second
+	return otp.SettingsFromConfig().WithDefaults().TTL
 }
 
 // newOTPDelivery selects how sign-in codes are delivered: to the log in

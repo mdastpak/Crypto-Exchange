@@ -7,6 +7,7 @@ import (
 
 	"encrypted-db/config"
 	"encrypted-db/internal/notify"
+	"encrypted-db/internal/otp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -91,4 +92,11 @@ func TestNewOTPDelivery_QueuesCodesForTheConfiguredChannels(t *testing.T) {
 	assert.True(t, sender.Supports("email"))
 	assert.False(t, sender.Supports("mobile"), "mobile sign-in needs an SMS provider")
 	assert.NotNil(t, worker)
+}
+
+func TestOTPTTL_MatchesTheStoreDefault(t *testing.T) {
+	withOTPDeliveryConfig(t, false)
+	config.Config.OTP.Auth.TTL = 0
+
+	assert.Equal(t, otp.DefaultTTL, otpTTL(), "queued codes must expire with the store's sessions")
 }

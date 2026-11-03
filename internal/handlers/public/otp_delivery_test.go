@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"testing"
 
 	"encrypted-db/internal/notify"
@@ -37,6 +36,14 @@ func (r *recordingOTPSender) SendOTP(ctx context.Context, msg notify.OTPMessage)
 	return r.err
 }
 
+// lastSentCode returns the code of the last message handed to sender. Tests
+// read codes there because Redis only holds their hashes.
+func lastSentCode(t *testing.T, sender *recordingOTPSender) string {
+	t.Helper()
+	require.NotEmpty(t, sender.messages, "no code was sent")
+	return sender.messages[len(sender.messages)-1].Code
+}
+
 // captureLog redirects the standard logger for the rest of the test.
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
@@ -60,19 +67,22 @@ func TestRequestOTP_RealSchema_DeliversTheCodeWithoutLoggingIt(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	sessionID := resp.Info.(map[string]interface{})["uuid"].(string)
 
-	keys, err := redisClient.Keys(context.Background(), otpKeyPrefix+sessionID+":*").Result()
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	code := strings.TrimPrefix(keys[0], otpKeyPrefix+sessionID+":")
-
 	require.Len(t, sender.messages, 1, "the code must be handed to the sender")
 	msg := sender.messages[0]
-	assert.Equal(t, code, msg.Code)
+	code := msg.Code
+	assert.Len(t, code, 6)
 	assert.Equal(t, "email", msg.ContactType)
 	assert.Equal(t, contact, msg.Contact)
 	assert.NotContains(t, msg.MaskedContact, "private.person")
 
 	assert.NotContains(t, logs.String(), code, "the sign-in code must not be logged")
+
+	keys, err := redisClient.Keys(context.Background(), "*").Result()
+	require.NoError(t, err)
+	assert.Contains(t, keys, "otp:session:"+sessionID)
+	for _, key := range keys {
+		assert.NotContains(t, key, code, "Redis keys must not contain the code")
+	}
 	assert.NotContains(t, logs.String(), contact, "the raw contact must not be logged")
 }
 
@@ -104,7 +114,7 @@ func TestRequestOTP_RealSchema_ContactTypeWithoutChannel(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, status)
 	assert.Equal(t, "Sign-in by mobile is not available", resp.Message)
 	assert.Empty(t, sender.messages, "no code may be sent")
-	keys, err := redisClient.Keys(context.Background(), otpKeyPrefix+"*").Result()
+	keys, err := redisClient.Keys(context.Background(), "otp:*").Result()
 	require.NoError(t, err)
 	assert.Empty(t, keys, "no code may be issued for a contact it cannot reach")
 
@@ -124,7 +134,7 @@ func TestRequestOTP_RealSchema_UsernameIsRejected(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, status)
 	assert.Equal(t, "Invalid contact information", resp.Message)
 	assert.Empty(t, sender.messages)
-	keys, err := redisClient.Keys(context.Background(), otpKeyPrefix+"*").Result()
+	keys, err := redisClient.Keys(context.Background(), "otp:*").Result()
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }

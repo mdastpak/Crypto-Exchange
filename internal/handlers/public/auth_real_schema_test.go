@@ -169,7 +169,9 @@ func countUsersWithContact(t *testing.T, conn *sql.DB, contactType, contact stri
 }
 
 func TestVerifyOTP_RealSchema_FirstSignInCreatesUser(t *testing.T) {
-	handler, conn, redisClient := setupRealSchemaHandler(t)
+	handler, conn, _ := setupRealSchemaHandler(t)
+	sender := &recordingOTPSender{}
+	handler.OTPSender = sender
 	router := gin.New()
 	router.POST("/public/auth", handler.RequestOTP)
 	router.POST("/public/auth/:uuid", handler.VerifyOTP)
@@ -179,12 +181,7 @@ func TestVerifyOTP_RealSchema_FirstSignInCreatesUser(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	sessionID := resp.Info.(map[string]interface{})["uuid"].(string)
 
-	keys, err := redisClient.Keys(context.Background(), otpKeyPrefix+sessionID+":*").Result()
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	code := strings.TrimPrefix(keys[0], otpKeyPrefix+sessionID+":")
-
-	status, resp = postJSON(t, router, "/public/auth/"+sessionID, map[string]string{"otp": code})
+	status, resp = postJSON(t, router, "/public/auth/"+sessionID, map[string]string{"otp": lastSentCode(t, sender)})
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	tokens := resp.Info.(map[string]interface{})
 	assert.NotEmpty(t, tokens["access_token"])
