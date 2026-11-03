@@ -2,8 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -22,8 +20,7 @@ func NewTokenBlacklist(client *redis.Client) *TokenBlacklist {
 }
 
 func (tb *TokenBlacklist) tokenKey(token string) string {
-	hash := sha256.Sum256([]byte(token))
-	return tb.Prefix + hex.EncodeToString(hash[:])
+	return tb.Prefix + HashToken(token)
 }
 
 func (tb *TokenBlacklist) AddTokenToBlacklist(ctx context.Context, token string, expiresAt time.Time) error {

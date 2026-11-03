@@ -31,8 +31,13 @@ Tokens are RS256-signed JWTs with these claims:
 | --- | --- |
 | `uuid` | The user's public identifier (`users.hk`) |
 | `role` | `user` or `admin` |
+| `typ` | `access` or `refresh`. Protected routes accept only `access` tokens, and the refresh endpoint accepts only `refresh` tokens. |
+| `sid` | The sign-in session the token belongs to |
+| `jti` | A unique token ID |
 | `iss` | `jwt.issuer` from the configuration |
 | `iat`, `exp` | Issue and expiry time |
+
+Each sign-in creates a session in the `sessions` table. Only SHA-256 hashes of the tokens are stored.
 
 ### Rate limiting
 
@@ -51,10 +56,11 @@ sequenceDiagram
     A-->>C: 200 {type, username (masked), uuid}
     C->>A: POST /public/auth/{uuid} {otp}
     A->>R: Verify the code and count failed attempts
-    A->>P: Find or create the user by contact
-    A-->>C: 200 {access_token, refresh_token} and Set-Cookie refresh_token
+    A->>P: Find or create the user by contact, create a session
+    A-->>C: 200 {access_token} and Set-Cookie refresh_token
     C->>A: POST /public/auth/refresh (cookie)
-    A-->>C: 200 {access_token}
+    A->>P: Rotate the session's refresh token
+    A-->>C: 200 {access_token} and Set-Cookie with the new refresh_token
 ```
 
 OTP codes are currently written to the server log rather than delivered by email or SMS ([#13](https://github.com/mdastpak/Crypto-Exchange/issues/13), [#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)).
@@ -101,11 +107,17 @@ Response `200`:
 {
   "status": 200,
   "message": "OTP verified successfully",
-  "info": { "access_token": "<jwt>", "refresh_token": "<jwt>" }
+  "info": { "access_token": "<jwt>" }
 }
 ```
 
-The refresh token is also set as an `HttpOnly`, `Secure` cookie named `refresh_token` with `Path=/`.
+The refresh token is **only** delivered in a cookie, never in the body, so scripts running in the page cannot read it:
+
+```http
+Set-Cookie: refresh_token=<jwt>; Path=/public/auth; Max-Age=<refresh_token.expiration_minutes × 60>; HttpOnly; Secure; SameSite=Strict
+```
+
+The browser sends the cookie only to `/public/auth/*`, which covers the refresh and logout routes. Because it is `Secure`, browsers only store it over HTTPS. Chrome and Firefox also store it on `http://localhost` during development.
 
 Errors:
 
@@ -118,13 +130,24 @@ The first successful verification for a contact creates the user. Each email add
 
 ### `POST /public/auth/refresh`
 
-Issues a new access token from the `refresh_token` cookie. No request body is needed.
+Exchanges the `refresh_token` cookie for a new access token. No request body is needed.
 
-Response `200`: `{"info": {"access_token": "<jwt>"}}`. Errors: `401` when the cookie is missing, invalid, or expired.
+Response `200`: `{"info": {"access_token": "<jwt>"}}`, together with a `Set-Cookie` header that carries a **new** refresh token. Each refresh token can be used only once:
+
+- The session's refresh token is replaced on every refresh (rotation), and its expiry moves forward by `refresh_token.expiration_minutes`.
+- Presenting a refresh token that was already rotated is treated as theft: the whole session is revoked, and its newest refresh token stops working too. This also applies when a client sends the same refresh token in two concurrent requests, so clients must not refresh in parallel.
+
+Errors: `401` when the cookie is missing, invalid, or expired, when it holds an access token, or when the session has been revoked. A `401` also clears the cookie.
 
 ### `POST /public/auth/logout` and `POST /user/logout`
 
-Revokes the access token sent in the `Authorization` header until it expires. The refresh token is not revoked yet ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
+Ends the session of the access token sent in the `Authorization` header:
+
+- The session is revoked, so its refresh token stops working.
+- The access token is blacklisted until it expires.
+- The refresh token cookie is cleared.
+
+Other access tokens issued earlier for the same session stay valid until they expire (`access_token.expiration_minutes`).
 
 | Route | Accepted `Authorization` value |
 | --- | --- |

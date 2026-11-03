@@ -16,11 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Moved the technical audit notes of 2026-09-14 from this file to [`docs/audits/2026-09-14-technical-audit.md`](docs/audits/2026-09-14-technical-audit.md).
 - `config/config.local.yaml` is now ignored by Git.
+- **Breaking:** OTP verification no longer returns `refresh_token` in the response body. The refresh token is only delivered in the `refresh_token` cookie, which is now `SameSite=Strict` and scoped to `/public/auth`. Tokens issued before this change have no token type and are rejected, so users must sign in again ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
 
 ### Fixed
 
 - First-time OTP sign-in failed with `500 Failed to create user`, because the `users.info` constraint from migration 2 required `username` and `password` keys that OTP sign-in never writes. Migration 11 requires a contact object in `users.info`, makes each contact value unique (email addresses and usernames case-insensitively), and stops with an actionable message if manually inserted rows conflict with these rules. Concurrent first sign-ins for the same contact now resolve to one user ([#8](https://github.com/mdastpak/Crypto-Exchange/issues/8)).
 - RabbitMQ publishing stalled after about three messages, and graceful shutdown could hang, because every `Publish` call registered a new publisher-confirm listener that was never removed, and the library delivers each confirmation to every listener with a blocking send. Each channel now has a single listener whose confirmations are routed to the waiting publish by delivery tag, so concurrent publishes are pipelined and each one waits only for its own confirmation. A channel closed by the broker is replaced on the next publish ([#9](https://github.com/mdastpak/Crypto-Exchange/issues/9)).
+
+### Security
+
+- Refresh tokens were accepted as access tokens, giving seven days of API access, and were never revoked, not even by logout. Tokens now carry a type (`typ`), so protected routes accept only access tokens and the refresh endpoint accepts only refresh tokens. Each sign-in creates a session in the `sessions` table. Refresh tokens are rotated on every use, and presenting an already rotated refresh token revokes the session. Logout revokes the session and clears the cookie ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
 
 ## 2026-09-16
 

@@ -75,7 +75,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 5 | `orders`, `order_events` | Not yet |
 | 6 | `trades`, `trade_events` | Not yet |
 | 7 | `balances`, `balance_snapshots`, `balance_changes` | Not yet |
-| 8 | Extra `users` columns, `sub_accounts`, `api_keys`, `sessions` | Not yet |
+| 8 | Extra `users` columns, `sub_accounts`, `api_keys`, `sessions` | `sessions` only (sign-in sessions and refresh token rotation) |
 | 9 | `kyc_profiles`, `kyc_documents`, `kyc_applications`, `sanctions_screenings`, `aml_rules`, `aml_alerts` | Not yet |
 | 10 | `deposit_addresses`, `deposits`, `withdrawals`, `settlements`, `custody_configs` | Not yet |
 | 11 | Aligns the `users.info` constraint with OTP sign-in, and adds unique indexes on contact values | Yes |

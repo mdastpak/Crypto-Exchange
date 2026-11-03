@@ -39,6 +39,7 @@ type InfraHandlers struct {
 	User           *user.UserHandler
 	Redis          *db.RedisService
 	TokenBlacklist *auth.TokenBlacklist
+	Sessions       auth.SessionStore
 }
 
 var (
@@ -210,6 +211,7 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		User:           user.NewHandler(services),
 		Redis:          services.Redis,
 		TokenBlacklist: tb,
+		Sessions:       auth.NewPostgresSessionStore(services.Postgres.DB),
 	}
 }
 
@@ -247,7 +249,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) {
 		publicGroup.POST("/auth/:uuid", ih.Public.VerifyOTP)
 		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
 		publicGroup.POST("/auth/logout", func(c *gin.Context) {
-			auth.LogoutHandler(c, ih.TokenBlacklist)
+			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
 	}
 
@@ -267,7 +269,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) {
 		userGroup.GET("/profile", ih.User.GetActiveCurrencies)
 		userGroup.POST("/update", ih.User.UpdateProfile)
 		userGroup.POST("/logout", func(c *gin.Context) {
-			auth.LogoutHandler(c, ih.TokenBlacklist)
+			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
 	}
 }

@@ -19,6 +19,9 @@ func JWTMiddleware(tb *TokenBlacklist) gin.HandlerFunc {
 		}
 
 		claims, err := VerifyRSATokenWithKeys(tokenString)
+		if err == nil && claims.Type != TokenTypeAccess {
+			err = ErrWrongTokenType
+		}
 		if err != nil {
 			helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
 			c.Abort()
@@ -64,7 +67,7 @@ func JWTAdminVerification(tb *TokenBlacklist) gin.HandlerFunc {
 			return
 		}
 
-		claims, err := VerifyRSAToken(token)
+		claims, err := VerifyAccessToken(token)
 		if err != nil {
 			helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
 			c.Abort()
@@ -106,7 +109,7 @@ func JWTUserVerification(tb *TokenBlacklist) gin.HandlerFunc {
 			return
 		}
 
-		claims, err := VerifyRSAToken(token)
+		claims, err := VerifyAccessToken(token)
 		if err != nil {
 			helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
 			c.Abort()

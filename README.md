@@ -25,7 +25,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Capability | Status | Notes |
 | --- | --- | --- |
 | OTP sign-in (email, mobile, username) | Implemented, with known defects | Codes are not delivered yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)), and verification needs hardening ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)). |
-| JWT access and refresh tokens, logout blacklist | Implemented, hardening pending | See [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) and [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). |
+| JWT access and refresh tokens, sessions, logout | Implemented, hardening pending | Typed tokens, refresh token rotation with reuse detection, and session revocation on logout. Issuer, key ID, and `Bearer` handling are tracked in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). |
 | Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | There is no admin sign-in flow yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
 | Public currency listing | Implemented | Served from the Redis cache. |
 | WebSocket gateway | Partial | Ping and pong only. Event broadcast is not wired yet ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)). |

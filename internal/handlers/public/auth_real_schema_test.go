@@ -51,6 +51,37 @@ func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Clien
 	gin.SetMode(gin.TestMode)
 
 	savedConfig := config.Config
+	t.Cleanup(func() { config.Config = savedConfig })
+	config.Config.OTP.Auth.Length = 6
+	config.Config.OTP.Auth.TTL = 300
+	config.Config.OTP.Auth.RetryLimit = 5
+	config.Config.JWT.AccessToken.Expiration = 15
+	config.Config.JWT.RefreshToken.Expiration = 60
+	config.Config.JWT.Issuer = "test"
+	initTestSigningKeys(t)
+
+	postgresService := migrateRealSchema(t)
+
+	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: realSchemaRedisDB})
+	require.NoError(t, redisClient.Ping(context.Background()).Err())
+	t.Cleanup(func() {
+		redisClient.FlushDB(context.Background())
+		redisClient.Close()
+	})
+
+	handler := NewHandler(&models.InfraServices{
+		Postgres: postgresService,
+		Redis:    &db.RedisService{Client: redisClient},
+	})
+	return handler, postgresService.DB, redisClient
+}
+
+// migrateRealSchema resets the dedicated database, applies the repository
+// migrations through db.NewPostgresService, and closes the service when the
+// test ends.
+func migrateRealSchema(t *testing.T) *db.PostgresService {
+	t.Helper()
+	savedConfig := config.Config
 	savedMigrationsPath := config.MigrationsPath()
 	t.Cleanup(func() {
 		config.Config = savedConfig
@@ -65,18 +96,11 @@ func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Clien
 	config.Config.Postgres.SSLMode = "disable"
 	config.Config.Postgres.ConnectRetries = 1
 	config.Config.Postgres.ConnectRetryDelayMs = 10
-	config.Config.OTP.Auth.Length = 6
-	config.Config.OTP.Auth.TTL = 300
-	config.Config.OTP.Auth.RetryLimit = 5
-	config.Config.JWT.AccessToken.Expiration = 15
-	config.Config.JWT.RefreshToken.Expiration = 60
-	config.Config.JWT.Issuer = "test"
 
 	migrationsDir, err := filepath.Abs(filepath.Join("..", "..", "db", "migrations"))
 	require.NoError(t, err)
 	config.SetMigrationsPath("file://" + strings.ReplaceAll(migrationsDir, "\\", "/"))
 
-	initTestSigningKeys(t)
 	ensureRealSchemaTestDB(t)
 	resetRealSchema(t)
 	t.Cleanup(func() { resetRealSchema(t) })
@@ -84,19 +108,7 @@ func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Clien
 	postgresService, err := db.NewPostgresService()
 	require.NoError(t, err, "the repository migrations must apply to an empty database")
 	t.Cleanup(func() { postgresService.Close() })
-
-	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: realSchemaRedisDB})
-	require.NoError(t, redisClient.Ping(context.Background()).Err())
-	t.Cleanup(func() {
-		redisClient.FlushDB(context.Background())
-		redisClient.Close()
-	})
-
-	handler := NewHandler(&models.InfraServices{
-		Postgres: postgresService,
-		Redis:    &db.RedisService{Client: redisClient},
-	})
-	return handler, postgresService.DB, redisClient
+	return postgresService
 }
 
 func initTestSigningKeys(t *testing.T) {
@@ -176,7 +188,7 @@ func TestVerifyOTP_RealSchema_FirstSignInCreatesUser(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	tokens := resp.Info.(map[string]interface{})
 	assert.NotEmpty(t, tokens["access_token"])
-	assert.NotEmpty(t, tokens["refresh_token"])
+	assert.NotContains(t, tokens, "refresh_token", "the refresh token is only delivered in the cookie")
 
 	assert.Equal(t, 1, countUsersWithContact(t, conn, "email", contact))
 }
