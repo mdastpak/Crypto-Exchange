@@ -200,6 +200,108 @@ func TestMigrations_FullUpDownUpCycle(t *testing.T) {
 	require.NoError(t, m.Up(), "re-applying up migrations after a full down should succeed")
 }
 
+// TestMigration11_StepDownAndUpWithOTPUsers checks that migration 11 can be
+// rolled back and re-applied on its own while users created by OTP sign-in
+// exist. Those rows do not satisfy the constraint that the down migration
+// restores, so the down migration must not validate existing rows.
+func TestMigration11_StepDownAndUpWithOTPUsers(t *testing.T) {
+	m := newMigrationsTestMigrator(t)
+	require.NoError(t, m.Migrate(11))
+
+	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Exec(`INSERT INTO users (info, status) VALUES ('{"contact": {"email": "otp-user@example.com"}}', 'approved')`)
+	require.NoError(t, err, "migration 11 must accept the document written by OTP sign-in")
+
+	require.NoError(t, m.Steps(-1), "rolling back migration 11 must keep existing OTP users")
+	require.NoError(t, m.Steps(1), "re-applying migration 11 must succeed")
+
+	var count int
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM users WHERE info->'contact'->>'email' = 'otp-user@example.com'`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
+// TestMigration11_PreflightStopsOnManualData checks that migration 11 stops
+// with an actionable message, before changing the schema, when users holds
+// rows that no application code writes: rows without a contact object, or
+// contact values shared by several users.
+func TestMigration11_PreflightStopsOnManualData(t *testing.T) {
+	cases := []struct {
+		name    string
+		rows    []string
+		wantErr string // empty when the migration must succeed
+	}{
+		{
+			name:    "row without contact",
+			rows:    []string{`{"username": "legacy", "password": "secret"}`},
+			wantErr: `have no "contact" object`,
+		},
+		{
+			name: "email shared by two users",
+			rows: []string{
+				`{"username": "first", "password": "secret", "contact": {"email": "Shared@Example.com"}}`,
+				`{"username": "second", "password": "secret", "contact": {"email": "shared@example.com"}}`,
+			},
+			wantErr: "shared by more than one user",
+		},
+		{
+			name: "null contact values are not duplicates",
+			rows: []string{
+				`{"username": "first", "password": "secret", "contact": {"email": null, "mobile": "09120000001"}}`,
+				`{"username": "second", "password": "secret", "contact": {"email": null, "mobile": "09120000002"}}`,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMigrationsTestMigrator(t)
+			require.NoError(t, m.Migrate(10))
+
+			conn, err := sql.Open("pgx", migrationsTestDBConnStr())
+			require.NoError(t, err)
+			defer conn.Close()
+			for _, row := range tc.rows {
+				_, err := conn.Exec(`INSERT INTO users (info) VALUES ($1::jsonb)`, row)
+				require.NoError(t, err)
+			}
+
+			err = m.Migrate(11)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Contains(t, err.Error(), `run "migrate force 10"`, "the error must explain how to recover from the dirty version")
+
+			var oldConstraintExists bool
+			require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_info_structure')`).Scan(&oldConstraintExists))
+			assert.True(t, oldConstraintExists, "a failed preflight must leave the schema unchanged")
+		})
+	}
+}
+
+// newMigrationsTestMigrator returns a migrator for the repository migrations
+// on a freshly reset migrations-test database.
+func newMigrationsTestMigrator(t *testing.T) *migrate.Migrate {
+	t.Helper()
+	ensureMigrationsTestDB(t)
+	resetMigrationsTestSchema(t)
+	t.Cleanup(func() { resetMigrationsTestSchema(t) })
+
+	cwd, err := filepath.Abs(".")
+	require.NoError(t, err)
+	sourceURL := "file://" + strings.ReplaceAll(filepath.Join(cwd, "migrations"), "\\", "/")
+	dbURL := "postgres://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
+		testPGUser, testPGPassword, testPGHost, testPGPort, migrationsTestDBName, testPGSSLMode)
+
+	m, err := migrate.New(sourceURL, dbURL)
+	require.NoError(t, err)
+	t.Cleanup(func() { m.Close() })
+	return m
+}
+
 func TestNewPostgresService_FailsFastWithBadHost(t *testing.T) {
 	originalConfig := config.Config
 	defer func() { config.Config = originalConfig }()

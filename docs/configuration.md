@@ -50,6 +50,16 @@ This document describes how the server is configured and which settings it curre
 
 Migrations are applied automatically at startup while a PostgreSQL advisory lock is held.
 
+If a migration fails, golang-migrate marks its version as dirty and the server refuses to start until the flag is cleared. Fix the cause named in the error message, then reset the version to the last successful migration with the [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate) and start the server again:
+
+```bash
+migrate -path internal/db/migrations \
+  -database "postgres://USER:PASSWORD@HOST:5432/exchange?sslmode=disable" \
+  force 10
+```
+
+Replace `10` with the version before the failed migration.
+
 ### `redis`
 
 | Key | Default | Description |

@@ -24,7 +24,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| OTP sign-in (email, mobile, username) | Implemented, with known defects | First-time sign-in fails on a migrated database ([#8](https://github.com/mdastpak/Crypto-Exchange/issues/8)). Codes are not delivered yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). |
+| OTP sign-in (email, mobile, username) | Implemented, with known defects | Codes are not delivered yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)), and verification needs hardening ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)). |
 | JWT access and refresh tokens, logout blacklist | Implemented, hardening pending | See [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) and [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). |
 | Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | There is no admin sign-in flow yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
 | Public currency listing | Implemented | Served from the Redis cache. |
@@ -199,7 +199,7 @@ go test -p 1 ./...
 ```
 
 > [!CAUTION]
-> The integration tests drop and recreate tables in `testdb` and `testdb_migrations`, and they flush Redis database 1. Never point them at an instance that holds real data. Stop the Docker Compose PostgreSQL service first, or change its port, because both use port 5432.
+> The integration tests drop and recreate tables in `testdb`, `testdb_migrations`, and `testdb_public_real_schema`, and they flush Redis databases 1 and 2. Never point them at an instance that holds real data. Stop the Docker Compose PostgreSQL service first, or change its port, because both use port 5432.
 
 `-p 1` is currently required because packages share the same test databases. Hermetic, parallel-safe tests are tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
 

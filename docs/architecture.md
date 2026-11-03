@@ -78,6 +78,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 8 | Extra `users` columns, `sub_accounts`, `api_keys`, `sessions` | Not yet |
 | 9 | `kyc_profiles`, `kyc_documents`, `kyc_applications`, `sanctions_screenings`, `aml_rules`, `aml_alerts` | Not yet |
 | 10 | `deposit_addresses`, `deposits`, `withdrawals`, `settlements`, `custody_configs` | Not yet |
+| 11 | Aligns the `users.info` constraint with OTP sign-in, and adds unique indexes on contact values | Yes |
 
 Two models currently coexist: the legacy JSONB `currencies` and `users` tables used by the API, and the typed exchange schema. Unifying them is tracked in [#38](https://github.com/mdastpak/Crypto-Exchange/issues/38) (users) and [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57) (currencies and assets).
 
