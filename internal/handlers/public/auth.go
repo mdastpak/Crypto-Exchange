@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type PublicHandler struct {
@@ -190,17 +192,42 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken, "refresh_token": refreshToken})
 }
 
+// contactLookupQueries uses the same expressions as the unique contact indexes
+// (migration 11), so each lookup is served by an index.
+var contactLookupQueries = map[string]string{
+	"email":    `SELECT hk, status FROM users WHERE info->'contact'->>'email' = $1`,
+	"mobile":   `SELECT hk, status FROM users WHERE info->'contact'->>'mobile' = $1`,
+	"username": `SELECT hk, status FROM users WHERE info->'contact'->>'username' = $1`,
+}
+
+// errUserAlreadyExists reports that another request created a user with the
+// same contact between the lookup and the insert.
+var errUserAlreadyExists = errors.New("user with this contact already exists")
+
+const uniqueViolationCode = "23505"
+
 func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, contact string) (uuid.UUID, error) {
 	log.Println("Checking if user exists or creating a new user")
 
-	query := `SELECT hk, status FROM users WHERE info->'contact'->>$1 = $2`
+	query, ok := contactLookupQueries[contactType]
+	if !ok {
+		return uuid.Nil, fmt.Errorf("unsupported contact type: %s", contactType)
+	}
 	var user User
 
-	err := h.PostgresDB.DB.QueryRowContext(ctx, query, contactType, contact).Scan(&user.HK, &user.Status)
+	err := h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status)
 	if err == sql.ErrNoRows {
 		log.Println("User does not exist, creating new user")
-		return h.createUser(ctx, contactType, contact)
-	} else if err != nil {
+		userHK, createErr := h.createUser(ctx, contactType, contact)
+		if !errors.Is(createErr, errUserAlreadyExists) {
+			return userHK, createErr
+		}
+		// A concurrent sign-in for the same contact won the insert; continue
+		// with that user so its status checks still apply.
+		log.Println("User was created by a concurrent request, loading it")
+		err = h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status)
+	}
+	if err != nil {
 		log.Printf("Database error: %v", err)
 		return uuid.Nil, fmt.Errorf("database error. please try again")
 	}
@@ -233,6 +260,10 @@ func (h *PublicHandler) createUser(ctx context.Context, contactType, contact str
 	var userHK uuid.UUID
 	err = h.PostgresDB.DB.QueryRowContext(ctx, query, infoData).Scan(&userHK)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode {
+			return uuid.Nil, errUserAlreadyExists
+		}
 		log.Printf("Failed to insert new user: %v", err)
 		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
 	}

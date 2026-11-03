@@ -200,6 +200,40 @@ func TestMigrations_FullUpDownUpCycle(t *testing.T) {
 	require.NoError(t, m.Up(), "re-applying up migrations after a full down should succeed")
 }
 
+// TestMigration11_StepDownAndUpWithOTPUsers checks that migration 11 can be
+// rolled back and re-applied on its own while users created by OTP sign-in
+// exist. Those rows do not satisfy the constraint that the down migration
+// restores, so the down migration must not validate existing rows.
+func TestMigration11_StepDownAndUpWithOTPUsers(t *testing.T) {
+	ensureMigrationsTestDB(t)
+	resetMigrationsTestSchema(t)
+	t.Cleanup(func() { resetMigrationsTestSchema(t) })
+
+	cwd, err := filepath.Abs(".")
+	require.NoError(t, err)
+	sourceURL := "file://" + strings.ReplaceAll(filepath.Join(cwd, "migrations"), "\\", "/")
+	dbURL := "postgres://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
+		testPGUser, testPGPassword, testPGHost, testPGPort, migrationsTestDBName, testPGSSLMode)
+
+	m, err := migrate.New(sourceURL, dbURL)
+	require.NoError(t, err)
+	defer m.Close()
+	require.NoError(t, m.Migrate(11))
+
+	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Exec(`INSERT INTO users (info, status) VALUES ('{"contact": {"email": "otp-user@example.com"}}', 'approved')`)
+	require.NoError(t, err, "migration 11 must accept the document written by OTP sign-in")
+
+	require.NoError(t, m.Steps(-1), "rolling back migration 11 must keep existing OTP users")
+	require.NoError(t, m.Steps(1), "re-applying migration 11 must succeed")
+
+	var count int
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM users WHERE info->'contact'->>'email' = 'otp-user@example.com'`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
 func TestNewPostgresService_FailsFastWithBadHost(t *testing.T) {
 	originalConfig := config.Config
 	defer func() { config.Config = originalConfig }()

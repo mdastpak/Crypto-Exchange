@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Moved the technical audit notes of 2026-09-14 from this file to [`docs/audits/2026-09-14-technical-audit.md`](docs/audits/2026-09-14-technical-audit.md).
 - `config/config.local.yaml` is now ignored by Git.
 
+### Fixed
+
+- First-time OTP sign-in failed with `500 Failed to create user`, because the `users.info` constraint from migration 2 required `username` and `password` keys that OTP sign-in never writes. Migration 11 aligns the constraint with the stored contact document and makes each contact value unique, and concurrent first sign-ins for the same contact now resolve to one user ([#8](https://github.com/mdastpak/Crypto-Exchange/issues/8)).
+
 ## 2026-09-16
 
 ### Added
