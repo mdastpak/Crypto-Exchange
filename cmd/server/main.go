@@ -92,7 +92,9 @@ func main() {
 		helpers.SendResponse(c, http.StatusOK, "Welcome to the Encrypted-DB API", nil)
 	})
 
-	RouteHandler(r, handlers)
+	if err := RouteHandler(r, handlers); err != nil {
+		log.Fatalf("Failed to register routes: %v", err)
+	}
 
 	protocol := "http"
 	if config.Config.Server.TLS.Enabled {
@@ -221,11 +223,15 @@ func initializeCache(ih *InfraHandlers) error {
 	return ih.Admin.LoadAndCacheCurrencies(ctx)
 }
 
-func RouteHandler(r *gin.Engine, ih *InfraHandlers) {
+func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	rl := middleware.NewRateLimiter(ih.Redis)
+	cors, err := middleware.NewCORSMiddleware(config.Config.Server.CORS.AllowedOrigins)
+	if err != nil {
+		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
+	}
 
 	r.Use(middleware.SecurityHeaders())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(cors)
 	r.Use(rl.RESTRateLimit())
 
 	socketGroup := r.Group("/ws")
@@ -272,6 +278,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) {
 			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
 	}
+	return nil
 }
 
 func requestIDMiddleware() gin.HandlerFunc {

@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Moved the technical audit notes of 2026-09-14 from this file to [`docs/audits/2026-09-14-technical-audit.md`](docs/audits/2026-09-14-technical-audit.md).
 - `config/config.local.yaml` is now ignored by Git.
+- **Breaking:** HTTP CORS is configured with the new `server.cors.allowed_origins` setting. `websocket.allowed_origins` now only applies to WebSocket connections ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)).
 - **Breaking:** OTP verification no longer returns `refresh_token` in the response body. The refresh token is only delivered in the `refresh_token` cookie, which is now `SameSite=Strict` and scoped to `/public/auth`. Tokens issued before this change have no token type and are rejected, so users must sign in again ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
 
 ### Fixed
@@ -26,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - Refresh tokens were accepted as access tokens, giving seven days of API access, and were never revoked, not even by logout. Tokens now carry a type (`typ`), so protected routes accept only access tokens and the refresh endpoint accepts only refresh tokens. Each sign-in creates a session in the `sessions` table. Refresh tokens are rotated on every use, and presenting an already rotated refresh token revokes the session. Logout revokes the session and clears the cookie ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
+- With no allowed origins configured (the default), the CORS middleware reflected every `Origin` together with `Access-Control-Allow-Credentials: true`, so any website could make credentialed requests and read the responses. A `"*"` entry had the same effect. The middleware now fails closed: only listed origins are allowed, `"*"` and malformed origins stop the server at startup, and responses carry `Vary: Origin` ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)).
 
 ## 2026-09-16
 

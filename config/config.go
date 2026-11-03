@@ -48,6 +48,11 @@ type Configuration struct {
 			CertFile string `yaml:"cert_file"`
 			KeyFile  string `yaml:"key_file"`
 		} `yaml:"tls"`
+		CORS struct {
+			// AllowedOrigins lists the browser origins (scheme://host[:port])
+			// that may call the API with credentials. Empty means none.
+			AllowedOrigins []string `yaml:"allowed_origins"`
+		} `yaml:"cors"`
 	} `yaml:"server"`
 
 	Postgres struct {
