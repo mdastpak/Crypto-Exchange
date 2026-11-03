@@ -101,6 +101,7 @@ Replace `10` with the version before the failed migration.
 | `auth.length` | **required** | Number of digits. There is no default. |
 | `auth.ttl_seconds` | **required** | Time-to-live of an OTP session |
 | `auth.retry_limit` | **required** | Failed verification attempts allowed per OTP session |
+| `auth.dev_log_codes` | `false` | Development only. Writes each sign-in code to the log, with a masked contact, so that sign-in can be tried locally before email and SMS delivery exists ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). When `false`, codes are not delivered anywhere. The server refuses to start with `true` in release mode (`GIN_MODE=release`). |
 | `auth.name` | none | Parsed, but not used yet |
 
 ### `websocket`

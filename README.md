@@ -148,7 +148,7 @@ Once the server is running:
 - Swagger UI: `http://localhost:8080/swagger/index.html`
 - Health check: `http://localhost:8080/system/healthcheck`
 
-OTP codes are currently written to the server log instead of being delivered ([#13](https://github.com/mdastpak/Crypto-Exchange/issues/13), [#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)).
+Email and SMS delivery of sign-in codes is not implemented yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). To try sign-in locally, set `otp.auth.dev_log_codes: true` in `config/config.local.yaml`; the codes then appear in the server log. Never enable it outside development: the server refuses to start with it in release mode.
 
 ## Configuration
 

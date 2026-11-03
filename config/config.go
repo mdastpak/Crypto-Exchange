@@ -125,6 +125,9 @@ type Configuration struct {
 			TTL        int    `yaml:"ttl_seconds"`
 			Length     int    `yaml:"length"`
 			RetryLimit int    `yaml:"retry_limit"`
+			// DevLogCodes writes sign-in codes to the log for local
+			// development. The server refuses to start with it in release mode.
+			DevLogCodes bool `yaml:"dev_log_codes"`
 		} `yaml:"auth"`
 	} `yaml:"otp"`
 

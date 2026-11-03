@@ -63,7 +63,7 @@ sequenceDiagram
     A-->>C: 200 {access_token} and Set-Cookie with the new refresh_token
 ```
 
-OTP codes are currently written to the server log rather than delivered by email or SMS ([#13](https://github.com/mdastpak/Crypto-Exchange/issues/13), [#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)).
+Codes are not delivered by email or SMS yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). For local development, `otp.auth.dev_log_codes` writes them to the server log (see [configuration.md](configuration.md#otp)). Codes and raw contacts are never logged otherwise.
 
 ### `POST /public/auth`
 

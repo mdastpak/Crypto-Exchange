@@ -19,6 +19,7 @@ import (
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/helpers"
 	"encrypted-db/internal/models"
+	"encrypted-db/internal/notify"
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,9 @@ type PublicHandler struct {
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
 	Sessions        auth.SessionStore
+	// OTPSender delivers sign-in codes. It discards them unless the server
+	// replaces it (see notify.NewOTPSender).
+	OTPSender notify.OTPSender
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
@@ -39,6 +43,7 @@ func NewHandler(is *models.InfraServices) *PublicHandler {
 		PostgresDB:      is.Postgres,
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
+		OTPSender:       notify.DiscardSender{},
 	}
 	if is.Postgres != nil {
 		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
@@ -114,7 +119,20 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	blacklistKey := "uuid_blacklist:" + userUUID
 	h.RedisClient.Client.Set(ctx, blacklistKey, 0, ttl*2)
 
-	log.Printf("OTP Code for %s: %s: %s", contactType, req.Username, otpCode)
+	// Never log the code or the raw contact: either one in a log helps an
+	// attacker take over the account.
+	err = h.OTPSender.SendOTP(ctx, notify.OTPMessage{
+		ContactType:   contactType,
+		Contact:       req.Username,
+		MaskedContact: maskedContact,
+		Code:          otpCode,
+	})
+	if err != nil {
+		log.Printf("Failed to send the sign-in code to %s %s: %v", contactType, maskedContact, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to send OTP", nil)
+		return
+	}
+
 	helpers.SendResponse(c, http.StatusOK, "OTP sent to your contact", gin.H{"type": contactType, "username": maskedContact, "uuid": userUUID})
 }
 
