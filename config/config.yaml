@@ -5,6 +5,7 @@ server:
   write_timeout_seconds: 10
   idle_timeout_seconds: 120
   mode: "debug"
+  trusted_proxies: []
 
 postgres:
   host: "localhost"

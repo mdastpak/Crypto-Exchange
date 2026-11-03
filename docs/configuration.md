@@ -32,6 +32,7 @@ This document describes how the server is configured and which settings it curre
 | `write_timeout_seconds` | `10` | HTTP write timeout |
 | `idle_timeout_seconds` | `120` | HTTP keep-alive idle timeout |
 | `mode` | `debug` | Parsed, but not used by the active middleware yet |
+| `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
 | `tls.enabled` | `false` | Serve HTTPS with `ListenAndServeTLS` |
 | `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled |
 

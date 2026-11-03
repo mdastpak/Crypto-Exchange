@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - Refresh tokens were accepted as access tokens, giving seven days of API access, and were never revoked, not even by logout. Tokens now carry a type (`typ`), so protected routes accept only access tokens and the refresh endpoint accepts only refresh tokens. Each sign-in creates a session in the `sessions` table. Refresh tokens are rotated on every use, and presenting an already rotated refresh token revokes the session. Logout revokes the session and clears the cookie ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)).
+- Every IP-based rate limit, including the OTP sign-in limit, could be bypassed by sending a different `X-Forwarded-For` value on each request, because the limiter read that header directly and Gin trusted forwarding headers from every peer. The limiter now uses the client address that Gin derives from the connection, and forwarding headers are trusted only from the proxies listed in the new `server.trusted_proxies` setting (none by default) ([#11](https://github.com/mdastpak/Crypto-Exchange/issues/11)).
 
 ## 2026-09-16
 
