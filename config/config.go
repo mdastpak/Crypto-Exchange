@@ -43,11 +43,20 @@ type Configuration struct {
 		WriteTimeout int    `yaml:"write_timeout_seconds"`
 		IdleTimeout  int    `yaml:"idle_timeout_seconds"`
 		Mode         string `yaml:"mode"`
-		TLS          struct {
+		// TrustedProxies lists the IP addresses or CIDR ranges of reverse
+		// proxies whose X-Forwarded-For and X-Real-IP headers are trusted.
+		// Empty means none: the client address is the TCP peer address.
+		TrustedProxies []string `yaml:"trusted_proxies"`
+		TLS            struct {
 			Enabled  bool   `yaml:"enabled"`
 			CertFile string `yaml:"cert_file"`
 			KeyFile  string `yaml:"key_file"`
 		} `yaml:"tls"`
+		CORS struct {
+			// AllowedOrigins lists the browser origins (scheme://host[:port])
+			// that may call the API with credentials. Empty means none.
+			AllowedOrigins []string `yaml:"allowed_origins"`
+		} `yaml:"cors"`
 	} `yaml:"server"`
 
 	Postgres struct {

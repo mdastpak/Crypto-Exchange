@@ -87,7 +87,10 @@ func main() {
 
 	serverAddr := fmt.Sprintf("%s:%s", config.Config.Server.IP, config.Config.Server.Port)
 
-	r := gin.New()
+	r, err := newEngine()
+	if err != nil {
+		log.Fatalf("Failed to create the HTTP engine: %v", err)
+	}
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
 	r.Use(gin.Logger())
@@ -99,7 +102,9 @@ func main() {
 		helpers.SendResponse(c, http.StatusOK, "Welcome to the Encrypted-DB API", nil)
 	})
 
-	RouteHandler(r, handlers)
+	if err := RouteHandler(r, handlers); err != nil {
+		log.Fatalf("Failed to register routes: %v", err)
+	}
 
 	protocol := "http"
 	if config.Config.Server.TLS.Enabled {
@@ -150,6 +155,18 @@ func main() {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 	log.Println("Server stopped gracefully")
+}
+
+// newEngine creates the Gin engine. Gin trusts forwarding headers from every
+// peer by default; restricting them to server.trusted_proxies (none unless
+// configured) stops clients from choosing the address that rate limiting and
+// logging see.
+func newEngine() (*gin.Engine, error) {
+	r := gin.New()
+	if err := r.SetTrustedProxies(config.Config.Server.TrustedProxies); err != nil {
+		return nil, fmt.Errorf("invalid server.trusted_proxies: %w", err)
+	}
+	return r, nil
 }
 
 func initAuthKeys() error {
@@ -228,11 +245,15 @@ func initializeCache(ih *InfraHandlers) error {
 	return ih.Admin.LoadAndCacheCurrencies(ctx)
 }
 
-func RouteHandler(r *gin.Engine, ih *InfraHandlers) {
+func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	rl := middleware.NewRateLimiter(ih.Redis)
+	cors, err := middleware.NewCORSMiddleware(config.Config.Server.CORS.AllowedOrigins)
+	if err != nil {
+		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
+	}
 
 	r.Use(middleware.SecurityHeaders())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(cors)
 	r.Use(rl.RESTRateLimit())
 
 	socketGroup := r.Group("/ws")
@@ -279,6 +300,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) {
 			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
 	}
+	return nil
 }
 
 func requestIDMiddleware() gin.HandlerFunc {
