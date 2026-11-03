@@ -22,6 +22,7 @@ go.work
 
 # Config and secrets
 config/config.yaml
+config/config.local.yaml
 .env
 .env.*
 !.env.example
