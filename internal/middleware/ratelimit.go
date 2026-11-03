@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"encrypted-db/config"
@@ -167,13 +166,12 @@ func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window 
 	return count, ttl
 }
 
+// getClientIP identifies the client for rate limiting. gin's ClientIP honors
+// forwarding headers (X-Forwarded-For, X-Real-IP) only when the request comes
+// from a proxy listed in server.trusted_proxies. Reading those headers directly
+// would let every client choose a fresh rate-limit identity for each request.
 func (rl *RateLimiter) getClientIP(c *gin.Context) string {
-	ip := c.ClientIP()
-	if forwarded := c.GetHeader("X-Forwarded-For"); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		ip = strings.TrimSpace(parts[0])
-	}
-	return ip
+	return c.ClientIP()
 }
 
 func (rl *RateLimiter) getUserID(c *gin.Context) string {

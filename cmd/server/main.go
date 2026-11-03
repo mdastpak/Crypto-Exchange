@@ -80,7 +80,10 @@ func main() {
 
 	serverAddr := fmt.Sprintf("%s:%s", config.Config.Server.IP, config.Config.Server.Port)
 
-	r := gin.New()
+	r, err := newEngine()
+	if err != nil {
+		log.Fatalf("Failed to create the HTTP engine: %v", err)
+	}
 	r.Use(gin.Recovery())
 	r.Use(requestIDMiddleware())
 	r.Use(gin.Logger())
@@ -145,6 +148,18 @@ func main() {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 	log.Println("Server stopped gracefully")
+}
+
+// newEngine creates the Gin engine. Gin trusts forwarding headers from every
+// peer by default; restricting them to server.trusted_proxies (none unless
+// configured) stops clients from choosing the address that rate limiting and
+// logging see.
+func newEngine() (*gin.Engine, error) {
+	r := gin.New()
+	if err := r.SetTrustedProxies(config.Config.Server.TrustedProxies); err != nil {
+		return nil, fmt.Errorf("invalid server.trusted_proxies: %w", err)
+	}
+	return r, nil
 }
 
 func initAuthKeys() error {
