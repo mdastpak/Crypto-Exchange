@@ -27,13 +27,13 @@ BEGIN
     -- any number of times, so they are not duplicates.
     SELECT COUNT(*) INTO duplicate_contacts
     FROM (
-        SELECT lower(info->'contact'->>'email') FROM users
+        SELECT lower((info->'contact'->>'email') COLLATE "C") FROM users
         WHERE info->'contact'->>'email' IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1
         UNION ALL
         SELECT info->'contact'->>'mobile' FROM users
         WHERE info->'contact'->>'mobile' IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1
         UNION ALL
-        SELECT lower(info->'contact'->>'username') FROM users
+        SELECT lower((info->'contact'->>'username') COLLATE "C") FROM users
         WHERE info->'contact'->>'username' IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1
     ) AS duplicates;
     IF duplicate_contacts > 0 THEN
@@ -51,8 +51,11 @@ ALTER TABLE users ADD CONSTRAINT user_info_contact CHECK (
 );
 
 -- One user per contact value. Email addresses and usernames are compared
--- case-insensitively. Rows without a given contact type index as NULL, which
--- never conflicts. Sign-in looks users up with these same expressions.
-CREATE UNIQUE INDEX users_contact_email_unique ON users ((lower(info->'contact'->>'email')));
+-- case-insensitively. COLLATE "C" makes lower() fold ASCII letters only,
+-- whatever the database locale (sign-in accepts ASCII email addresses and
+-- usernames only), so the same address can never fold to two values. Rows
+-- without a given contact type index as NULL, which never conflicts.
+-- Sign-in looks users up with these same expressions.
+CREATE UNIQUE INDEX users_contact_email_unique ON users ((lower((info->'contact'->>'email') COLLATE "C")));
 CREATE UNIQUE INDEX users_contact_mobile_unique ON users ((info->'contact'->>'mobile'));
-CREATE UNIQUE INDEX users_contact_username_unique ON users ((lower(info->'contact'->>'username')));
+CREATE UNIQUE INDEX users_contact_username_unique ON users ((lower((info->'contact'->>'username') COLLATE "C")));

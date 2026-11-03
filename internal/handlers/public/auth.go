@@ -194,11 +194,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 
 // contactLookupQueries uses the same expressions as the unique contact indexes
 // (migration 11), so each lookup is served by an index. Email addresses and
-// usernames match case-insensitively, like the indexes.
+// usernames match case-insensitively, like the indexes, with ASCII-only case
+// folding that does not depend on the database locale.
 var contactLookupQueries = map[string]string{
-	"email":    `SELECT hk, status FROM users WHERE lower(info->'contact'->>'email') = lower($1)`,
+	"email":    `SELECT hk, status FROM users WHERE lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`,
 	"mobile":   `SELECT hk, status FROM users WHERE info->'contact'->>'mobile' = $1`,
-	"username": `SELECT hk, status FROM users WHERE lower(info->'contact'->>'username') = lower($1)`,
+	"username": `SELECT hk, status FROM users WHERE lower((info->'contact'->>'username') COLLATE "C") = lower($1 COLLATE "C")`,
 }
 
 // errUserAlreadyExists reports that another request created a user with the

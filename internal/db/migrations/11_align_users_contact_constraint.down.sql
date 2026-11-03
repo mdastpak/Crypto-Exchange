@@ -8,6 +8,9 @@ DROP INDEX IF EXISTS users_contact_email_unique;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS user_info_contact;
 
 -- NOT VALID: users created by OTP sign-in do not satisfy the original rule.
+-- Existing rows are kept, but updating them fails until migration 11 is applied
+-- again, which matches the schema before this migration, when OTP users could
+-- not be created at all.
 ALTER TABLE users ADD CONSTRAINT user_info_structure CHECK (
     info ? 'username' AND
     info ? 'password'
