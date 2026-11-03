@@ -63,6 +63,26 @@ otp:
     retry_limit: 3
     dev_log_codes: false
 
+notifications:
+  email:
+    host: ""
+    port: 587
+    username: ""
+    password: ""
+    from: ""
+    implicit_tls: false
+    timeout_seconds: 10
+  sms:
+    provider: ""
+    kavenegar:
+      api_key: ""
+      otp_template: ""
+      base_url: "https://api.kavenegar.com"
+      timeout_seconds: 10
+  worker:
+    concurrency: 4
+    max_attempts: 3
+
 websocket:
   allowed_origins: []
   ping_interval_seconds: 30

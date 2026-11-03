@@ -10,21 +10,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewOTPSender(t *testing.T) {
-	sender, err := NewOTPSender(false, false)
-	require.NoError(t, err)
-	assert.IsType(t, DiscardSender{}, sender, "codes are not logged unless explicitly enabled")
+func TestCheckDevLogCodes(t *testing.T) {
+	assert.NoError(t, CheckDevLogCodes(false, false))
+	assert.NoError(t, CheckDevLogCodes(false, true))
+	assert.NoError(t, CheckDevLogCodes(true, false))
+	assert.ErrorIs(t, CheckDevLogCodes(true, true), ErrDevLogCodesInRelease,
+		"development code logging must not start in release mode")
+}
 
-	sender, err = NewOTPSender(false, true)
-	require.NoError(t, err)
-	assert.IsType(t, DiscardSender{}, sender)
-
-	sender, err = NewOTPSender(true, false)
-	require.NoError(t, err)
-	assert.IsType(t, DevLogSender{}, sender)
-
-	_, err = NewOTPSender(true, true)
-	assert.ErrorIs(t, err, ErrDevLogCodesInRelease, "development code logging must not start in release mode")
+func TestSenders_SupportOnlyEmailAndMobile(t *testing.T) {
+	for _, sender := range []OTPSender{DiscardSender{}, DevLogSender{}} {
+		assert.True(t, sender.Supports(ContactEmail))
+		assert.True(t, sender.Supports(ContactMobile))
+		assert.False(t, sender.Supports("username"))
+		assert.False(t, sender.Supports(""))
+	}
 }
 
 func TestDevLogSender_LogsOnlyTheMaskedContact(t *testing.T) {

@@ -331,9 +331,41 @@ func (r *RabbitMQService) Close() error {
 	return nil
 }
 
+// OpenChannel opens a new channel on the current connection, for consumers.
+// The caller owns the channel and must close it. It is not in confirm mode,
+// and it closes when the connection drops, so a consumer opens a new one after
+// the service reconnects.
+func (r *RabbitMQService) OpenChannel() (*amqp.Channel, error) {
+	if r.closed.Load() {
+		return nil, fmt.Errorf("rabbitmq service closed")
+	}
+	r.connMu.RLock()
+	conn := r.conn
+	r.connMu.RUnlock()
+	if conn == nil || conn.IsClosed() {
+		return nil, fmt.Errorf("rabbitmq connection is not available")
+	}
+	return conn.Channel()
+}
+
+// Publish publishes a persistent JSON message and waits until the broker
+// confirms it.
 func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string) error {
+	return r.PublishMessage(ctx, exchange, amqp.Publishing{
+		ContentType:  "application/json",
+		Body:         []byte(message),
+		DeliveryMode: amqp.Persistent,
+	})
+}
+
+// PublishMessage publishes msg and waits until the broker confirms it. The
+// timestamp is set when msg has none.
+func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, msg amqp.Publishing) error {
 	if r.closed.Load() {
 		return fmt.Errorf("rabbitmq service closed")
+	}
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now()
 	}
 
 	if _, err := r.GetChannel(); err != nil {
@@ -358,18 +390,7 @@ func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string)
 		r.chMu.Unlock()
 		return err
 	}
-	err = ch.Publish(
-		exchange,
-		"",
-		false,
-		false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			Body:         []byte(message),
-			DeliveryMode: amqp.Persistent,
-			Timestamp:    time.Now(),
-		},
-	)
+	err = ch.Publish(exchange, "", false, false, msg)
 	if err != nil {
 		// The tag was never used, so this channel's tags no longer line up;
 		// the next publish opens a new channel with a new tracker.

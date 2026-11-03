@@ -75,10 +75,41 @@ otp:
     ttl_seconds: 60
     length: 6
     retry_limit: 3
-    # Development only: write sign-in codes to the log, because email and SMS
-    # delivery is not implemented yet. The server refuses to start with this
-    # enabled in release mode (GIN_MODE=release).
+    # Development only: write sign-in codes to the log instead of delivering
+    # them. The server refuses to start with this enabled in release mode
+    # (GIN_MODE=release).
     dev_log_codes: false
+
+# Delivery of sign-in codes. Codes are queued on the notifications exchange
+# and a worker delivers them over the channel that matches the contact: email
+# addresses by SMTP and mobile numbers by SMS. A contact type without a
+# configured channel cannot sign in.
+notifications:
+  email:
+    host: ""                # Empty disables email
+    port: 587
+    username: ""
+    password: ""            # Or set SMTP_PASSWORD
+    from: "Exchange <no-reply@example.com>"
+    implicit_tls: false     # true for implicit TLS, usually on port 465
+    timeout_seconds: 10
+    # Go text/template templates with {{.Code}} and {{.TTLSeconds}}. Write
+    # them in the language of your users.
+    otp_subject: "Your sign-in code"
+    otp_body: |
+      Your sign-in code is {{.Code}}. It expires in {{.TTLSeconds}} seconds.
+
+      If you did not request this code, you can ignore this email. Never share it with anyone.
+  sms:
+    provider: ""            # "kavenegar", or empty to disable SMS
+    kavenegar:
+      api_key: ""           # Or set KAVENEGAR_API_KEY
+      otp_template: ""      # A verify template approved in the Kavenegar panel; the code fills %token
+      base_url: "https://api.kavenegar.com"
+      timeout_seconds: 10
+  worker:
+    concurrency: 4          # Codes delivered in parallel
+    max_attempts: 3         # Attempts per code; delivery also stops when the code expires
 
 websocket:
   allowed_origins: []

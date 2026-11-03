@@ -80,7 +80,7 @@ Replace `10` with the version before the failed migration.
 | `host`, `port`, `username`, `password` | none | Connection settings. The server connects to `amqp://username:password@host:port/`. |
 | `exchanges.price_updates` | none | Fan-out exchange used for currency change events |
 | `exchanges.trade_events` | none | Declared at startup. Not used yet. |
-| `exchanges.notifications` | none | Declared at startup. Not used yet. |
+| `exchanges.notifications` | none | Fan-out exchange for sign-in code jobs. The delivery worker consumes it through the `notifications.otp` queue (see [`notifications`](#notifications)). |
 | `exchanges.order_events`, `exchanges.settlement` | none | Parsed, but not declared or used yet |
 
 ### `jwt`
@@ -101,8 +101,39 @@ Replace `10` with the version before the failed migration.
 | `auth.length` | **required** | Number of digits. There is no default. |
 | `auth.ttl_seconds` | **required** | Time-to-live of an OTP session |
 | `auth.retry_limit` | **required** | Failed verification attempts allowed per OTP session |
-| `auth.dev_log_codes` | `false` | Development only. Writes each sign-in code to the log, with a masked contact, so that sign-in can be tried locally before email and SMS delivery exists ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). When `false`, codes are not delivered anywhere. The server refuses to start with `true` in release mode (`GIN_MODE=release`). |
+| `auth.dev_log_codes` | `false` | Development only. Writes each sign-in code to the log, with a masked contact, instead of delivering it through [`notifications`](#notifications), so that sign-in can be tried locally without an email or SMS provider. The server refuses to start with `true` in release mode (`GIN_MODE=release`). |
 | `auth.name` | none | Parsed, but not used yet |
+
+### `notifications`
+
+Sign-in codes are published to the `rabbitmq.exchanges.notifications` exchange and delivered by a worker in the server process. The worker sends codes for email addresses by SMTP and codes for mobile numbers by SMS. A channel without configuration is disabled, and sign-in with that contact type is refused with `400`. With no channel at all, sign-in is unavailable unless `otp.auth.dev_log_codes` is enabled for development.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `email.host` | none | SMTP server. Empty disables email. |
+| `email.port` | `587` | SMTP port |
+| `email.username`, `email.password` | none | SMTP credentials, sent with `AUTH PLAIN`. Leave both empty for a relay without authentication. `SMTP_PASSWORD` overrides the password. |
+| `email.from` | **required** with `email.host` | Sender address, optionally with a display name, for example `Exchange <no-reply@example.com>` |
+| `email.implicit_tls` | `false` | Connect with TLS from the start, usually on port `465`. Otherwise the connection is upgraded with `STARTTLS`. Codes and credentials are only sent over TLS; a server without `STARTTLS` is refused unless it runs on the local machine. |
+| `email.timeout_seconds` | `10` | Limit for one SMTP session |
+| `email.otp_subject`, `email.otp_body` | An English subject and body | [Go templates](https://pkg.go.dev/text/template) for the email. They can use `{{.Code}}` and `{{.TTLSeconds}}`, and can be written in any language. The server refuses to start if a template is invalid or the subject spans several lines. |
+| `sms.provider` | none | `kavenegar`, or empty to disable SMS |
+| `sms.kavenegar.api_key` | **required** with the provider | Kavenegar API key. `KAVENEGAR_API_KEY` overrides it. |
+| `sms.kavenegar.otp_template` | **required** with the provider | A verify template approved in the Kavenegar panel. The code fills its `%token` placeholder, so the panel defines the text and language of the message. |
+| `sms.kavenegar.base_url` | `https://api.kavenegar.com` | API base URL. Codes are sent with the [verify lookup](https://kavenegar.com/rest.html) method. |
+| `sms.kavenegar.timeout_seconds` | `10` | Limit for one API request |
+| `worker.concurrency` | `4` | Codes delivered in parallel by each server instance |
+| `worker.max_attempts` | `3` | Delivery attempts per code. Temporary failures, such as timeouts or SMTP `4xx` replies, are retried with exponential backoff starting at one second. Permanent failures, such as an unknown recipient or invalid credentials, are not retried. Delivery also stops once the code expires. |
+
+The worker declares this RabbitMQ topology at startup:
+
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `notifications.otp` | Durable queue bound to the notifications exchange | Pending sign-in code jobs. Jobs are not persisted to disk and expire with the code (`otp.auth.ttl_seconds`), so a code that waits too long is dropped by the broker. Several server instances share the queue. |
+| `notifications.dead-letter` | Durable fan-out exchange | Receives a record of every code that could not be delivered |
+| `notifications.otp.dead-letter` | Durable queue bound to `notifications.dead-letter` | Keeps those records for seven days. A record holds the contact type, the masked contact, the reason, the number of attempts, and the last error, but never the code or the raw contact. Its depth is a direct measure of delivery failures. |
+
+Failed attempts and abandoned codes are also logged with the masked contact. Delivery metrics are part of [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50).
 
 ### `websocket`
 
@@ -148,6 +179,8 @@ Only the variables below are read. Several variables in `.env.example` are not r
 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | `redis.*` |
 | `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `rabbitmq.*` |
 | `JWT_ISSUER` | `jwt.issuer` |
+| `SMTP_PASSWORD` | `notifications.email.password` |
+| `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
 | `LOG_LEVEL` | `observability.logging.level` |
 | `OTEL_ENDPOINT` | `observability.tracing.endpoint` |
 | `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Credentials of the `binance` price provider |
