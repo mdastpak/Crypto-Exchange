@@ -230,7 +230,7 @@ func TestMigration11_PreflightStopsOnManualData(t *testing.T) {
 	cases := []struct {
 		name    string
 		rows    []string
-		wantErr string
+		wantErr string // empty when the migration must succeed
 	}{
 		{
 			name:    "row without contact",
@@ -244,6 +244,13 @@ func TestMigration11_PreflightStopsOnManualData(t *testing.T) {
 				`{"username": "second", "password": "secret", "contact": {"email": "shared@example.com"}}`,
 			},
 			wantErr: "shared by more than one user",
+		},
+		{
+			name: "null contact values are not duplicates",
+			rows: []string{
+				`{"username": "first", "password": "secret", "contact": {"email": null, "mobile": "09120000001"}}`,
+				`{"username": "second", "password": "secret", "contact": {"email": null, "mobile": "09120000002"}}`,
+			},
 		},
 	}
 	for _, tc := range cases {
@@ -260,8 +267,13 @@ func TestMigration11_PreflightStopsOnManualData(t *testing.T) {
 			}
 
 			err = m.Migrate(11)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Contains(t, err.Error(), `run "migrate force 10"`, "the error must explain how to recover from the dirty version")
 
 			var oldConstraintExists bool
 			require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_info_structure')`).Scan(&oldConstraintExists))

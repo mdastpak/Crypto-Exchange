@@ -246,6 +246,68 @@ func TestCheckOrCreateUser_RealSchema_ConcurrentFirstSignInCreatesOneUser(t *tes
 	assert.Equal(t, 1, countUsersWithContact(t, conn, "email", contact))
 }
 
+// TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert forces the race
+// deterministically: an open transaction inserts the same contact, so the
+// handler's lookup misses it and the handler's insert waits on the unique
+// index. Committing the transaction makes that insert fail with a unique
+// violation, which must lead to the competing user, including its status check.
+func TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert(t *testing.T) {
+	handler, conn, _ := setupRealSchemaHandler(t)
+
+	cases := []struct {
+		name, contact, status string
+		wantErr               bool
+	}{
+		{name: "active user is reused", contact: "race-approved@example.com", status: "approved"},
+		{name: "disabled user stays blocked", contact: "race-disabled@example.com", status: "disabled", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			tx, err := conn.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			var competitor uuid.UUID
+			require.NoError(t, tx.QueryRowContext(ctx,
+				`INSERT INTO users (info, status) VALUES ($1::jsonb, $2) RETURNING hk`,
+				fmt.Sprintf(`{"contact": {"email": %q}}`, tc.contact), tc.status,
+			).Scan(&competitor))
+
+			type result struct {
+				hk  uuid.UUID
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				hk, err := handler.checkOrCreateUser(ctx, "email", tc.contact)
+				done <- result{hk, err}
+			}()
+
+			// The handler's insert blocks on the uncommitted row once its lookup has missed.
+			require.Eventually(t, func() bool {
+				var blocked bool
+				err := conn.QueryRowContext(ctx, `SELECT EXISTS (
+					SELECT 1 FROM pg_stat_activity
+					WHERE datname = current_database() AND wait_event_type = 'Lock'
+					  AND query LIKE 'INSERT INTO users (info, status) VALUES ($1, ''approved'')%')`).Scan(&blocked)
+				return err == nil && blocked
+			}, 10*time.Second, 20*time.Millisecond, "the handler insert never waited on the competing row")
+			require.NoError(t, tx.Commit())
+
+			res := <-done
+			if tc.wantErr {
+				assert.Error(t, res.err, "the status check must also apply to a user created by a competing request")
+				assert.Equal(t, uuid.Nil, res.hk)
+				return
+			}
+			require.NoError(t, res.err)
+			assert.Equal(t, competitor, res.hk, "the handler must return the user created by the competing transaction")
+		})
+	}
+}
+
 func TestUsersSchema_RealSchema_EnforcesContactRules(t *testing.T) {
 	_, conn, _ := setupRealSchemaHandler(t)
 
