@@ -98,11 +98,16 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `auth.length` | **required** | Number of digits. There is no default. |
-| `auth.ttl_seconds` | **required** | Time-to-live of an OTP session |
-| `auth.retry_limit` | **required** | Failed verification attempts allowed per OTP session |
+| `auth.length` | `6` | Number of digits, from 4 to 10 |
+| `auth.ttl_seconds` | `60` | Lifetime of a code and of its sign-in session |
+| `auth.retry_limit` | `3` | Verification attempts per code. After the last failed attempt, the code is erased and further attempts are refused until the session expires. |
+| `auth.secret` | **required** in release mode | Key for the HMAC of each code and the encryption of contacts in Redis, so that reading Redis reveals neither. At least 32 bytes, for example from `openssl rand -base64 48`, and the same on every server instance. `OTP_SECRET` overrides it. Changing it only invalidates the codes that are pending. Outside release mode, an empty secret is replaced by a random one at startup, which works only with a single server process. |
+| `auth.contact_requests_per_hour` | `5` | Codes issued to one email address or mobile number per hour |
+| `auth.contact_attempts_per_hour` | `10` | Verification attempts for one contact per hour, across all of its codes, so that requesting a new code does not bring new attempts. A successful sign-in resets the count. It must be at least `retry_limit`. Anyone who knows a contact can use up its attempts and block its sign-in for up to an hour, so keep it well above `retry_limit`. |
 | `auth.dev_log_codes` | `false` | Development only. Writes each sign-in code to the log, with a masked contact, so that sign-in can be tried locally before email and SMS delivery exists ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). When `false`, codes are not delivered anywhere. The server refuses to start with `true` in release mode (`GIN_MODE=release`). |
 | `auth.name` | none | Parsed, but not used yet |
+
+The server refuses to start when a value is out of range or the secret is shorter than 32 bytes.
 
 ### `websocket`
 
@@ -148,6 +153,7 @@ Only the variables below are read. Several variables in `.env.example` are not r
 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | `redis.*` |
 | `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `rabbitmq.*` |
 | `JWT_ISSUER` | `jwt.issuer` |
+| `OTP_SECRET` | `otp.auth.secret` |
 | `LOG_LEVEL` | `observability.logging.level` |
 | `OTEL_ENDPOINT` | `observability.tracing.endpoint` |
 | `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Credentials of the `binance` price provider |
@@ -160,3 +166,4 @@ Only the variables below are read. Several variables in `.env.example` are not r
 - Never commit credentials or key material. `config/config.local.yaml`, `.env` files, and `internal/ssl/**/*.pem` are ignored by Git. `config/config.yaml` is listed in `.gitignore` but is still tracked in the repository ([#29](https://github.com/mdastpak/Crypto-Exchange/issues/29)), so never put secrets in it.
 - Prefer environment variables, or files mounted from a secret manager, for passwords and keys.
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
+- Use a separate `OTP_SECRET` for every environment, and rotate it if it is ever exposed.

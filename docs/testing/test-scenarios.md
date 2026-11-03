@@ -202,18 +202,18 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 | A-02 | P0 / contract | Valid mobile matching the configured pattern | `200`; type `mobile`; masked value | Passes functionally |
 | A-03 | P0 / contract | Valid username of 6–20 allowed characters | `200`; type `username`; masked value | Passes functionally |
 | A-04 | P0 / contract | Empty, overlong, or invalid contact | `400`; no OTP key is created | Current validation occurs after OTP generation but before Redis write |
-| A-05 | P0 / security | Generate many OTPs rapidly | Values are unpredictable, uniformly distributed, and not all identical | **Gap:** `GenerateOTP` derives every digit from `time.Now()` |
+| A-05 | P0 / security | Generate many OTPs rapidly | Values are unpredictable, uniformly distributed, and not all identical | Passes: `otp.GenerateCode` uses `crypto/rand` with rejection sampling, checked by a chi-squared test over 100,000 codes ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
 | A-06 | P0 / security | Capture application logs after OTP request | Logs contain neither the plaintext OTP nor the full contact | **Gap:** `RequestOTP` logs both |
 | A-07 | P0 / contract | Redis SET fails | `500`; message `Failed to store OTP`; no success response | Passes |
 | A-08 | P0 / contract | Valid UUID, matching OTP, new user | `200`; access and refresh tokens are returned; secure HttpOnly cookie is set; OTP key is deleted | Passes when JWT keys are initialized |
 | A-09 | P0 / contract | Valid UUID, matching OTP, existing approved user | `200`; existing HK is reused; no duplicate row is created | Passes functionally |
-| A-10 | P0 / contract | Wrong OTP | `401`; message `Invalid or expired OTP code`; attempt counter increments | Current behavior |
-| A-11 | P0 / contract | Retry counter reaches the configured limit | `429`; message `Too many failed attempts...`; OTP cannot be retried | Current behavior; verify TTL and reset semantics |
-| A-12 | P0 / contract | Expired OTP key | `401`; key is removed or allowed to expire naturally | Current behavior |
-| A-13 | P0 / security | Redis contains malformed OTP JSON | No panic; client receives a defined `400/401/500`; attempt is recorded | **Gap:** `otpInfo["auth"].(string)` can panic |
-| A-14 | P0 / contract | OTP UUID does not match the path UUID | `401`; message `Invalid UUID` | Passes |
-| A-15 | P0 / contract | Decryption fails for a stored OTP value | No panic; defined error response; attempt is recorded | **Gap:** failed decryption does not consistently increment attempts |
-| A-16 | P0 / contract | Existing user status is `disabled`, `deleted`, or `suspend` | Authentication is rejected with a stable client error and no token | Current code converts these domain errors to `500` |
+| A-10 | P0 / contract | Wrong OTP | `401`; message `Invalid or expired OTP code`; attempt counter increments | Passes |
+| A-11 | P0 / contract | Retry counter reaches the configured limit, including with parallel requests | `429`; message `Too many failed attempts...`; OTP cannot be retried; a new code does not reset the contact's attempts | Passes: attempts are reserved atomically per code and per contact ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
+| A-12 | P0 / contract | Expired OTP session | `401`; the session expires naturally | Passes |
+| A-13 | P0 / security | Redis holds an unexpected session value | No panic; client receives a defined `401/500`; attempt is recorded | Passes: sessions are Redis hashes read without type assertions ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
+| A-14 | P0 / contract | Redis keys and values after an OTP request | Neither the code nor the raw contact appears in a key or a value | Passes: the code is stored as an HMAC and the contact with AES-GCM ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
+| A-15 | P0 / contract | Decryption fails for a stored contact, for example after the secret changed | No panic; `500 Failed to verify OTP`; attempt is recorded | Passes |
+| A-16 | P0 / contract | Existing user status is `disabled`, `deleted`, or `suspend` | Authentication is rejected with a stable client error and no token | Passes: `403` with no session ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
 | A-17 | P0 / contract | Database create fails | `500`; no token or cookie is issued; OTP cleanup is attempted | Current behavior; verify cleanup |
 | A-18 | P0 / contract | Valid refresh cookie and initialized RSA keys | `200`; a new access token has the configured issuer, role, UUID, and expiry | Current handler parses the cookie only |
 | A-19 | P0 / contract | Missing refresh cookie | `401`; message `Refresh token not provided` | Passes |
@@ -224,7 +224,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 | A-24 | P0 / contract | Invalid logout token | `401`; message `Unauthorized - Invalid token` | Passes |
 | A-25 | P0 / contract | Blacklist Redis fails during logout | `500`; message `Failed to logout`; token is not silently considered logged out | Passes |
 | A-26 | P1 / contract | Old token after a configured key rotation | Verification uses the registered historical public key until retirement | **Gap:** admin/user middleware call `VerifyRSAToken`, not the rotation-aware verifier |
-| A-27 | P0 / security | Two concurrent VerifyOTP requests use the same OTP | Exactly one succeeds; the second is rejected | **Gap:** delete occurs only after database/user work, allowing a race |
+| A-27 | P0 / security | Two concurrent VerifyOTP requests use the same OTP | Exactly one succeeds; the second is rejected | Passes: only the request that deletes the session may sign in ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
 | A-28 | P1 / contract | Refresh cookie is set over plain HTTP in a browser test | Test explicitly records whether `Secure` prevents storage; production requires HTTPS | Current cookie is always `Secure=true` |
 
 ---
@@ -338,13 +338,13 @@ Status as of 2026-11-02. The tables after this one are the original findings, un
 | --- | --- |
 | `/user/profile` is not a profile endpoint | Open: [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
 | Empty currency responses are `null` | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) and [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
-| OTP generation is predictable | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) (`crypto/rand`). The remaining modulo bias is tracked in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15). |
+| OTP generation is predictable | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) (`crypto/rand`) and [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (no modulo bias) |
 | OTP and contact are logged in plaintext | Open: [#13](https://github.com/mdastpak/Crypto-Exchange/issues/13) |
 | Refresh tokens bypass blacklist | Open: [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) |
 | Protected rate limiting fails open | Open: [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34) |
 | User currency reads can block indefinitely | Open: [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
 | Stale suspended/deleted currencies remain active | Open: [#24](https://github.com/mdastpak/Crypto-Exchange/issues/24) |
-| Malformed OTP data can panic | Open: [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (together with A-15, A-16, and A-27) |
+| Malformed OTP data can panic | Fixed in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (together with A-15, A-16, and A-27) |
 | User migration references the wrong table | Fixed in [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
 | Public currency traffic consumes the login quota | Open: [#26](https://github.com/mdastpak/Crypto-Exchange/issues/26) |
 | CORS reflects arbitrary origins with credentials | Open: [#12](https://github.com/mdastpak/Crypto-Exchange/issues/12) |

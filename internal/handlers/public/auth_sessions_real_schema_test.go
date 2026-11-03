@@ -2,12 +2,10 @@ package public
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -26,11 +24,14 @@ type sessionTestEnv struct {
 	router      *gin.Engine
 	conn        *sql.DB
 	redisClient *redis.Client
+	sender      *recordingOTPSender
 }
 
 func newSessionTestEnv(t *testing.T) *sessionTestEnv {
 	t.Helper()
 	handler, conn, redisClient := setupRealSchemaHandler(t)
+	sender := &recordingOTPSender{}
+	handler.OTPSender = sender
 	blacklist := auth.NewTokenBlacklist(redisClient)
 
 	router := gin.New()
@@ -43,7 +44,7 @@ func newSessionTestEnv(t *testing.T) *sessionTestEnv {
 	router.GET("/user/ping", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
-	return &sessionTestEnv{router: router, conn: conn, redisClient: redisClient}
+	return &sessionTestEnv{router: router, conn: conn, redisClient: redisClient, sender: sender}
 }
 
 type requestOption func(*http.Request)
@@ -81,12 +82,7 @@ func (e *sessionTestEnv) signIn(t *testing.T, contact string) (string, *http.Coo
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	sessionID := resp.Info.(map[string]interface{})["uuid"].(string)
 
-	keys, err := e.redisClient.Keys(context.Background(), otpKeyPrefix+sessionID+":*").Result()
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	code := strings.TrimPrefix(keys[0], otpKeyPrefix+sessionID+":")
-
-	w = e.send(http.MethodPost, "/public/auth/"+sessionID, map[string]string{"otp": code})
+	w = e.send(http.MethodPost, "/public/auth/"+sessionID, map[string]string{"otp": lastSentCode(t, e.sender)})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	accessToken := resp.Info.(map[string]interface{})["access_token"].(string)

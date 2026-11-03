@@ -68,6 +68,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-redis}
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - OTP_SECRET=${OTP_SECRET:-}
     ports:
       - "8080:8080"
     depends_on:

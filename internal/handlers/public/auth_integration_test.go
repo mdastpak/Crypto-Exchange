@@ -45,6 +45,7 @@ type PublicHandlerTestSuite struct {
 	handler         *PublicHandler
 	postgresService *db.PostgresService
 	redisClient     *redis.Client
+	sender          *recordingOTPSender
 }
 
 func (s *PublicHandlerTestSuite) SetupSuite() {
@@ -118,6 +119,8 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 	}
 
 	s.handler = NewHandler(services)
+	s.sender = &recordingOTPSender{}
+	s.handler.OTPSender = s.sender
 	s.router = gin.New()
 	s.router.Use(gin.Recovery())
 	s.router.Use(requestIDMiddleware())
@@ -179,16 +182,10 @@ func (s *PublicHandlerTestSuite) makeRequestWithCookie(method, path string, body
 	return w
 }
 
-func (s *PublicHandlerTestSuite) getOTPFromRedis(uuidStr string) string {
-	ctx := context.Background()
-	pattern := fmt.Sprintf("otp:auth:%s:*", uuidStr)
-	keys, err := s.redisClient.Keys(ctx, pattern).Result()
-	require.NoError(s.T(), err)
-	require.Len(s.T(), keys, 1)
-
-	otpKey := keys[0]
-	prefix := fmt.Sprintf("otp:auth:%s:", uuidStr)
-	return otpKey[len(prefix):]
+// sentOTP returns the last code handed to the sender. Redis only holds a
+// hash of the code.
+func (s *PublicHandlerTestSuite) sentOTP() string {
+	return lastSentCode(s.T(), s.sender)
 }
 
 func TestPublicHandlerSuite(t *testing.T) {
@@ -277,7 +274,7 @@ func (s *PublicHandlerTestSuite) TestVerifyOTP_Success() {
 
 	otpData := otpResp.Info.(map[string]interface{})
 	otpUUID := otpData["uuid"].(string)
-	otp := s.getOTPFromRedis(otpUUID)
+	otp := s.sentOTP()
 
 	w = s.makeRequest(http.MethodPost, fmt.Sprintf("/public/auth/%s", otpUUID), map[string]string{
 		"otp": otp,
@@ -345,16 +342,14 @@ func (s *PublicHandlerTestSuite) TestVerifyOTP_ExpiredOTP() {
 	otpData := otpResp.Info.(map[string]interface{})
 	otpUUID := otpData["uuid"].(string)
 
-	ctx := context.Background()
-	pattern := fmt.Sprintf("otp:auth:%s:*", otpUUID)
-	keys, _ := s.redisClient.Keys(ctx, pattern).Result()
-	s.redisClient.Del(ctx, keys...)
+	// Let the session expire.
+	s.redisClient.Del(context.Background(), "otp:session:"+otpUUID)
 
 	w = s.makeRequest(http.MethodPost, fmt.Sprintf("/public/auth/%s", otpUUID), map[string]string{
-		"otp": "123456",
+		"otp": s.sentOTP(),
 	}, "")
 
-	assert.Equal(s.T(), http.StatusUnauthorized, w.Code)
+	assert.Equal(s.T(), http.StatusUnauthorized, w.Code, "an expired code is refused even when it is right")
 }
 
 func (s *PublicHandlerTestSuite) TestVerifyOTP_InvalidUUID() {
@@ -403,7 +398,7 @@ func (s *PublicHandlerTestSuite) TestRefreshToken_Success() {
 
 	otpData := otpResp.Info.(map[string]interface{})
 	otpUUID := otpData["uuid"].(string)
-	otp := s.getOTPFromRedis(otpUUID)
+	otp := s.sentOTP()
 
 	w = s.makeRequest(http.MethodPost, fmt.Sprintf("/public/auth/%s", otpUUID), map[string]string{
 		"otp": otp,
@@ -455,7 +450,7 @@ func (s *PublicHandlerTestSuite) TestLogout_Success() {
 
 	otpData := otpResp.Info.(map[string]interface{})
 	otpUUID := otpData["uuid"].(string)
-	otp := s.getOTPFromRedis(otpUUID)
+	otp := s.sentOTP()
 
 	w = s.makeRequest(http.MethodPost, fmt.Sprintf("/public/auth/%s", otpUUID), map[string]string{
 		"otp": otp,

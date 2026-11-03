@@ -128,6 +128,15 @@ type Configuration struct {
 			// DevLogCodes writes sign-in codes to the log for local
 			// development. The server refuses to start with it in release mode.
 			DevLogCodes bool `yaml:"dev_log_codes"`
+			// Secret keys the hashes of sign-in codes and the encryption of
+			// contacts in Redis. Every server instance must use the same
+			// secret, and it is required in release mode.
+			Secret string `yaml:"secret"`
+			// ContactRequestsPerHour bounds the codes issued to one contact.
+			ContactRequestsPerHour int `yaml:"contact_requests_per_hour"`
+			// ContactAttemptsPerHour bounds the verification attempts for
+			// one contact across all of its codes.
+			ContactAttemptsPerHour int `yaml:"contact_attempts_per_hour"`
 		} `yaml:"auth"`
 	} `yaml:"otp"`
 
@@ -518,6 +527,9 @@ func overlayEnvVars() {
 
 	if v := os.Getenv("JWT_ISSUER"); v != "" {
 		Config.JWT.Issuer = v
+	}
+	if v := os.Getenv("OTP_SECRET"); v != "" {
+		Config.OTP.Auth.Secret = v
 	}
 
 	if v := os.Getenv("BINANCE_API_KEY"); v != "" {

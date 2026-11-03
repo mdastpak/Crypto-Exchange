@@ -1,34 +1,11 @@
 package public
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
-
-func TestGenerateOTP_ReturnsRequestedDigits(t *testing.T) {
-	for _, length := range []int{1, 6, 32} {
-		t.Run(fmt.Sprintf("length_%d", length), func(t *testing.T) {
-			otp := GenerateOTP(length)
-
-			assert.Len(t, otp, length)
-			for _, digit := range otp {
-				assert.Contains(t, "0123456789", string(digit))
-			}
-		})
-	}
-}
-
-func TestGenerateOTP_ProducesDifferentValues(t *testing.T) {
-	values := make(map[string]struct{})
-	for i := 0; i < 20; i++ {
-		values[GenerateOTP(12)] = struct{}{}
-	}
-
-	assert.Greater(t, len(values), 1)
-}
 
 func TestIdentifyInputType(t *testing.T) {
 	tests := []struct {

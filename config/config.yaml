@@ -61,6 +61,9 @@ otp:
     ttl_seconds: 60
     length: 6
     retry_limit: 3
+    secret: ""
+    contact_requests_per_hour: 5
+    contact_attempts_per_hour: 10
     dev_log_codes: false
 
 websocket:

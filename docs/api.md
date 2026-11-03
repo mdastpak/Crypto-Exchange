@@ -91,7 +91,10 @@ Response `200`:
 }
 ```
 
-Errors: `400` for a missing or invalid contact, `429` when the rate limit is exceeded.
+Errors:
+
+- `400`: missing or invalid contact
+- `429`: the rate limit is exceeded, the contact has received `otp.auth.contact_requests_per_hour` codes in the current hour (`Too many sign-in codes requested. Please try again later.`), or its verification attempts are used up (`Too many failed attempts. Please try again later.`). See [Sign-in limits](#sign-in-limits).
 
 ### `POST /public/auth/{uuid}`
 
@@ -122,11 +125,23 @@ The browser sends the cookie only to `/public/auth/*`, which covers the refresh 
 Errors:
 
 - `400`: invalid UUID or missing code
-- `401`: wrong or expired code
-- `429`: too many failed attempts (`otp.auth.retry_limit`)
-- `500`: the user could not be created or loaded. This currently includes disabled, deleted, and suspended accounts ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)).
+- `401`: wrong, expired, or already used code
+- `403`: the account is disabled, deleted, or suspended (`This account cannot sign in. Please contact support.`). The code was right, so no information is revealed to someone who does not control the contact.
+- `429`: the attempts of the code or of the contact are used up. See [Sign-in limits](#sign-in-limits).
+- `500`: the user could not be created or loaded, or the session could not be read
 
 The first successful verification for a contact creates the user. Each email address, mobile number, and username belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses and usernames are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
+
+### Sign-in limits
+
+These limits apply on top of the per-IP [rate limits](#rate-limiting):
+
+- A code is valid for `otp.auth.ttl_seconds` and signs in only once, even when it is sent in concurrent requests.
+- A code can be tried `otp.auth.retry_limit` times. Each attempt is counted before the code is checked, so concurrent requests cannot get more tries. After the last failed attempt, the code is erased and further attempts get `429` until the session expires.
+- Each email address or mobile number receives at most `otp.auth.contact_requests_per_hour` codes per hour. Email addresses are compared case-insensitively.
+- Each contact gets at most `otp.auth.contact_attempts_per_hour` attempts per hour across all of its codes, so requesting a new code does not bring new attempts. While they are used up, no new code is issued for the contact. A successful sign-in resets the count.
+
+Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by `otp.auth.secret`.
 
 ### `POST /public/auth/refresh`
 

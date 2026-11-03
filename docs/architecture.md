@@ -35,6 +35,7 @@ flowchart TB
 | `internal/auth` | RS256 JWT issuing and verification, key registry for rotation, Redis-backed token blacklist, admin and user middleware |
 | `internal/db` | PostgreSQL connection with startup retries and migrations under an advisory lock, Redis client |
 | `internal/rabbitmq` | Connection, publisher confirms, automatic reconnect |
+| `internal/otp` | Sign-in codes: unbiased generation, Redis sessions with hashed codes and encrypted contacts, atomic attempt limits per code and per contact |
 | `internal/handlers/*` | HTTP and WebSocket handlers. They currently contain the business logic and SQL directly ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). |
 | `internal/middleware` | Security headers, CORS, Redis rate limiters, validation and recovery helpers |
 | `internal/domain/*` | Exchange domain model (asset, market, order, trade, balance, account, kyc, custody, shared). It is not used by handlers yet. |
@@ -87,8 +88,9 @@ Two models currently coexist: the legacy JSONB `currencies` and `users` tables u
 | Key pattern | Purpose | Lifetime |
 | --- | --- | --- |
 | `base_definitions:currency:<hk>` | Cached currency | 24 hours |
-| `otp:auth:<session-uuid>:<code>` | OTP session ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) removes the code from the key) | `otp.auth.ttl_seconds` |
-| `uuid_blacklist:<session-uuid>` | Failed OTP attempts | Up to 24 hours |
+| `otp:session:<session-uuid>` | Sign-in session: HMAC of the code, encrypted contact, contact ID, and attempt count. The code and the contact are erased when its attempts are used up. | `otp.auth.ttl_seconds` |
+| `otp:contact:<contact-id>:requests` | Codes issued to a contact in the current hour. The contact ID is an HMAC of the normalized contact. | 1 hour from the first code |
+| `otp:contact:<contact-id>:attempts` | Verification attempts for a contact in the current hour, across all of its codes | 1 hour from the first attempt, removed by a successful sign-in |
 | `blacklist:token:<sha256>` | Revoked access tokens | Until the token expires |
 | `ratelimit:<scope>:<key>` | Rate-limit buckets and counters | Window-dependent |
 

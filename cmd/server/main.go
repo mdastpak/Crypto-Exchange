@@ -25,6 +25,7 @@ import (
 	"encrypted-db/internal/middleware"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/notify"
+	"encrypted-db/internal/otp"
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -65,6 +66,13 @@ func main() {
 
 	if err := initAuthKeys(); err != nil {
 		log.Fatalf("Failed to initialize auth keys: %v", err)
+	}
+
+	if err := otp.SettingsFromConfig().Validate(gin.Mode() == gin.ReleaseMode); err != nil {
+		log.Fatalf("Invalid OTP configuration: %v", err)
+	}
+	if config.Config.OTP.Auth.Secret == "" {
+		log.Println("WARNING: otp.auth.secret is not set: using a random secret, so sign-in codes can only be verified by this process until it restarts")
 	}
 
 	otpSender, err := notify.NewOTPSender(config.Config.OTP.Auth.DevLogCodes, gin.Mode() == gin.ReleaseMode)
