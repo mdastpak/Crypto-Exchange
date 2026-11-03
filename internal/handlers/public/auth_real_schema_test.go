@@ -39,8 +39,13 @@ import (
 
 const realSchemaTestDBName = "testdb_public_real_schema"
 
+// realSchemaRedisDB is reserved for this file. The other suites use database 1
+// and flush it, which would delete this suite's OTP sessions if packages run
+// in parallel.
+const realSchemaRedisDB = 2
+
 // setupRealSchemaHandler migrates a dedicated database with the repository
-// migrations and returns a handler wired to it and to Redis database 1.
+// migrations and returns a handler wired to it and to Redis database 2.
 func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Client) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -80,7 +85,7 @@ func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Clien
 	require.NoError(t, err, "the repository migrations must apply to an empty database")
 	t.Cleanup(func() { postgresService.Close() })
 
-	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 1})
+	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: realSchemaRedisDB})
 	require.NoError(t, redisClient.Ping(context.Background()).Err())
 	t.Cleanup(func() {
 		redisClient.FlushDB(context.Background())
@@ -190,6 +195,27 @@ func TestCheckOrCreateUser_RealSchema_ReusesExistingUser(t *testing.T) {
 	assert.Equal(t, 1, countUsersWithContact(t, conn, "mobile", "09121234567"))
 }
 
+func TestCheckOrCreateUser_RealSchema_EmailAndUsernameIgnoreCase(t *testing.T) {
+	handler, _, _ := setupRealSchemaHandler(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		contactType, first, second string
+	}{
+		{"email", "Mixed.Case@Example.COM", "mixed.case@example.com"},
+		{"username", "Alice_2026", "alice_2026"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.contactType, func(t *testing.T) {
+			first, err := handler.checkOrCreateUser(ctx, tc.contactType, tc.first)
+			require.NoError(t, err)
+			second, err := handler.checkOrCreateUser(ctx, tc.contactType, tc.second)
+			require.NoError(t, err)
+			assert.Equal(t, first, second, "%q and %q must resolve to the same user", tc.first, tc.second)
+		})
+	}
+}
+
 func TestCheckOrCreateUser_RealSchema_ConcurrentFirstSignInCreatesOneUser(t *testing.T) {
 	handler, conn, _ := setupRealSchemaHandler(t)
 	const contact = "concurrent@example.com"
@@ -235,16 +261,26 @@ func TestUsersSchema_RealSchema_EnforcesContactRules(t *testing.T) {
 		return ""
 	}
 
-	for _, contactType := range []string{"email", "mobile", "username"} {
-		t.Run("unique "+contactType, func(t *testing.T) {
-			info := fmt.Sprintf(`{"contact": {%q: "duplicate-%s"}}`, contactType, contactType)
-			require.NoError(t, insert(info))
-			assert.Equal(t, "23505", pgCode(insert(info)), "a second user with the same %s must be rejected", contactType)
+	uniqueCases := []struct {
+		contactType, first, second string
+	}{
+		{"email", "duplicate@example.com", "duplicate@example.com"},
+		{"email", "Case@Example.com", "case@EXAMPLE.COM"},
+		{"mobile", "09120000000", "09120000000"},
+		{"username", "duplicate_user", "duplicate_user"},
+		{"username", "Case_User", "case_user"},
+	}
+	for _, tc := range uniqueCases {
+		t.Run(fmt.Sprintf("unique %s %s", tc.contactType, tc.second), func(t *testing.T) {
+			require.NoError(t, insert(fmt.Sprintf(`{"contact": {%q: %q}}`, tc.contactType, tc.first)))
+			err := insert(fmt.Sprintf(`{"contact": {%q: %q}}`, tc.contactType, tc.second))
+			assert.Equal(t, "23505", pgCode(err), "%q must conflict with %q", tc.second, tc.first)
 		})
 	}
 
-	t.Run("contact is required", func(t *testing.T) {
-		assert.Equal(t, "23514", pgCode(insert(`{}`)))
-		assert.Equal(t, "23514", pgCode(insert(`{"contact": "not-an-object"}`)))
-	})
+	for _, info := range []string{`{}`, `{"contact": "not-an-object"}`, `{"contact": null}`, `["contact"]`, `{"username": "legacy", "password": "x"}`} {
+		t.Run("rejects "+info, func(t *testing.T) {
+			assert.Equal(t, "23514", pgCode(insert(info)), "info %s has no contact object", info)
+		})
+	}
 }

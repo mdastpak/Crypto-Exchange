@@ -114,7 +114,7 @@ Errors:
 - `429`: too many failed attempts (`otp.auth.retry_limit`)
 - `500`: the user could not be created or loaded. This currently includes disabled, deleted, and suspended accounts ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)).
 
-The first successful verification for a contact creates the user. Each email address, mobile number, and username belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user.
+The first successful verification for a contact creates the user. Each email address, mobile number, and username belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses and usernames are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
 
 ### `POST /public/auth/refresh`
 
