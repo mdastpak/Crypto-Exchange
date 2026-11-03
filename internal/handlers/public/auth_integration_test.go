@@ -229,19 +229,19 @@ func (s *PublicHandlerTestSuite) TestRequestOTP_ValidMobile() {
 	assert.Equal(s.T(), "mobile", data["type"])
 }
 
-func (s *PublicHandlerTestSuite) TestRequestOTP_ValidUsername() {
+func (s *PublicHandlerTestSuite) TestRequestOTP_UsernameIsRejected() {
 	w := s.makeRequest(http.MethodPost, "/public/auth", map[string]string{
 		"username": "testuser123",
 	}, "")
 
-	assert.Equal(s.T(), http.StatusOK, w.Code)
+	// A code cannot be delivered to a username, so it cannot prove who is
+	// signing in.
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code)
 
 	var resp models.APIResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(s.T(), err)
-
-	data := resp.Info.(map[string]interface{})
-	assert.Equal(s.T(), "username", data["type"])
+	assert.Equal(s.T(), "Invalid contact information", resp.Message)
 }
 
 func (s *PublicHandlerTestSuite) TestRequestOTP_InvalidInput() {

@@ -68,6 +68,8 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-redis}
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - KAVENEGAR_API_KEY=${KAVENEGAR_API_KEY:-}
     ports:
       - "8080:8080"
     depends_on:

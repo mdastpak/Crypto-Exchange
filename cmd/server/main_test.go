@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"encrypted-db/config"
+	"encrypted-db/internal/notify"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -50,4 +51,44 @@ func TestNewEngine_RejectsInvalidProxyEntries(t *testing.T) {
 
 	_, err := newEngine()
 	assert.Error(t, err)
+}
+
+func withOTPDeliveryConfig(t *testing.T, devLogCodes bool) {
+	t.Helper()
+	saved := config.Config
+	t.Cleanup(func() { config.Config = saved })
+	config.Config.OTP.Auth.DevLogCodes = devLogCodes
+	config.Config.OTP.Auth.TTL = 60
+	config.Config.RabbitMQ.Exchanges.Notifications = "notifications"
+}
+
+func TestNewOTPDelivery_DevLogCodesWritesCodesToTheLog(t *testing.T) {
+	withOTPDeliveryConfig(t, true)
+	email := &notify.EmailDeliverer{}
+
+	sender, worker := newOTPDelivery(notify.Channels{Email: email}, nil)
+
+	assert.IsType(t, notify.DevLogSender{}, sender, "development logging replaces delivery")
+	assert.Nil(t, worker)
+}
+
+func TestNewOTPDelivery_WithoutChannelsRefusesSignIn(t *testing.T) {
+	withOTPDeliveryConfig(t, false)
+
+	sender, worker := newOTPDelivery(notify.Channels{}, nil)
+
+	assert.False(t, sender.Supports("email"), "sign-in must be refused rather than claim to send a code")
+	assert.False(t, sender.Supports("mobile"))
+	assert.Nil(t, worker, "there is nothing to deliver")
+}
+
+func TestNewOTPDelivery_QueuesCodesForTheConfiguredChannels(t *testing.T) {
+	withOTPDeliveryConfig(t, false)
+
+	sender, worker := newOTPDelivery(notify.Channels{Email: &notify.EmailDeliverer{}}, nil)
+
+	assert.IsType(t, &notify.QueueSender{}, sender)
+	assert.True(t, sender.Supports("email"))
+	assert.False(t, sender.Supports("mobile"), "mobile sign-in needs an SMS provider")
+	assert.NotNil(t, worker)
 }

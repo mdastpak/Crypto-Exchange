@@ -50,10 +50,15 @@ sequenceDiagram
     participant C as Client
     participant A as API
     participant R as Redis
+    participant Q as RabbitMQ
+    participant W as Delivery worker
     participant P as PostgreSQL
-    C->>A: POST /public/auth {username}
+    C->>A: POST /public/auth {username: email or mobile}
     A->>R: Store OTP session (TTL = otp.auth.ttl_seconds)
+    A->>Q: Queue the code on the notifications exchange
     A-->>C: 200 {type, username (masked), uuid}
+    Q->>W: Deliver the job
+    W-->>C: Email (SMTP) or SMS (Kavenegar)
     C->>A: POST /public/auth/{uuid} {otp}
     A->>R: Verify the code and count failed attempts
     A->>P: Find or create the user by contact, create a session
@@ -63,7 +68,7 @@ sequenceDiagram
     A-->>C: 200 {access_token} and Set-Cookie with the new refresh_token
 ```
 
-Codes are not delivered by email or SMS yet ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)). For local development, `otp.auth.dev_log_codes` writes them to the server log (see [configuration.md](configuration.md#otp)). Codes and raw contacts are never logged otherwise.
+Codes are queued and delivered in the background: by email when the contact is an email address, and by SMS when it is a mobile number. Delivery is retried while the code is valid. A `200` response therefore means that the code was queued, not that it has arrived. [configuration.md](configuration.md#notifications) describes the channels. For local development, `otp.auth.dev_log_codes` writes codes to the server log instead (see [configuration.md](configuration.md#otp)). Codes and raw contacts are never logged otherwise.
 
 ### `POST /public/auth`
 
@@ -73,13 +78,14 @@ Requests an OTP.
 { "username": "user@example.com" }
 ```
 
-`username` accepts one of the following:
+The `username` field holds the contact that receives the code, as one of the following:
 
-| Contact type | Format |
-| --- | --- |
-| `email` | A standard email address |
-| `mobile` | An Iranian mobile number: `09` followed by 9 digits |
-| `username` | 6 to 20 characters of `A-Z`, `a-z`, `0-9`, and `_`. It must not start with a digit or `_` and must not contain `__`. |
+| Contact type | Format | Delivered by |
+| --- | --- | --- |
+| `email` | A standard email address | Email (`notifications.email`) |
+| `mobile` | An Iranian mobile number: `09` followed by 9 digits | SMS (`notifications.sms`) |
+
+Usernames are not accepted, because a code cannot be delivered to a username, so it cannot prove who is signing in.
 
 Response `200`:
 
@@ -91,7 +97,11 @@ Response `200`:
 }
 ```
 
-Errors: `400` for a missing or invalid contact, `429` when the rate limit is exceeded.
+Errors:
+
+- `400`: missing or invalid contact (`Invalid contact information`), or a contact type whose channel is not configured on the server, for example `Sign-in by mobile is not available`
+- `429`: the rate limit is exceeded
+- `500`: the code could not be stored or queued (`Failed to send OTP`)
 
 ### `POST /public/auth/{uuid}`
 
@@ -126,7 +136,7 @@ Errors:
 - `429`: too many failed attempts (`otp.auth.retry_limit`)
 - `500`: the user could not be created or loaded. This currently includes disabled, deleted, and suspended accounts ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)).
 
-The first successful verification for a contact creates the user. Each email address, mobile number, and username belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses and usernames are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
+The first successful verification for a contact creates the user. Each email address and mobile number belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
 
 ### `POST /public/auth/refresh`
 

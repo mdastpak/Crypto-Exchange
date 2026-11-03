@@ -131,6 +131,8 @@ type Configuration struct {
 		} `yaml:"auth"`
 	} `yaml:"otp"`
 
+	Notifications NotificationsConfig `yaml:"notifications"`
+
 	WebSocket struct {
 		AllowedOrigins []string `yaml:"allowed_origins"`
 		PingInterval   int      `yaml:"ping_interval_seconds"`
@@ -237,6 +239,59 @@ type Configuration struct {
 			OTPRequestsPerHour     int `yaml:"otp_requests_per_hour"`
 		} `yaml:"auth"`
 	} `yaml:"rate_limits"`
+}
+
+// NotificationsConfig configures how messages such as sign-in codes reach
+// users. A channel without configuration is disabled.
+type NotificationsConfig struct {
+	Email EmailConfig `yaml:"email"`
+	SMS   SMSConfig   `yaml:"sms"`
+	// Worker configures the consumer that delivers queued messages.
+	Worker struct {
+		// Concurrency is the number of messages delivered in parallel.
+		Concurrency int `yaml:"concurrency"`
+		// MaxAttempts bounds the delivery attempts per message. A message is
+		// also given up once its sign-in code expires.
+		MaxAttempts int `yaml:"max_attempts"`
+	} `yaml:"worker"`
+}
+
+// EmailConfig configures delivery by SMTP. Email is disabled when Host is empty.
+type EmailConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	// From is the sender address, optionally with a display name.
+	From string `yaml:"from"`
+	// ImplicitTLS connects with TLS from the start (usually port 465).
+	// Otherwise the connection is upgraded with STARTTLS, which is required
+	// before credentials are sent to any host other than localhost.
+	ImplicitTLS bool `yaml:"implicit_tls"`
+	Timeout     int  `yaml:"timeout_seconds"`
+	// OTPSubject and OTPBody are Go text/template templates for sign-in code
+	// emails. They can use {{.Code}} and {{.TTLSeconds}}.
+	OTPSubject string `yaml:"otp_subject"`
+	OTPBody    string `yaml:"otp_body"`
+}
+
+// SMSConfig selects and configures the SMS provider. SMS is disabled when
+// Provider is empty.
+type SMSConfig struct {
+	// Provider is "kavenegar" or empty.
+	Provider  string          `yaml:"provider"`
+	Kavenegar KavenegarConfig `yaml:"kavenegar"`
+}
+
+// KavenegarConfig configures the Kavenegar verify lookup API.
+type KavenegarConfig struct {
+	APIKey string `yaml:"api_key"`
+	// OTPTemplate is the name of a verify template approved in the Kavenegar
+	// panel. Its %token placeholder receives the sign-in code, so the
+	// message text and its language are defined in the panel.
+	OTPTemplate string `yaml:"otp_template"`
+	BaseURL     string `yaml:"base_url"`
+	Timeout     int    `yaml:"timeout_seconds"`
 }
 
 // PriceProviderConfig holds configuration for a price data provider
@@ -397,6 +452,8 @@ func setDefaults() {
 		Config.Redis.ConnectRetryDelayMs = 500
 	}
 
+	setNotificationDefaults(&Config.Notifications)
+
 	if Config.WebSocket.PingInterval == 0 {
 		Config.WebSocket.PingInterval = 30
 	}
@@ -476,6 +533,42 @@ func setDefaults() {
 	}
 }
 
+// DefaultOTPEmailSubject and DefaultOTPEmailBody are used when the
+// configuration does not define the sign-in code email.
+const (
+	DefaultOTPEmailSubject = "Your sign-in code"
+	DefaultOTPEmailBody    = "Your sign-in code is {{.Code}}. It expires in {{.TTLSeconds}} seconds.\n\n" +
+		"If you did not request this code, you can ignore this email. Never share it with anyone.\n"
+	DefaultKavenegarBaseURL = "https://api.kavenegar.com"
+)
+
+func setNotificationDefaults(n *NotificationsConfig) {
+	if n.Email.Port == 0 {
+		n.Email.Port = 587
+	}
+	if n.Email.Timeout == 0 {
+		n.Email.Timeout = 10
+	}
+	if n.Email.OTPSubject == "" {
+		n.Email.OTPSubject = DefaultOTPEmailSubject
+	}
+	if n.Email.OTPBody == "" {
+		n.Email.OTPBody = DefaultOTPEmailBody
+	}
+	if n.SMS.Kavenegar.BaseURL == "" {
+		n.SMS.Kavenegar.BaseURL = DefaultKavenegarBaseURL
+	}
+	if n.SMS.Kavenegar.Timeout == 0 {
+		n.SMS.Kavenegar.Timeout = 10
+	}
+	if n.Worker.Concurrency == 0 {
+		n.Worker.Concurrency = 4
+	}
+	if n.Worker.MaxAttempts == 0 {
+		n.Worker.MaxAttempts = 3
+	}
+}
+
 func overlayEnvVars() {
 	if v := os.Getenv("POSTGRES_PASSWORD"); v != "" {
 		Config.Postgres.Password = v
@@ -518,6 +611,13 @@ func overlayEnvVars() {
 
 	if v := os.Getenv("JWT_ISSUER"); v != "" {
 		Config.JWT.Issuer = v
+	}
+
+	if v := os.Getenv("SMTP_PASSWORD"); v != "" {
+		Config.Notifications.Email.Password = v
+	}
+	if v := os.Getenv("KAVENEGAR_API_KEY"); v != "" {
+		Config.Notifications.SMS.Kavenegar.APIKey = v
 	}
 
 	if v := os.Getenv("BINANCE_API_KEY"); v != "" {

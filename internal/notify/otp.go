@@ -7,22 +7,36 @@ import (
 	"log"
 )
 
+// Contact types that sign-in codes can be delivered to.
+const (
+	ContactEmail  = "email"
+	ContactMobile = "mobile"
+)
+
 // OTPMessage is a one-time sign-in code addressed to a contact.
 type OTPMessage struct {
-	ContactType   string // "email", "mobile" or "username"
+	ContactType   string // ContactEmail or ContactMobile
 	Contact       string // the raw address; never log it
 	MaskedContact string // safe to log
 	Code          string // never log it outside development
 }
 
-// OTPSender delivers sign-in codes. Email and SMS providers are tracked in #14.
+// OTPSender delivers sign-in codes.
 type OTPSender interface {
+	// Supports reports whether codes can be delivered to contacts of
+	// contactType, so that a request can be refused before a code is issued.
+	Supports(contactType string) bool
 	SendOTP(ctx context.Context, msg OTPMessage) error
 }
 
-// DiscardSender drops codes. It is the default until a delivery provider is
-// configured.
+func knownContactType(contactType string) bool {
+	return contactType == ContactEmail || contactType == ContactMobile
+}
+
+// DiscardSender drops codes. Tests use it when they read codes from Redis.
 type DiscardSender struct{}
+
+func (DiscardSender) Supports(contactType string) bool { return knownContactType(contactType) }
 
 func (DiscardSender) SendOTP(ctx context.Context, msg OTPMessage) error { return nil }
 
@@ -33,6 +47,8 @@ type DevLogSender struct {
 	Logger *log.Logger
 }
 
+func (DevLogSender) Supports(contactType string) bool { return knownContactType(contactType) }
+
 func (s DevLogSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 	s.Logger.Printf("DEVELOPMENT ONLY: sign-in code for %s %s: %s", msg.ContactType, msg.MaskedContact, msg.Code)
 	return nil
@@ -42,13 +58,10 @@ func (s DevLogSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 // in release mode.
 var ErrDevLogCodesInRelease = errors.New("otp.auth.dev_log_codes must not be enabled in release mode: it writes sign-in codes to the log")
 
-// NewOTPSender returns the sender selected by the configuration.
-func NewOTPSender(devLogCodes, releaseMode bool) (OTPSender, error) {
-	if !devLogCodes {
-		return DiscardSender{}, nil
+// CheckDevLogCodes refuses development code logging in release mode.
+func CheckDevLogCodes(devLogCodes, releaseMode bool) error {
+	if devLogCodes && releaseMode {
+		return ErrDevLogCodesInRelease
 	}
-	if releaseMode {
-		return nil, ErrDevLogCodesInRelease
-	}
-	return DevLogSender{Logger: log.Default()}, nil
+	return nil
 }
