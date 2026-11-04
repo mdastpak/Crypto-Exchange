@@ -80,7 +80,7 @@ func TestAuthRateLimit_SpoofedForwardedForDoesNotBypassTheLimit(t *testing.T) {
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
 	rl := NewRateLimiter(&db.RedisService{Client: client})
-	engine.POST("/public/auth", rl.AuthRateLimit("login"), func(c *gin.Context) { c.Status(http.StatusOK) })
+	engine.POST("/public/auth", rl.AuthRateLimit(AuthLogin), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	codes := make([]int, 0, 6)
 	for i := 0; i < 6; i++ {

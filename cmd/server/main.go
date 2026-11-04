@@ -416,13 +416,14 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		systemGroup.GET("/ping", ih.System.PingPongHandler)
 	}
 
+	// Public routes fall under the REST limit. Sign-in adds limits of its own:
+	// code requests per hour and code verifications per minute.
 	publicGroup := r.Group("/public")
-	publicGroup.Use(rl.AuthRateLimit("login"))
 	{
 		publicGroup.GET("/currencies", ih.Public.GetActiveCurrencies)
 		publicGroup.GET("/currencies/:hk", ih.Public.GetCurrencyByHK)
-		publicGroup.POST("/auth", ih.Public.RequestOTP)
-		publicGroup.POST("/auth/:uuid", ih.Public.VerifyOTP)
+		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), ih.Public.RequestOTP)
+		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.VerifyOTP)
 		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
 		// here too, behind the same authentication as /user/logout.
@@ -434,10 +435,9 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	// Admin sign-in is public, rate-limited like user sign-in, and separate
 	// from the admin group, which requires an admin token.
 	adminAuthGroup := r.Group("/admin/auth")
-	adminAuthGroup.Use(rl.AuthRateLimit("login"))
 	{
-		adminAuthGroup.POST("", ih.Admin.RequestSignIn)
-		adminAuthGroup.POST("/:uuid", ih.Admin.VerifySignIn)
+		adminAuthGroup.POST("", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.RequestSignIn)
+		adminAuthGroup.POST("/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Admin.VerifySignIn)
 	}
 
 	adminGroup := r.Group("/admin")

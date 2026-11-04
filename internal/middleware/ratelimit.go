@@ -38,27 +38,35 @@ func (rl *RateLimiter) TradingRateLimit() gin.HandlerFunc {
 	return rl.tokenBucketMiddleware("trading", cfg.OrdersPerSecond, cfg.Burst, rl.getUserID)
 }
 
-func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
+// Authentication limits, for AuthRateLimit.
+const (
+	// AuthLogin limits sign-in code verifications, per minute.
+	AuthLogin = "login"
+	// AuthOTP limits sign-in code requests, per hour.
+	AuthOTP = "otp"
+)
+
+// authLimit returns the configured limit of an authentication action and the
+// window it is counted in.
+func authLimit(action string) (int, time.Duration) {
 	cfg := config.Config.RateLimits.Auth
-	var limit, burst int
-	var keyPrefix string
-
 	switch action {
-	case "login":
-		keyPrefix = "auth:login"
-		limit = cfg.LoginAttemptsPerMinute
-		burst = cfg.LoginAttemptsPerMinute
-	case "otp":
-		keyPrefix = "auth:otp"
-		limit = cfg.OTPRequestsPerHour
-		burst = cfg.OTPRequestsPerHour
-	default:
-		keyPrefix = "auth:default"
-		limit = 10
-		burst = 10
+	case AuthLogin:
+		return cfg.LoginAttemptsPerMinute, time.Minute
+	case AuthOTP:
+		return cfg.OTPRequestsPerHour, time.Hour
 	}
+	panic(fmt.Sprintf("unknown authentication rate limit %q", action))
+}
 
-	return rl.fixedWindowMiddleware(keyPrefix, limit, burst, time.Minute, rl.getClientIP)
+// AuthRateLimit limits an authentication route per client IP, in the window
+// of the action. Each route counts separately, so that, for example, user
+// sign-in traffic cannot use up the budget of admin sign-in.
+func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
+	limit, window := authLimit(action)
+	return rl.fixedWindowMiddleware("auth:"+action, limit, limit, window, func(c *gin.Context) string {
+		return c.FullPath() + ":" + rl.getClientIP(c)
+	})
 }
 
 func (rl *RateLimiter) tokenBucketMiddleware(prefix string, rate, burst int, keyFunc func(*gin.Context) string) gin.HandlerFunc {

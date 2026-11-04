@@ -176,8 +176,10 @@ Writing to the database is not enough to create an administrator: changing `user
 | `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route except `/` and `/swagger/*` ([#32](https://github.com/mdastpak/Crypto-Exchange/issues/32)), as a token bucket per client IP |
 | `ws.messages_per_second`, `ws.burst` | `50`, `100` | The WebSocket upgrade request |
 | `trading.orders_per_second`, `trading.burst` | `10`, `20` | `/admin/*` and `/user/*` |
-| `auth.login_attempts_per_minute` | `5` | Every `/public/*` route ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)). This is not a fixed window: every request, including a rejected one, restarts the counter's one-minute expiry, so a blocked client is only allowed again after a full minute without requests ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)). |
-| `auth.otp_requests_per_hour` | `10` | Parsed, but not applied yet |
+| `auth.login_attempts_per_minute` | `5` | Sign-in code verifications: `POST /public/auth/{uuid}` and `POST /admin/auth/{uuid}`, per client IP and route |
+| `auth.otp_requests_per_hour` | `10` | Sign-in code requests: `POST /public/auth` and `POST /admin/auth`, per client IP and route |
+
+The two `auth` limits are counted in a window of one minute and one hour. User and admin sign-in count separately, and the other `/public/*` routes, such as the currency reads, are only subject to the `rest` limit. The windows are not fixed yet: every request, including a rejected one, restarts the counter's expiry, so a blocked client is only allowed again after a full window without requests ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)).
 
 ## Settings reserved for roadmap features
 
