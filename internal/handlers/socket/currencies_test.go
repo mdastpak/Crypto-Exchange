@@ -76,6 +76,10 @@ func newBrokerHandler(t *testing.T) (*WebSocketHandler, *Client) {
 	h.Clients[client] = true
 	h.Mu.Unlock()
 	t.Cleanup(func() {
+		// The test client has no connection for Shutdown to close.
+		h.Mu.Lock()
+		delete(h.Clients, client)
+		h.Mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		assert.NoError(t, h.Shutdown(ctx))
