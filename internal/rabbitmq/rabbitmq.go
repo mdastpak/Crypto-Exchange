@@ -445,6 +445,10 @@ func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string)
 // waitForChannel returns the publishing channel, waiting up to channelWait
 // while the supervisor restores it.
 func (r *RabbitMQService) waitForChannel(ctx context.Context) (*amqp.Channel, error) {
+	if r.stop == nil {
+		// Never connected, so no supervisor will ever provide a channel.
+		return nil, errChannelUnavailable
+	}
 	timer := time.NewTimer(channelWait)
 	defer timer.Stop()
 	for {

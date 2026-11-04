@@ -151,10 +151,21 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
+	// The row is locked from the read to the write, so that concurrent
+	// partial updates of one currency are applied one after the other
+	// instead of overwriting each other's fields.
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("Error starting a currency update: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update currency due to an unexpected error.", nil)
+		return
+	}
+	defer tx.Rollback()
+
 	var currentStatus string
 	var infoData []byte
-	err = h.PostgresDB.DB.QueryRowContext(ctx,
-		"SELECT status, info FROM currencies WHERE hk = $1 AND deleted_at IS NULL", hk,
+	err = tx.QueryRowContext(ctx,
+		"SELECT status, info FROM currencies WHERE hk = $1 AND deleted_at IS NULL FOR UPDATE", hk,
 	).Scan(&currentStatus, &infoData)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -188,10 +199,13 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
-	_, err = h.PostgresDB.DB.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		"UPDATE currencies SET status=$1, info=$2::jsonb, updated_at=NOW() WHERE hk=$3 AND deleted_at IS NULL",
 		currentStatus, infoJSON, hk,
 	)
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
 		sendCurrencyWriteError(c, err, "update")
 		return

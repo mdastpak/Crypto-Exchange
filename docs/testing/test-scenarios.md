@@ -250,7 +250,7 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 | D-13 | P1 / integration | RabbitMQ publish fails after DB/cache commit | Event is retried or reconciled; client receives a documented result | **Gap:** publish errors are only logged |
 | D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes for the query, but does not clean stale keys |
 | D-15 | P1 / integration | `CleanupBaseDefinitions` runs with unrelated Redis keys | Only `base_definitions:currency:*` keys are deleted | Passes; verify cursor completion |
-| D-16 | P1 / concurrency | Two updates target the same HK concurrently | Final DB/cache state is deterministic and no event is lost | No version/idempotency contract is visible |
+| D-16 | P1 / concurrency | Two updates target the same HK concurrently | Final DB/cache state is deterministic and no change is lost | Passes for the database: the row is locked from read to write ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)). Event ordering is not guaranteed yet. |
 
 ---
 

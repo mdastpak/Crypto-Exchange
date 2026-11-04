@@ -547,3 +547,49 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyRequests_RejectMalformedBodies() 
 		}
 	}
 }
+
+// TestUpdateCurrency_ConcurrentUpdatesKeepEachOthersFields holds the row lock
+// in a transaction, as a concurrent update would, while the handler updates
+// another field. The handler must wait and apply its change on top of the
+// committed one instead of overwriting it with the row it read before.
+func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ConcurrentUpdatesKeepEachOthersFields() {
+	hk := s.createCurrency("LTC", "")
+	ctx := context.Background()
+
+	tx, err := s.postgresSvc.DB.BeginTx(ctx, nil)
+	require.NoError(s.T(), err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`SELECT 1 FROM currencies WHERE hk = $1 FOR UPDATE`, hk)
+	require.NoError(s.T(), err)
+
+	done := make(chan int, 1)
+	go func() {
+		w := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{
+			"info": map[string]interface{}{"fa_name": "Litecoin (new Persian name)"},
+		})
+		done <- w.Code
+	}()
+
+	// The handler must still be waiting for the lock.
+	select {
+	case code := <-done:
+		s.T().Fatalf("the update finished with %d while the row was locked", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+	_, err = tx.Exec(`UPDATE currencies SET info = jsonb_set(info, '{en_name}', '"Litecoin"') WHERE hk = $1`, hk)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), tx.Commit())
+
+	select {
+	case code := <-done:
+		require.Equal(s.T(), http.StatusOK, code)
+	case <-time.After(10 * time.Second):
+		s.T().Fatal("the update did not finish after the lock was released")
+	}
+	var infoData []byte
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT info FROM currencies WHERE hk = $1", hk).Scan(&infoData))
+	var info models.CurrencyInfo
+	require.NoError(s.T(), json.Unmarshal(infoData, &info))
+	assert.Equal(s.T(), "Litecoin", info.EnName, "the concurrent change must not be lost")
+	assert.Equal(s.T(), "Litecoin (new Persian name)", info.FaName)
+}
