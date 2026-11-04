@@ -173,25 +173,32 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := handlers.Socket.Shutdown(shutdownCtx); err != nil {
+	if err := shutdown(shutdownCtx, srv, handlers, otpWorker); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+	log.Println("Server stopped gracefully")
+}
+
+// shutdown stops this instance: its WebSocket clients, its HTTP server, and
+// its OTP delivery worker. It leaves the shared state in Redis, such as the
+// currency cache, untouched, because the other instances keep serving from
+// it. The caller closes the services afterwards.
+func shutdown(ctx context.Context, srv *http.Server, handlers *InfraHandlers, otpWorker *notify.Worker) error {
+	if err := handlers.Socket.Shutdown(ctx); err != nil {
 		log.Printf("Error during WebSocket shutdown: %v", err)
 	}
 
-	if err := handlers.Admin.CleanupBaseDefinitions(shutdownCtx); err != nil {
-		log.Printf("Error during cache cleanup: %v", err)
-	}
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	if err := srv.Shutdown(ctx); err != nil {
+		return err
 	}
 	// The worker publishes dead-letter records, so it stops before the
-	// deferred cleanup closes RabbitMQ.
+	// services, and RabbitMQ with them, are closed.
 	if otpWorker != nil {
-		if err := otpWorker.Stop(shutdownCtx); err != nil {
+		if err := otpWorker.Stop(ctx); err != nil {
 			log.Printf("Error while stopping the OTP delivery worker: %v", err)
 		}
 	}
-	log.Println("Server stopped gracefully")
+	return nil
 }
 
 // adminSignInKey decodes admin.totp_key. Without it, admin sign-in is

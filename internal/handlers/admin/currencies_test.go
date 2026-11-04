@@ -381,23 +381,82 @@ func (s *AdminCurrenciesTestSuite) TestAddAndDeleteCurrencyCache() {
 	assert.ErrorIs(s.T(), err, redis.Nil)
 }
 
-func (s *AdminCurrenciesTestSuite) TestCleanupBaseDefinitions_RemovesAllCurrencyKeys() {
+// cacheEntry writes a cache entry directly, as an older version or a failed
+// cache delete could have left it.
+func (s *AdminCurrenciesTestSuite) cacheEntry(c models.Currency) {
+	data, err := json.Marshal(c)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.redisClient.Set(context.Background(), currencyCachePrefix+c.HK, data, 0).Err())
+}
+
+// TestLoadAndCacheCurrencies_RemovesStaleEntriesOnly starts from a cache that
+// is out of date. Loading it brings it in line with the database without
+// clearing it: the public currency stays cached throughout, and unrelated
+// keys are not touched.
+func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_RemovesStaleEntriesOnly() {
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
-		key := fmt.Sprintf("base_definitions:currency:%d", i)
-		require.NoError(s.T(), s.redisClient.Set(ctx, key, "{}", 0).Err())
+	public := s.createCurrency("AAA", "")
+	s.update(public, map[string]interface{}{"status": "approved"})
+	s.cacheEntry(models.Currency{HK: public, Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "OLD"}})
+
+	// The database says pending, the cache approved.
+	pending := s.createCurrency("BBB", "")
+	s.cacheEntry(models.Currency{HK: pending, Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BBB"}})
+	// No such currency.
+	s.cacheEntry(models.Currency{HK: uuid.NewString(), Status: models.CurrencyStatusApproved})
+	// Keys that are not the canonical form of a UUID, some of which
+	// PostgreSQL would reject or accept as another spelling of the public
+	// currency.
+	for _, suffix := range []string{
+		"not-a-uuid",
+		"urn:uuid:" + public,
+		"{" + public + "}",
+		strings.ToUpper(public),
+		strings.ReplaceAll(public, "-", ""),
+	} {
+		require.NoError(s.T(), s.redisClient.Set(ctx, currencyCachePrefix+suffix, "{}", 0).Err())
 	}
 	require.NoError(s.T(), s.redisClient.Set(ctx, "unrelated:key", "keep-me", 0).Err())
 
-	require.NoError(s.T(), s.handler.CleanupBaseDefinitions(ctx))
+	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(ctx))
 
-	keys, err := s.redisClient.Keys(ctx, "base_definitions:currency:*").Result()
+	keys, err := s.redisClient.Keys(ctx, currencyCachePrefix+"*").Result()
 	require.NoError(s.T(), err)
-	assert.Empty(s.T(), keys)
-
+	assert.Equal(s.T(), []string{currencyCachePrefix + public}, keys)
+	val, err := s.redisClient.Get(ctx, currencyCachePrefix+public).Result()
+	require.NoError(s.T(), err)
+	assert.Contains(s.T(), val, `"symbol":"AAA"`, "the public entry is refreshed from the database")
 	stillThere, err := s.redisClient.Get(ctx, "unrelated:key").Result()
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), "keep-me", stillThere)
+}
+
+// Another instance may approve and cache a currency after this one read the
+// approved rows. Its entry is missing from the load but public in the
+// database, so it stays.
+func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_KeepsCurrenciesApprovedMeanwhile() {
+	hk := s.createCurrency("CCC", "")
+	s.update(hk, map[string]interface{}{"status": "approved"})
+
+	require.NoError(s.T(), s.handler.removeStaleCurrencies(context.Background(), map[string]bool{}))
+
+	assert.True(s.T(), s.isCached(hk))
+}
+
+// An entry that changed after it was found stale was written by another
+// instance in the meantime, so it is kept.
+func (s *AdminCurrenciesTestSuite) TestDeleteIfUnchanged_KeepsAChangedEntry() {
+	ctx := context.Background()
+	key := currencyCachePrefix + uuid.NewString()
+	require.NoError(s.T(), s.redisClient.Set(ctx, key, "new", 0).Err())
+
+	deleted, err := deleteIfUnchanged.Run(ctx, s.redisClient, []string{key}, "old").Int()
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), 0, deleted)
+
+	deleted, err = deleteIfUnchanged.Run(ctx, s.redisClient, []string{key}, "new").Int()
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), 1, deleted)
 }
 
 func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_OnlyCachesApprovedNonDeleted() {
@@ -712,11 +771,15 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_SameAfterARestart() {
 	before := visible()
 	assert.Equal(s.T(), map[string]bool{"approved": true, "pending": false, "suspended": false, "deleted": false}, before)
 
-	// A restart clears the cache and loads it from the database.
-	require.NoError(s.T(), s.handler.CleanupBaseDefinitions(context.Background()))
+	// A restart loads the cache again, also after Redis lost its data.
 	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(context.Background()))
-
 	assert.Equal(s.T(), before, visible(), "visibility must not change with a restart")
+
+	keys, err := s.redisClient.Keys(context.Background(), currencyCachePrefix+"*").Result()
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.redisClient.Del(context.Background(), keys...).Err())
+	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(context.Background()))
+	assert.Equal(s.T(), before, visible(), "visibility must not change with a restart on an empty cache")
 }
 
 // TestDeleteCurrency_WaitsForAConcurrentChange holds the row lock while it
