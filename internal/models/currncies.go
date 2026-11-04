@@ -20,3 +20,17 @@ type Currency struct {
 	UpdatedAt string       `json:"updated_at"`
 	DeletedAt *string      `json:"deleted_at,omitempty"`
 }
+
+// Currency statuses. Only approved currencies are public.
+const (
+	CurrencyStatusApproved = "approved"
+	CurrencyStatusPending  = "pending"
+	CurrencyStatusSuspend  = "suspend"
+	CurrencyStatusDeleted  = "deleted"
+)
+
+// IsPublic reports whether the currency may be shown to clients that are not
+// administrators: in public and user responses, and in WebSocket events.
+func (c Currency) IsPublic() bool {
+	return c.Status == CurrencyStatusApproved && c.DeletedAt == nil
+}

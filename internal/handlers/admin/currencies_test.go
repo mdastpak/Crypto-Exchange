@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,36 @@ type AdminCurrenciesTestSuite struct {
 	handler     *AdminHandler
 	postgresSvc *db.PostgresService
 	redisClient *redis.Client
+	events      *recordingPublisher
+}
+
+// recordingPublisher records the currency events instead of publishing them.
+type recordingPublisher struct {
+	mu     sync.Mutex
+	events []CurrencyEvent
+}
+
+func (p *recordingPublisher) Publish(ctx context.Context, exchange, message string) error {
+	var event CurrencyEvent
+	if err := json.Unmarshal([]byte(message), &event); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, event)
+	return nil
+}
+
+// take returns the recorded "action hk" pairs and forgets them.
+func (p *recordingPublisher) take() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	taken := make([]string, 0, len(p.events))
+	for _, e := range p.events {
+		taken = append(taken, e.Action+" "+e.HK)
+	}
+	p.events = nil
+	return taken
 }
 
 func (s *AdminCurrenciesTestSuite) SetupSuite() {
@@ -103,6 +134,8 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 		RabbitMQ: &rabbitmq.RabbitMQService{},
 	}
 	s.handler = NewHandler(services)
+	s.events = &recordingPublisher{}
+	s.handler.Events = s.events
 
 	s.router = gin.New()
 	s.router.POST("/currencies", s.handler.CreateCurrency)
@@ -165,7 +198,9 @@ func (s *AdminCurrenciesTestSuite) createCurrency(symbol, contract string) strin
 }
 
 func (s *AdminCurrenciesTestSuite) TestCreateCurrency_Success() {
-	w := s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("BTC", "native-btc"))
+	payload := sampleCurrencyPayload("BTC", "native-btc")
+	payload["status"] = "approved"
+	w := s.makeRequest(http.MethodPost, "/currencies", payload)
 
 	assert.Equal(s.T(), http.StatusCreated, w.Code)
 
@@ -177,7 +212,7 @@ func (s *AdminCurrenciesTestSuite) TestCreateCurrency_Success() {
 	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'BTC'").Scan(&count))
 	assert.Equal(s.T(), 1, count)
 
-	// The handler caches the currency in Redis under its generated hk.
+	// An approved currency is cached in Redis under its generated hk.
 	var hk string
 	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = 'BTC'").Scan(&hk))
 	val, err := s.redisClient.Get(context.Background(), fmt.Sprintf("base_definitions:currency:%s", hk)).Result()
@@ -592,4 +627,94 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ConcurrentUpdatesKeepEachO
 	require.NoError(s.T(), json.Unmarshal(infoData, &info))
 	assert.Equal(s.T(), "Litecoin", info.EnName, "the concurrent change must not be lost")
 	assert.Equal(s.T(), "Litecoin (new Persian name)", info.FaName)
+}
+
+// isCached reports whether the currency is in the cache that public and user
+// responses read.
+func (s *AdminCurrenciesTestSuite) isCached(hk string) bool {
+	n, err := s.redisClient.Exists(context.Background(), "base_definitions:currency:"+hk).Result()
+	require.NoError(s.T(), err)
+	return n == 1
+}
+
+func (s *AdminCurrenciesTestSuite) update(hk string, body map[string]interface{}) {
+	s.T().Helper()
+	w := s.makeRequest(http.MethodPut, "/currencies/"+hk, body)
+	require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+}
+
+// TestCurrencyVisibility_FollowsStatusTransitions walks one currency through
+// every status and checks what public clients can see after each step: the
+// cache and the events.
+func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_FollowsStatusTransitions() {
+	hk := s.createCurrency("NEAR", "")
+	assert.False(s.T(), s.isCached(hk), "a pending currency must not be public")
+	assert.Empty(s.T(), s.events.take(), "a hidden currency must not be announced")
+
+	steps := []struct {
+		name   string
+		body   map[string]interface{}
+		cached bool
+		events []string
+	}{
+		{"approve", map[string]interface{}{"status": "approved"}, true, []string{"create " + hk}},
+		{"edit while approved", map[string]interface{}{"info": map[string]interface{}{"en_name": "Near"}}, true, []string{"update " + hk}},
+		{"suspend", map[string]interface{}{"status": "suspend"}, false, []string{"delete " + hk}},
+		{"edit while suspended", map[string]interface{}{"info": map[string]interface{}{"en_name": "NEAR"}}, false, []string{}},
+		{"approve again", map[string]interface{}{"status": "approved"}, true, []string{"create " + hk}},
+		{"back to pending", map[string]interface{}{"status": "pending"}, false, []string{"delete " + hk}},
+		{"pending to suspended", map[string]interface{}{"status": "suspend"}, false, []string{}},
+	}
+	for _, step := range steps {
+		s.update(hk, step.body)
+		assert.Equal(s.T(), step.cached, s.isCached(hk), step.name)
+		assert.Equal(s.T(), step.events, s.events.take(), step.name)
+	}
+
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	s.events.take()
+	w := s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	assert.False(s.T(), s.isCached(hk))
+	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "deleting a public currency removes it from public view")
+}
+
+func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_HiddenCurrenciesStayUnannounced() {
+	payload := sampleCurrencyPayload("ALGO", "")
+	payload["status"] = "suspend"
+	require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", payload).Code)
+	var hk string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = 'ALGO'").Scan(&hk))
+
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+
+	assert.Empty(s.T(), s.events.take(), "creating and deleting a hidden currency must not reach WebSocket clients")
+	assert.False(s.T(), s.isCached(hk))
+}
+
+func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_SameAfterARestart() {
+	approved := s.createCurrency("ATOM", "")
+	s.update(approved, map[string]interface{}{"status": "approved"})
+	pending := s.createCurrency("AVAX", "")
+	suspended := s.createCurrency("FIL", "")
+	s.update(suspended, map[string]interface{}{"status": "approved"})
+	s.update(suspended, map[string]interface{}{"status": "suspend"})
+	deleted := s.createCurrency("ETC", "")
+	s.update(deleted, map[string]interface{}{"status": "approved"})
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+deleted, nil).Code)
+
+	visible := func() map[string]bool {
+		return map[string]bool{
+			"approved": s.isCached(approved), "pending": s.isCached(pending),
+			"suspended": s.isCached(suspended), "deleted": s.isCached(deleted),
+		}
+	}
+	before := visible()
+	assert.Equal(s.T(), map[string]bool{"approved": true, "pending": false, "suspended": false, "deleted": false}, before)
+
+	// A restart clears the cache and loads it from the database.
+	require.NoError(s.T(), s.handler.CleanupBaseDefinitions(context.Background()))
+	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(context.Background()))
+
+	assert.Equal(s.T(), before, visible(), "visibility must not change with a restart")
 }
