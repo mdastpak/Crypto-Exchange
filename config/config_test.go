@@ -87,6 +87,7 @@ func TestSetDefaults_FillsZeroValues(t *testing.T) {
 	assert.Equal(t, 10, Config.Server.WriteTimeout)
 	assert.Equal(t, 120, Config.Server.IdleTimeout)
 	assert.Equal(t, "debug", Config.Server.Mode)
+	assert.Equal(t, DefaultJWTIssuer, Config.JWT.Issuer, "tokens are always checked for an issuer")
 
 	assert.Equal(t, 25, Config.Postgres.MaxOpenConns)
 	assert.Equal(t, 5, Config.Postgres.MaxIdleConns)

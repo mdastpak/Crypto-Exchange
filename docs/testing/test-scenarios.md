@@ -84,7 +84,7 @@ base_definitions:currency:44444444-4444-4444-4444-444444444444
 blacklist:token:<sha256-of-token>
 ```
 
-The current middleware reads the JWT directly from `Authorization`; it does not remove a `Bearer ` prefix. Tests must cover both the current raw-token behavior and the target standard `Bearer <token>` behavior.
+Protected routes require `Authorization: Bearer <token>` since [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). A bare token is rejected with `401`. The scenarios below that say "raw" JWT send it with the `Bearer` scheme.
 
 ---
 
@@ -95,7 +95,7 @@ Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.
 > [!IMPORTANT]
 > **Two contracts in this section.** Every scenario except U-30 describes the current route, which returns the currency list. U-30 is the target contract, in which `/user/profile` returns the authenticated user's profile ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)). Do not automate both against the same route. Once #27 is implemented:
 >
-> - U-01 and U-02 keep their authentication setup (user and admin token) but assert the caller's profile, as U-30 does.
+> - U-01 keeps its user token but asserts the caller's profile, as U-30 does. U-02 still expects `401` for an admin token.
 > - U-03 to U-10, U-28, U-29, and U-31 to U-35 (authentication, CORS, and rate limiting) apply to the profile route unchanged.
 > - U-27 changes: #27 adds `PATCH /user/profile`, so only `POST`, `PUT`, and `DELETE` return `405`, and the `Allow` header lists both `GET` and `PATCH`.
 > - U-11 to U-26 (currency listing) move to the shared currency listing used by the public endpoint.
@@ -103,13 +103,13 @@ Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
 | U-01 | P0 / contract | Valid raw user JWT; Redis contains one approved currency | `200`; `status=200`; `info` contains exactly that currency | Passes when keys and Redis are initialized |
-| U-02 | P0 / contract | Valid raw admin JWT; one currency | `200`; admin is accepted by `JWTUserVerification` | Passes; document that admin is intentionally allowed |
-| U-03 | P0 / contract | Standard `Authorization: Bearer <valid-token>` | `200` after the header is normalized | **Gap:** current code sends the whole value to the JWT parser and returns `401` |
+| U-02 | P0 / contract | Valid admin JWT; one currency | `401`; user routes accept only tokens signed with a user key | Passes ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
+| U-03 | P0 / contract | Standard `Authorization: Bearer <valid-token>` | `200` | Passes ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)); a bare token gets `401` |
 | U-04 | P0 / contract | No `Authorization` header | `401`; message `Unauthorized - Token not provided`; handler not entered | Covered by middleware |
 | U-05 | P0 / contract | Malformed JWT | `401`; message `Unauthorized - Invalid token` | Covered by middleware |
 | U-06 | P0 / contract | Valid claims but expired `exp` | `401`; no currency read | Covered by JWT parser |
-| U-07 | P0 / contract | Valid JWT signed with a non-RSA algorithm | `401`; signing algorithm must not be accepted | Covered by `VerifyRSAToken` |
-| U-08 | P0 / contract | Valid JWT with role `system` | `403`; message `Forbidden - User access required` | Covered by role check |
+| U-07 | P0 / contract | Valid JWT signed with any algorithm other than RS256, including RS512 and HS256 keyed with the public key | `401`; signing algorithm must not be accepted | Covered by `ParseToken` |
+| U-08 | P0 / contract | Valid JWT with role `system` | `401`; message `Unauthorized - Invalid token` | Covered by `ParseToken`: the role must match the route ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
 | U-09 | P0 / contract | Valid JWT already present in the blacklist | `401`; message `Unauthorized - Token is blacklisted` | Requires a real Redis-backed test |
 | U-10 | P0 / contract | Blacklist Redis returns an error | `500`; message `Error checking blacklist`; handler not entered | Current behavior; verify no currency data is returned |
 | U-11 | P0 / contract | Empty Redis currency cache | `200`; `info` is an empty JSON array `[]` | **Gap:** a nil Go slice currently marshals as `null` |
@@ -223,7 +223,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 | A-23 | P0 / contract | Missing logout token | `401`; message `Unauthorized - Token not provided` | Passes |
 | A-24 | P0 / contract | Invalid logout token | `401`; message `Unauthorized - Invalid token` | Passes |
 | A-25 | P0 / contract | Blacklist Redis fails during logout | `500`; message `Failed to logout`; token is not silently considered logged out | Passes |
-| A-26 | P1 / contract | Old token after a configured key rotation | Verification uses the registered historical public key until retirement | **Gap:** admin/user middleware call `VerifyRSAToken`, not the rotation-aware verifier |
+| A-26 | P1 / contract | Old token after a configured key rotation | Verification uses the registered historical public key until retirement | Passes: `ParseToken` selects the key by `kid` and accepts `retired_public_keys` ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
 | A-27 | P0 / security | Two concurrent VerifyOTP requests use the same OTP | Exactly one succeeds; the second is rejected | Passes: only the request that deletes the session may sign in ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
 | A-28 | P1 / contract | Refresh cookie is set over plain HTTP in a browser test | Test explicitly records whether `Secure` prevents storage; production requires HTTPS | Current cookie is always `Secure=true` |
 
@@ -351,8 +351,8 @@ Status as of 2026-11-02. The tables after this one are the original findings, un
 | List handlers have no pagination or response cap | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) and [#53](https://github.com/mdastpak/Crypto-Exchange/issues/53) |
 | Redis has no database fallback | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |
 | Duplicate SCAN results are not deduplicated | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |
-| Standard Bearer header is not normalized | Open: [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17). Logout accepts the `Bearer` scheme since [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1). |
-| Key rotation verifier is not used by role middleware | Open: [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17) |
+| Standard Bearer header is not normalized | Fixed in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17): every protected route, including logout, requires the `Bearer` scheme |
+| Key rotation verifier is not used by role middleware | Fixed in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17): `ParseToken` selects the key by `kid`, including retired keys |
 | Swagger does not match actual responses | Open: [#54](https://github.com/mdastpak/Crypto-Exchange/issues/54) |
 | Cache and event failures are silently non-fatal | Open: [#89](https://github.com/mdastpak/Crypto-Exchange/issues/89) |
 | Global config and RSA keys make tests order-dependent | Open: [#48](https://github.com/mdastpak/Crypto-Exchange/issues/48) and [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37) |

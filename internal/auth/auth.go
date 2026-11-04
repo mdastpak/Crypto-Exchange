@@ -16,12 +16,17 @@ import (
 )
 
 var (
-	ErrInvalidToken      = errors.New("invalid token")
-	ErrTokenExpired      = errors.New("token expired")
-	ErrKeysNotLoaded     = errors.New("RSA keys not loaded")
-	ErrInvalidSigningAlg = errors.New("unexpected signing method")
-	ErrWrongTokenType    = errors.New("wrong token type")
+	ErrInvalidToken   = errors.New("invalid token")
+	ErrKeysNotLoaded  = errors.New("RSA keys not loaded")
+	ErrUnknownRole    = errors.New("unknown role")
+	ErrUnknownKeyID   = errors.New("unknown or missing key ID")
+	ErrWrongTokenType = errors.New("wrong token type")
+	ErrWrongRole      = errors.New("wrong role")
 )
+
+// signingMethod is the only accepted algorithm. Accepting any RS* or other
+// algorithm named by the token itself invites algorithm confusion.
+var signingMethod = jwt.SigningMethodRS256
 
 // Token types carried in the "typ" claim. Access tokens authorize API
 // requests; refresh tokens can only be exchanged for new tokens.
@@ -67,9 +72,12 @@ func RefreshTokenLifetime() time.Duration {
 	return time.Duration(config.Config.JWT.RefreshToken.Expiration) * time.Minute
 }
 
+// generateToken signs a token with the key of role. The "kid" header names
+// that key, and the audience names the role's API.
 func generateToken(userID, role, sessionID, tokenType string, lifetime time.Duration) (string, error) {
-	if !KeysLoaded() {
-		return "", ErrKeysNotLoaded
+	keys, err := keysFor(role)
+	if err != nil {
+		return "", err
 	}
 
 	now := time.Now()
@@ -84,12 +92,14 @@ func generateToken(userID, role, sessionID, tokenType string, lifetime time.Dura
 			ID:        uuid.NewString(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
 			Issuer:    config.Config.JWT.Issuer,
+			Audience:  jwt.ClaimStrings{audienceFor(role)},
 			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tokenString, err := token.SignedString(PrivateKey())
+	token := jwt.NewWithClaims(signingMethod, claims)
+	token.Header["kid"] = keys.signingKID
+	tokenString, err := token.SignedString(keys.signing)
 	if err != nil {
 		log.Printf("Error signing %s token: %v", tokenType, err)
 		return "", fmt.Errorf("failed to sign %s token: %w", tokenType, err)
@@ -98,50 +108,43 @@ func generateToken(userID, role, sessionID, tokenType string, lifetime time.Dura
 	return tokenString, nil
 }
 
-// VerifyRSAToken verifies the signature and expiry of a JWT, whatever its type.
-// Use VerifyAccessToken or VerifyRefreshToken to also require a token type.
-func VerifyRSAToken(tokenString string) (*Claims, error) {
-	if !KeysLoaded() {
-		return nil, ErrKeysNotLoaded
-	}
-
-	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, ErrInvalidSigningAlg
-		}
-		return PublicKey(), nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token: %w", err)
-	}
-
-	if !token.Valid {
-		return nil, ErrInvalidToken
-	}
-
-	return claims, nil
-}
-
-// VerifyAccessToken verifies a JWT and requires it to be an access token, so a
-// refresh token cannot be used to call the API.
-func VerifyAccessToken(tokenString string) (*Claims, error) {
-	return verifyTokenOfType(tokenString, TokenTypeAccess)
-}
-
-// VerifyRefreshToken verifies a JWT and requires it to be a refresh token.
-func VerifyRefreshToken(tokenString string) (*Claims, error) {
-	return verifyTokenOfType(tokenString, TokenTypeRefresh)
-}
-
-func verifyTokenOfType(tokenString, tokenType string) (*Claims, error) {
-	claims, err := VerifyRSAToken(tokenString)
+// ParseToken verifies tokenString and returns its claims. The token must be
+// signed with RS256 by a key of role, named by its "kid" header, and must
+// carry the configured issuer, the audience of role, an expiry in the
+// future, the role itself, and tokenType, so that a refresh token cannot call
+// the API and a user token cannot reach admin routes.
+func ParseToken(tokenString, role, tokenType string) (*Claims, error) {
+	keys, err := keysFor(role)
 	if err != nil {
 		return nil, err
 	}
+
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{signingMethod.Alg()}),
+		jwt.WithIssuer(config.Config.JWT.Issuer),
+		jwt.WithAudience(audienceFor(role)),
+		jwt.WithExpirationRequired(),
+	)
+	claims := &Claims{}
+	token, err := parser.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		kid, _ := token.Header["kid"].(string)
+		key, ok := keys.verifying[kid]
+		if !ok {
+			return nil, ErrUnknownKeyID
+		}
+		return key, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
+	}
+	if !token.Valid {
+		return nil, ErrInvalidToken
+	}
 	if claims.Type != tokenType {
 		return nil, ErrWrongTokenType
+	}
+	if claims.Role != role {
+		return nil, ErrWrongRole
 	}
 	return claims, nil
 }
@@ -150,7 +153,7 @@ func verifyTokenOfType(tokenString, tokenType string) (*Claims, error) {
 // and rotates the refresh token. A refresh token can be used only once:
 // presenting one that was already rotated revokes the whole session.
 func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
-	if !KeysLoaded() {
+	if !KeysLoaded(RoleUser) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to load RSA keys", nil)
 		return
 	}
@@ -161,7 +164,8 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 		return
 	}
 
-	claims, err := VerifyRefreshToken(refreshToken)
+	// Only users have refresh tokens and sessions.
+	claims, err := ParseToken(refreshToken, RoleUser, TokenTypeRefresh)
 	if err != nil || claims.SessionID == "" {
 		ClearRefreshTokenCookie(c)
 		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired refresh token", nil)
@@ -217,22 +221,4 @@ func SetRefreshTokenCookie(c *gin.Context, refreshToken string) {
 func ClearRefreshTokenCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(RefreshTokenCookie, "", -1, refreshTokenCookiePath, "", true, true)
-}
-
-// VerifyAdminToken verifies if the token is a valid access token with admin role.
-func VerifyAdminToken(tokenString string) bool {
-	claims, err := VerifyAccessToken(tokenString)
-	if err != nil {
-		return false
-	}
-	return claims.Role == "admin"
-}
-
-// VerifyUserToken verifies if the token is a valid access token with user role.
-func VerifyUserToken(tokenString string) bool {
-	claims, err := VerifyAccessToken(tokenString)
-	if err != nil {
-		return false
-	}
-	return claims.Role == "user"
 }

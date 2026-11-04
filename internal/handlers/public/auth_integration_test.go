@@ -130,8 +130,9 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 		publicGroup.POST("/auth", s.handler.RequestOTP)
 		publicGroup.POST("/auth/:uuid", s.handler.VerifyOTP)
 		publicGroup.POST("/auth/refresh", s.handler.RefreshToken)
-		publicGroup.POST("/auth/logout", func(c *gin.Context) {
-			auth.LogoutHandler(c, auth.NewTokenBlacklist(s.redisClient), s.handler.Sessions)
+		blacklist := auth.NewTokenBlacklist(s.redisClient)
+		publicGroup.POST("/auth/logout", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
+			auth.LogoutHandler(c, blacklist, s.handler.Sessions)
 		})
 		publicGroup.GET("/currencies", s.handler.GetActiveCurrencies)
 		publicGroup.GET("/currencies/:hk", s.handler.GetCurrencyByHK)

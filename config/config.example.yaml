@@ -57,12 +57,20 @@ rabbitmq:
 
 jwt:
   ssl:
+    # Each role signs its tokens with its own RSA key pair (at least 2048
+    # bits), so a user token is never accepted on admin routes. Admin keys
+    # are optional; without them, admin routes reject every token. Both roles
+    # must use different keys.
     admin:
       private_key: []  # Path segments to admin private key PEM
       public_key: []   # Path segments to admin public key PEM
+      retired_public_keys: []  # Earlier admin public keys, accepted until their tokens expire
     user:
       private_key: []  # Path segments to user private key PEM (e.g., ["internal", "ssl", "user", "private_key.pem"])
       public_key: []   # Path segments to user public key PEM
+      # Earlier user public keys, for key rotation, for example:
+      # - ["internal", "ssl", "user", "2026-10", "public_key.pem"]
+      retired_public_keys: []
   issuer: "encrypted-db-exchange"
   access_token:
     expiration_minutes: 15

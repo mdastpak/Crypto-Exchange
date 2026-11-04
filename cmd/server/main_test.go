@@ -1,11 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"encrypted-db/config"
+	"encrypted-db/internal/auth"
 	"encrypted-db/internal/notify"
 	"encrypted-db/internal/otp"
 
@@ -99,4 +106,79 @@ func TestOTPTTL_MatchesTheStoreDefault(t *testing.T) {
 	config.Config.OTP.Auth.TTL = 0
 
 	assert.Equal(t, otp.DefaultTTL, otpTTL(), "queued codes must expire with the store's sessions")
+}
+
+// writeKeyPair writes a new RSA key pair to dir and returns the paths.
+func writeKeyPair(t *testing.T, dir, name string) config.JWTKeyPaths {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	privatePath := filepath.Join(dir, name+"_private.pem")
+	publicPath := filepath.Join(dir, name+"_public.pem")
+	require.NoError(t, os.WriteFile(privatePath, pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}), 0o600))
+	require.NoError(t, os.WriteFile(publicPath, pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PUBLIC KEY", Bytes: x509.MarshalPKCS1PublicKey(&key.PublicKey),
+	}), 0o600))
+	return config.JWTKeyPaths{PrivateKey: []string{privatePath}, PublicKey: []string{publicPath}}
+}
+
+func withJWTKeys(t *testing.T, user, admin config.JWTKeyPaths) {
+	t.Helper()
+	saved := config.Config.JWT
+	t.Cleanup(func() { config.Config.JWT = saved })
+	config.Config.JWT.SSL.User = user
+	config.Config.JWT.SSL.Admin = admin
+	config.Config.JWT.Issuer = "test-issuer"
+	config.Config.JWT.AccessToken.Expiration = 15
+}
+
+func TestInitAuthKeys_LoadsSeparateKeysPerRole(t *testing.T) {
+	dir := t.TempDir()
+	user := writeKeyPair(t, dir, "user")
+	retired := writeKeyPair(t, dir, "retired")
+	user.RetiredPublicKeys = [][]string{retired.PublicKey}
+	withJWTKeys(t, user, writeKeyPair(t, dir, "admin"))
+
+	require.NoError(t, initAuthKeys())
+
+	assert.True(t, auth.KeysLoaded(auth.RoleUser))
+	assert.True(t, auth.KeysLoaded(auth.RoleAdmin))
+	userToken, err := auth.GenerateAccessToken("user-1", auth.RoleUser, "")
+	require.NoError(t, err)
+	_, err = auth.ParseToken(userToken, auth.RoleAdmin, auth.TokenTypeAccess)
+	assert.Error(t, err, "admin routes must reject tokens signed with the user key")
+}
+
+func TestInitAuthKeys_AdminKeysAreOptional(t *testing.T) {
+	withJWTKeys(t, writeKeyPair(t, t.TempDir(), "user"), config.JWTKeyPaths{})
+
+	require.NoError(t, initAuthKeys())
+
+	assert.True(t, auth.KeysLoaded(auth.RoleUser))
+	assert.False(t, auth.KeysLoaded(auth.RoleAdmin), "without admin keys, admin routes reject every token")
+}
+
+func TestInitAuthKeys_RejectsInvalidConfigurations(t *testing.T) {
+	dir := t.TempDir()
+	user := writeKeyPair(t, dir, "user")
+	admin := writeKeyPair(t, dir, "admin")
+
+	cases := map[string][2]config.JWTKeyPaths{
+		"no user keys":               {config.JWTKeyPaths{}, admin},
+		"missing user file":          {config.JWTKeyPaths{PrivateKey: []string{dir, "missing.pem"}, PublicKey: user.PublicKey}, admin},
+		"half-configured admin":      {user, config.JWTKeyPaths{PrivateKey: admin.PrivateKey}},
+		"admin reuses the user keys": {user, user},
+		"missing retired key": {config.JWTKeyPaths{
+			PrivateKey: user.PrivateKey, PublicKey: user.PublicKey,
+			RetiredPublicKeys: [][]string{{dir, "missing.pem"}},
+		}, admin},
+	}
+	for name, keys := range cases {
+		t.Run(name, func(t *testing.T) {
+			withJWTKeys(t, keys[0], keys[1])
+			assert.Error(t, initAuthKeys())
+		})
+	}
 }

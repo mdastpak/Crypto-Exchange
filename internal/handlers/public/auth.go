@@ -175,12 +175,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	}
 
 	sessionID := uuid.NewString()
-	accessToken, err := auth.GenerateAccessToken(userHK.String(), "user", sessionID)
+	accessToken, err := auth.GenerateAccessToken(userHK.String(), auth.RoleUser, sessionID)
 	if err != nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
 		return
 	}
-	refreshToken, err := auth.GenerateRefreshToken(userHK.String(), "user", sessionID)
+	refreshToken, err := auth.GenerateRefreshToken(userHK.String(), auth.RoleUser, sessionID)
 	if err != nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate refresh token", nil)
 		return

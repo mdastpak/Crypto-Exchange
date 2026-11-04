@@ -38,7 +38,7 @@ func newSessionTestEnv(t *testing.T) *sessionTestEnv {
 	router.POST("/public/auth", handler.RequestOTP)
 	router.POST("/public/auth/:uuid", handler.VerifyOTP)
 	router.POST("/public/auth/refresh", handler.RefreshToken)
-	router.POST("/public/auth/logout", func(c *gin.Context) {
+	router.POST("/public/auth/logout", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
 		auth.LogoutHandler(c, blacklist, handler.Sessions)
 	})
 	router.GET("/user/ping", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
@@ -49,8 +49,10 @@ func newSessionTestEnv(t *testing.T) *sessionTestEnv {
 
 type requestOption func(*http.Request)
 
+// withAuthorization sends token with the Bearer scheme, which every protected
+// route requires.
 func withAuthorization(token string) requestOption {
-	return func(r *http.Request) { r.Header.Set("Authorization", token) }
+	return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
 }
 
 func withRefreshCookie(token string) requestOption {
@@ -213,7 +215,7 @@ func TestSession_RealSchema_LogoutEndsTheSession(t *testing.T) {
 	const email = "session-logout@example.com"
 	accessToken, cookie, _ := env.signIn(t, email)
 
-	w := env.send(http.MethodPost, "/public/auth/logout", nil, withAuthorization("Bearer "+accessToken))
+	w := env.send(http.MethodPost, "/public/auth/logout", nil, withAuthorization(accessToken))
 	require.Equal(t, http.StatusOK, w.Code)
 	cleared := findRefreshCookie(w)
 	require.NotNil(t, cleared)

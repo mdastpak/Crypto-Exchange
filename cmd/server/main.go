@@ -230,21 +230,57 @@ func newEngine() (*gin.Engine, error) {
 	return r, nil
 }
 
+// initAuthKeys loads the signing keys of each role. User keys are required.
+// Admin keys are optional: without them, admin routes reject every token.
 func initAuthKeys() error {
-	privateKeyPath := filepath.Join(config.Config.JWT.SSL.User.PrivateKey...)
-	publicKeyPath := filepath.Join(config.Config.JWT.SSL.User.PublicKey...)
-
-	privateKeyPEM, err := os.ReadFile(privateKeyPath)
+	userKeys, err := readKeyPair(config.Config.JWT.SSL.User)
 	if err != nil {
-		return fmt.Errorf("failed to read private key: %w", err)
+		return fmt.Errorf("jwt.ssl.user: %w", err)
+	}
+	pairs := map[string]auth.KeyPair{auth.RoleUser: userKeys}
+
+	admin := config.Config.JWT.SSL.Admin
+	switch {
+	case len(admin.PrivateKey) == 0 && len(admin.PublicKey) == 0:
+		log.Println("WARNING: jwt.ssl.admin keys are not configured: admin routes reject every token")
+	default:
+		adminKeys, err := readKeyPair(admin)
+		if err != nil {
+			return fmt.Errorf("jwt.ssl.admin: %w", err)
+		}
+		pairs[auth.RoleAdmin] = adminKeys
+	}
+	return auth.SetKeys(pairs)
+}
+
+func readKeyPair(paths config.JWTKeyPaths) (auth.KeyPair, error) {
+	read := func(name string, segments []string) ([]byte, error) {
+		if len(segments) == 0 {
+			return nil, fmt.Errorf("%s is not configured", name)
+		}
+		data, err := os.ReadFile(filepath.Join(segments...))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", name, err)
+		}
+		return data, nil
 	}
 
-	publicKeyPEM, err := os.ReadFile(publicKeyPath)
-	if err != nil {
-		return fmt.Errorf("failed to read public key: %w", err)
+	var pair auth.KeyPair
+	var err error
+	if pair.PrivateKey, err = read("private_key", paths.PrivateKey); err != nil {
+		return auth.KeyPair{}, err
 	}
-
-	return auth.InitKeys(privateKeyPEM, publicKeyPEM)
+	if pair.PublicKey, err = read("public_key", paths.PublicKey); err != nil {
+		return auth.KeyPair{}, err
+	}
+	for i, segments := range paths.RetiredPublicKeys {
+		retired, err := read(fmt.Sprintf("retired_public_keys[%d]", i), segments)
+		if err != nil {
+			return auth.KeyPair{}, err
+		}
+		pair.Retired = append(pair.Retired, retired)
+	}
+	return pair, nil
 }
 
 func initializeServices() (*models.InfraServices, func(), error) {
@@ -337,7 +373,9 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		publicGroup.POST("/auth", ih.Public.RequestOTP)
 		publicGroup.POST("/auth/:uuid", ih.Public.VerifyOTP)
 		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
-		publicGroup.POST("/auth/logout", func(c *gin.Context) {
+		// The refresh token cookie is scoped to /public/auth, so logout lives
+		// here too, behind the same authentication as /user/logout.
+		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), func(c *gin.Context) {
 			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
 	}

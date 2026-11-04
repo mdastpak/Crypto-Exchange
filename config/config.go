@@ -101,14 +101,10 @@ type Configuration struct {
 
 	JWT struct {
 		SSL struct {
-			Admin struct {
-				PrivateKey []string `yaml:"private_key"`
-				PublicKey  []string `yaml:"public_key"`
-			} `yaml:"admin"`
-			User struct {
-				PrivateKey []string `yaml:"private_key"`
-				PublicKey  []string `yaml:"public_key"`
-			} `yaml:"user"`
+			// Admin keys are optional: without them, admin routes reject
+			// every token. They must differ from the user keys.
+			Admin JWTKeyPaths `yaml:"admin"`
+			User  JWTKeyPaths `yaml:"user"`
 		} `yaml:"ssl"`
 		Issuer      string `yaml:"issuer"`
 		AccessToken struct {
@@ -249,6 +245,19 @@ type Configuration struct {
 		} `yaml:"auth"`
 	} `yaml:"rate_limits"`
 }
+
+// JWTKeyPaths locates the PEM files of one role. Each path is a list of
+// segments that are joined with the platform's separator.
+type JWTKeyPaths struct {
+	PrivateKey []string `yaml:"private_key"`
+	PublicKey  []string `yaml:"public_key"`
+	// RetiredPublicKeys lists the public keys of earlier key pairs. Tokens
+	// they signed are accepted until they expire.
+	RetiredPublicKeys [][]string `yaml:"retired_public_keys"`
+}
+
+// DefaultJWTIssuer is the "iss" claim when jwt.issuer is not set.
+const DefaultJWTIssuer = "encrypted-db-exchange"
 
 // NotificationsConfig configures how messages such as sign-in codes reach
 // users. A channel without configuration is disabled.
@@ -424,6 +433,10 @@ func setDefaults() {
 	}
 	if Config.Server.Mode == "" {
 		Config.Server.Mode = "debug"
+	}
+
+	if Config.JWT.Issuer == "" {
+		Config.JWT.Issuer = DefaultJWTIssuer
 	}
 
 	if Config.Postgres.MaxOpenConns == 0 {
