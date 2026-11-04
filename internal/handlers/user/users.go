@@ -30,7 +30,7 @@ type Profile struct {
 	DisplayName *string           `json:"display_name"`
 	KYCStatus   string            `json:"kyc_status"`
 	KYCTier     string            `json:"kyc_tier"`
-	CreatedAt   time.Time         `json:"created_at"`
+	CreatedAt   *time.Time        `json:"created_at"`
 }
 
 var (
@@ -43,7 +43,11 @@ type queryRower interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
-const profileQuery = `SELECT hk, status, role, info->'contact', first_name, last_name, display_name, kyc_status, kyc_tier, created_at
+// profileQuery reads a profile. users.created_at is a timestamp without time
+// zone, written with NOW() in the database's time zone, so it is converted
+// to an instant in that same time zone.
+const profileQuery = `SELECT hk, status, role, info->'contact', first_name, last_name, display_name, kyc_status, kyc_tier,
+	created_at AT TIME ZONE current_setting('TimeZone')
 	FROM users WHERE hk = $1 AND deleted_at IS NULL`
 
 // loadProfile reads the profile of a user. It returns errProfileNotFound for
@@ -84,7 +88,10 @@ func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool
 			p.Contact[contactType] = maskContact(contactType, value)
 		}
 	}
-	p.CreatedAt = p.CreatedAt.UTC()
+	if p.CreatedAt != nil {
+		created := p.CreatedAt.UTC()
+		p.CreatedAt = &created
+	}
 	return p, nil
 }
 

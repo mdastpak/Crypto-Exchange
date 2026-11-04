@@ -89,10 +89,17 @@ func validateName(name string) string {
 	if utf8.RuneCountInString(name) > maxNameLength {
 		return "must be at most 100 characters"
 	}
+	visible := false
 	for _, r := range name {
 		if unicode.IsControl(r) || isBidiOverride(r) {
 			return "must not contain control characters"
 		}
+		if unicode.IsGraphic(r) && !unicode.IsSpace(r) && !unicode.Is(unicode.Cf, r) {
+			visible = true
+		}
+	}
+	if name != "" && !visible {
+		return "must contain a visible character"
 	}
 	return ""
 }
@@ -101,7 +108,7 @@ func validateName(name string) string {
 // which can make a name display as something else. Marks such as the
 // zero-width non-joiner, which Persian names need, are allowed.
 func isBidiOverride(r rune) bool {
-	return (r >= '‪' && r <= '‮') || (r >= '⁦' && r <= '⁩')
+	return (r >= '\u202A' && r <= '\u202E') || (r >= '\u2066' && r <= '\u2069')
 }
 
 // apply sets the fields of the update on the profile. An empty name clears

@@ -381,7 +381,7 @@ Returns the profile of the signed-in user:
 }
 ```
 
-`contact` holds the email address and the mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set are `null`.
+`contact` holds the email address and the mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set, and a creation time that was not recorded, are `null`.
 
 Errors: `401` for a missing or invalid token; `403` when the account was disabled, deleted, or suspended, or became an administrator account, after the token was issued (`This account is not available. Please contact support.`); `404` when the user was deleted.
 
@@ -395,7 +395,7 @@ Changes the names in the profile and returns the updated profile, as `GET` does.
 
 | Field | Rules |
 | --- | --- |
-| `first_name`, `last_name`, `display_name` | Optional. Spaces around the name are trimmed, and an empty string clears the field. At most 100 characters, without control characters or characters that reorder text (U+202A to U+202E and U+2066 to U+2069). The zero-width non-joiner is allowed. |
+| `first_name`, `last_name`, `display_name` | Optional. Spaces around the name are trimmed, and an empty string clears the field. At most 100 characters, without control characters or characters that reorder text (U+202A to U+202E and U+2066 to U+2069), and with at least one visible character. The zero-width non-joiner is allowed. |
 
 Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401`, `403`, and `404` as for `GET`.
 

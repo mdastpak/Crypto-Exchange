@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"encrypted-db/internal/auth"
 
@@ -88,7 +89,9 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		assert.Nil(t, resp.Info.FirstName)
 		assert.Equal(t, "PENDING", resp.Info.KYCStatus)
 		assert.Equal(t, "NONE", resp.Info.KYCTier)
-		assert.NotEmpty(t, resp.Info.CreatedAt)
+		created, err := time.Parse(time.RFC3339, resp.Info.CreatedAt)
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now(), created, time.Minute, "created_at is the instant of the first sign-in")
 
 		status, resp = env.profile(t, http.MethodGet, nil, bobToken)
 		require.Equal(t, http.StatusOK, status)
@@ -129,7 +132,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 
 	t.Run("invalid updates are rejected", func(t *testing.T) {
 		for _, body := range []interface{}{
-			map[string]string{"first_name": "a‮b"},
+			map[string]string{"first_name": "a\u202Eb"},
 			map[string]string{"status": "approved"},
 			map[string]string{"kyc_tier": "INSTITUTIONAL"},
 			map[string]string{},
@@ -165,6 +168,35 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		status, resp := env.profile(t, http.MethodGet, nil, bobToken)
 		assert.Equal(t, http.StatusNotFound, status)
 		assert.Equal(t, "Profile not found", resp.Message)
+	})
+
+	t.Run("created_at is an instant whatever the database time zone", func(t *testing.T) {
+		token, id := env.signedInUser(t, "carol@example.com")
+		var stored time.Time
+		require.NoError(t, env.db.QueryRow(`SELECT created_at AT TIME ZONE 'UTC' FROM users WHERE hk = $1`, id).Scan(&stored))
+
+		// In another database time zone, NOW() writes another wall-clock
+		// value. The profile must still report the same instant.
+		_, err := env.db.Exec(`UPDATE users SET created_at = (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Tehran' WHERE hk = $1`, id)
+		require.NoError(t, err)
+		_, err = env.db.Exec(`ALTER DATABASE ` + e2eDBName + ` SET timezone TO 'Asia/Tehran'`)
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = env.db.Exec(`ALTER DATABASE ` + e2eDBName + ` RESET timezone`) })
+		// env.db is the server's pool: new connections pick up the setting.
+		env.db.SetMaxIdleConns(0)
+		env.db.SetMaxIdleConns(2)
+
+		status, resp := env.profile(t, http.MethodGet, nil, token)
+		require.Equal(t, http.StatusOK, status, resp.Message)
+		got, err := time.Parse(time.RFC3339, resp.Info.CreatedAt)
+		require.NoError(t, err)
+		assert.WithinDuration(t, stored, got, time.Second)
+
+		_, err = env.db.Exec(`UPDATE users SET created_at = NULL WHERE hk = $1`, id)
+		require.NoError(t, err)
+		status, raw := env.call(t, http.MethodGet, "/user/profile", nil, token)
+		require.Equal(t, http.StatusOK, status, string(raw))
+		assert.Contains(t, string(raw), `"created_at":null`)
 	})
 
 	t.Run("the old routes are gone", func(t *testing.T) {

@@ -55,17 +55,19 @@ func TestDecodeProfileUpdate_RejectsMalformedBodies(t *testing.T) {
 
 func TestProfileUpdate_Validate(t *testing.T) {
 	text := func(s string) *string { return &s }
-	long := strings.Repeat("ب", maxNameLength+1)
+	// U+0628 is a letter that takes two bytes in UTF-8.
+	long := strings.Repeat("\u0628", maxNameLength+1)
 
 	assert.Nil(t, profileUpdate{FirstName: text("  Ali  ")}.validate())
 	assert.Nil(t, profileUpdate{DisplayName: text("")}.validate(), "an empty name clears the field")
-	assert.Nil(t, profileUpdate{LastName: text("محمدی‌پور")}.validate(), "the zero-width non-joiner is part of Persian names")
-	assert.Nil(t, profileUpdate{LastName: text(strings.Repeat("ب", maxNameLength))}.validate(), "the limit counts characters, not bytes")
+	assert.Nil(t, profileUpdate{LastName: text("Ab\u200Ccd")}.validate(), "the zero-width non-joiner (U+200C), which Persian names need, is allowed")
+	assert.Nil(t, profileUpdate{LastName: text(strings.Repeat("\u0628", maxNameLength))}.validate(), "the limit counts characters, not bytes")
 
 	assert.Equal(t, fieldErrors{"body": "send at least one of first_name, last_name, and display_name"}, profileUpdate{}.validate())
 	assert.Equal(t, fieldErrors{"first_name": "must be at most 100 characters"}, profileUpdate{FirstName: &long}.validate())
 	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("a\nb")}.validate())
-	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("admin‮gnp.exe")}.validate())
+	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("admin\u202Egnp.exe")}.validate())
+	assert.Equal(t, fieldErrors{"display_name": "must contain a visible character"}, profileUpdate{DisplayName: text("\u200B\u2060\u200C")}.validate())
 }
 
 func TestProfileUpdate_Apply(t *testing.T) {
