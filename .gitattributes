@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Files read by Linux containers keep LF line endings on every platform, so
+# that line continuations in Dockerfile commands work after a Windows checkout.
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+*.sh text eol=lf

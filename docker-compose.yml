@@ -1,5 +1,5 @@
-version: '3.8'
-
+# Local development environment. Not for production: services use default
+# passwords and publish their ports.
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -12,7 +12,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./internal/db/migrations:/migrations
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d exchange"]
       interval: 10s
@@ -25,12 +24,15 @@ services:
     image: redis:7-alpine
     container_name: encrypted-db-redis
     command: redis-server --requirepass ${REDIS_PASSWORD:-redis} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-redis}
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      # PING changes no data, unlike the INCR the check used before.
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,6 +46,12 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
       RABBITMQ_DEFAULT_VHOST: /
+      # Passing the Erlang cookie on the command line avoids reading
+      # .erlang.cookie, which fails with "eacces" on some Docker Desktop and
+      # WSL 2 setups. The distribution ports are not published, so the cookie
+      # is only used inside the container.
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -setcookie ${RABBITMQ_ERLANG_COOKIE:-local-development-cookie}
+      RABBITMQ_CTL_ERL_ARGS: -setcookie ${RABBITMQ_ERLANG_COOKIE:-local-development-cookie}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -62,6 +70,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: encrypted-db-app
+    # On Linux, set APP_UID and APP_GID to your own IDs (id -u, id -g) so
+    # that the server can read the JWT key files without widening their
+    # permissions.
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    command: ["-config", "config/config.compose.yaml"]
     environment:
       - GIN_MODE=debug
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -72,6 +85,9 @@ services:
       - ADMIN_TOTP_KEY=${ADMIN_TOTP_KEY:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - KAVENEGAR_API_KEY=${KAVENEGAR_API_KEY:-}
+    secrets:
+      - jwt_user_private_key
+      - jwt_user_public_key
     ports:
       - "8080:8080"
     depends_on:
@@ -82,9 +98,17 @@ services:
       rabbitmq:
         condition: service_healthy
     volumes:
-      - ./config:/app/config
+      - ./config:/app/config:ro
     networks:
       - encrypted-db-network
+
+secrets:
+  # Generate the keys as described in the README, or point these variables
+  # at other files.
+  jwt_user_private_key:
+    file: ${JWT_USER_PRIVATE_KEY_FILE:-./internal/ssl/user/private_key.pem}
+  jwt_user_public_key:
+    file: ${JWT_USER_PUBLIC_KEY_FILE:-./internal/ssl/user/public_key.pem}
 
 volumes:
   postgres_data:
