@@ -12,6 +12,7 @@ import (
 	"encrypted-db/config"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -352,4 +353,36 @@ func TestPingWithRetry_NormalizesInvalidArguments(t *testing.T) {
 	// maxAttempts <= 0 and delay <= 0 should be normalized instead of looping forever.
 	err = pingWithRetry(svc.DB, 0, 0)
 	assert.NoError(t, err)
+}
+
+// TestMigration13_OnlyNonEmptyContractsAreUnique checks that several
+// currencies without a contract can coexist, while a contract still belongs to
+// one currency only, and that the migration rolls back.
+func TestMigration13_OnlyNonEmptyContractsAreUnique(t *testing.T) {
+	m := newMigrationsTestMigrator(t)
+	require.NoError(t, m.Migrate(13))
+
+	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
+	require.NoError(t, err)
+	defer conn.Close()
+	insert := func(symbol, contract string) error {
+		_, err := conn.Exec(`INSERT INTO currencies (status, info) VALUES ('approved', jsonb_build_object(
+			'en_name', $1::text, 'fa_name', $1::text, 'symbol', $1::text,
+			'if_fiat', false, 'is_token', $2::text <> '', 'contract', $2::text))`, symbol, contract)
+		return err
+	}
+
+	require.NoError(t, insert("BTC", ""))
+	require.NoError(t, insert("ETH", ""), "a second currency without a contract must be accepted")
+	require.NoError(t, insert("USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"))
+	err = insert("FAKE", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr, "a contract must stay unique")
+	assert.Equal(t, "23505", pgErr.Code)
+	assert.Equal(t, "currencies_info_contract_unique", pgErr.ConstraintName)
+
+	_, err = conn.Exec(`UPDATE currencies SET info = jsonb_set(info, '{contract}', '"native-eth"') WHERE info->>'symbol' = 'ETH'`)
+	require.NoError(t, err)
+	require.NoError(t, m.Steps(-1), "rolling back works once the empty contracts are distinct")
+	require.NoError(t, m.Steps(1))
 }
