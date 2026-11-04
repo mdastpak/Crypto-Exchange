@@ -51,6 +51,17 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	services, cleanup, err := initializeServices()
 	require.NoError(t, err)
 	handlers := initializeHandlers(services)
+	srv := &http.Server{}
+	stopped := false
+	// Stops the second instance when the test fails before it does.
+	t.Cleanup(func() {
+		if !stopped {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = shutdown(ctx, srv, handlers, nil)
+			cleanup()
+		}
+	})
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
 	require.NoError(t, initializeCache(handlers))
 	router, err := newEngine()
@@ -58,7 +69,7 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	require.NoError(t, RouteHandler(router, handlers))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	srv := &http.Server{Handler: router}
+	srv.Handler = router
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()
 
@@ -67,6 +78,7 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	stopped = true
 	require.NoError(t, shutdown(ctx, srv, handlers, nil))
 	require.ErrorIs(t, <-served, http.ErrServerClosed)
 	cleanup()

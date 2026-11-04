@@ -404,7 +404,18 @@ func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_RemovesStaleEntrie
 	s.cacheEntry(models.Currency{HK: pending, Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BBB"}})
 	// No such currency.
 	s.cacheEntry(models.Currency{HK: uuid.NewString(), Status: models.CurrencyStatusApproved})
-	require.NoError(s.T(), s.redisClient.Set(ctx, currencyCachePrefix+"not-a-uuid", "{}", 0).Err())
+	// Keys that are not the canonical form of a UUID, some of which
+	// PostgreSQL would reject or accept as another spelling of the public
+	// currency.
+	for _, suffix := range []string{
+		"not-a-uuid",
+		"urn:uuid:" + public,
+		"{" + public + "}",
+		strings.ToUpper(public),
+		strings.ReplaceAll(public, "-", ""),
+	} {
+		require.NoError(s.T(), s.redisClient.Set(ctx, currencyCachePrefix+suffix, "{}", 0).Err())
+	}
 	require.NoError(s.T(), s.redisClient.Set(ctx, "unrelated:key", "keep-me", 0).Err())
 
 	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(ctx))

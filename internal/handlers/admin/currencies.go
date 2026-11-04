@@ -448,9 +448,10 @@ func (h *AdminHandler) removeStaleCurrencies(ctx context.Context, loaded map[str
 }
 
 // isPublicInDatabase reports whether the currency with the given hk is
-// approved and not deleted. An hk that is not a UUID names no currency.
+// approved and not deleted. Currencies are cached under the canonical form
+// of their UUID, so any other hk names no currency.
 func (h *AdminHandler) isPublicInDatabase(ctx context.Context, hk string) (bool, error) {
-	if _, err := uuid.Parse(hk); err != nil {
+	if id, err := uuid.Parse(hk); err != nil || id.String() != hk {
 		return false, nil
 	}
 	var public bool
