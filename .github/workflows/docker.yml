@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check that the Dockerfile uses the Go version of go.mod
         run: |
@@ -21,10 +21,10 @@ jobs:
           echo "go.mod: $go_mod, Dockerfile: $dockerfile"
           test "$go_mod" = "$dockerfile"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build the image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
