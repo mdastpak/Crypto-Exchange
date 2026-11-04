@@ -116,8 +116,8 @@ Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.
 | U-12 | P0 / contract | One valid cached currency | `200`; all currency fields map exactly from the fixture | Passes |
 | U-13 | P1 / contract | Two valid cached currencies | `200`; both HKs are present exactly once; order is not asserted | Passes functionally; SCAN order is nondeterministic |
 | U-14 | P1 / contract | Duplicate HKs returned by the cache scan | Response contains one currency per HK | **Gap:** current code does not deduplicate |
-| U-15 | P0 / contract | Cached currency has `status: suspended` | It is excluded from the active list | **Gap:** handler does not filter status |
-| U-16 | P0 / contract | Cached currency has `deleted_at` or `status: deleted` | It is excluded from the active list | **Gap:** stale cache entries are returned |
+| U-15 | P0 / contract | Cached currency has `status: suspended` | It is excluded from the active list | Passes: only approved currencies are cached, and reads skip any other entry ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
+| U-16 | P0 / contract | Cached currency has `deleted_at` or `status: deleted` | It is excluded from the active list | Passes ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | U-17 | P1 / contract | One cached value is invalid JSON | Valid entries are returned; corrupt entry is logged and skipped | **Gap:** user handler fails the whole request with `500` |
 | U-18 | P1 / contract | One cache key returns a Redis GET error | Valid entries are returned; failed entry is skipped | **Gap:** user handler fails the whole request with `500` |
 | U-19 | P0 / contract | Redis SCAN returns an error | `500`; message `Failed to retrieve currencies from cache.` | Current behavior |
@@ -159,7 +159,7 @@ Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/mai
 | C-08 | P0 / contract | Redis SCAN fails | `500`; message `Failed to retrieve currencies from cache.` | Passes |
 | C-09 | P0 / contract | Redis is unavailable | `500` within the configured request timeout | Passes with a 10-second context |
 | C-10 | P0 / contract | Client cancels the request during SCAN/GET | Work stops promptly and no leaked goroutine remains | Current context support should be verified under a slow fake |
-| C-11 | P0 / contract | Suspended or deleted currency is cached | It is excluded from active currencies | **Gap:** no status/deletion filter |
+| C-11 | P0 / contract | Suspended or deleted currency is cached | It is excluded from active currencies | Passes ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | C-12 | P1 / contract | Duplicate HKs are observed | Each HK appears once | **Gap:** no deduplication |
 | C-13 | P1 / contract | `limit=2&offset=1` after pagination is introduced | Correct page is returned with stable ordering | **Gap:** query parameters are ignored |
 | C-14 | P1 / contract | `limit` exceeds the configured maximum | Request is capped or rejected according to the documented API contract | No maximum exists today |
@@ -186,7 +186,7 @@ Implementation: `internal/handlers/public/auth.go:350`.
 | H-03 | P1 / contract | Non-UUID HK | `400`; message identifies invalid UUID format | **Gap:** current code treats it as a cache miss and returns `404` |
 | H-04 | P0 / contract | Redis GET returns a non-`Nil` error | `500`; message `Failed to retrieve currency from cache.` | Passes |
 | H-05 | P1 / contract | Cached value is invalid JSON | `500`; message `Failed to process currency information.` | Passes |
-| H-06 | P0 / contract | Cached currency is suspended/deleted | `404` or an explicit inactive response | **Gap:** current code returns it |
+| H-06 | P0 / contract | Cached currency is suspended/deleted | `404` or an explicit inactive response | Passes: `404` with the message of a missing currency ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | H-07 | P0 / contract | Client cancels during Redis GET | Request terminates within the timeout | Current 5-second context should be tested |
 | H-08 | P1 / contract | Wrong HTTP method | `405` | Gin default behavior |
 
@@ -236,16 +236,16 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
 | D-01 | P0 / integration | Valid approved currency JSON; admin JWT; empty DB/cache | DB row is created; cache key is written with the documented TTL; create event is published | Current cache/event failures are logged but the response remains `201` |
-| D-02 | P0 / contract | `status: pending` or `status: suspended` | Row is created but currency is not exposed in active-cache reads | **Gap:** create path caches every status |
+| D-02 | P0 / contract | `status: pending` or `status: suspended` | Row is created but currency is not exposed in active-cache reads | Passes: it is neither cached nor announced ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | D-03 | P0 / contract | Malformed JSON, invalid status, invalid field values, or server-controlled fields (`id`, `hk`, timestamps) | `400`; field errors for invalid values; no DB row, cache entry, or event | Passes; a missing `status` defaults to `pending` ([#23](https://github.com/mdastpak/Crypto-Exchange/issues/23)) |
 | D-04 | P1 / integration | Symbol or non-empty contract violates uniqueness | `409` with `duplicate_symbol` or `duplicate_contract`; no partial cache/event side effect | Passes; several currencies without a contract are allowed ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)) |
 | D-05 | P0 / integration | Valid update to an approved currency | DB and cache contain the same final `status` and `info` | Current partial update can preserve stale fields |
-| D-06 | P0 / integration | Update changes approved currency to suspended/deleted | Cache entry is removed or marked inactive; public/user reads exclude it | **Gap:** update path writes the changed object back to the active pattern |
+| D-06 | P0 / integration | Update changes approved currency to suspended/deleted | Cache entry is removed or marked inactive; public/user reads exclude it | Passes: the entry is removed and a `delete` event is published. Every status transition is tested, and visibility is the same after a restart ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | D-07 | P0 / contract | Update changes a boolean from `true` to `false` | The requested false value is persisted | Passes: only the fields sent are changed (part of [#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)) |
 | D-08 | P0 / contract | Update uses a non-UUID HK | `400`; message identifies invalid UUID | Passes |
 | D-09 | P0 / integration | Update uses an unknown or already deleted HK | `404`; no cache/event side effect | Passes for the DB lookup |
 | D-10 | P0 / integration | Delete an existing currency | DB row is soft-deleted; cache key is removed; delete event is published | Cache/event failures are currently non-fatal |
-| D-11 | P0 / contract | Delete an unknown or already deleted currency | `404`; no repeated side effects | Passes |
+| D-11 | P0 / contract | Delete an unknown or already deleted currency | `404`; no repeated side effects | Passes, also for concurrent deletes: the row is locked, so one delete succeeds and publishes one event ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | D-12 | P1 / integration | Cache write fails after DB commit | System returns a defined consistency/degradation result and schedules reconciliation | **Gap:** current handler logs and returns success |
 | D-13 | P1 / integration | RabbitMQ publish fails after DB/cache commit | Event is retried or reconciled; client receives a documented result | **Gap:** publish errors are only logged |
 | D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes for the query, but does not clean stale keys |
@@ -334,22 +334,22 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 
 ## Finding status
 
-Status as of 2026-11-02. The tables after this one are the original findings, unchanged.
+Status as of 2026-11-05. The tables after this one are the original findings, unchanged.
 
 | Finding | Status |
 | --- | --- |
 | `/user/profile` is not a profile endpoint | Open: [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
 | Empty currency responses are `null` | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) and [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
 | OTP generation is predictable | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) (`crypto/rand`) and [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (no modulo bias) |
-| OTP and contact are logged in plaintext | Open: [#13](https://github.com/mdastpak/Crypto-Exchange/issues/13) |
-| Refresh tokens bypass blacklist | Open: [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) |
+| OTP and contact are logged in plaintext | Fixed in [#13](https://github.com/mdastpak/Crypto-Exchange/issues/13) |
+| Refresh tokens bypass blacklist | Fixed in [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) |
 | Protected rate limiting fails open | Open: [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34) |
 | User currency reads can block indefinitely | Open: [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
-| Stale suspended/deleted currencies remain active | Open: [#24](https://github.com/mdastpak/Crypto-Exchange/issues/24) |
+| Stale suspended/deleted currencies remain active | Fixed in [#24](https://github.com/mdastpak/Crypto-Exchange/issues/24) |
 | Malformed OTP data can panic | Fixed in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (together with A-15, A-16, and A-27) |
 | User migration references the wrong table | Fixed in [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
 | Public currency traffic consumes the login quota | Open: [#26](https://github.com/mdastpak/Crypto-Exchange/issues/26) |
-| CORS reflects arbitrary origins with credentials | Open: [#12](https://github.com/mdastpak/Crypto-Exchange/issues/12) |
+| CORS reflects arbitrary origins with credentials | Fixed in [#12](https://github.com/mdastpak/Crypto-Exchange/issues/12) |
 | List handlers have no pagination or response cap | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) and [#53](https://github.com/mdastpak/Crypto-Exchange/issues/53) |
 | Redis has no database fallback | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |
 | Duplicate SCAN results are not deduplicated | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |

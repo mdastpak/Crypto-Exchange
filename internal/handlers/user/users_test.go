@@ -94,6 +94,37 @@ func TestGetActiveCurrencies_ReturnsCachedCurrencies(t *testing.T) {
 	assert.Len(t, got, 2)
 }
 
+// The cache should only hold public currencies, but an entry that is out of
+// date must not leak a hidden currency either.
+func TestGetActiveCurrencies_SkipsCurrenciesThatAreNotPublic(t *testing.T) {
+	client := setupUserRedis(t)
+	h := &UserHandler{RedisClient: &db.RedisService{Client: client}}
+
+	deletedAt := "2026-01-01T00:00:00Z"
+	currencies := []models.Currency{
+		{HK: "hk-approved", Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BTC"}},
+		{HK: "hk-pending", Status: models.CurrencyStatusPending, Info: models.CurrencyInfo{Symbol: "ETH"}},
+		{HK: "hk-suspend", Status: models.CurrencyStatusSuspend, Info: models.CurrencyInfo{Symbol: "XRP"}},
+		{HK: "hk-deleted", Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "LTC"}, DeletedAt: &deletedAt},
+	}
+	ctx := context.Background()
+	for _, c := range currencies {
+		data, err := json.Marshal(c)
+		require.NoError(t, err)
+		require.NoError(t, client.Set(ctx, "base_definitions:currency:"+c.HK, data, 0).Err())
+	}
+
+	w := performGetActiveCurrencies(h)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Info []models.Currency `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Info, 1)
+	assert.Equal(t, "hk-approved", resp.Info[0].HK)
+}
+
 func TestGetActiveCurrencies_UnmarshalErrorReturns500(t *testing.T) {
 	client := setupUserRedis(t)
 	h := &UserHandler{RedisClient: &db.RedisService{Client: client}}

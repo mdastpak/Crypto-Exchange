@@ -268,15 +268,15 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
 }
 ```
 
-`status` is one of `approved`, `pending`, `suspend`, or `deleted`. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. The field name `if_fiat` is a known typo ([#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)).
+`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. The field name `if_fiat` is a known typo ([#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)).
 
 ### `GET /public/currencies`
 
-Lists the currencies held in the Redis cache. Response `200` with an array in `info`, which is empty when there are none.
+Lists the public currencies, read from the Redis cache. Response `200` with an array in `info`, which is empty when there are none.
 
 ### `GET /public/currencies/{hk}`
 
-Returns one cached currency. Errors: `404` when it is not cached.
+Returns one public currency. Errors: `404` when it is not cached or not public, with the same message, so a hidden currency looks like a missing one.
 
 ### `POST /admin/currencies` (admin)
 
@@ -334,7 +334,7 @@ Soft-deletes a currency (sets `deleted_at` and `status = deleted`) and removes i
 
 Response `200`. Errors: `400` for an invalid UUID, `404` when the currency is not found or already deleted.
 
-Create, update, and delete publish an event to the `price_updates` exchange:
+Changes that affect the public view publish an event to the `price_updates` exchange:
 
 ```json
 {
@@ -345,6 +345,15 @@ Create, update, and delete publish an event to the `price_updates` exchange:
   "server_time": "2026-11-02T10:00:00Z"
 }
 ```
+
+Events and the cache describe what public clients can see, so they follow the visibility of a currency rather than the admin operation:
+
+| Change | Cache | Event |
+| --- | --- | --- |
+| A currency becomes approved: it is created as approved, or updated to approved | Added | `create` with the currency's `info` |
+| An approved currency is updated and stays approved | Replaced | `update` with the currency's `info` |
+| An approved currency is suspended, set back to pending, or deleted | Removed | `delete` with `info` set to `{"status": "<new status>"}` |
+| A currency that is not approved is created, updated, or deleted | Not cached | None |
 
 ## User
 

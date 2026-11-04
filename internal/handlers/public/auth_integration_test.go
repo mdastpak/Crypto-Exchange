@@ -509,3 +509,46 @@ func (s *PublicHandlerTestSuite) TestGetCurrencyByHK_NotFound() {
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), "Currency not found", resp.Message)
 }
+
+// cacheCurrency writes a currency to the cache the way the admin handler does.
+func (s *PublicHandlerTestSuite) cacheCurrency(c models.Currency) {
+	data, err := json.Marshal(c)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.redisClient.Set(context.Background(), "base_definitions:currency:"+c.HK, data, 0).Err())
+}
+
+// The cache should only hold public currencies, but an entry that is out of
+// date must not leak a hidden currency either.
+func (s *PublicHandlerTestSuite) TestCurrencies_HideCurrenciesThatAreNotPublic() {
+	deletedAt := "2026-01-01T00:00:00Z"
+	approved := models.Currency{HK: uuid.New().String(), Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BTC"}}
+	hidden := []models.Currency{
+		{HK: uuid.New().String(), Status: models.CurrencyStatusPending, Info: models.CurrencyInfo{Symbol: "ETH"}},
+		{HK: uuid.New().String(), Status: models.CurrencyStatusSuspend, Info: models.CurrencyInfo{Symbol: "XRP"}},
+		{HK: uuid.New().String(), Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "LTC"}, DeletedAt: &deletedAt},
+	}
+	s.cacheCurrency(approved)
+	for _, c := range hidden {
+		s.cacheCurrency(c)
+	}
+
+	w := s.makeRequest(http.MethodGet, "/public/currencies", nil, "")
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var list struct {
+		Info []models.Currency `json:"info"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &list))
+	require.Len(s.T(), list.Info, 1)
+	assert.Equal(s.T(), approved.HK, list.Info[0].HK)
+
+	w = s.makeRequest(http.MethodGet, "/public/currencies/"+approved.HK, nil, "")
+	assert.Equal(s.T(), http.StatusOK, w.Code)
+
+	for _, c := range hidden {
+		w := s.makeRequest(http.MethodGet, "/public/currencies/"+c.HK, nil, "")
+		assert.Equal(s.T(), http.StatusNotFound, w.Code, c.Info.Symbol)
+		var resp models.APIResponse
+		require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(s.T(), "Currency not found", resp.Message, "a hidden currency must look like a missing one")
+	}
+}

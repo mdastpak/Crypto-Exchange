@@ -362,6 +362,11 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 			log.Printf("Error unmarshalling currency data for key %s: %v", iter.Val(), err)
 			continue
 		}
+		// The cache should only hold public currencies; filtering here too
+		// keeps an outdated entry from leaking.
+		if !currency.IsPublic() {
+			continue
+		}
 
 		currencies = append(currencies, currency)
 	}
@@ -396,6 +401,10 @@ func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
 	if err := json.Unmarshal([]byte(data), &currency); err != nil {
 		log.Printf("Error unmarshalling currency data for HK %s: %v", hk, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to process currency information.", nil)
+		return
+	}
+	if !currency.IsPublic() {
+		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
 		return
 	}
 

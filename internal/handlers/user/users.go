@@ -42,7 +42,11 @@ func (h *UserHandler) GetActiveCurrencies(c *gin.Context) {
 			return
 		}
 
-		// Append the currency to the list
+		// The cache should only hold public currencies; filtering here too
+		// keeps an outdated entry from leaking.
+		if !currency.IsPublic() {
+			continue
+		}
 		currencies = append(currencies, currency)
 	}
 
