@@ -718,3 +718,66 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_SameAfterARestart() {
 
 	assert.Equal(s.T(), before, visible(), "visibility must not change with a restart")
 }
+
+// TestDeleteCurrency_WaitsForAConcurrentChange holds the row lock while it
+// approves the currency, as a concurrent update would. The delete must wait
+// and decide from the approved status: a public currency is deleted, so
+// WebSocket clients must be told.
+func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_WaitsForAConcurrentChange() {
+	hk := s.createCurrency("DOT", "")
+	ctx := context.Background()
+
+	tx, err := s.postgresSvc.DB.BeginTx(ctx, nil)
+	require.NoError(s.T(), err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`SELECT 1 FROM currencies WHERE hk = $1 FOR UPDATE`, hk)
+	require.NoError(s.T(), err)
+
+	done := make(chan int, 1)
+	go func() {
+		done <- s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code
+	}()
+
+	select {
+	case code := <-done:
+		s.T().Fatalf("the delete finished with %d while the row was locked", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+	_, err = tx.Exec(`UPDATE currencies SET status = 'approved' WHERE hk = $1`, hk)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), tx.Commit())
+
+	select {
+	case code := <-done:
+		require.Equal(s.T(), http.StatusOK, code)
+	case <-time.After(10 * time.Second):
+		s.T().Fatal("the delete did not finish after the lock was released")
+	}
+	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "the delete must see the approved status")
+}
+
+func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_ConcurrentDeletesSucceedOnce() {
+	hk := s.createCurrency("UNI", "")
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	s.events.take()
+
+	const deletes = 5
+	codes := make(chan int, deletes)
+	var wg sync.WaitGroup
+	for i := 0; i < deletes; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+
+	counts := map[int]int{}
+	for code := range codes {
+		counts[code]++
+	}
+	assert.Equal(s.T(), map[int]int{http.StatusOK: 1, http.StatusNotFound: deletes - 1}, counts)
+	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "one deletion, one event")
+}

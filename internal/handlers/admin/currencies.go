@@ -274,10 +274,21 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		return
 	}
 
+	// The row is locked from the read to the write, so that the previous
+	// status, which decides the event, is the one this delete replaces, and
+	// concurrent deletes of one currency succeed only once.
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("Error starting a currency delete: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to delete currency due to an unexpected error.", nil)
+		return
+	}
+	defer tx.Rollback()
+
 	var isDeleted bool
 	var previousStatus string
-	err := h.PostgresDB.DB.QueryRowContext(ctx,
-		"SELECT (deleted_at IS NOT NULL), status FROM currencies WHERE hk = $1", hk,
+	err = tx.QueryRowContext(ctx,
+		"SELECT (deleted_at IS NOT NULL), status FROM currencies WHERE hk = $1 FOR UPDATE", hk,
 	).Scan(&isDeleted, &previousStatus)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -294,9 +305,12 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		return
 	}
 
-	_, err = h.PostgresDB.DB.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		"UPDATE currencies SET deleted_at=NOW(), status='deleted' WHERE hk=$1", hk,
 	)
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
 		log.Printf("Error deleting currency in database: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to delete currency due to an unexpected error.", nil)

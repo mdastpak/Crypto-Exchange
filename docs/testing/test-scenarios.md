@@ -245,7 +245,7 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 | D-08 | P0 / contract | Update uses a non-UUID HK | `400`; message identifies invalid UUID | Passes |
 | D-09 | P0 / integration | Update uses an unknown or already deleted HK | `404`; no cache/event side effect | Passes for the DB lookup |
 | D-10 | P0 / integration | Delete an existing currency | DB row is soft-deleted; cache key is removed; delete event is published | Cache/event failures are currently non-fatal |
-| D-11 | P0 / contract | Delete an unknown or already deleted currency | `404`; no repeated side effects | Passes |
+| D-11 | P0 / contract | Delete an unknown or already deleted currency | `404`; no repeated side effects | Passes, also for concurrent deletes: the row is locked, so one delete succeeds and publishes one event ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | D-12 | P1 / integration | Cache write fails after DB commit | System returns a defined consistency/degradation result and schedules reconciliation | **Gap:** current handler logs and returns success |
 | D-13 | P1 / integration | RabbitMQ publish fails after DB/cache commit | Event is retried or reconciled; client receives a documented result | **Gap:** publish errors are only logged |
 | D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes for the query, but does not clean stale keys |
