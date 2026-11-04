@@ -4,13 +4,12 @@ This document describes how the server is configured and which settings it curre
 
 ## Loading order
 
-1. **File.** The YAML file passed with `-config` is read. The default is `config/config.yaml`. If the file does not exist, the embedded copy of `config/config.example.yaml` is used instead. The `app` service of `docker-compose.yml` uses `config/config.compose.yaml`, which holds no secrets.
-2. **Defaults.** Numeric and string settings that are still zero or empty after loading receive the defaults listed below.
-3. **Environment variables.** The variables listed in [Environment variables](#environment-variables) override the corresponding settings.
-4. **Validation.** Missing credentials and similar problems are logged as warnings. The server does not refuse to start on them yet. Fail-closed validation is tracked in [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41).
+1. **File.** The YAML file passed with `-config` is read. The default is `config/config.yaml`, which is not part of the repository. If the file does not exist, the embedded copy of [`config/config.example.yaml`](../config/config.example.yaml) is used instead, and the log says so. The `app` service of `docker-compose.yml` uses `config/config.compose.yaml`, which holds no secrets.
+2. **Environment variables.** The variables listed in [Environment variables](#environment-variables) override the corresponding settings. A variable that is unset or empty leaves the setting unchanged.
+3. **Defaults.** Numeric and string settings that are still zero or empty receive the defaults listed below.
+4. **Validation.** The server stops with one message that names every problem when a value in an environment variable cannot be parsed, when `server.mode` is not a known mode, or when a setting it cannot start without is not set. Each message names the setting and its environment variable, for example `rabbitmq.username (RABBITMQ_USER)`. The required settings are marked **required** below. Other problems, such as an empty database password, are logged as warnings. Stricter validation is tracked in [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41).
 
-> [!IMPORTANT]
-> `${VAR}` placeholders in YAML files are **not** expanded. A value such as `password: "${POSTGRES_PASSWORD}"` is used literally unless the environment variable overrides it ([#29](https://github.com/mdastpak/Crypto-Exchange/issues/29)).
+`${VAR}` placeholders in YAML files are **not** expanded. Keep secrets out of the file and set them with the environment variables.
 
 ## Command-line flags and process environment
 
@@ -18,7 +17,6 @@ This document describes how the server is configured and which settings it curre
 | --- | --- | --- |
 | `-config` | `config/config.yaml` | Path to the configuration file |
 | `-migrations` | `file://internal/db/migrations` | golang-migrate source URL. The default is relative to the working directory, so start the server from the repository root. |
-| `GIN_MODE` | `debug` | Set to `release` to enable Gin release mode. The `server.mode` setting is not used for this yet. |
 
 ## Settings in use
 
@@ -26,12 +24,12 @@ This document describes how the server is configured and which settings it curre
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `ip` | none | Listen address, for example `0.0.0.0` |
-| `port` | none | Listen port, for example `8080` |
+| `ip` | none | Listen address, for example `0.0.0.0`. Empty listens on every interface. |
+| `port` | **required** | Listen port, for example `8080` |
 | `read_timeout_seconds` | `10` | HTTP read timeout |
 | `write_timeout_seconds` | `10` | HTTP write timeout |
 | `idle_timeout_seconds` | `120` | HTTP keep-alive idle timeout |
-| `mode` | `debug` | Parsed, but not used by the active middleware yet |
+| `mode` | `debug` | `debug`, `release`, or `test`. Sets Gin's mode, and `release` turns on the release checks: `otp.auth.secret` is required, and `otp.auth.dev_log_codes` is refused. Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
 | `tls.enabled` | `false` | Serve HTTPS with `ListenAndServeTLS` |
 | `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled |
@@ -41,7 +39,8 @@ This document describes how the server is configured and which settings it curre
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port`, `user`, `password`, `dbname` | none | Connection settings |
+| `host`, `port`, `user`, `dbname` | **required** | Connection settings |
+| `password` | none | Database password. Set it with `POSTGRES_PASSWORD`. |
 | `sslmode` | `disable` | libpq SSL mode. Use `verify-full` outside local development. |
 | `max_open_conns` | `25` | Maximum open connections |
 | `max_idle_conns` | `5` | Maximum idle connections |
@@ -66,7 +65,8 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port`, `password` | none | Connection settings |
+| `host`, `port` | **required** | Connection settings |
+| `password` | none | Redis password. Set it with `REDIS_PASSWORD`. |
 | `db` | `0` | Database index |
 | `pool_size` | `10` | Connection pool size |
 | `min_idle_conns` | `2` | Minimum idle connections |
@@ -77,7 +77,7 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port`, `username`, `password` | none | Connection settings. The server connects to `amqp://username:password@host:port/`. |
+| `host`, `port`, `username`, `password` | **required** | Connection settings. The server connects to `amqp://username:password@host:port/`. Set the credentials with `RABBITMQ_USER` and `RABBITMQ_PASSWORD`. |
 | `exchanges.price_updates` | none | Fan-out exchange used for currency change events |
 | `exchanges.trade_events` | none | Declared at startup. Not used yet. |
 | `exchanges.notifications` | none | Fan-out exchange for sign-in code jobs. The delivery worker consumes it through the `notifications.otp` queue (see [`notifications`](#notifications)). |
@@ -87,13 +87,13 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `ssl.user.private_key` | **required** | Path to the RSA private key PEM that signs user tokens, as a list of path segments, for example `["internal", "ssl", "user", "private_key.pem"]` |
-| `ssl.user.public_key` | **required** | Path to the matching public key PEM, as a list of path segments |
-| `ssl.user.retired_public_keys` | `[]` | Public keys of earlier user key pairs, each as a list of path segments. Tokens they signed stay valid until they expire. See [Rotating signing keys](#rotating-signing-keys). |
+| `ssl.user.private_key` | **required** | Path to the RSA private key PEM that signs user tokens, for example `"internal/ssl/user/private_key.pem"`. A relative path starts at the working directory. A list of path segments, which earlier versions required, is still accepted. |
+| `ssl.user.public_key` | **required** | Path to the matching public key PEM |
+| `ssl.user.retired_public_keys` | `[]` | Paths of the public keys of earlier user key pairs. Tokens they signed stay valid until they expire. See [Rotating signing keys](#rotating-signing-keys). |
 | `ssl.admin.private_key`, `ssl.admin.public_key` | none | The key pair that signs admin tokens. Without it, admin routes reject every token, and the server logs a warning. It must differ from the user key pair. |
 | `ssl.admin.retired_public_keys` | `[]` | Public keys of earlier admin key pairs |
 | `issuer` | `encrypted-db-exchange` | Issuer claim written into tokens and required on every token |
-| `access_token.expiration_minutes` | **required** | Access token lifetime. There is no default; `0` produces tokens that expire immediately. |
+| `access_token.expiration_minutes` | **required** | Access token lifetime. There is no default. |
 | `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age` |
 
 Keys must be RSA keys of at least 2048 bits, and a public key must belong to its private key. Tokens name their signing key in the `kid` header, which is derived from a SHA-256 hash of the public key, so key IDs need no configuration. The server refuses to start if a key is invalid or shared between the roles.
@@ -115,7 +115,7 @@ Keys must be RSA keys of at least 2048 bits, and a public key must belong to its
 | `auth.secret` | **required** in release mode | Key for the HMAC of each code and the encryption of contacts in Redis, so that reading Redis reveals neither. At least 32 bytes, for example from `openssl rand -base64 48`, and the same on every server instance. `OTP_SECRET` overrides it. Changing it only invalidates the codes that are pending. Outside release mode, an empty secret is replaced by a random one at startup, which works only with a single server process. |
 | `auth.contact_requests_per_hour` | `5` | Codes issued to one email address or mobile number per hour |
 | `auth.contact_attempts_per_hour` | `10` | Verification attempts for one contact per hour, across all of its codes, so that requesting a new code does not bring new attempts. A successful sign-in resets the count. It must be at least `retry_limit`. Anyone who knows a contact can use up its attempts and block its sign-in for up to an hour, so keep it well above `retry_limit`. |
-| `auth.dev_log_codes` | `false` | Development only. Writes each sign-in code to the log, with a masked contact, instead of delivering it through [`notifications`](#notifications), so that sign-in can be tried locally without an email or SMS provider. The server refuses to start with `true` in release mode (`GIN_MODE=release`). |
+| `auth.dev_log_codes` | `false` | Development only. Writes each sign-in code to the log, with a masked contact, instead of delivering it through [`notifications`](#notifications), so that sign-in can be tried locally without an email or SMS provider. The server refuses to start with `true` in release mode (`server.mode: release`). |
 | `auth.name` | none | Parsed, but not used yet |
 
 The server refuses to start when a value is out of range or the secret is shorter than 32 bytes.
@@ -200,29 +200,82 @@ The following sections are parsed, and some receive defaults, but no code uses t
 
 ## Environment variables
 
-Only the variables below are read. Several variables in `.env.example` are not read yet ([#29](https://github.com/mdastpak/Crypto-Exchange/issues/29)).
+Each variable overrides one setting, and an unset or empty variable leaves it unchanged. Integers and `true` or `false` are parsed strictly. Lists are comma-separated. [`.env.example`](../.env.example) lists the variables for a local setup, and a test checks that each of them is read.
 
-| Variable | Overrides |
+| Variable | Setting |
 | --- | --- |
-| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `postgres.*` |
-| `POSTGRES_DB` | `postgres.dbname`. Note that `.env.example` currently lists `POSTGRES_DBNAME`, which is not read. |
-| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | `redis.*` |
-| `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `rabbitmq.*` |
+| `GIN_MODE` | `server.mode`. Older name of `SERVER_MODE`, which takes precedence. |
+| `SERVER_MODE` | `server.mode` |
+| `SERVER_IP` | `server.ip` |
+| `SERVER_PORT` | `server.port` |
+| `SERVER_READ_TIMEOUT_SECONDS` | `server.read_timeout_seconds` |
+| `SERVER_WRITE_TIMEOUT_SECONDS` | `server.write_timeout_seconds` |
+| `SERVER_IDLE_TIMEOUT_SECONDS` | `server.idle_timeout_seconds` |
+| `SERVER_TRUSTED_PROXIES` | `server.trusted_proxies`, as a comma-separated list |
+| `SERVER_CORS_ALLOWED_ORIGINS` | `server.cors.allowed_origins`, as a comma-separated list |
+| `SERVER_TLS_ENABLED` | `server.tls.enabled` |
+| `SERVER_TLS_CERT_FILE` | `server.tls.cert_file` |
+| `SERVER_TLS_KEY_FILE` | `server.tls.key_file` |
+| `POSTGRES_HOST` | `postgres.host` |
+| `POSTGRES_PORT` | `postgres.port` |
+| `POSTGRES_USER` | `postgres.user` |
+| `POSTGRES_PASSWORD` | `postgres.password` |
+| `POSTGRES_DB` | `postgres.dbname` |
+| `POSTGRES_SSLMODE` | `postgres.sslmode` |
+| `POSTGRES_MAX_OPEN_CONNS` | `postgres.max_open_conns` |
+| `POSTGRES_MAX_IDLE_CONNS` | `postgres.max_idle_conns` |
+| `POSTGRES_CONN_MAX_LIFETIME_MINUTES` | `postgres.conn_max_lifetime_minutes` |
+| `POSTGRES_CONN_MAX_IDLE_TIME_MINUTES` | `postgres.conn_max_idle_time_minutes` |
+| `REDIS_HOST` | `redis.host` |
+| `REDIS_PORT` | `redis.port` |
+| `REDIS_PASSWORD` | `redis.password` |
+| `REDIS_DB` | `redis.db` |
+| `REDIS_POOL_SIZE` | `redis.pool_size` |
+| `REDIS_MIN_IDLE_CONNS` | `redis.min_idle_conns` |
+| `RABBITMQ_HOST` | `rabbitmq.host` |
+| `RABBITMQ_PORT` | `rabbitmq.port` |
+| `RABBITMQ_USER` | `rabbitmq.username` |
+| `RABBITMQ_PASSWORD` | `rabbitmq.password` |
+| `JWT_SSL_USER_PRIVATE_KEY` | `jwt.ssl.user.private_key` |
+| `JWT_SSL_USER_PUBLIC_KEY` | `jwt.ssl.user.public_key` |
+| `JWT_SSL_ADMIN_PRIVATE_KEY` | `jwt.ssl.admin.private_key` |
+| `JWT_SSL_ADMIN_PUBLIC_KEY` | `jwt.ssl.admin.public_key` |
 | `JWT_ISSUER` | `jwt.issuer` |
+| `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` | `jwt.access_token.expiration_minutes` |
+| `JWT_REFRESH_TOKEN_EXPIRATION_MINUTES` | `jwt.refresh_token.expiration_minutes` |
+| `OTP_AUTH_NAME` | `otp.auth.name` |
+| `OTP_AUTH_TTL_SECONDS` | `otp.auth.ttl_seconds` |
+| `OTP_AUTH_LENGTH` | `otp.auth.length` |
+| `OTP_AUTH_RETRY_LIMIT` | `otp.auth.retry_limit` |
 | `OTP_SECRET` | `otp.auth.secret` |
 | `ADMIN_TOTP_KEY` | `admin.totp_key` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
+| `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |
+| `WS_PING_INTERVAL_SECONDS` | `websocket.ping_interval_seconds` |
+| `WS_MAX_MESSAGE_SIZE_BYTES` | `websocket.max_message_size_bytes` |
+| `RATE_LIMITS_REST_REQUESTS_PER_SECOND` | `rate_limits.rest.requests_per_second` |
+| `RATE_LIMITS_REST_BURST` | `rate_limits.rest.burst` |
+| `RATE_LIMITS_WS_MESSAGES_PER_SECOND` | `rate_limits.ws.messages_per_second` |
+| `RATE_LIMITS_WS_BURST` | `rate_limits.ws.burst` |
+| `RATE_LIMITS_TRADING_ORDERS_PER_SECOND` | `rate_limits.trading.orders_per_second` |
+| `RATE_LIMITS_TRADING_BURST` | `rate_limits.trading.burst` |
+| `RATE_LIMITS_AUTH_LOGIN_ATTEMPTS_PER_MINUTE` | `rate_limits.auth.login_attempts_per_minute` |
+| `RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR` | `rate_limits.auth.otp_requests_per_hour` |
 | `LOG_LEVEL` | `observability.logging.level` |
 | `OTEL_ENDPOINT` | `observability.tracing.endpoint` |
-| `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Credentials of the `binance` price provider |
-| `FIAT_PROVIDER_API_KEY`, `FIAT_PROVIDER_API_SECRET` | Credentials of every fiat provider |
-| `CHAINALYSIS_API_KEY`, `TRM_API_KEY` | Credentials of the matching sanctions provider |
-| `SUMSUB_API_KEY`, `ONFIDO_API_KEY` | Credentials of the matching KYC provider |
+| `BINANCE_API_KEY` | `api_key` of the `binance` provider in `price_aggregator` |
+| `BINANCE_API_SECRET` | `api_secret` of the `binance` provider in `price_aggregator` |
+| `FIAT_PROVIDER_API_KEY` | `api_key` of every provider in `fiat` |
+| `FIAT_PROVIDER_API_SECRET` | `api_secret` of every provider in `fiat` |
+| `CHAINALYSIS_API_KEY` | `api_key` of the `chainalysis` provider in `compliance.sanctions` |
+| `TRM_API_KEY` | `api_key` of the `trm` provider in `compliance.sanctions` |
+| `SUMSUB_API_KEY` | `api_key` of the `sumsub` provider in `compliance.kyc` |
+| `ONFIDO_API_KEY` | `api_key` of the `onfido` provider in `compliance.kyc` |
 
 ## Secrets
 
-- Never commit credentials or key material. `config/config.local.yaml`, `.env` files, and `internal/ssl/**/*.pem` are ignored by Git. `config/config.yaml` is listed in `.gitignore` but is still tracked in the repository ([#29](https://github.com/mdastpak/Crypto-Exchange/issues/29)), so never put secrets in it.
+- Never commit credentials or key material. `config/config.local.yaml`, `.env` files, and `internal/ssl/**/*.pem` are ignored by Git. `config/config.yaml` is ignored as well.
 - Prefer environment variables, or files mounted from a secret manager, for passwords and keys.
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
 - Use a separate `OTP_SECRET` for every environment, and rotate it if it is ever exposed.

@@ -108,17 +108,7 @@ PEM files under `internal/ssl/` are ignored by Git. Never commit key material.
 cp config/config.example.yaml config/config.local.yaml
 ```
 
-Edit `config/config.local.yaml` and set at least the JWT key paths. They are lists of path segments:
-
-```yaml
-jwt:
-  ssl:
-    user:
-      private_key: ["internal", "ssl", "user", "private_key.pem"]
-      public_key: ["internal", "ssl", "user", "public_key.pem"]
-```
-
-The example file contains `${...}` placeholders. These are **not** expanded inside YAML ([#29](https://github.com/mdastpak/Crypto-Exchange/issues/29)). Supply the credentials through environment variables instead. The following values match the Docker Compose defaults:
+The example works as it is for a local setup: it reads the user keys from step 3. Keep credentials out of the file and supply them through environment variables instead. The following values match the Docker Compose defaults:
 
 ```bash
 export POSTGRES_PASSWORD=postgres
@@ -140,7 +130,7 @@ go run ./cmd/server -config config/config.local.yaml
 | `-config` | `config/config.yaml` | Path to the YAML configuration file |
 | `-migrations` | `file://internal/db/migrations` | Migration source URL |
 
-Set `GIN_MODE=release` to run Gin in release mode.
+Without `-config`, the server reads `config/config.yaml`, or an embedded copy of the example when that file does not exist. Most settings can also be set with an environment variable, such as `SERVER_PORT` or `SERVER_MODE=release`; [docs/configuration.md](docs/configuration.md#environment-variables) lists them all. When a required setting is missing, the server stops and names it, together with its variable.
 
 Once the server is running:
 
@@ -171,9 +161,10 @@ The server and the command must use the same `ADMIN_TOTP_KEY`. `reset-totp` repl
 
 ### Run everything with Docker Compose
 
-The `app` service builds the server image and runs it with [`config/config.compose.yaml`](config/config.compose.yaml), which holds no secrets. Passwords come from environment variables, and the user keys from step 3 are mounted as Compose secrets:
+The `app` service builds the server image and runs it with [`config/config.compose.yaml`](config/config.compose.yaml), which holds no secrets. Passwords come from environment variables, and the user keys from step 3 are mounted as Compose secrets. To change settings, copy [`.env.example`](.env.example) to `.env`: Compose uses it for the dependencies and passes all of it to the server.
 
 ```bash
+cp .env.example .env
 docker compose up -d --build
 curl http://localhost:8080/system/healthcheck
 ```

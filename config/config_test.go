@@ -52,7 +52,7 @@ postgres:
 	defer func() { configPath = originalPath }()
 	SetConfigPath(path)
 
-	LoadConfig()
+	require.NoError(t, Load())
 
 	assert.Equal(t, "127.0.0.1", Config.Server.IP)
 	assert.Equal(t, "9999", Config.Server.Port)
@@ -71,7 +71,7 @@ func TestLoadConfig_FallsBackToEmbedded(t *testing.T) {
 	// embedded config.example.yaml.
 	SetConfigPath(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 
-	LoadConfig()
+	require.NoError(t, Load())
 
 	assert.NotEmpty(t, Config.Server.Port, "expected embedded config.example.yaml to be loaded")
 	assert.NotEmpty(t, Config.Postgres.DBName)
@@ -201,7 +201,7 @@ func TestOverlayEnvVars(t *testing.T) {
 		t.Setenv(k, v)
 	}
 
-	overlayEnvVars()
+	require.NoError(t, overlayEnvVars())
 
 	assert.Equal(t, "pgpass", Config.Postgres.Password)
 	assert.Equal(t, "pghost", Config.Postgres.Host)
@@ -235,7 +235,7 @@ func TestOverlayEnvVars_NoEnvVarsSetLeavesConfigUnchanged(t *testing.T) {
 	Config = Configuration{}
 	Config.Postgres.Host = "unchanged-host"
 
-	overlayEnvVars()
+	require.NoError(t, overlayEnvVars())
 
 	assert.Equal(t, "unchanged-host", Config.Postgres.Host)
 }
@@ -261,8 +261,8 @@ func TestValidateConfig_DoesNotPanicWithProvidersConfigured(t *testing.T) {
 	Config.Postgres.Password = "x"
 	Config.RabbitMQ.Username = "x"
 	Config.RabbitMQ.Password = "x"
-	Config.JWT.SSL.User.PrivateKey = []string{"a"}
-	Config.JWT.SSL.User.PublicKey = []string{"b"}
+	Config.JWT.SSL.User.PrivateKey = "a"
+	Config.JWT.SSL.User.PublicKey = "b"
 	Config.Exchange.Name = "test-exchange"
 
 	assert.NotPanics(t, func() {
@@ -273,11 +273,11 @@ func TestValidateConfig_DoesNotPanicWithProvidersConfigured(t *testing.T) {
 func TestJWTKeyPaths(t *testing.T) {
 	defer resetConfig()
 	c := &Configuration{}
-	c.JWT.SSL.User.PrivateKey = []string{"config", "ssl", "user_private.pem"}
-	c.JWT.SSL.User.PublicKey = []string{"config", "ssl", "user_public.pem"}
+	c.JWT.SSL.User.PrivateKey = "config/ssl/user_private.pem"
+	c.JWT.SSL.User.PublicKey = "config/ssl/user_public.pem"
 
-	assert.Equal(t, filepath.Join("config", "ssl", "user_private.pem"), c.JWTPrivateKeyPath())
-	assert.Equal(t, filepath.Join("config", "ssl", "user_public.pem"), c.JWTPublicKeyPath())
+	assert.Equal(t, "config/ssl/user_private.pem", c.JWTPrivateKeyPath())
+	assert.Equal(t, "config/ssl/user_public.pem", c.JWTPublicKeyPath())
 }
 
 func TestGetRabbitMQURL(t *testing.T) {
@@ -327,14 +327,14 @@ func TestComposeConfig(t *testing.T) {
 	}
 
 	SetConfigPath("config.compose.yaml")
-	LoadConfig()
+	require.NoError(t, Load())
 
 	assert.Equal(t, "0.0.0.0", Config.Server.IP, "the server must listen on the container network")
 	assert.Equal(t, "postgres", Config.Postgres.Host)
 	assert.Equal(t, "redis", Config.Redis.Host)
 	assert.Equal(t, "rabbitmq", Config.RabbitMQ.Host)
-	assert.Equal(t, []string{"/run/secrets/jwt_user_private_key"}, Config.JWT.SSL.User.PrivateKey)
-	assert.Equal(t, []string{"/run/secrets/jwt_user_public_key"}, Config.JWT.SSL.User.PublicKey)
+	assert.Equal(t, KeyPath("/run/secrets/jwt_user_private_key"), Config.JWT.SSL.User.PrivateKey)
+	assert.Equal(t, KeyPath("/run/secrets/jwt_user_public_key"), Config.JWT.SSL.User.PublicKey)
 	assert.NotEmpty(t, Config.RabbitMQ.Exchanges.Notifications)
 
 	assert.Empty(t, Config.Postgres.Password, "passwords come from the environment")

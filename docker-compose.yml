@@ -1,19 +1,22 @@
 # Local development environment. Not for production: services use default
 # passwords and publish their ports.
+#
+# Settings come from .env when it exists (copy .env.example), with defaults
+# for everything that the services need.
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
     container_name: encrypted-db-postgres
     environment:
-      POSTGRES_USER: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: exchange
+      POSTGRES_DB: ${POSTGRES_DB:-exchange}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d exchange"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -75,8 +78,29 @@ services:
     # permissions.
     user: "${APP_UID:-10001}:${APP_GID:-10001}"
     command: ["-config", "config/config.compose.yaml"]
+    # Every variable in .env reaches the server. The ones below take
+    # precedence: they give the defaults, and keep the container's addresses,
+    # port, and key paths whatever .env says for running outside Compose.
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - GIN_MODE=debug
+      - SERVER_IP=0.0.0.0
+      - SERVER_PORT=8080
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-exchange}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - JWT_SSL_USER_PRIVATE_KEY=/run/secrets/jwt_user_private_key
+      - JWT_SSL_USER_PUBLIC_KEY=/run/secrets/jwt_user_public_key
+      # Admin keys are not mounted. An empty value leaves the setting of
+      # config.compose.yaml, which has none.
+      - JWT_SSL_ADMIN_PRIVATE_KEY=
+      - JWT_SSL_ADMIN_PUBLIC_KEY=
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-redis}
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}

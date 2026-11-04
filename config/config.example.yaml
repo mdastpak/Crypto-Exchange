@@ -1,6 +1,13 @@
 # Crypto Exchange Configuration Example
-# Copy this file to config.yaml and fill in your values
-# Environment variables can override any setting (see overlayEnvVars in config.go)
+#
+# Copy this file to config/config.local.yaml (ignored by Git) and adjust it,
+# then start the server with -config config/config.local.yaml. Without a
+# configuration file, the server uses an embedded copy of this file.
+#
+# Keep secrets out of this file: set them with the environment variables named
+# in the comments. Every environment variable is listed in
+# docs/configuration.md, and an empty variable leaves the setting unchanged.
+# ${VAR} placeholders are not expanded in this file.
 
 server:
   ip: "0.0.0.0"
@@ -8,7 +15,7 @@ server:
   read_timeout_seconds: 10
   write_timeout_seconds: 10
   idle_timeout_seconds: 120
-  mode: "debug"  # debug, release
+  mode: "debug"  # debug, release, or test. Set with SERVER_MODE.
   # IPs or CIDR ranges of reverse proxies (load balancer, ingress) whose
   # X-Forwarded-For and X-Real-IP headers are trusted. Leave empty when clients
   # connect directly; otherwise they could spoof their address.
@@ -27,7 +34,7 @@ postgres:
   host: "localhost"
   port: "5432"
   user: "postgres"
-  password: "${POSTGRES_PASSWORD}"
+  password: ""  # Set with POSTGRES_PASSWORD
   dbname: "exchange"
   sslmode: "disable"
   max_open_conns: 25
@@ -38,14 +45,14 @@ postgres:
 redis:
   host: "localhost"
   port: "6379"
-  password: "${REDIS_PASSWORD}"
+  password: ""  # Set with REDIS_PASSWORD
   db: 0
   pool_size: 10
   min_idle_conns: 2
 
 rabbitmq:
-  username: "${RABBITMQ_USER}"
-  password: "${RABBITMQ_PASSWORD}"
+  username: ""  # Set with RABBITMQ_USER
+  password: ""  # Set with RABBITMQ_PASSWORD
   host: "localhost"
   port: "5672"
   exchanges:
@@ -62,14 +69,19 @@ jwt:
     # are optional; without them, admin routes reject every token. Both roles
     # must use different keys.
     admin:
-      private_key: []  # Path segments to admin private key PEM
-      public_key: []   # Path segments to admin public key PEM
+      # For example "internal/ssl/admin/private_key.pem". Set with
+      # JWT_SSL_ADMIN_PRIVATE_KEY and JWT_SSL_ADMIN_PUBLIC_KEY.
+      private_key: ""
+      public_key: ""
       retired_public_keys: []  # Earlier admin public keys, accepted until their tokens expire
     user:
-      private_key: []  # Path segments to user private key PEM (e.g., ["internal", "ssl", "user", "private_key.pem"])
-      public_key: []   # Path segments to user public key PEM
+      # Generated as described in the README. Paths are relative to the
+      # working directory. Set with JWT_SSL_USER_PRIVATE_KEY and
+      # JWT_SSL_USER_PUBLIC_KEY.
+      private_key: "internal/ssl/user/private_key.pem"
+      public_key: "internal/ssl/user/public_key.pem"
       # Earlier user public keys, for key rotation, for example:
-      # - ["internal", "ssl", "user", "2026-10", "public_key.pem"]
+      # - "internal/ssl/user/2026-10/public_key.pem"
       retired_public_keys: []
   issuer: "encrypted-db-exchange"
   access_token:
@@ -165,8 +177,8 @@ price_aggregator:
       type: "websocket"
       ws_endpoint: "wss://stream.binance.com:9443/ws"
       rest_endpoint: "https://api.binance.com"
-      api_key: "${BINANCE_API_KEY}"
-      api_secret: "${BINANCE_API_SECRET}"
+      api_key: ""  # Set with BINANCE_API_KEY
+      api_secret: ""  # Set with BINANCE_API_SECRET
       passphrase: ""
       symbols:
         - "btcusdt"
@@ -181,9 +193,9 @@ price_aggregator:
       type: "websocket"
       ws_endpoint: "wss://ws-feed.exchange.coinbase.com"
       rest_endpoint: "https://api.exchange.coinbase.com"
-      api_key: "${COINBASE_API_KEY}"
-      api_secret: "${COINBASE_API_SECRET}"
-      passphrase: "${COINBASE_PASSPHRASE}"
+      api_key: ""
+      api_secret: ""
+      passphrase: ""
       symbols:
         - "BTC-USD"
         - "ETH-USD"
@@ -260,7 +272,7 @@ custody:
       ws_endpoints: []
       explorer_api: "https://apilist.tronscan.org/api"
       explorer_ws: ""
-      api_key: "${TRON_API_KEY}"
+      api_key: ""
       api_secret: ""
       chain_id: "tron-mainnet"
       contract_address: ""
@@ -301,13 +313,13 @@ fiat:
       enabled: false
       type: "bank_api"
       endpoint: "https://api.partnerbank.com/v1"
-      api_key: "${FIAT_PROVIDER_API_KEY}"
-      api_secret: "${FIAT_PROVIDER_API_SECRET}"
+      api_key: ""  # Set with FIAT_PROVIDER_API_KEY
+      api_secret: ""  # Set with FIAT_PROVIDER_API_SECRET
       cert_path: ""
       key_path: ""
       ca_path: ""
       supported_assets: ["USD", "EUR"]
-      webhook_secret: "${FIAT_WEBHOOK_SECRET}"
+      webhook_secret: ""
       timeout_seconds: 30
 
 compliance:
@@ -320,15 +332,15 @@ compliance:
         timeout_seconds: 30
       - name: "chainalysis"
         enabled: false
-        api_key: "${CHAINALYSIS_API_KEY}"
-        api_secret: "${CHAINALYSIS_API_SECRET}"
+        api_key: ""  # Set with CHAINALYSIS_API_KEY
+        api_secret: ""
         endpoint: "https://api.chainalysis.com/api"
         priority: 2
         timeout_seconds: 10
       - name: "trm"
         enabled: false
-        api_key: "${TRM_API_KEY}"
-        api_secret: "${TRM_API_SECRET}"
+        api_key: ""  # Set with TRM_API_KEY
+        api_secret: ""
         endpoint: "https://api.trmlabs.com/v1"
         priority: 3
         timeout_seconds: 10
@@ -349,17 +361,17 @@ compliance:
         timeout_seconds: 0
       - name: "sumsub"
         enabled: false
-        api_key: "${SUMSUB_API_KEY}"
-        api_secret: "${SUMSUB_API_SECRET}"
+        api_key: ""  # Set with SUMSUB_API_KEY
+        api_secret: ""
         endpoint: "https://api.sumsub.com"
-        webhook_secret: "${SUMSUB_WEBHOOK_SECRET}"
+        webhook_secret: ""
         timeout_seconds: 30
       - name: "onfido"
         enabled: false
-        api_key: "${ONFIDO_API_KEY}"
-        api_secret: "${ONFIDO_API_SECRET}"
+        api_key: ""  # Set with ONFIDO_API_KEY
+        api_secret: ""
         endpoint: "https://api.onfido.com/v3.6"
-        webhook_secret: "${ONFIDO_WEBHOOK_SECRET}"
+        webhook_secret: ""
         timeout_seconds: 30
     default_tier: "STANDARD"
     auto_approve_low_risk: false
@@ -376,7 +388,7 @@ observability:
     path: "/metrics"
   tracing:
     enabled: false
-    endpoint: "${OTEL_ENDPOINT}"
+    endpoint: ""  # Set with OTEL_ENDPOINT
     service_name: "encrypted-db-exchange"
     sample_rate: 0.1
 

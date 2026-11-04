@@ -2,10 +2,12 @@ package config
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -253,14 +255,33 @@ type Configuration struct {
 	} `yaml:"rate_limits"`
 }
 
-// JWTKeyPaths locates the PEM files of one role. Each path is a list of
-// segments that are joined with the platform's separator.
+// JWTKeyPaths locates the PEM files of one role.
 type JWTKeyPaths struct {
-	PrivateKey []string `yaml:"private_key"`
-	PublicKey  []string `yaml:"public_key"`
+	PrivateKey KeyPath `yaml:"private_key"`
+	PublicKey  KeyPath `yaml:"public_key"`
 	// RetiredPublicKeys lists the public keys of earlier key pairs. Tokens
 	// they signed are accepted until they expire.
-	RetiredPublicKeys [][]string `yaml:"retired_public_keys"`
+	RetiredPublicKeys []KeyPath `yaml:"retired_public_keys"`
+}
+
+// KeyPath is the path of a key file. In YAML it is a string. A list of path
+// segments, which earlier versions required, is still accepted and joined
+// with the platform's separator.
+type KeyPath string
+
+// UnmarshalYAML accepts a string or a list of path segments.
+func (p *KeyPath) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var path string
+	if err := unmarshal(&path); err == nil {
+		*p = KeyPath(path)
+		return nil
+	}
+	var segments []string
+	if err := unmarshal(&segments); err != nil {
+		return errors.New("a key path must be a string")
+	}
+	*p = KeyPath(filepath.Join(segments...))
+	return nil
 }
 
 // DefaultJWTIssuer is the "iss" claim when jwt.issuer is not set.
@@ -402,30 +423,94 @@ type KYCProviderConfig struct {
 	Timeout       int    `yaml:"timeout_seconds"`
 }
 
+// LoadConfig loads the configuration as Load does, and stops the process
+// when it is invalid.
 func LoadConfig() {
+	if err := Load(); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
+	}
+}
+
+// Load reads the configuration file, applies the environment variables,
+// fills in the defaults, and checks the values that every command uses. The
+// settings that only the server needs are checked by ValidateServer.
+func Load() error {
 	var data []byte
 	var err error
 
 	if _, statErr := os.Stat(configPath); statErr == nil {
 		data, err = os.ReadFile(configPath)
 		if err != nil {
-			log.Fatalf("Error reading config file: %v", err)
+			return fmt.Errorf("reading %s: %w", configPath, err)
 		}
 	} else {
+		log.Printf("%s does not exist: using the embedded config.example.yaml", configPath)
 		data, err = configEmbed.ReadFile("config.example.yaml")
 		if err != nil {
-			log.Fatalf("Error reading embedded config: %v", err)
+			return fmt.Errorf("reading the embedded configuration: %w", err)
 		}
 	}
 
-	err = yaml.Unmarshal(data, &Config)
-	if err != nil {
-		log.Fatalf("Error parsing config file: %v", err)
+	Config = Configuration{}
+	if err := yaml.Unmarshal(data, &Config); err != nil {
+		return fmt.Errorf("parsing %s: %w", configPath, err)
 	}
-
+	if err := overlayEnvVars(); err != nil {
+		return fmt.Errorf("invalid environment variables: %w", err)
+	}
 	setDefaults()
-	overlayEnvVars()
+	if err := Config.validateMode(); err != nil {
+		return err
+	}
 	validateConfig()
+	return nil
+}
+
+// Server modes. They are the modes of Gin.
+var serverModes = []string{"debug", "release", "test"}
+
+func (c *Configuration) validateMode() error {
+	for _, mode := range serverModes {
+		if c.Server.Mode == mode {
+			return nil
+		}
+	}
+	return fmt.Errorf("server.mode (%s) is %q; it must be one of %s",
+		envVarFor("server.mode"), c.Server.Mode, strings.Join(serverModes, ", "))
+}
+
+// ValidateServer reports the settings that the server cannot start without,
+// all at once, each with the environment variable that can set it.
+func ValidateServer() error {
+	return Config.validateServer()
+}
+
+func (c *Configuration) validateServer() error {
+	var missing []string
+	require := func(ok bool, key string) {
+		if !ok {
+			missing = append(missing, fmt.Sprintf("%s (%s)", key, envVarFor(key)))
+		}
+	}
+	require(c.Server.Port != "", "server.port")
+	require(c.Postgres.Host != "", "postgres.host")
+	require(c.Postgres.Port != "", "postgres.port")
+	require(c.Postgres.User != "", "postgres.user")
+	require(c.Postgres.DBName != "", "postgres.dbname")
+	require(c.Redis.Host != "", "redis.host")
+	require(c.Redis.Port != "", "redis.port")
+	require(c.RabbitMQ.Host != "", "rabbitmq.host")
+	require(c.RabbitMQ.Port != "", "rabbitmq.port")
+	require(c.RabbitMQ.Username != "", "rabbitmq.username")
+	require(c.RabbitMQ.Password != "", "rabbitmq.password")
+	require(c.JWT.SSL.User.PrivateKey != "", "jwt.ssl.user.private_key")
+	require(c.JWT.SSL.User.PublicKey != "", "jwt.ssl.user.public_key")
+	require(c.JWT.AccessToken.Expiration > 0, "jwt.access_token.expiration_minutes")
+	require(c.JWT.RefreshToken.Expiration > 0, "jwt.refresh_token.expiration_minutes")
+	if len(missing) > 0 {
+		return fmt.Errorf("required settings are not set: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func setDefaults() {
@@ -598,136 +683,12 @@ func setNotificationDefaults(n *NotificationsConfig) {
 	}
 }
 
-func overlayEnvVars() {
-	if v := os.Getenv("POSTGRES_PASSWORD"); v != "" {
-		Config.Postgres.Password = v
-	}
-	if v := os.Getenv("POSTGRES_HOST"); v != "" {
-		Config.Postgres.Host = v
-	}
-	if v := os.Getenv("POSTGRES_PORT"); v != "" {
-		Config.Postgres.Port = v
-	}
-	if v := os.Getenv("POSTGRES_USER"); v != "" {
-		Config.Postgres.User = v
-	}
-	if v := os.Getenv("POSTGRES_DB"); v != "" {
-		Config.Postgres.DBName = v
-	}
-
-	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
-		Config.Redis.Password = v
-	}
-	if v := os.Getenv("REDIS_HOST"); v != "" {
-		Config.Redis.Host = v
-	}
-	if v := os.Getenv("REDIS_PORT"); v != "" {
-		Config.Redis.Port = v
-	}
-
-	if v := os.Getenv("RABBITMQ_USER"); v != "" {
-		Config.RabbitMQ.Username = v
-	}
-	if v := os.Getenv("RABBITMQ_PASSWORD"); v != "" {
-		Config.RabbitMQ.Password = v
-	}
-	if v := os.Getenv("RABBITMQ_HOST"); v != "" {
-		Config.RabbitMQ.Host = v
-	}
-	if v := os.Getenv("RABBITMQ_PORT"); v != "" {
-		Config.RabbitMQ.Port = v
-	}
-
-	if v := os.Getenv("JWT_ISSUER"); v != "" {
-		Config.JWT.Issuer = v
-	}
-	if v := os.Getenv("OTP_SECRET"); v != "" {
-		Config.OTP.Auth.Secret = v
-	}
-	if v := os.Getenv("ADMIN_TOTP_KEY"); v != "" {
-		Config.Admin.TOTPKey = v
-	}
-
-	if v := os.Getenv("SMTP_PASSWORD"); v != "" {
-		Config.Notifications.Email.Password = v
-	}
-	if v := os.Getenv("KAVENEGAR_API_KEY"); v != "" {
-		Config.Notifications.SMS.Kavenegar.APIKey = v
-	}
-
-	if v := os.Getenv("BINANCE_API_KEY"); v != "" {
-		for i := range Config.PriceAggregator.Providers {
-			if Config.PriceAggregator.Providers[i].Name == "binance" {
-				Config.PriceAggregator.Providers[i].APIKey = v
-			}
-		}
-	}
-	if v := os.Getenv("BINANCE_API_SECRET"); v != "" {
-		for i := range Config.PriceAggregator.Providers {
-			if Config.PriceAggregator.Providers[i].Name == "binance" {
-				Config.PriceAggregator.Providers[i].APISecret = v
-			}
-		}
-	}
-
-	if v := os.Getenv("FIAT_PROVIDER_API_KEY"); v != "" {
-		for i := range Config.Fiat.Providers {
-			Config.Fiat.Providers[i].APIKey = v
-		}
-	}
-	if v := os.Getenv("FIAT_PROVIDER_API_SECRET"); v != "" {
-		for i := range Config.Fiat.Providers {
-			Config.Fiat.Providers[i].APISecret = v
-		}
-	}
-
-	if v := os.Getenv("CHAINALYSIS_API_KEY"); v != "" {
-		for i := range Config.Compliance.Sanctions.Providers {
-			if Config.Compliance.Sanctions.Providers[i].Name == "chainalysis" {
-				Config.Compliance.Sanctions.Providers[i].APIKey = v
-			}
-		}
-	}
-	if v := os.Getenv("TRM_API_KEY"); v != "" {
-		for i := range Config.Compliance.Sanctions.Providers {
-			if Config.Compliance.Sanctions.Providers[i].Name == "trm" {
-				Config.Compliance.Sanctions.Providers[i].APIKey = v
-			}
-		}
-	}
-
-	if v := os.Getenv("SUMSUB_API_KEY"); v != "" {
-		for i := range Config.Compliance.KYC.Providers {
-			if Config.Compliance.KYC.Providers[i].Name == "sumsub" {
-				Config.Compliance.KYC.Providers[i].APIKey = v
-			}
-		}
-	}
-	if v := os.Getenv("ONFIDO_API_KEY"); v != "" {
-		for i := range Config.Compliance.KYC.Providers {
-			if Config.Compliance.KYC.Providers[i].Name == "onfido" {
-				Config.Compliance.KYC.Providers[i].APIKey = v
-			}
-		}
-	}
-
-	if v := os.Getenv("OTEL_ENDPOINT"); v != "" {
-		Config.Observability.Tracing.Endpoint = v
-	}
-	if v := os.Getenv("LOG_LEVEL"); v != "" {
-		Config.Observability.Logging.Level = v
-	}
-}
-
 func validateConfig() {
 	if Config.Postgres.Password == "" {
 		log.Println("WARNING: POSTGRES_PASSWORD is not set")
 	}
 	if Config.RabbitMQ.Username == "" || Config.RabbitMQ.Password == "" {
 		log.Println("WARNING: RABBITMQ credentials are not set")
-	}
-	if len(Config.JWT.SSL.User.PrivateKey) == 0 || len(Config.JWT.SSL.User.PublicKey) == 0 {
-		log.Println("WARNING: JWT SSL keys not configured")
 	}
 	if Config.Exchange.Name == "" {
 		log.Println("WARNING: Exchange name not set")
@@ -767,11 +728,11 @@ func validateConfig() {
 }
 
 func (c *Configuration) JWTPrivateKeyPath() string {
-	return filepath.Join(c.JWT.SSL.User.PrivateKey...)
+	return string(c.JWT.SSL.User.PrivateKey)
 }
 
 func (c *Configuration) JWTPublicKeyPath() string {
-	return filepath.Join(c.JWT.SSL.User.PublicKey...)
+	return string(c.JWT.SSL.User.PublicKey)
 }
 
 func GetRabbitMQURL() string {

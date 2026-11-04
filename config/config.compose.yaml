@@ -29,8 +29,8 @@ jwt:
   ssl:
     user:
       # Mounted by the jwt_user_* Compose secrets.
-      private_key: ["/run/secrets/jwt_user_private_key"]
-      public_key: ["/run/secrets/jwt_user_public_key"]
+      private_key: "/run/secrets/jwt_user_private_key"
+      public_key: "/run/secrets/jwt_user_public_key"
   issuer: "encrypted-db-exchange"
   access_token:
     expiration_minutes: 15

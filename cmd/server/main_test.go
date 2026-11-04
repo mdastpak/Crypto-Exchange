@@ -121,7 +121,7 @@ func writeKeyPair(t *testing.T, dir, name string) config.JWTKeyPaths {
 	require.NoError(t, os.WriteFile(publicPath, pem.EncodeToMemory(&pem.Block{
 		Type: "RSA PUBLIC KEY", Bytes: x509.MarshalPKCS1PublicKey(&key.PublicKey),
 	}), 0o600))
-	return config.JWTKeyPaths{PrivateKey: []string{privatePath}, PublicKey: []string{publicPath}}
+	return config.JWTKeyPaths{PrivateKey: config.KeyPath(privatePath), PublicKey: config.KeyPath(publicPath)}
 }
 
 func withJWTKeys(t *testing.T, user, admin config.JWTKeyPaths) {
@@ -138,7 +138,7 @@ func TestInitAuthKeys_LoadsSeparateKeysPerRole(t *testing.T) {
 	dir := t.TempDir()
 	user := writeKeyPair(t, dir, "user")
 	retired := writeKeyPair(t, dir, "retired")
-	user.RetiredPublicKeys = [][]string{retired.PublicKey}
+	user.RetiredPublicKeys = []config.KeyPath{retired.PublicKey}
 	withJWTKeys(t, user, writeKeyPair(t, dir, "admin"))
 
 	require.NoError(t, initAuthKeys())
@@ -167,12 +167,12 @@ func TestInitAuthKeys_RejectsInvalidConfigurations(t *testing.T) {
 
 	cases := map[string][2]config.JWTKeyPaths{
 		"no user keys":               {config.JWTKeyPaths{}, admin},
-		"missing user file":          {config.JWTKeyPaths{PrivateKey: []string{dir, "missing.pem"}, PublicKey: user.PublicKey}, admin},
+		"missing user file":          {config.JWTKeyPaths{PrivateKey: config.KeyPath(filepath.Join(dir, "missing.pem")), PublicKey: user.PublicKey}, admin},
 		"half-configured admin":      {user, config.JWTKeyPaths{PrivateKey: admin.PrivateKey}},
 		"admin reuses the user keys": {user, user},
 		"missing retired key": {config.JWTKeyPaths{
 			PrivateKey: user.PrivateKey, PublicKey: user.PublicKey,
-			RetiredPublicKeys: [][]string{{dir, "missing.pem"}},
+			RetiredPublicKeys: []config.KeyPath{config.KeyPath(filepath.Join(dir, "missing.pem"))},
 		}, admin},
 	}
 	for name, keys := range cases {

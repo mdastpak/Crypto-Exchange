@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -60,10 +59,13 @@ func main() {
 	config.SetConfigPath(configPath)
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
-
-	if os.Getenv("GIN_MODE") == "release" {
-		gin.SetMode(gin.ReleaseMode)
+	if err := config.ValidateServer(); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
 	}
+
+	// server.mode, which SERVER_MODE or GIN_MODE can set, selects the
+	// release checks below as well as Gin's mode.
+	gin.SetMode(config.Config.Server.Mode)
 
 	if err := initAuthKeys(); err != nil {
 		log.Fatalf("Failed to initialize auth keys: %v", err)
@@ -292,7 +294,7 @@ func initAuthKeys() error {
 
 	admin := config.Config.JWT.SSL.Admin
 	switch {
-	case len(admin.PrivateKey) == 0 && len(admin.PublicKey) == 0:
+	case admin.PrivateKey == "" && admin.PublicKey == "":
 		log.Println("WARNING: jwt.ssl.admin keys are not configured: admin routes reject every token")
 	default:
 		adminKeys, err := readKeyPair(admin)
@@ -305,11 +307,11 @@ func initAuthKeys() error {
 }
 
 func readKeyPair(paths config.JWTKeyPaths) (auth.KeyPair, error) {
-	read := func(name string, segments []string) ([]byte, error) {
-		if len(segments) == 0 {
+	read := func(name string, path config.KeyPath) ([]byte, error) {
+		if path == "" {
 			return nil, fmt.Errorf("%s is not configured", name)
 		}
-		data, err := os.ReadFile(filepath.Join(segments...))
+		data, err := os.ReadFile(string(path))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read %s: %w", name, err)
 		}
@@ -324,8 +326,8 @@ func readKeyPair(paths config.JWTKeyPaths) (auth.KeyPair, error) {
 	if pair.PublicKey, err = read("public_key", paths.PublicKey); err != nil {
 		return auth.KeyPair{}, err
 	}
-	for i, segments := range paths.RetiredPublicKeys {
-		retired, err := read(fmt.Sprintf("retired_public_keys[%d]", i), segments)
+	for i, path := range paths.RetiredPublicKeys {
+		retired, err := read(fmt.Sprintf("retired_public_keys[%d]", i), path)
 		if err != nil {
 			return auth.KeyPair{}, err
 		}
