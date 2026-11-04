@@ -3,7 +3,6 @@ package auth
 import (
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"encrypted-db/internal/helpers"
@@ -11,22 +10,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// LogoutHandler ends the session of the access token in the Authorization
-// header: it revokes the session, so its refresh token stops working, and
-// blacklists the access token until it expires.
+// LogoutHandler ends the session of the access token that RequireRole
+// accepted, so it must run behind that middleware: it revokes the session, so
+// its refresh token stops working, and blacklists the access token until it
+// expires.
 func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
-	tokenString := c.GetHeader("Authorization")
-	if tokenString == "" {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Token not provided", nil)
-		return
-	}
-	if strings.HasPrefix(tokenString, "Bearer ") {
-		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
-	}
-
-	claims, err := VerifyAccessToken(tokenString)
-	if err != nil {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
+	claims, ok := GetClaims(c)
+	tokenString, hasToken := accessToken(c)
+	if !ok || !hasToken {
+		// The route is not protected by RequireRole.
+		unauthorized(c, "Unauthorized - Token not provided")
 		return
 	}
 
@@ -39,11 +32,10 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 		}
 	}
 
-	var expiresAt time.Time
+	// ParseToken requires an expiry, so ExpiresAt is always set.
+	expiresAt := time.Now().Add(time.Hour)
 	if claims.ExpiresAt != nil {
 		expiresAt = claims.ExpiresAt.Time
-	} else {
-		expiresAt = time.Now().Add(24 * time.Hour)
 	}
 
 	if err := tb.AddTokenToBlacklist(ctx, tokenString, expiresAt); err != nil {

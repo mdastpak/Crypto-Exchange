@@ -34,7 +34,7 @@ flowchart TB
 | --- | --- |
 | `cmd/server` | Startup, route registration, graceful shutdown |
 | `config` | YAML loading, defaults, environment overrides (see [configuration.md](configuration.md)) |
-| `internal/auth` | RS256 JWT issuing and verification, key registry for rotation, Redis-backed token blacklist, admin and user middleware |
+| `internal/auth` | RS256 JWT issuing and verification with separate keys per role, `kid`-based key selection and retired keys for rotation, Redis-backed token blacklist, admin and user middleware |
 | `internal/db` | PostgreSQL connection with startup retries and migrations under an advisory lock, Redis client |
 | `internal/rabbitmq` | Connection, publisher confirms, automatic reconnect |
 | `internal/notify` | Sign-in code delivery: the queue sender used by OTP sign-in, the worker that consumes the queue with retries and a dead-letter queue, and the SMTP and Kavenegar SMS channels |
@@ -52,8 +52,9 @@ Middleware is applied in this order: recovery, which answers a panic with `500 I
 | --- | --- |
 | `/ws` | WebSocket rate limit (applied to the upgrade request) |
 | `/public` | Authentication rate limit |
-| `/admin` | `JWTAdminVerification` (role `admin`, blacklist check), trading rate limit |
-| `/user` | `JWTUserVerification` (role `user` or `admin`, blacklist check), trading rate limit |
+| `/admin` | `JWTAdminVerification` (Bearer access token signed with an admin key, blacklist check), trading rate limit |
+| `/user` | `JWTUserVerification` (Bearer access token signed with a user key, blacklist check), trading rate limit |
+| `POST /public/auth/logout` | `JWTUserVerification`, like `/user/logout` |
 
 ### Startup and shutdown
 

@@ -87,12 +87,23 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `ssl.user.private_key` | **required** | Path to the RSA private key PEM, as a list of path segments, for example `["internal", "ssl", "user", "private_key.pem"]` |
-| `ssl.user.public_key` | **required** | Path to the RSA public key PEM, as a list of path segments |
-| `ssl.admin.private_key`, `ssl.admin.public_key` | none | Parsed, but not loaded yet. Admin tokens are signed with the user key ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)). |
-| `issuer` | none | Issuer claim written into tokens |
+| `ssl.user.private_key` | **required** | Path to the RSA private key PEM that signs user tokens, as a list of path segments, for example `["internal", "ssl", "user", "private_key.pem"]` |
+| `ssl.user.public_key` | **required** | Path to the matching public key PEM, as a list of path segments |
+| `ssl.user.retired_public_keys` | `[]` | Public keys of earlier user key pairs, each as a list of path segments. Tokens they signed stay valid until they expire. See [Rotating signing keys](#rotating-signing-keys). |
+| `ssl.admin.private_key`, `ssl.admin.public_key` | none | The key pair that signs admin tokens. Without it, admin routes reject every token, and the server logs a warning. It must differ from the user key pair. |
+| `ssl.admin.retired_public_keys` | `[]` | Public keys of earlier admin key pairs |
+| `issuer` | `encrypted-db-exchange` | Issuer claim written into tokens and required on every token |
 | `access_token.expiration_minutes` | **required** | Access token lifetime. There is no default; `0` produces tokens that expire immediately. |
 | `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age` |
+
+Keys must be RSA keys of at least 2048 bits, and a public key must belong to its private key. Tokens name their signing key in the `kid` header, which is derived from a SHA-256 hash of the public key, so key IDs need no configuration. The server refuses to start if a key is invalid or shared between the roles.
+
+#### Rotating signing keys
+
+1. Generate a new key pair for the role.
+2. Point `private_key` and `public_key` at the new pair, and add the old public key to `retired_public_keys`.
+3. Restart every server instance. New tokens are signed with the new key, and tokens signed with the old key keep working.
+4. After `refresh_token.expiration_minutes` (or `access_token.expiration_minutes` for admin keys, which have no refresh tokens), remove the old key from `retired_public_keys`.
 
 ### `otp`
 

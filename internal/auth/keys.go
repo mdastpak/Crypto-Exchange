@@ -2,141 +2,161 @@ package auth
 
 import (
 	"crypto/rsa"
-	"sync"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"sync/atomic"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var (
-	// Current active keys
-	privateKey *rsa.PrivateKey
-	publicKey  *rsa.PublicKey
-
-	// Key rotation: map of key ID -> public key for verifying old tokens
-	publicKeys map[string]*rsa.PublicKey
-
-	keysOnce   sync.Once
-	keysErr    error
-	keysMutex  sync.RWMutex
+// Roles. Each role has its own signing keys and audience, so a token issued
+// for one role is never accepted for another, even if its role claim was
+// forged with a stolen key.
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
 )
 
-// LoadKeys loads the RSA private and public keys once at startup.
-// Thread-safe: uses sync.Once to ensure keys are loaded only once.
-func LoadKeys() error {
-	keysOnce.Do(func() {
-		keysErr = loadKeysInternal()
-	})
-	return keysErr
+// minRSAKeyBits is the smallest accepted RSA modulus.
+const minRSAKeyBits = 2048
+
+// audienceFor returns the "aud" claim of tokens for role.
+func audienceFor(role string) string {
+	return role + "-api"
 }
 
-func loadKeysInternal() error {
-	// Keys should be loaded from config at startup, not per-request.
-	// This function is kept for backward compatibility but should not be used.
-	// Actual key loading happens in InitKeys() during application startup.
-	publicKeys = make(map[string]*rsa.PublicKey)
+func knownRole(role string) bool {
+	return role == RoleUser || role == RoleAdmin
+}
+
+// KeyPair holds the PEM-encoded keys of one role.
+type KeyPair struct {
+	// PrivateKey signs new tokens. PublicKey must belong to it.
+	PrivateKey []byte
+	PublicKey  []byte
+	// Retired holds the public keys of earlier key pairs. Tokens they signed
+	// stay valid until they expire, so keys can be rotated without signing
+	// everyone out.
+	Retired [][]byte
+}
+
+// roleKeys are the parsed keys of one role.
+type roleKeys struct {
+	signing    *rsa.PrivateKey
+	signingKID string
+	// verifying maps a key ID to a public key, including the signing key's.
+	verifying map[string]*rsa.PublicKey
+}
+
+// keyring is never modified after it is built; SetKeys replaces it as a
+// whole, so readers need no lock.
+type keyring struct {
+	roles map[string]*roleKeys
+}
+
+var currentKeys atomic.Pointer[keyring]
+
+// SetKeys installs the keys of every role at once, replacing earlier keys. A
+// role without keys can neither issue nor accept tokens. Keys must be RSA
+// keys of at least 2048 bits, and no key may be shared between roles.
+func SetKeys(pairs map[string]KeyPair) error {
+	ring := &keyring{roles: make(map[string]*roleKeys, len(pairs))}
+	owner := make(map[string]string) // key ID -> role, to reject shared keys
+	for role, pair := range pairs {
+		if !knownRole(role) {
+			return fmt.Errorf("%w: %q", ErrUnknownRole, role)
+		}
+		keys, err := parseKeyPair(pair)
+		if err != nil {
+			return fmt.Errorf("%s keys: %w", role, err)
+		}
+		for kid := range keys.verifying {
+			if other, taken := owner[kid]; taken {
+				return fmt.Errorf("%s and %s must not share a key", other, role)
+			}
+			owner[kid] = role
+		}
+		ring.roles[role] = keys
+	}
+	currentKeys.Store(ring)
 	return nil
 }
 
-// InitKeys initializes RSA keys from PEM data. Call once at application startup.
+// InitKeys installs the user keys only. Admin tokens can then neither be
+// issued nor accepted. The server uses SetKeys.
 func InitKeys(privateKeyPEM, publicKeyPEM []byte) error {
-	var err error
-	privateKey, err = jwt.ParseRSAPrivateKeyFromPEM(privateKeyPEM)
+	return SetKeys(map[string]KeyPair{RoleUser: {PrivateKey: privateKeyPEM, PublicKey: publicKeyPEM}})
+}
+
+func parseKeyPair(pair KeyPair) (*roleKeys, error) {
+	private, err := jwt.ParseRSAPrivateKeyFromPEM(pair.PrivateKey)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("private key: %w", err)
 	}
-	publicKey, err = jwt.ParseRSAPublicKeyFromPEM(publicKeyPEM)
+	public, err := jwt.ParseRSAPublicKeyFromPEM(pair.PublicKey)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("public key: %w", err)
 	}
-
-	keysMutex.Lock()
-	defer keysMutex.Unlock()
-
-	if publicKeys == nil {
-		publicKeys = make(map[string]*rsa.PublicKey)
+	if !private.PublicKey.Equal(public) {
+		return nil, errors.New("the public key does not belong to the private key")
 	}
-	// Default key ID for current key
-	publicKeys["current"] = publicKey
-	return nil
-}
-
-// AddPublicKey adds a public key for token verification (key rotation support).
-// keyID is a unique identifier for the key (e.g., "key-2024-01", "key-2024-02").
-func AddPublicKey(keyID string, publicKeyPEM []byte) error {
-	pubKey, err := jwt.ParseRSAPublicKeyFromPEM(publicKeyPEM)
+	kid, err := checkedKeyID(public)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	keysMutex.Lock()
-	defer keysMutex.Unlock()
-
-	if publicKeys == nil {
-		publicKeys = make(map[string]*rsa.PublicKey)
+	keys := &roleKeys{signing: private, signingKID: kid, verifying: map[string]*rsa.PublicKey{kid: public}}
+	for i, pemData := range pair.Retired {
+		retired, err := jwt.ParseRSAPublicKeyFromPEM(pemData)
+		if err != nil {
+			return nil, fmt.Errorf("retired public key %d: %w", i+1, err)
+		}
+		retiredKID, err := checkedKeyID(retired)
+		if err != nil {
+			return nil, fmt.Errorf("retired public key %d: %w", i+1, err)
+		}
+		keys.verifying[retiredKID] = retired
 	}
-	publicKeys[keyID] = pubKey
-	return nil
+	return keys, nil
 }
 
-// RemovePublicKey removes a public key (e.g., when a key is fully retired).
-func RemovePublicKey(keyID string) {
-	keysMutex.Lock()
-	defer keysMutex.Unlock()
-	delete(publicKeys, keyID)
-}
-
-// GetPublicKeys returns all registered public keys for verification.
-func GetPublicKeys() map[string]*rsa.PublicKey {
-	keysMutex.RLock()
-	defer keysMutex.RUnlock()
-
-	result := make(map[string]*rsa.PublicKey, len(publicKeys))
-	for k, v := range publicKeys {
-		result[k] = v
+func checkedKeyID(key *rsa.PublicKey) (string, error) {
+	if key.N.BitLen() < minRSAKeyBits {
+		return "", fmt.Errorf("RSA keys must have at least %d bits, got %d", minRSAKeyBits, key.N.BitLen())
 	}
-	return result
+	return KeyID(key)
 }
 
-// PrivateKey returns the current active RSA private key (for signing).
-func PrivateKey() *rsa.PrivateKey {
-	return privateKey
+// KeyID derives the "kid" header of tokens signed with the private key of
+// key, from a SHA-256 hash of the public key. Every server instance derives
+// the same ID, so key IDs need no configuration.
+func KeyID(key *rsa.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:16]), nil
 }
 
-// PublicKey returns the current active RSA public key (for verification).
-func PublicKey() *rsa.PublicKey {
-	return publicKey
-}
-
-// KeysLoaded returns true if keys have been successfully initialized.
-func KeysLoaded() bool {
-	return privateKey != nil && publicKey != nil
-}
-
-// VerifyRSATokenWithKeys verifies a JWT using all registered public keys (supports key rotation).
-func VerifyRSATokenWithKeys(tokenString string) (*Claims, error) {
-	if !KeysLoaded() {
+// keysFor returns the keys of role, or an error when the role is unknown or
+// has no keys.
+func keysFor(role string) (*roleKeys, error) {
+	if !knownRole(role) {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownRole, role)
+	}
+	ring := currentKeys.Load()
+	if ring == nil || ring.roles[role] == nil {
 		return nil, ErrKeysNotLoaded
 	}
+	return ring.roles[role], nil
+}
 
-	claims := &Claims{}
-	keys := GetPublicKeys()
-
-	var lastErr error
-	for _, pubKey := range keys {
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, ErrInvalidSigningAlg
-			}
-			return pubKey, nil
-		})
-
-		if err == nil && token.Valid {
-			// Token validated successfully with this key
-			return claims, nil
-		}
-		lastErr = err
-		// Continue trying other keys
-	}
-
-	return nil, lastErr
+// KeysLoaded reports whether keys are installed for role.
+func KeysLoaded(role string) bool {
+	_, err := keysFor(role)
+	return err == nil
 }

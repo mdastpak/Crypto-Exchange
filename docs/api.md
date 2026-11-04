@@ -20,12 +20,15 @@ Every endpoint except `/system/*` responds with:
 
 ### Authentication
 
-Protected routes expect the JWT access token in the `Authorization` header.
+Protected routes, including both logout routes, expect the access token with the `Bearer` scheme:
 
-> [!NOTE]
-> The `/admin/*` and `/user/*` middleware currently expects the **raw token without a `Bearer` prefix**, and rejects a prefixed token with `401` before the handler runs. Only `POST /public/auth/logout`, which has no authentication middleware, accepts both forms. Consistent `Bearer` support is tracked in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17).
+```http
+Authorization: Bearer <access token>
+```
 
-Tokens are RS256-signed JWTs with these claims:
+The scheme is case-insensitive. A bare token or any other scheme is rejected with `401`. Every `401` from the authentication middleware carries `WWW-Authenticate: Bearer`.
+
+Tokens are JWTs signed with RS256. The header names the signing key in `kid`, and the claims are:
 
 | Claim | Description |
 | --- | --- |
@@ -35,7 +38,16 @@ Tokens are RS256-signed JWTs with these claims:
 | `sid` | The sign-in session the token belongs to |
 | `jti` | A unique token ID |
 | `iss` | `jwt.issuer` from the configuration |
-| `iat`, `exp` | Issue and expiry time |
+| `aud` | `user-api` or `admin-api`, matching the role |
+| `iat`, `exp` | Issue and expiry time. `exp` is required. |
+
+Each role has its own signing keys. User routes accept only user tokens and admin routes only admin tokens, so a user token can never reach an admin route, even with a forged `role` claim. A token is rejected with `401` when any of the following holds:
+
+- Its algorithm is not RS256.
+- Its `kid` is missing or names no key of the route's role.
+- Its issuer or audience is wrong.
+- It has no expiry or has expired.
+- Its type or role does not match the route.
 
 Each sign-in creates a session in the `sessions` table. Only SHA-256 hashes of the tokens are stored.
 
@@ -171,12 +183,9 @@ Ends the session of the access token sent in the `Authorization` header:
 
 Other access tokens issued earlier for the same session stay valid until they expire (`access_token.expiration_minutes`).
 
-| Route | Accepted `Authorization` value |
-| --- | --- |
-| `POST /public/auth/logout` | The raw token, or `Bearer <token>` |
-| `POST /user/logout` | The raw token only. A `Bearer` prefix is rejected with `401` by the user middleware ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)). |
+Both routes require a user access token as `Authorization: Bearer <token>`. `POST /public/auth/logout` exists because the refresh token cookie is only sent to `/public/auth/*`, so only this route can clear it in the browser.
 
-Response `200`. Errors: `401` for a missing or invalid token.
+Response `200`. Errors: `401` for a missing, invalid, or blacklisted token, or a token without the `Bearer` scheme.
 
 ## Currencies
 
