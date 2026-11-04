@@ -371,4 +371,16 @@ The server replies:
 
 ### Server messages
 
-Currency events (see [Currencies](#currencies)) are meant to be broadcast to every client, with a `server_time` field added. The broadcast consumer is not started by the server yet ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)). When several messages are queued, they can currently arrive concatenated in a single frame ([#20](https://github.com/mdastpak/Crypto-Exchange/issues/20)).
+Currency events (see [Currencies](#currencies)) are broadcast to every connected client, with a `server_time` field added:
+
+```json
+{
+  "entity": "currencies",
+  "action": "create",
+  "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10",
+  "info": { "symbol": "USDT" },
+  "server_time": "2026-11-02T10:00:00Z"
+}
+```
+
+Every server instance consumes the events through a queue of its own, so a client receives every event whichever instance it is connected to. Each message is a separate frame that holds exactly one JSON document.

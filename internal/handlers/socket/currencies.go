@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-func (h *WebSocketHandler) handleCurrencyUpdates(body []byte) {
+// handleCurrencyUpdate forwards a currency event from RabbitMQ to every
+// connected client, with the server time added.
+func (h *WebSocketHandler) handleCurrencyUpdate(body []byte) {
 	var update map[string]interface{}
 	if err := json.Unmarshal(body, &update); err != nil {
 		log.Printf("Error unmarshaling currency update: %v", err)

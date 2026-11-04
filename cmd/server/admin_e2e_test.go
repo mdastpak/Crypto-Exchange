@@ -200,6 +200,13 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	key, err := adminSignInKey()
 	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, key, sender))
+	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
+	// Registered after the services cleanup, so it runs first, as in main.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = handlers.Socket.Shutdown(ctx)
+	})
 
 	gin.SetMode(gin.TestMode)
 	router, err := newEngine()
