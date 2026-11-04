@@ -3,6 +3,8 @@ package socket
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/streadway/amqp"
 )
 
 type WebSocketHandler struct {
@@ -166,18 +169,9 @@ func (h *WebSocketHandler) writePump(client *Client) {
 				return
 			}
 
-			w, err := client.Conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
-
-			n := len(client.Send)
-			for i := 0; i < n; i++ {
-				w.Write(<-client.Send)
-			}
-
-			if err := w.Close(); err != nil {
+			// Every message is its own frame, so that each frame holds exactly
+			// one JSON document even when several messages are queued.
+			if err := client.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				return
 			}
 
@@ -259,118 +253,118 @@ func (h *WebSocketHandler) Broadcast(message []byte) {
 	}
 }
 
+// consumerPrefetch bounds the events delivered to this instance and not yet
+// broadcast.
+const consumerPrefetch = 64
+
+const maxConsumerBackoff = 30 * time.Second
+
+// subscription is an open consumer of the event exchange.
+type subscription struct {
+	channel    *amqp.Channel
+	deliveries <-chan amqp.Delivery
+}
+
+// StartConsumer forwards the events of the price updates exchange to the
+// connected clients. It subscribes before it returns, so no event published
+// afterwards is missed, and keeps consuming in the background until ctx ends
+// or the handler shuts down, subscribing again whenever the channel closes.
 func (h *WebSocketHandler) StartConsumer(ctx context.Context) error {
+	if h.RabbitMQService == nil {
+		return errors.New("the WebSocket consumer needs RabbitMQ")
+	}
+	exchange := config.Config.RabbitMQ.Exchanges.PriceUpdates
+	sub, err := h.subscribe(exchange)
+	if err != nil {
+		return fmt.Errorf("subscribe to %s: %w", exchange, err)
+	}
+
 	h.Wg.Add(1)
 	go func() {
 		defer h.Wg.Done()
-		h.consumeRabbitMQ(ctx)
+		h.consumeRabbitMQ(ctx, exchange, sub)
 	}()
 	return nil
 }
 
-func (h *WebSocketHandler) consumeRabbitMQ(ctx context.Context) {
-	exchangeName := config.Config.RabbitMQ.Exchanges.PriceUpdates
-	queueName := "ws_price_updates"
-
+func (h *WebSocketHandler) consumeRabbitMQ(ctx context.Context, exchange string, sub *subscription) {
+	backoff := time.Second
 	for {
+		if sub != nil {
+			err := h.drain(ctx, sub)
+			if err == nil {
+				return // stopped
+			}
+			log.Printf("WebSocket consumer: %v", err)
+			backoff = time.Second
+		}
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-h.ShutdownCh:
 			return
-		default:
-			err := h.consumeOnce(ctx, exchangeName, queueName)
-			if err != nil {
-				log.Printf("RabbitMQ consumer error: %v, reconnecting in 5s...", err)
-				select {
-				case <-time.After(5 * time.Second):
-				case <-ctx.Done():
-					return
-				case <-h.ShutdownCh:
-					return
-				}
-			}
+		case <-time.After(backoff):
+		}
+		backoff = min(2*backoff, maxConsumerBackoff)
+
+		var err error
+		sub, err = h.subscribe(exchange)
+		if err != nil {
+			log.Printf("WebSocket consumer: subscribe to %s: %v; retrying in %v", exchange, err, backoff)
 		}
 	}
 }
 
-func (h *WebSocketHandler) consumeOnce(ctx context.Context, exchangeName, queueName string) error {
-	ch, err := h.RabbitMQService.GetChannel()
+// subscribe opens a channel of its own and binds a queue for this instance to
+// exchange. The queue is server-named, exclusive, and deleted with the
+// channel, so every server instance receives every event and forwards it to
+// its own clients.
+func (h *WebSocketHandler) subscribe(exchange string) (*subscription, error) {
+	ch, err := h.RabbitMQService.OpenChannel()
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	_, err = ch.QueueDeclare(
-		queueName,
-		true,  // durable
-		false, // auto-delete
-		false, // exclusive
-		false, // no-wait
-		nil,
-	)
+	if err := ch.Qos(consumerPrefetch, 0, false); err != nil {
+		ch.Close()
+		return nil, err
+	}
+	queue, err := ch.QueueDeclare("", false, true, true, false, nil)
 	if err != nil {
-		return err
+		ch.Close()
+		return nil, err
 	}
-
-	err = ch.QueueBind(
-		queueName,
-		"",
-		exchangeName,
-		false,
-		nil,
-	)
+	if err := ch.QueueBind(queue.Name, "", exchange, false, nil); err != nil {
+		ch.Close()
+		return nil, err
+	}
+	deliveries, err := ch.Consume(queue.Name, "", false, true, false, false, nil)
 	if err != nil {
-		return err
+		ch.Close()
+		return nil, err
 	}
+	log.Printf("WebSocket consumer subscribed to %s", exchange)
+	return &subscription{channel: ch, deliveries: deliveries}, nil
+}
 
-	msgs, err := ch.Consume(
-		queueName,
-		"",
-		false, // manual ack
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("WebSocket consumer started on queue: %s", queueName)
-
+// drain broadcasts deliveries until the handler stops, which returns nil, or
+// the channel closes, which returns an error.
+func (h *WebSocketHandler) drain(ctx context.Context, sub *subscription) error {
+	defer sub.channel.Close()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-h.ShutdownCh:
 			return nil
-		case msg, ok := <-msgs:
+		case msg, ok := <-sub.deliveries:
 			if !ok {
-				return nil // channel closed
+				return errors.New("the consumer channel closed")
 			}
 			h.handleCurrencyUpdate(msg.Body)
-			msg.Ack(false)
+			_ = msg.Ack(false)
 		}
 	}
-}
-
-func (h *WebSocketHandler) handleCurrencyUpdate(body []byte) {
-	var update map[string]interface{}
-	if err := json.Unmarshal(body, &update); err != nil {
-		log.Printf("Error unmarshaling currency update: %v", err)
-		return
-	}
-
-	// Add server timestamp
-	update["server_time"] = time.Now().UTC().Format(time.RFC3339)
-
-	data, err := json.Marshal(update)
-	if err != nil {
-		log.Printf("Error marshaling broadcast: %v", err)
-		return
-	}
-
-	h.Broadcast(data)
 }
 
 func (h *WebSocketHandler) Shutdown(ctx context.Context) error {

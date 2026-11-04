@@ -100,6 +100,11 @@ func main() {
 	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
 		log.Fatalf("Failed to configure admin sign-in: %v", err)
 	}
+	// Forward currency events to WebSocket clients. Socket.Shutdown stops
+	// the consumer before RabbitMQ is closed.
+	if err := handlers.Socket.StartConsumer(context.Background()); err != nil {
+		log.Fatalf("Failed to start the WebSocket event consumer: %v", err)
+	}
 	if otpWorker != nil {
 		if err := otpWorker.Start(); err != nil {
 			log.Fatalf("Failed to start the OTP delivery worker: %v", err)

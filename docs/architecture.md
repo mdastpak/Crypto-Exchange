@@ -24,7 +24,7 @@ flowchart TB
     admin -->|publish| mq[[RabbitMQ]]
     public -->|queue sign-in codes| mq
     mq -->|consume| notify["notify worker<br/>email (SMTP), SMS (Kavenegar)"]
-    mq -.->|consume, not started yet| socket
+    mq -->|consume currency events| socket
     system --> pg & redis & mq
 ```
 
@@ -65,7 +65,7 @@ Middleware is applied in this order: recovery, which answers a panic with `500 I
 1. Load the configuration and the RSA key pair.
 2. Connect to PostgreSQL with retries, then apply the migrations under a PostgreSQL advisory lock.
 3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges.
-4. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured.
+4. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
 5. Load approved currencies from PostgreSQL into the Redis cache.
 6. Start the HTTP server (with TLS when enabled).
 7. On `SIGINT` or `SIGTERM`: close WebSocket clients, delete the shared currency cache ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)), shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
@@ -113,7 +113,7 @@ Two models currently coexist: the legacy JSONB `currencies` and `users` tables u
 | `notifications` | Durable fan-out exchange | Sign-in code jobs |
 | `notifications.otp` | Durable queue bound to `notifications` | Consumed by the delivery worker. Jobs expire with the code. |
 | `notifications.dead-letter`, `notifications.otp.dead-letter` | Durable fan-out exchange and queue | Records of codes that could not be delivered, without the code or the raw contact, kept for seven days |
-| `ws_price_updates` | Durable queue bound to `price_updates` | WebSocket broadcast consumer ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |
+| Server-named queue per instance | Exclusive, auto-delete queue bound to `price_updates` | WebSocket broadcast consumer. Each instance has its own queue, so every instance receives every event. The queue disappears when the instance disconnects. |
 
 ## Target architecture
 

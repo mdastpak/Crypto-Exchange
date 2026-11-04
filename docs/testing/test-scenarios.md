@@ -297,8 +297,8 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-07 | P1 / contract | Malformed JSON client message | Message is ignored/logged; connection remains usable | Passes |
 | W-08 | P1 / contract | JSON has no string `event` | Message is ignored | Passes |
 | W-09 | P1 / contract | Unknown event type | Message is ignored/logged; no broadcast | Passes |
-| W-10 | P0 / contract | Valid RabbitMQ currency event | One broadcast is sent to each connected client with a UTC `server_time` | Passes functionally |
-| W-11 | P0 / contract | RabbitMQ body is invalid JSON | No broadcast; message is not acknowledged as successfully processed | Current code returns before `Ack`, which may cause redelivery; verify broker semantics |
+| W-10 | P0 / contract | Valid RabbitMQ currency event | One broadcast is sent to each connected client with a UTC `server_time` | Passes, end to end: a currency created through the admin API reaches every connected client ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |
+| W-11 | P0 / contract | RabbitMQ body is invalid JSON | No broadcast; the event is not redelivered forever | Passes: the event is logged and acknowledged, because redelivering a malformed event cannot succeed |
 | W-12 | P1 / security | RabbitMQ event contains unexpected or malicious fields | Schema is validated/sanitized before broadcast | **Gap:** raw map is rebroadcast |
 | W-13 | P1 / concurrency | Client send buffer is full | Broadcast skips that client without blocking other clients | Passes |
 | W-14 | P0 / contract | Client disconnects | Client is removed; send channel is closed once; connection closes | Passes; race-test cleanup |
@@ -306,6 +306,8 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-16 | P1 / integration | RabbitMQ connection closes unexpectedly | Service reconnects with bounded backoff and redeclares exchanges | Reconnect loop exists; automate with a broker double |
 | W-17 | P0 / integration | Broker does not confirm a publish | `Publish` returns an error and the caller retries or reconciles | Publisher confirms are implemented |
 | W-18 | P1 / integration | Broker is unavailable for several attempts | Retry count and final error are deterministic; no goroutine leak remains | Verify with a fake or isolated broker |
+| W-19 | P0 / integration | Two server instances consume the same exchange | Clients on both instances receive every event exactly once | Passes: each instance has an exclusive queue ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |
+| W-20 | P0 / contract | Several messages are queued before the write pump runs | Every frame holds exactly one JSON document | Passes ([#20](https://github.com/mdastpak/Crypto-Exchange/issues/20)) |
 
 ---
 

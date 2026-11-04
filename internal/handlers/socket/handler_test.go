@@ -270,3 +270,44 @@ func TestShutdown_ReturnsContextErrorWhenDeadlineExceeded(t *testing.T) {
 	err := h.Shutdown(ctx)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
+
+// TestWritePump_SendsEachMessageAsItsOwnFrame queues several messages before
+// the pump runs and checks that every frame holds exactly one of them.
+func TestWritePump_SendsEachMessageAsItsOwnFrame(t *testing.T) {
+	h := newTestHandler()
+	messages := []string{
+		`{"event":"pong","timestamp":"2026-11-04T10:00:00Z"}`,
+		`{"entity":"currencies","action":"create"}`,
+		`{"entity":"currencies","action":"delete"}`,
+	}
+
+	pumped := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		client := &Client{Conn: conn, Send: make(chan []byte, len(messages))}
+		for _, m := range messages {
+			client.Send <- []byte(m)
+		}
+		close(client.Send)
+		h.Wg.Add(1)
+		h.writePump(client)
+		close(pumped)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	for i, want := range messages {
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		messageType, frame, err := conn.ReadMessage()
+		require.NoError(t, err, "frame %d", i)
+		assert.Equal(t, websocket.TextMessage, messageType)
+		assert.JSONEq(t, want, string(frame), "frame %d must hold exactly one message", i)
+	}
+	<-pumped
+}
