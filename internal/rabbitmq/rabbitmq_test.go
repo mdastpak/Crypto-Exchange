@@ -57,13 +57,6 @@ func TestRabbitMQService_IsHealthy_ClosedService(t *testing.T) {
 	assert.False(t, r.IsHealthy())
 }
 
-func TestRabbitMQService_healthCheck_NoChannel(t *testing.T) {
-	r := &RabbitMQService{}
-	err := r.healthCheck()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no channel")
-}
-
 func TestRabbitMQService_Close_NeverConnected(t *testing.T) {
 	r := &RabbitMQService{}
 	err := r.Close()
@@ -89,7 +82,7 @@ func TestRabbitMQService_Publish_ClosedService(t *testing.T) {
 	assert.Contains(t, err.Error(), "rabbitmq service closed")
 }
 
-func TestRabbitMQService_Publish_NoConnectionAttemptsRecreateAndFails(t *testing.T) {
+func TestRabbitMQService_Publish_WithoutChannelFails(t *testing.T) {
 	r := &RabbitMQService{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -117,15 +110,4 @@ func TestRabbitMQService_PublishWithRetry_ContextCancelled(t *testing.T) {
 
 	err := r.PublishWithRetry(ctx, "some-exchange", "payload", 3)
 	assert.Error(t, err)
-}
-
-func TestRabbitMQService_GetChannel_ReturnsExistingChannel(t *testing.T) {
-	// GetChannel should return the cached channel without attempting to
-	// reconnect when one is already set (using a non-nil sentinel via the
-	// exported behavior is not possible without a live broker, so this test
-	// documents/asserts the nil-channel path instead).
-	r := &RabbitMQService{}
-	ch, err := r.GetChannel()
-	assert.Error(t, err)
-	assert.Nil(t, ch)
 }

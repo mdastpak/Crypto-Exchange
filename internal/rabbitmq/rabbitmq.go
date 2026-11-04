@@ -14,23 +14,56 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// RabbitMQService publishes with publisher confirms and opens channels for
+// consumers. One supervisor goroutine owns reconnection: it watches the
+// connection and the publishing channel, and replaces whichever closes, so
+// that a broker restart or a channel-level error is recovered without the
+// callers noticing more than a short delay.
 type RabbitMQService struct {
+	url       string
+	exchanges []string
+
+	// mu guards conn, channel, confirms, and ready. Only the supervisor
+	// replaces the connection and restores the publishing channel; a publish
+	// can only drop a channel that failed.
+	mu      sync.RWMutex
 	conn    *amqp.Connection
-	connMu  sync.RWMutex
 	channel *amqp.Channel
 	// confirms routes the publisher confirmations of channel to the publishes
 	// waiting for them. It owns the channel's only confirmation listener: the
 	// library delivers every confirmation to every listener with a blocking
 	// send, so a listener per publish stalls the connection after a few
 	// messages.
-	confirms    *confirmTracker
-	chMu        sync.RWMutex
-	closed      atomic.Bool
-	reconnectWg sync.WaitGroup
-	notifyClose chan *amqp.Error
-	url         string
-	exchanges   []string
+	confirms *confirmTracker
+	// ready is closed while a publishing channel is available, and replaced
+	// by an open channel when it is dropped, so that publishes can wait for
+	// the supervisor to restore it.
+	ready chan struct{}
+
+	closed   atomic.Bool
+	stop     chan struct{}
+	stopOnce sync.Once
+	// wake asks the supervisor to replace a publishing channel that a publish
+	// dropped.
+	wake chan struct{}
+	wg   sync.WaitGroup
 }
+
+const (
+	reconnectInitialBackoff = time.Second
+	reconnectMaxBackoff     = 30 * time.Second
+	// dialTimeout bounds a connection attempt, so that Close does not wait
+	// for a long dial.
+	dialTimeout = 5 * time.Second
+	// channelWait bounds how long a publish waits while the supervisor
+	// restores the publishing channel.
+	channelWait = 5 * time.Second
+)
+
+var (
+	errServiceClosed      = errors.New("rabbitmq service closed")
+	errChannelUnavailable = errors.New("rabbitmq channel is not available")
+)
 
 // confirmBufferSize lets the broker run ahead of the dispatcher goroutine
 // without blocking the connection's reader.
@@ -100,66 +133,66 @@ func (t *confirmTracker) forget(tag uint64) {
 }
 
 func NewRabbitMQService(exchanges ...string) (*RabbitMQService, error) {
-	url := config.GetRabbitMQURL()
 	r := &RabbitMQService{
-		url:         url,
-		exchanges:   exchanges,
-		notifyClose: make(chan *amqp.Error, 1),
+		url:       config.GetRabbitMQURL(),
+		exchanges: exchanges,
+		ready:     make(chan struct{}),
+		stop:      make(chan struct{}),
+		wake:      make(chan struct{}, 1),
 	}
 
-	if err := r.connect(); err != nil {
+	conn, ch, err := r.open()
+	if err != nil {
 		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
+	r.install(conn, ch)
 
-	r.reconnectWg.Add(1)
-	go r.reconnectLoop()
+	r.wg.Add(1)
+	go r.supervise(conn, ch)
 
+	log.Println("RabbitMQ connection and channel established with publisher confirms")
 	return r, nil
 }
 
-func (r *RabbitMQService) connect() error {
-	r.connMu.Lock()
-	defer r.connMu.Unlock()
-
+// open dials the broker and opens the publishing channel.
+func (r *RabbitMQService) open() (*amqp.Connection, *amqp.Channel, error) {
 	conn, err := amqp.DialConfig(r.url, amqp.Config{
 		Heartbeat: 10 * time.Second,
 		Locale:    "en_US",
+		Dial:      amqp.DefaultDial(dialTimeout),
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-
-	ch, err := conn.Channel()
+	ch, err := r.openChannel(conn)
 	if err != nil {
 		conn.Close()
-		return err
+		return nil, nil, err
 	}
-
-	if err := ch.Confirm(false); err != nil {
-		ch.Close()
-		conn.Close()
-		return fmt.Errorf("failed to enable publisher confirms: %w", err)
-	}
-
-	r.conn = conn
-	r.useChannel(ch)
-	r.closed.Store(false)
-
-	r.notifyClose = conn.NotifyClose(make(chan *amqp.Error, 1))
-
-	for _, exchange := range r.exchanges {
-		if err := r.declareExchange(ch, exchange); err != nil {
-			ch.Close()
-			conn.Close()
-			return fmt.Errorf("failed to declare exchange %s: %w", exchange, err)
-		}
-	}
-
-	log.Println("RabbitMQ connection and channel established with publisher confirms")
-	return nil
+	return conn, ch, nil
 }
 
-func (r *RabbitMQService) declareExchange(ch *amqp.Channel, exchangeName string) error {
+// openChannel opens a publishing channel in confirm mode on conn and declares
+// the exchanges, which are missing after the broker lost its state.
+func (r *RabbitMQService) openChannel(conn *amqp.Connection) (*amqp.Channel, error) {
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, err
+	}
+	if err := ch.Confirm(false); err != nil {
+		ch.Close()
+		return nil, fmt.Errorf("failed to enable publisher confirms: %w", err)
+	}
+	for _, exchange := range r.exchanges {
+		if err := declareExchange(ch, exchange); err != nil {
+			ch.Close()
+			return nil, fmt.Errorf("failed to declare exchange %s: %w", exchange, err)
+		}
+	}
+	return ch, nil
+}
+
+func declareExchange(ch *amqp.Channel, exchangeName string) error {
 	return ch.ExchangeDeclare(
 		exchangeName,
 		"fanout",
@@ -171,162 +204,213 @@ func (r *RabbitMQService) declareExchange(ch *amqp.Channel, exchangeName string)
 	)
 }
 
-func (r *RabbitMQService) GetChannel() (*amqp.Channel, error) {
-	r.chMu.RLock()
-	ch := r.channel
-	r.chMu.RUnlock()
-
-	if ch != nil {
-		return ch, nil
+// install makes conn and ch current and closes the connection they replace.
+// It refuses them once the service is closed, so that a reconnect racing with
+// Close does not leak a connection.
+func (r *RabbitMQService) install(conn *amqp.Connection, ch *amqp.Channel) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed.Load() {
+		conn.Close()
+		return false
 	}
-
-	return r.recreateChannel()
+	if r.conn != nil && r.conn != conn {
+		r.conn.Close()
+	}
+	r.conn = conn
+	r.setChannelLocked(ch)
+	return true
 }
 
-func (r *RabbitMQService) recreateChannel() (*amqp.Channel, error) {
-	r.chMu.Lock()
-	defer r.chMu.Unlock()
-
-	if r.channel != nil {
-		return r.channel, nil
+// setChannelLocked makes ch the publishing channel, or marks the channel
+// unavailable when ch is nil. ready is closed exactly while a channel is
+// available. r.mu must be held.
+func (r *RabbitMQService) setChannelLocked(ch *amqp.Channel) {
+	if ch == nil {
+		if r.channel != nil {
+			r.ready = make(chan struct{})
+		}
+		r.channel, r.confirms = nil, nil
+		return
 	}
-
-	r.connMu.RLock()
-	conn := r.conn
-	r.connMu.RUnlock()
-
-	if conn == nil || conn.IsClosed() {
-		if err := r.connect(); err != nil {
-			return nil, err
-		}
-	} else {
-		ch, err := conn.Channel()
-		if err != nil {
-			return nil, err
-		}
-		if err := ch.Confirm(false); err != nil {
-			ch.Close()
-			return nil, err
-		}
-		for _, exchange := range r.exchanges {
-			if err := r.declareExchange(ch, exchange); err != nil {
-				ch.Close()
-				return nil, err
-			}
-		}
-		r.useChannel(ch)
+	if r.channel == nil && r.ready != nil {
+		close(r.ready)
 	}
-	return r.channel, nil
-}
-
-// useChannel makes ch the publishing channel, with its own confirmation tracker.
-func (r *RabbitMQService) useChannel(ch *amqp.Channel) {
 	r.channel = ch
 	r.confirms = newConfirmTracker(ch)
 }
 
-// dropChannel forgets ch, if it is still the current channel, so that the next
-// publish opens a new one.
+// dropChannel marks ch unavailable, if it is still the publishing channel,
+// and asks the supervisor to replace it.
 func (r *RabbitMQService) dropChannel(ch *amqp.Channel) {
-	r.chMu.Lock()
+	r.mu.Lock()
 	if r.channel == ch {
-		r.channel = nil
+		r.setChannelLocked(nil)
 	}
-	r.chMu.Unlock()
+	r.mu.Unlock()
+	r.requestChannel()
 }
 
-func (r *RabbitMQService) reconnectLoop() {
-	defer r.reconnectWg.Done()
+func (r *RabbitMQService) requestChannel() {
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+// supervise watches the connection and the publishing channel and replaces
+// whichever closes, until the service is closed. The close notifications are
+// local to this goroutine, so no other goroutine reads them.
+func (r *RabbitMQService) supervise(conn *amqp.Connection, ch *amqp.Channel) {
+	defer r.wg.Done()
+	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
+	chClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
 
 	for {
 		select {
-		case err := <-r.notifyClose:
-			if err != nil {
-				log.Printf("RabbitMQ connection closed: %v, reconnecting...", err)
-			} else {
-				log.Println("RabbitMQ connection closed gracefully")
-			}
+		case <-r.stop:
+			return
+
+		case err := <-connClosed:
 			if r.closed.Load() {
 				return
 			}
-			r.reconnect()
-		case <-time.After(30 * time.Second):
-			if r.closed.Load() {
+			log.Printf("RabbitMQ connection closed (%v), reconnecting", err)
+			r.dropChannel(ch)
+			conn, ch = r.reconnect()
+			if conn == nil {
 				return
 			}
-			if err := r.healthCheck(); err != nil {
-				log.Printf("RabbitMQ health check failed: %v, reconnecting...", err)
-				r.reconnect()
+			connClosed = conn.NotifyClose(make(chan *amqp.Error, 1))
+			chClosed = ch.NotifyClose(make(chan *amqp.Error, 1))
+			log.Println("RabbitMQ reconnected")
+
+		case err := <-chClosed:
+			// After a channel-level error, such as a publish to an unknown
+			// exchange, the broker closes the publishing channel but keeps
+			// the connection.
+			chClosed = nil
+			if conn.IsClosed() {
+				continue // connClosed handles it
+			}
+			log.Printf("RabbitMQ publishing channel closed (%v), restoring it", err)
+			r.dropChannel(ch)
+			ch = r.restoreChannel(conn)
+			if ch != nil {
+				chClosed = ch.NotifyClose(make(chan *amqp.Error, 1))
+			}
+
+		case <-r.wake:
+			r.mu.RLock()
+			missing := r.channel == nil
+			r.mu.RUnlock()
+			if !missing || conn.IsClosed() {
+				continue
+			}
+			if ch != nil {
+				ch.Close()
+			}
+			ch = r.restoreChannel(conn)
+			chClosed = nil
+			if ch != nil {
+				chClosed = ch.NotifyClose(make(chan *amqp.Error, 1))
 			}
 		}
 	}
 }
 
-func (r *RabbitMQService) healthCheck() error {
-	r.chMu.RLock()
-	ch := r.channel
-	r.chMu.RUnlock()
+// reconnect dials until it succeeds or the service is closed, which returns
+// nil values.
+func (r *RabbitMQService) reconnect() (*amqp.Connection, *amqp.Channel) {
+	backoff := reconnectInitialBackoff
+	for !r.closed.Load() {
+		conn, ch, err := r.open()
+		if err == nil {
+			if !r.install(conn, ch) {
+				return nil, nil
+			}
+			return conn, ch
+		}
+		log.Printf("RabbitMQ reconnect failed: %v, retrying in %v", err, backoff)
+		if !r.sleep(backoff) {
+			return nil, nil
+		}
+		backoff = min(2*backoff, reconnectMaxBackoff)
+	}
+	return nil, nil
+}
 
-	if ch == nil {
-		return fmt.Errorf("no channel")
+// restoreChannel opens a new publishing channel on conn, retrying while the
+// connection stays open. It returns nil when the connection closes or the
+// service is closed.
+func (r *RabbitMQService) restoreChannel(conn *amqp.Connection) *amqp.Channel {
+	backoff := reconnectInitialBackoff
+	for !r.closed.Load() && !conn.IsClosed() {
+		ch, err := r.openChannel(conn)
+		if err == nil {
+			r.mu.Lock()
+			r.setChannelLocked(ch)
+			r.mu.Unlock()
+			log.Println("RabbitMQ publishing channel restored")
+			return ch
+		}
+		log.Printf("RabbitMQ failed to restore the publishing channel: %v, retrying in %v", err, backoff)
+		if !r.sleep(backoff) {
+			return nil
+		}
+		backoff = min(2*backoff, reconnectMaxBackoff)
 	}
 	return nil
 }
 
-// IsHealthy reports whether the service has an active connection and channel.
-// It is safe for concurrent use and does not perform any network I/O.
+// sleep waits for d and reports false when the service is closed first.
+func (r *RabbitMQService) sleep(d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-r.stop:
+		return false
+	}
+}
+
+// IsHealthy reports whether the service has an open connection and a usable
+// publishing channel. It is false while the supervisor restores either. It is
+// safe for concurrent use and does not perform any network I/O.
 func (r *RabbitMQService) IsHealthy() bool {
 	if r.closed.Load() {
 		return false
 	}
-
-	r.connMu.RLock()
-	conn := r.conn
-	r.connMu.RUnlock()
-	if conn == nil || conn.IsClosed() {
-		return false
-	}
-
-	return r.healthCheck() == nil
+	r.mu.RLock()
+	conn, ch := r.conn, r.channel
+	r.mu.RUnlock()
+	return conn != nil && !conn.IsClosed() && ch != nil
 }
 
-func (r *RabbitMQService) reconnect() {
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
-
-	for !r.closed.Load() {
-		if err := r.connect(); err != nil {
-			log.Printf("RabbitMQ reconnect failed: %v, retrying in %v", err, backoff)
-			time.Sleep(backoff)
-			backoff = time.Duration(float64(backoff) * 1.5)
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
-		}
-		log.Println("RabbitMQ reconnected successfully")
-		return
-	}
-}
-
+// Close stops the supervisor and closes the channel and the connection. It
+// is idempotent.
 func (r *RabbitMQService) Close() error {
 	r.closed.Store(true)
+	r.stopOnce.Do(func() {
+		if r.stop != nil {
+			close(r.stop)
+		}
+	})
 
-	r.chMu.Lock()
-	if r.channel != nil {
-		r.channel.Close()
-		r.channel = nil
+	r.mu.Lock()
+	ch, conn := r.channel, r.conn
+	r.setChannelLocked(nil)
+	r.conn = nil
+	r.mu.Unlock()
+	if ch != nil {
+		ch.Close()
 	}
-	r.chMu.Unlock()
-
-	r.connMu.Lock()
-	if r.conn != nil {
-		r.conn.Close()
-		r.conn = nil
+	if conn != nil {
+		conn.Close()
 	}
-	r.connMu.Unlock()
 
-	r.reconnectWg.Wait()
+	r.wg.Wait()
 	log.Println("RabbitMQ connection closed gracefully")
 	return nil
 }
@@ -337,11 +421,11 @@ func (r *RabbitMQService) Close() error {
 // the service reconnects.
 func (r *RabbitMQService) OpenChannel() (*amqp.Channel, error) {
 	if r.closed.Load() {
-		return nil, fmt.Errorf("rabbitmq service closed")
+		return nil, errServiceClosed
 	}
-	r.connMu.RLock()
+	r.mu.RLock()
 	conn := r.conn
-	r.connMu.RUnlock()
+	r.mu.RUnlock()
 	if conn == nil || conn.IsClosed() {
 		return nil, fmt.Errorf("rabbitmq connection is not available")
 	}
@@ -358,48 +442,49 @@ func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string)
 	})
 }
 
+// waitForChannel returns the publishing channel, waiting up to channelWait
+// while the supervisor restores it.
+func (r *RabbitMQService) waitForChannel(ctx context.Context) (*amqp.Channel, error) {
+	timer := time.NewTimer(channelWait)
+	defer timer.Stop()
+	for {
+		if r.closed.Load() {
+			return nil, errServiceClosed
+		}
+		r.mu.RLock()
+		ch, ready := r.channel, r.ready
+		r.mu.RUnlock()
+		if ch != nil {
+			return ch, nil
+		}
+		r.requestChannel()
+		select {
+		case <-ready:
+		case <-r.stop:
+			return nil, errServiceClosed
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return nil, errChannelUnavailable
+		}
+	}
+}
+
 // PublishMessage publishes msg and waits until the broker confirms it. The
-// timestamp is set when msg has none.
+// timestamp is set when msg has none. While the publishing channel is being
+// restored, it waits up to channelWait for it.
 func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, msg amqp.Publishing) error {
 	if r.closed.Load() {
-		return fmt.Errorf("rabbitmq service closed")
+		return errServiceClosed
 	}
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now()
 	}
 
-	if _, err := r.GetChannel(); err != nil {
-		return err
-	}
-
-	// Reserve the delivery tag and publish under chMu, so that tags follow the
-	// order of publishes on the channel and a reconnect cannot swap the channel
-	// in between. Waiting for the confirmation happens outside the lock, so
-	// concurrent publishes are pipelined.
-	r.chMu.Lock()
-	ch, tracker := r.channel, r.confirms
-	if ch == nil || tracker == nil {
-		r.chMu.Unlock()
-		return fmt.Errorf("rabbitmq channel is not available")
-	}
-	tag, ack, err := tracker.register()
+	ch, tracker, tag, ack, err := r.send(ctx, exchange, msg)
 	if err != nil {
-		if r.channel == ch {
-			r.channel = nil
-		}
-		r.chMu.Unlock()
 		return err
 	}
-	err = ch.Publish(exchange, "", false, false, msg)
-	if err != nil {
-		// The tag was never used, so this channel's tags no longer line up;
-		// the next publish opens a new channel with a new tracker.
-		tracker.forget(tag)
-		r.channel = nil
-		r.chMu.Unlock()
-		return err
-	}
-	r.chMu.Unlock()
 
 	timer := time.NewTimer(publishConfirmTimeout)
 	defer timer.Stop()
@@ -421,6 +506,45 @@ func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, m
 	case <-timer.C:
 		tracker.forget(tag)
 		return fmt.Errorf("publish confirm timeout")
+	}
+}
+
+// send reserves the delivery tag and publishes under mu, so that tags follow
+// the order of publishes on the channel and the channel cannot be swapped in
+// between. Waiting for the confirmation happens outside the lock, so
+// concurrent publishes are pipelined.
+func (r *RabbitMQService) send(ctx context.Context, exchange string, msg amqp.Publishing) (*amqp.Channel, *confirmTracker, uint64, <-chan bool, error) {
+	for {
+		ch, err := r.waitForChannel(ctx)
+		if err != nil {
+			return nil, nil, 0, nil, err
+		}
+
+		r.mu.Lock()
+		if r.channel != ch {
+			// Replaced while waiting for the lock.
+			r.mu.Unlock()
+			continue
+		}
+		tracker := r.confirms
+		tag, ack, err := tracker.register()
+		if err != nil {
+			r.setChannelLocked(nil)
+			r.mu.Unlock()
+			r.requestChannel()
+			return nil, nil, 0, nil, err
+		}
+		if err := ch.Publish(exchange, "", false, false, msg); err != nil {
+			// The tag was never used, so this channel's tags no longer line
+			// up; the supervisor replaces it with a new channel and tracker.
+			tracker.forget(tag)
+			r.setChannelLocked(nil)
+			r.mu.Unlock()
+			r.requestChannel()
+			return nil, nil, 0, nil, err
+		}
+		r.mu.Unlock()
+		return ch, tracker, tag, ack, nil
 	}
 }
 

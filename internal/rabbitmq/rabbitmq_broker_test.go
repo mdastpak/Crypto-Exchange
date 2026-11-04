@@ -176,9 +176,9 @@ func TestPublish_Broker_RecoversAfterConnectionLoss(t *testing.T) {
 	svc, exchange := newBrokerTestService(t)
 	require.NoError(t, publishWithTimeout(svc, exchange, `{"before": true}`))
 
-	svc.connMu.RLock()
+	svc.mu.RLock()
 	conn := svc.conn
-	svc.connMu.RUnlock()
+	svc.mu.RUnlock()
 	require.NoError(t, conn.Close())
 
 	assert.Eventually(t, func() bool {
