@@ -90,19 +90,18 @@ Protected routes require `Authorization: Bearer <token>` since [#17](https://git
 
 # 1. User Handler and `/user/profile`
 
-Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.go:263`.
+Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `cmd/server/main.go`.
 
 > [!IMPORTANT]
-> **Two contracts in this section.** Every scenario except U-30 describes the current route, which returns the currency list. U-30 is the target contract, in which `/user/profile` returns the authenticated user's profile ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)). Do not automate both against the same route. Once #27 is implemented:
+> `/user/profile` returns the authenticated user's profile since [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27), and the user handler no longer lists currencies. Therefore:
 >
 > - U-01 keeps its user token but asserts the caller's profile, as U-30 does. U-02 still expects `401` for an admin token.
 > - U-03 to U-10, U-28, U-29, and U-31 to U-35 (authentication, CORS, and rate limiting) apply to the profile route unchanged.
-> - U-27 changes: #27 adds `PATCH /user/profile`, so only `POST`, `PUT`, and `DELETE` return `405`, and the `Allow` header lists both `GET` and `PATCH`.
-> - U-11 to U-26 (currency listing) move to the shared currency listing used by the public endpoint.
+> - U-11 to U-26 (currency listing) apply to `GET /public/currencies`, the only currency listing.
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
-| U-01 | P0 / contract | Valid raw user JWT; Redis contains one approved currency | `200`; `status=200`; `info` contains exactly that currency | Passes when keys and Redis are initialized |
+| U-01 | P0 / contract | Valid user access token | `200`; `status=200`; `info` is the caller's profile | Passes ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)) |
 | U-02 | P0 / contract | Valid admin JWT; one currency | `401`; user routes accept only tokens signed with a user key | Passes ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
 | U-03 | P0 / contract | Standard `Authorization: Bearer <valid-token>` | `200` | Passes ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)); a bare token gets `401` |
 | U-04 | P0 / contract | No `Authorization` header | `401`; message `Unauthorized - Token not provided`; handler not entered | Covered by middleware |
@@ -128,10 +127,10 @@ Implementation: `internal/handlers/user/users.go:14`, route at `cmd/server/main.
 | U-24 | P1 / contract | Cached JSON has wrong types for `id`, `status`, or `info` | Invalid entry is rejected or skipped without leaking an internal error | **Gap:** unmarshal errors currently produce a generic `500` |
 | U-25 | P1 / contract | `?limit=-1`, `?offset=-1`, or non-numeric pagination values | `400` with a validation error after pagination is introduced | **Gap:** query parameters are currently ignored |
 | U-26 | P1 / performance | More than 10,000 cached currencies | Response is paginated/capped and completes within the latency budget | **Gap:** current handler streams an unbounded result into memory |
-| U-27 | P1 / contract | `POST`, `PUT`, or `DELETE /user/profile` | `405` with an `Allow: GET` header | Gin default behavior; verify after route changes |
+| U-27 | P1 / contract | `POST`, `PUT`, or `DELETE /user/profile` | `405` with an `Allow: GET, PATCH` header | **Gap:** the router does not enable `HandleMethodNotAllowed`, so these get `404` |
 | U-28 | P1 / contract | Valid request with no body and no query | `200`; body content type is `application/json` | Passes |
 | U-29 | P1 / contract | Disallowed CORS origin | No permissive `Access-Control-Allow-Origin`; credentials are not exposed | **Gap:** default CORS reflects arbitrary origins |
-| U-30 | P0 / product | Valid user JWT and user-specific profile data in PostgreSQL | Response contains the authenticated user's profile, never the global currency list | **Gap:** `/user/profile` currently returns currencies and ignores JWT claims |
+| U-30 | P0 / product | Valid user JWT and user-specific profile data in PostgreSQL | Response contains the authenticated user's profile, never the global currency list | Passes: each user reads and changes only their own profile, and a body cannot name another user, tested end to end with two signed-in users ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)) |
 | U-31 | P1 / contract | Valid request under the rate limit | `200`; `X-RateLimit-Limit` and `X-RateLimit-Remaining` are present | Current token bucket does not set remaining on allowed requests |
 | U-32 | P0 / contract | Requests exceed the trading burst | `429`; `Retry-After` is positive; handler is not entered | Current behavior; automate with controlled time/Redis |
 | U-33 | P1 / contract | Two users send requests concurrently | Limits are isolated by user; one user cannot consume another user's quota | Current key function can do this only if `user_id` is set; no route middleware currently sets it |
@@ -338,13 +337,13 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 
 | Finding | Status |
 | --- | --- |
-| `/user/profile` is not a profile endpoint | Open: [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
+| `/user/profile` is not a profile endpoint | Fixed in [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
 | Empty currency responses are `null` | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) and [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
 | OTP generation is predictable | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) (`crypto/rand`) and [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (no modulo bias) |
 | OTP and contact are logged in plaintext | Fixed in [#13](https://github.com/mdastpak/Crypto-Exchange/issues/13) |
 | Refresh tokens bypass blacklist | Fixed in [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) |
 | Protected rate limiting fails open | Open: [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34) |
-| User currency reads can block indefinitely | Open: [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27) |
+| User currency reads can block indefinitely | Fixed in [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27): the user handler no longer lists currencies |
 | Stale suspended/deleted currencies remain active | Fixed in [#24](https://github.com/mdastpak/Crypto-Exchange/issues/24) |
 | Malformed OTP data can panic | Fixed in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (together with A-15, A-16, and A-27) |
 | User migration references the wrong table | Fixed in [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |

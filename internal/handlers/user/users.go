@@ -2,61 +2,205 @@ package user
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"encrypted-db/internal/helpers"
-	"encrypted-db/internal/models"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
+
+	"encrypted-db/internal/auth"
+	"encrypted-db/internal/helpers"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-// UpdateProfile is a placeholder endpoint for future profile-update functionality.
-// It returns 501 Not Implemented rather than leaving the route unregistered or
-// wired to a nil handler (which would panic the server on first request).
-func (h *UserHandler) UpdateProfile(c *gin.Context) {
-	helpers.SendResponse(c, http.StatusNotImplemented, "Profile update is not implemented yet.", nil)
+// Profile is the response of GET and PATCH /user/profile. The contacts are
+// masked: the user proved control of them at sign-in, and a leaked response
+// should not reveal them.
+type Profile struct {
+	UUID        string            `json:"uuid"`
+	Status      string            `json:"status"`
+	Contact     map[string]string `json:"contact"`
+	FirstName   *string           `json:"first_name"`
+	LastName    *string           `json:"last_name"`
+	DisplayName *string           `json:"display_name"`
+	KYCStatus   string            `json:"kyc_status"`
+	KYCTier     string            `json:"kyc_tier"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 
-func (h *UserHandler) GetActiveCurrencies(c *gin.Context) {
-	// Define the pattern to match all active currency keys
-	pattern := "base_definitions:currency:*"
+var (
+	errProfileNotFound    = errors.New("profile not found")
+	errAccountUnavailable = errors.New("account is not available")
+)
 
-	// Use Redis SCAN command to retrieve all matching keys
-	currencies := make([]models.Currency, 0)
-	iter := h.RedisClient.Client.Scan(context.Background(), 0, pattern, 0).Iterator()
-	for iter.Next(context.Background()) {
-		// Get the value of each currency key from Redis
-		data, err := h.RedisClient.Client.Get(context.Background(), iter.Val()).Result()
-		if err != nil {
-			log.Printf("Error retrieving currency from cache for key %s: %v\n", iter.Val(), err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to retrieve currencies from cache.", nil)
-			return
-		}
+// queryRower is implemented by *sql.DB and *sql.Tx.
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
 
-		// Unmarshal the JSON data into a Currency struct
-		var currency models.Currency
-		if err := json.Unmarshal([]byte(data), &currency); err != nil {
-			log.Printf("Error unmarshalling currency data for key %s: %v\n", iter.Val(), err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to process currency information.", nil)
-			return
-		}
+const profileQuery = `SELECT hk, status, role, info->'contact', first_name, last_name, display_name, kyc_status, kyc_tier, created_at
+	FROM users WHERE hk = $1 AND deleted_at IS NULL`
 
-		// The cache should only hold public currencies; filtering here too
-		// keeps an outdated entry from leaking.
-		if !currency.IsPublic() {
-			continue
-		}
-		currencies = append(currencies, currency)
+// loadProfile reads the profile of a user. It returns errProfileNotFound for
+// a missing or deleted user, and errAccountUnavailable for an account that
+// cannot sign in or is not a user account, so that a token issued before
+// such a change no longer reaches the profile.
+func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool) (Profile, error) {
+	query := profileQuery
+	if lock {
+		query += " FOR UPDATE"
+	}
+	var p Profile
+	var role string
+	var contact []byte
+	err := db.QueryRowContext(ctx, query, userID).Scan(&p.UUID, &p.Status, &role, &contact,
+		&p.FirstName, &p.LastName, &p.DisplayName, &p.KYCStatus, &p.KYCTier, &p.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, errProfileNotFound
+	}
+	if err != nil {
+		return p, err
+	}
+	switch p.Status {
+	case "disabled", "deleted", "suspend":
+		return p, errAccountUnavailable
+	}
+	if role != auth.RoleUser {
+		return p, errAccountUnavailable
 	}
 
-	// Check for any error during key iteration
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis key iteration: %v\n", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to retrieve currencies from cache.", nil)
+	var contacts map[string]string
+	if err := json.Unmarshal(contact, &contacts); err != nil {
+		return p, fmt.Errorf("decoding the contacts: %w", err)
+	}
+	p.Contact = make(map[string]string)
+	for _, contactType := range []string{"email", "mobile"} {
+		if value, ok := contacts[contactType]; ok {
+			p.Contact[contactType] = maskContact(contactType, value)
+		}
+	}
+	p.CreatedAt = p.CreatedAt.UTC()
+	return p, nil
+}
+
+// maskContact hides most of a contact, like the sign-in logs do: the first
+// three characters stay visible, with the domain of an email address or the
+// last three digits of a mobile number.
+func maskContact(contactType, value string) string {
+	const hidden = "*****"
+	if contactType == "email" {
+		at := strings.LastIndex(value, "@")
+		if at <= 0 {
+			return hidden
+		}
+		return value[:min(3, at)] + hidden + value[at:]
+	}
+	if len(value) <= 6 {
+		return hidden
+	}
+	return value[:3] + hidden + value[len(value)-3:]
+}
+
+// callerID returns the user that the access token names. There is no user ID
+// in the profile routes, so a user can only read and change their own
+// profile.
+func callerID(c *gin.Context) (uuid.UUID, bool) {
+	claims, ok := auth.GetClaims(c)
+	if !ok {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(claims.UUID)
+	return id, err == nil
+}
+
+// sendProfileError answers a failed profile read.
+func sendProfileError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errProfileNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, "Profile not found", nil)
+	case errors.Is(err, errAccountUnavailable):
+		helpers.SendResponse(c, http.StatusForbidden, "This account is not available. Please contact support.", nil)
+	default:
+		log.Printf("Failed to load a profile: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to load the profile.", nil)
+	}
+}
+
+// GetProfile returns the profile of the signed-in user.
+func (h *UserHandler) GetProfile(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	userID, ok := callerID(c)
+	if !ok {
+		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
+		return
+	}
+	profile, err := loadProfile(ctx, h.PostgresDB.DB, userID, false)
+	if err != nil {
+		sendProfileError(c, err)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, "Profile retrieved successfully.", profile)
+}
+
+// UpdateProfile changes the names in the profile of the signed-in user and
+// returns the updated profile. Only the fields in the request change.
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	userID, ok := callerID(c)
+	if !ok {
+		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
+		return
+	}
+	update, errs, err := decodeProfileUpdate(c)
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request body", nil)
+		return
+	}
+	if errs == nil {
+		errs = update.validate()
+	}
+	if errs != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, "Validation failed", gin.H{"errors": errs})
 		return
 	}
 
-	// Send the list of active currencies as a response
-	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", currencies)
+	// The row is locked from the read to the write, so that the account
+	// checks hold for the write, and concurrent updates of different
+	// fields keep each other's changes.
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("Error starting a profile update: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update the profile.", nil)
+		return
+	}
+	defer tx.Rollback()
+
+	profile, err := loadProfile(ctx, tx, userID, true)
+	if err != nil {
+		sendProfileError(c, err)
+		return
+	}
+	update.apply(&profile)
+	_, err = tx.ExecContext(ctx,
+		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, updated_at = NOW() WHERE hk = $4",
+		profile.FirstName, profile.LastName, profile.DisplayName, userID,
+	)
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		log.Printf("Error updating a profile: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update the profile.", nil)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, "Profile updated successfully.", profile)
 }

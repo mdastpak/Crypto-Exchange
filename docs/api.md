@@ -357,10 +357,47 @@ Events and the cache describe what public clients can see, so they follow the vi
 
 ## User
 
-| Route | Current behavior |
+The user routes require a user access token. The profile routes take no user ID: they always act on the user that the token names, so a user cannot read or change another user's profile.
+
+### `GET /user/profile`
+
+Returns the profile of the signed-in user:
+
+```json
+{
+  "status": 200,
+  "message": "Profile retrieved successfully.",
+  "info": {
+    "uuid": "5b0c1a52-3f5e-4c2a-9d1e-2f7f8f0b6a11",
+    "status": "approved",
+    "contact": { "email": "ali*****@example.com" },
+    "first_name": "Ali",
+    "last_name": null,
+    "display_name": null,
+    "kyc_status": "PENDING",
+    "kyc_tier": "NONE",
+    "created_at": "2026-11-05T09:30:00Z"
+  }
+}
+```
+
+`contact` holds the email address and the mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set are `null`.
+
+Errors: `401` for a missing or invalid token; `403` when the account was disabled, deleted, or suspended, or became an administrator account, after the token was issued (`This account is not available. Please contact support.`); `404` when the user was deleted.
+
+### `PATCH /user/profile`
+
+Changes the names in the profile and returns the updated profile, as `GET` does.
+
+```json
+{ "first_name": "Ali", "display_name": "" }
+```
+
+| Field | Rules |
 | --- | --- |
-| `GET /user/profile` | Returns the currency list instead of the profile ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)) |
-| `POST /user/update` | Returns `501 Not Implemented` |
+| `first_name`, `last_name`, `display_name` | Optional. Spaces around the name are trimmed, and an empty string clears the field. At most 100 characters, without control characters or characters that reorder text (U+202A to U+202E and U+2066 to U+2069). The zero-width non-joiner is allowed. |
+
+Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401`, `403`, and `404` as for `GET`.
 
 ## System
 
