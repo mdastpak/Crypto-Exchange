@@ -1,0 +1,51 @@
+name: Docker image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the Dockerfile uses the Go version of go.mod
+        run: |
+          go_mod=$(awk '/^go /{split($2, v, "."); print v[1] "." v[2]}' go.mod)
+          dockerfile=$(sed -n 's/^ARG GO_VERSION=//p' Dockerfile)
+          echo "go.mod: $go_mod, Dockerfile: $dockerfile"
+          test "$go_mod" = "$dockerfile"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: crypto-exchange:ci
+
+      - name: Check that the image holds only the binaries and migrations
+        run: |
+          unexpected=$(docker run --rm --entrypoint /bin/sh crypto-exchange:ci -c \
+            'find /app -type f ! -path "/app/internal/db/migrations/*.sql" ! -path /app/server ! -path /app/admin')
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected files in /app:"
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Check that the image runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id crypto-exchange:ci -u)" != "0"
+
+      - name: Check that the binaries start
+        run: |
+          # Without arguments, admin prints its usage and exits with status 2.
+          output=$(docker run --rm --entrypoint /app/admin crypto-exchange:ci 2>&1 || true)
+          echo "$output" | grep -q '^Usage: admin'

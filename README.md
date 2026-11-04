@@ -90,7 +90,7 @@ cd Crypto-Exchange
 docker compose up -d postgres redis rabbitmq
 ```
 
-The `app` service in `docker-compose.yml` cannot be built yet ([#28](https://github.com/mdastpak/Crypto-Exchange/issues/28)), so run the server directly with Go.
+This starts only the dependencies, for running the server with Go in the next steps. To run the server in Docker as well, see [Run everything with Docker Compose](#run-everything-with-docker-compose).
 
 ### 3. Generate JWT signing keys
 
@@ -168,6 +168,22 @@ go run ./cmd/admin -config config/config.local.yaml create -email admin@example.
 ```
 
 The server and the command must use the same `ADMIN_TOTP_KEY`. `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
+
+### Run everything with Docker Compose
+
+The `app` service builds the server image and runs it with [`config/config.compose.yaml`](config/config.compose.yaml), which holds no secrets. Passwords come from environment variables, and the user keys from step 3 are mounted as Compose secrets:
+
+```bash
+docker compose up -d --build
+curl http://localhost:8080/system/healthcheck
+```
+
+- Sign-in codes appear in the log of the `app` service (`docker compose logs app`), because the Compose configuration enables `dev_log_codes`.
+- On Linux, run the server as your own user so that it can read the key files without widening their permissions: `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build`.
+- `JWT_USER_PRIVATE_KEY_FILE` and `JWT_USER_PUBLIC_KEY_FILE` select other key files.
+- To create an administrator in the stack, set `ADMIN_TOTP_KEY` and run the `admin` command from the image: `docker compose run --rm --no-deps --entrypoint /app/admin app -config config/config.compose.yaml create -email admin@example.com`. Admin sign-in additionally needs the admin keys, which this file does not mount.
+
+The image contains only the `server` and `admin` binaries and the migrations, and runs as an unprivileged user. Configuration and keys are mounted at runtime and never built into it. Hardening for staging and production is tracked in [#103](https://github.com/mdastpak/Crypto-Exchange/issues/103).
 
 ## Configuration
 

@@ -1,48 +1,51 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
+# syntax=docker/dockerfile:1
 
-WORKDIR /app
+# GO_VERSION must match the go directive in go.mod (major.minor); CI checks it.
+ARG GO_VERSION=1.26
 
-# Install build dependencies
-RUN apk add --no-cache git make
+FROM golang:${GO_VERSION}-alpine AS builder
 
-# Copy go mod files
+WORKDIR /src
+
+# Download modules first, so that they are cached until go.mod or go.sum
+# change. The cache mounts keep modules and build results across builds
+# without adding them to any layer.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download && go mod verify
 
-# Copy source code
+# .dockerignore keeps secrets, local configuration, and keys out of this copy.
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/server ./cmd/server && \
+    CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/admin ./cmd/admin
 
-# Final stage
-FROM alpine:3.20
+# The runtime stage installs no packages: the base image already has the CA
+# certificates, and the timetzdata tag embeds the time zone database in the
+# binaries.
+FROM alpine:3.22
+
+RUN addgroup -g 10001 -S app && \
+    adduser -u 10001 -S -G app -H -s /sbin/nologin app
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+# Only the binaries and the migrations, which the server reads from
+# internal/db/migrations relative to /app. Configuration and keys are mounted
+# at runtime and never built into the image. Without a configuration file the
+# server falls back to the embedded example configuration.
+COPY --from=builder /out/server /out/admin /app/
+COPY --from=builder /src/internal/db/migrations /app/internal/db/migrations
 
-# Create non-root user
-RUN addgroup -g 1000 -S appgroup && \
-    adduser -u 1000 -S appuser -G appgroup
-
-# Copy binary from builder
-COPY --from=builder /app/server .
-
-# Copy config directory
-COPY --from=builder /app/config ./config
-
-# Change ownership
-RUN chown -R appuser:appgroup /app
-
-USER appuser
+USER 10001:10001
 
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/system/healthcheck || exit 1
+# /system/ping only shows that the process serves requests. The dependency
+# health check always returns 200 until #33.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/system/ping || exit 1
 
-CMD ["./server"]
+ENTRYPOINT ["/app/server"]

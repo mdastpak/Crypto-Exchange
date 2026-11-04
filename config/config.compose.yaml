@@ -1,0 +1,50 @@
+# Configuration of the app service in docker-compose.yml, for local
+# development. It holds no secrets: passwords and keys come from environment
+# variables and Compose secrets.
+server:
+  ip: "0.0.0.0"
+  port: "8080"
+  mode: "debug"
+
+postgres:
+  host: "postgres"
+  port: "5432"
+  user: "postgres"
+  dbname: "exchange"
+  sslmode: "disable"
+
+redis:
+  host: "redis"
+  port: "6379"
+
+rabbitmq:
+  host: "rabbitmq"
+  port: "5672"
+  exchanges:
+    price_updates: "price_updates"
+    trade_events: "trade_events"
+    notifications: "notifications"
+
+jwt:
+  ssl:
+    user:
+      # Mounted by the jwt_user_* Compose secrets.
+      private_key: ["/run/secrets/jwt_user_private_key"]
+      public_key: ["/run/secrets/jwt_user_public_key"]
+  issuer: "encrypted-db-exchange"
+  access_token:
+    expiration_minutes: 15
+  refresh_token:
+    expiration_minutes: 10080
+
+exchange:
+  name: "EncryptedDB Exchange (local)"
+
+otp:
+  auth:
+    ttl_seconds: 60
+    length: 6
+    retry_limit: 3
+    # Development only: sign-in codes appear in the log of the app service.
+    # The server refuses to start with this in release mode.
+    dev_log_codes: true

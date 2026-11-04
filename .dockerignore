@@ -1,0 +1,26 @@
+# The build context must never contain secrets. Git ignores these files, but
+# Docker does not, and COPY . . would put them into the build stage.
+.env
+.env.*
+!.env.example
+**/*.pem
+**/*.key
+internal/ssl/
+config/*.local.yaml
+config/config.yaml
+
+# Not needed to build the binaries.
+.git
+.github
+.kilo
+.vscode
+.idea
+**/*_test.go
+**/testdata/
+*.md
+docs/**/*.md
+coverage*
+*.out
+Dockerfile
+.dockerignore
+docker-compose*.yml

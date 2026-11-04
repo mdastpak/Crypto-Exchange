@@ -4,7 +4,7 @@ This document describes how the server is configured and which settings it curre
 
 ## Loading order
 
-1. **File.** The YAML file passed with `-config` is read. The default is `config/config.yaml`. If the file does not exist, the embedded copy of `config/config.example.yaml` is used instead.
+1. **File.** The YAML file passed with `-config` is read. The default is `config/config.yaml`. If the file does not exist, the embedded copy of `config/config.example.yaml` is used instead. The `app` service of `docker-compose.yml` uses `config/config.compose.yaml`, which holds no secrets.
 2. **Defaults.** Numeric and string settings that are still zero or empty after loading receive the defaults listed below.
 3. **Environment variables.** The variables listed in [Environment variables](#environment-variables) override the corresponding settings.
 4. **Validation.** Missing credentials and similar problems are logged as warnings. The server does not refuse to start on them yet. Fail-closed validation is tracked in [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41).

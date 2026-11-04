@@ -315,3 +315,31 @@ func TestGetServerTimeouts(t *testing.T) {
 	assert.Equal(t, 7*time.Second, write)
 	assert.Equal(t, 60*time.Second, idle)
 }
+
+// TestComposeConfig keeps config.compose.yaml, the configuration of the app
+// service in docker-compose.yml, loadable and free of secrets.
+func TestComposeConfig(t *testing.T) {
+	defer resetConfig()
+	original := configPath
+	defer func() { configPath = original }()
+	for _, name := range []string{"POSTGRES_PASSWORD", "REDIS_PASSWORD", "RABBITMQ_PASSWORD", "OTP_SECRET", "ADMIN_TOTP_KEY"} {
+		t.Setenv(name, "")
+	}
+
+	SetConfigPath("config.compose.yaml")
+	LoadConfig()
+
+	assert.Equal(t, "0.0.0.0", Config.Server.IP, "the server must listen on the container network")
+	assert.Equal(t, "postgres", Config.Postgres.Host)
+	assert.Equal(t, "redis", Config.Redis.Host)
+	assert.Equal(t, "rabbitmq", Config.RabbitMQ.Host)
+	assert.Equal(t, []string{"/run/secrets/jwt_user_private_key"}, Config.JWT.SSL.User.PrivateKey)
+	assert.Equal(t, []string{"/run/secrets/jwt_user_public_key"}, Config.JWT.SSL.User.PublicKey)
+	assert.NotEmpty(t, Config.RabbitMQ.Exchanges.Notifications)
+
+	assert.Empty(t, Config.Postgres.Password, "passwords come from the environment")
+	assert.Empty(t, Config.Redis.Password)
+	assert.Empty(t, Config.RabbitMQ.Password)
+	assert.Empty(t, Config.OTP.Auth.Secret)
+	assert.Empty(t, Config.Admin.TOTPKey)
+}
