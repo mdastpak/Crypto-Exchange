@@ -145,7 +145,7 @@ Errors:
 
 - `400`: invalid UUID or missing code
 - `401`: wrong, expired, or already used code
-- `403`: the account is disabled, deleted, or suspended (`This account cannot sign in. Please contact support.`). The code was right, so no information is revealed to someone who does not control the contact.
+- `403`: the account is disabled, deleted, or suspended (`This account cannot sign in. Please contact support.`), or belongs to an administrator (`Administrators must use the admin sign-in.`). The code was right, so no information is revealed to someone who does not control the contact.
 - `429`: the attempts of the code or of the contact are used up. See [Sign-in limits](#sign-in-limits).
 - `500`: the user could not be created or loaded, or the session could not be read
 
@@ -186,6 +186,65 @@ Other access tokens issued earlier for the same session stay valid until they ex
 Both routes require a user access token as `Authorization: Bearer <token>`. `POST /public/auth/logout` exists because the refresh token cookie is only sent to `/public/auth/*`, so only this route can clear it in the browser.
 
 Response `200`. Errors: `401` for a missing, invalid, or blacklisted token, or a token without the `Bearer` scheme.
+
+## Admin sign-in
+
+Administrators are created by an operator with the `cmd/admin` command (see the [README](../README.md#6-create-an-administrator-optional)), never through the API. They sign in with two factors:
+
+1. A one-time code sent to their email address.
+2. A code from their authenticator app (TOTP, RFC 6238: 6 digits, 30-second steps).
+
+Admin sign-in needs `jwt.ssl.admin` keys, [`admin.totp_key`](configuration.md#admin), and email delivery. Without them, both sign-in routes return `503 Admin sign-in is not available`.
+
+### `POST /admin/auth`
+
+Starts an admin sign-in.
+
+```json
+{ "email": "admin@example.com" }
+```
+
+Response `200` for every valid address, so that it does not reveal which addresses belong to administrators:
+
+```json
+{
+  "status": 200,
+  "message": "If this address belongs to an administrator, a sign-in code was sent to it",
+  "info": { "uuid": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed" }
+}
+```
+
+A code is only emailed when the address belongs to an active administrator. The [sign-in limits](#sign-in-limits) apply, counted separately from user sign-in.
+
+Errors: `400` for an invalid address, `429` when a limit is reached, `503` when admin sign-in is not configured.
+
+### `POST /admin/auth/{uuid}`
+
+Completes the sign-in with both codes.
+
+```json
+{ "otp": "123456", "totp": "654321" }
+```
+
+Response `200`: `{"info": {"access_token": "<jwt>"}}`. Admin tokens are access tokens for the `admin-api` audience. There is no refresh token: administrators sign in again when the token expires after `access_token.expiration_minutes`.
+
+- The emailed code is checked first, and this ends the sign-in session, so a wrong authenticator code needs a new emailed code.
+- Each authenticator code is accepted once.
+
+Errors:
+
+- `400`: invalid UUID, or a missing code
+- `401 Invalid or expired code`: either code is wrong or expired, or the address is not an active administrator. The answer does not say which.
+- `429`: the attempts of the emailed code are used up
+- `503`: admin sign-in is not configured
+
+### `POST /admin/logout`
+
+Requires an admin token. Blacklists the token until it expires. Response `200`.
+
+### Checks on admin routes
+
+On every request, all `/admin/*` routes except sign-in check that the token's administrator still has the admin role, the approved status, and an enrolled authenticator. Demoting or disabling an administrator therefore revokes its tokens at once, also when the change is made directly in the database. Such a token gets `401 Unauthorized - Administrator is not active`.
 
 ## Currencies
 

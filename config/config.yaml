@@ -86,6 +86,9 @@ notifications:
     concurrency: 4
     max_attempts: 3
 
+admin:
+  totp_key: ""
+
 websocket:
   allowed_origins: []
   ping_interval_seconds: 30

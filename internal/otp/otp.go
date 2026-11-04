@@ -24,6 +24,10 @@ const MinSecretLength = 32
 
 // Settings configures a Store. Zero values select the defaults.
 type Settings struct {
+	// Namespace separates independent sign-in flows that share Redis, such
+	// as user and admin sign-in: a session or a limit of one namespace is
+	// unknown to the others. Empty is the user namespace.
+	Namespace string
 	// Secret keys the hashes of codes and contacts and the encryption of
 	// contacts in Redis. Every server instance must use the same secret.
 	Secret     string

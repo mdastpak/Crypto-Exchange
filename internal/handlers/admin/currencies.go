@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"encrypted-db/config"
+	"encrypted-db/internal/adminauth"
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/helpers"
 	"encrypted-db/internal/models"
+	"encrypted-db/internal/notify"
+	"encrypted-db/internal/otp"
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -24,14 +27,29 @@ type AdminHandler struct {
 	PostgresDB      *db.PostgresService
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
+
+	// Admin sign-in. Accounts is nil, and sign-in unavailable, until the
+	// server configures admin.totp_key.
+	Accounts *adminauth.Service
+	// OTP issues the emailed sign-in codes, in its own namespace.
+	OTP *otp.Store
+	// OTPSender delivers the emailed codes.
+	OTPSender notify.OTPSender
 }
 
 func NewHandler(is *models.InfraServices) *AdminHandler {
-	return &AdminHandler{
+	h := &AdminHandler{
 		PostgresDB:      is.Postgres,
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
+		OTPSender:       notify.DiscardSender{},
 	}
+	if is.Redis != nil {
+		settings := otp.SettingsFromConfig()
+		settings.Namespace = otpNamespace
+		h.OTP = otp.NewStore(is.Redis.Client, settings)
+	}
+	return h
 }
 
 type CurrencyEvent struct {

@@ -126,6 +126,13 @@ notifications:
     concurrency: 4          # Codes delivered in parallel
     max_attempts: 3         # Attempts per code; delivery also stops when the code expires
 
+admin:
+  # Encrypts the authenticator (TOTP) secrets of administrators: 32 random
+  # bytes, base64-encoded (openssl rand -base64 32). Admin sign-in is disabled
+  # without it. Prefer the ADMIN_TOTP_KEY environment variable; the server and
+  # the cmd/admin command must use the same key.
+  totp_key: ""
+
 websocket:
   allowed_origins: []
   ping_interval_seconds: 30

@@ -26,7 +26,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | --- | --- | --- |
 | OTP sign-in (email, mobile) | Implemented | Codes are delivered by email (SMTP) and SMS (Kavenegar) through a RabbitMQ queue with retries. Codes are stored hashed, and attempts are limited per code and per contact. |
 | JWT access and refresh tokens, sessions, logout | Implemented | Typed tokens with issuer, audience, and `kid` checks, separate signing keys for users and admins, key rotation, `Bearer` authentication, refresh token rotation with reuse detection, and session revocation on logout. Admins cannot sign in yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
-| Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | There is no admin sign-in flow yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
+| Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | Administrators are created with the `cmd/admin` command and sign in with an emailed code and an authenticator app (TOTP). |
 | Public currency listing | Implemented | Served from the Redis cache. |
 | WebSocket gateway | Partial | Ping and pong only. Event broadcast is not wired yet ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)). |
 | Rate limiting (Redis) | Implemented, with known defects | See [#11](https://github.com/mdastpak/Crypto-Exchange/issues/11), [#26](https://github.com/mdastpak/Crypto-Exchange/issues/26), and [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34). |
@@ -150,6 +150,25 @@ Once the server is running:
 
 Sign-in codes are delivered by email and SMS once `notifications` is configured (see [docs/configuration.md](docs/configuration.md#notifications)). To try sign-in locally without a provider, set `otp.auth.dev_log_codes: true` in `config/config.local.yaml`; the codes then appear in the server log. Never enable it outside development: the server refuses to start with it in release mode.
 
+### 6. Create an administrator (optional)
+
+Admin sign-in needs its own signing key pair, a key that encrypts authenticator secrets, and email delivery (or `dev_log_codes` locally):
+
+```bash
+mkdir -p internal/ssl/admin
+openssl genpkey -algorithm RSA -out internal/ssl/admin/private_key.pem -pkeyopt rsa_keygen_bits:2048
+openssl rsa -pubout -in internal/ssl/admin/private_key.pem -out internal/ssl/admin/public_key.pem
+export ADMIN_TOTP_KEY="$(openssl rand -base64 32)"
+```
+
+Add the admin key paths under `jwt.ssl.admin` in `config/config.local.yaml`, as for the user keys. Then create the administrator. The command prints an `otpauth://` URI and a key for the authenticator app, once:
+
+```bash
+go run ./cmd/admin -config config/config.local.yaml create -email admin@example.com
+```
+
+The server and the command must use the same `ADMIN_TOTP_KEY`. `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
+
 ## Configuration
 
 Configuration is loaded from a YAML file, missing values are filled with defaults, and selected environment variables override the result. [docs/configuration.md](docs/configuration.md) describes every section, the defaults, and the supported environment variables.
@@ -172,6 +191,9 @@ All JSON responses, except the system endpoints, use this envelope:
 | `POST` | `/public/auth/{uuid}` | None | Verify an OTP and receive tokens |
 | `POST` | `/public/auth/refresh` | Refresh token cookie | Issue a new access token |
 | `POST` | `/public/auth/logout` | Access token | Revoke the access token |
+| `POST` | `/admin/auth` | None | Request an admin sign-in code |
+| `POST` | `/admin/auth/{uuid}` | None | Verify the emailed code and the authenticator code, and receive an admin token |
+| `POST` | `/admin/logout` | Admin token | Revoke the admin token |
 | `POST` | `/admin/currencies` | Admin token | Create a currency |
 | `PUT` | `/admin/currencies/{hk}` | Admin token | Update a currency |
 | `DELETE` | `/admin/currencies/{hk}` | Admin token | Soft-delete a currency |
@@ -218,10 +240,12 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 ## Project layout
 
 ```text
+cmd/admin/             Command for managing administrators
 cmd/server/            Application entry point, routing, and lifecycle
 config/                Configuration loader, example and default YAML files
 configs/               Asset registry and AML rule definitions (not loaded yet)
 docs/                  Generated Swagger files and project documentation
+internal/adminauth/    Administrator accounts and authenticator (TOTP) enrollment
 internal/auth/         JWT issuing and verification, key rotation, blacklist, middleware
 internal/db/           PostgreSQL and Redis clients, SQL migrations
 internal/domain/       Exchange domain model: asset, market, order, trade, balance,
@@ -230,7 +254,10 @@ internal/handlers/     HTTP and WebSocket handlers (admin, public, socket, syste
 internal/helpers/      Response helpers
 internal/middleware/   Security headers, CORS, rate limiting, validation, recovery
 internal/models/       API models for currencies and users
+internal/notify/       Delivery of sign-in codes by email and SMS through RabbitMQ
+internal/otp/          Sign-in codes: generation, hashed storage in Redis, attempt limits
 internal/rabbitmq/     RabbitMQ connection, publishing with confirms, reconnect
+internal/totp/         Time-based one-time passwords (RFC 6238)
 pkg/utils/             Shared utilities
 ```
 
