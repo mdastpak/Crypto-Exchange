@@ -38,27 +38,35 @@ func (rl *RateLimiter) TradingRateLimit() gin.HandlerFunc {
 	return rl.tokenBucketMiddleware("trading", cfg.OrdersPerSecond, cfg.Burst, rl.getUserID)
 }
 
-func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
+// Authentication limits, for AuthRateLimit.
+const (
+	// AuthLogin limits sign-in code verifications, per minute.
+	AuthLogin = "login"
+	// AuthOTP limits sign-in code requests, per hour.
+	AuthOTP = "otp"
+)
+
+// authLimit returns the configured limit of an authentication action and the
+// window it is counted in.
+func authLimit(action string) (int, time.Duration) {
 	cfg := config.Config.RateLimits.Auth
-	var limit, burst int
-	var keyPrefix string
-
 	switch action {
-	case "login":
-		keyPrefix = "auth:login"
-		limit = cfg.LoginAttemptsPerMinute
-		burst = cfg.LoginAttemptsPerMinute
-	case "otp":
-		keyPrefix = "auth:otp"
-		limit = cfg.OTPRequestsPerHour
-		burst = cfg.OTPRequestsPerHour
-	default:
-		keyPrefix = "auth:default"
-		limit = 10
-		burst = 10
+	case AuthLogin:
+		return cfg.LoginAttemptsPerMinute, time.Minute
+	case AuthOTP:
+		return cfg.OTPRequestsPerHour, time.Hour
 	}
+	panic(fmt.Sprintf("unknown authentication rate limit %q", action))
+}
 
-	return rl.fixedWindowMiddleware(keyPrefix, limit, burst, time.Minute, rl.getClientIP)
+// AuthRateLimit limits an authentication route per client IP, in the window
+// of the action. Each route counts separately, so that, for example, user
+// sign-in traffic cannot use up the budget of admin sign-in.
+func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
+	limit, window := authLimit(action)
+	return rl.fixedWindowMiddleware("auth:"+action, limit, limit, window, func(c *gin.Context) string {
+		return c.FullPath() + ":" + rl.getClientIP(c)
+	})
 }
 
 func (rl *RateLimiter) tokenBucketMiddleware(prefix string, rate, burst int, keyFunc func(*gin.Context) string) gin.HandlerFunc {
@@ -150,20 +158,27 @@ func (rl *RateLimiter) consumeToken(ctx context.Context, key string, rate, burst
 	return allowed, time.Duration(waitMs) * time.Millisecond
 }
 
+// fixedWindowScript counts a request and returns the count with the time
+// left in the window, in milliseconds. The window starts with the first
+// request and is not extended by later ones, so a blocked client is allowed
+// again when it ends, however often it retries. A counter without an expiry
+// gets one, so that it cannot block a client forever.
+var fixedWindowScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if count == 1 or ttl < 0 then
+	redis.call('PEXPIRE', KEYS[1], ARGV[1])
+	ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+`)
+
 func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window time.Duration) (int64, time.Duration) {
-	pipe := rl.redis.Client.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, window)
-	_, err := pipe.Exec(ctx)
+	result, err := fixedWindowScript.Run(ctx, rl.redis.Client, []string{key}, window.Milliseconds()).Slice()
 	if err != nil {
 		return 0, window
 	}
-	count := incr.Val()
-	ttl, _ := rl.redis.Client.TTL(ctx, key).Result()
-	if ttl < 0 {
-		ttl = window
-	}
-	return count, ttl
+	return result[0].(int64), time.Duration(result[1].(int64)) * time.Millisecond
 }
 
 // getClientIP identifies the client for rate limiting. gin's ClientIP honors

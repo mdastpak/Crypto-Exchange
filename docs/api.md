@@ -53,7 +53,7 @@ Each sign-in creates a session in the `sessions` table. Only SHA-256 hashes of t
 
 ### Rate limiting
 
-Rate-limited responses return `429 Too Many Requests` with the `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` headers. [docs/configuration.md](configuration.md#rate_limits) lists the limits per route group.
+Rate-limited responses return `429 Too Many Requests` with the `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` headers. Every route is subject to the general REST limit per client IP. Sign-in adds two limits per client IP: code requests per hour and code verifications per minute. [docs/configuration.md](configuration.md#rate_limits) lists the limits and their routes.
 
 ## Sign-in flow
 

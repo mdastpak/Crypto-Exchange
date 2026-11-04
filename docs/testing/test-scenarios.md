@@ -165,10 +165,10 @@ Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/mai
 | C-14 | P1 / contract | `limit` exceeds the configured maximum | Request is capped or rejected according to the documented API contract | No maximum exists today |
 | C-15 | P1 / contract | `GET /public/currencies` with a body | Body is ignored for the GET contract | Passes |
 | C-16 | P1 / contract | Wrong HTTP method | `405` | Gin default behavior |
-| C-17 | P0 / contract | Requests remain below the public REST limit | `200`; rate headers are accurate | **Gap:** route currently uses the login fixed window |
-| C-18 | P0 / contract | Same IP exceeds the public limit | `429`; `Retry-After` is positive | Current behavior, but the limit is incorrectly shared with login attempts |
-| C-19 | P0 / contract | Two public clients use different IPs | One client's limit does not affect the other | Current fixed-window key is IP-based; verify with a fake Redis clock |
-| C-20 | P1 / contract | Wait until the fixed window expires | Next request is allowed and the counter is reset | Current behavior; automate without a real minute delay |
+| C-17 | P0 / contract | Requests remain below the public REST limit | `200`; rate headers are accurate | Passes: only the REST limit applies ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
+| C-18 | P0 / contract | Same IP exceeds the public limit | `429`; `Retry-After` is positive | Passes with the REST limit, which is no longer shared with sign-in ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
+| C-19 | P0 / contract | Two public clients use different IPs | One client's limit does not affect the other | Passes: limits are kept per client IP, and sign-in limits also per route ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
+| C-20 | P1 / contract | Wait until the fixed window expires | Next request is allowed and the counter is reset | Passes, also when the client keeps retrying while blocked: the window is no longer extended by each request ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26), item 2 of [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | C-21 | P0 / security | Redis rate-limit backend fails | Public endpoint fails closed or returns an explicit degraded response | **Gap:** fixed-window errors currently allow the request |
 | C-22 | P1 / contract | Allowed origin from configuration | CORS headers match the configured origin | Passes when config is set |
 | C-23 | P0 / security | Disallowed origin | No reflected `Access-Control-Allow-Origin` or credentials header | **Gap:** empty configuration reflects any origin |
@@ -348,7 +348,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | Stale suspended/deleted currencies remain active | Fixed in [#24](https://github.com/mdastpak/Crypto-Exchange/issues/24) |
 | Malformed OTP data can panic | Fixed in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (together with A-15, A-16, and A-27) |
 | User migration references the wrong table | Fixed in [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
-| Public currency traffic consumes the login quota | Open: [#26](https://github.com/mdastpak/Crypto-Exchange/issues/26) |
+| Public currency traffic consumes the login quota | Fixed in [#26](https://github.com/mdastpak/Crypto-Exchange/issues/26) |
 | CORS reflects arbitrary origins with credentials | Fixed in [#12](https://github.com/mdastpak/Crypto-Exchange/issues/12) |
 | List handlers have no pagination or response cap | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) and [#53](https://github.com/mdastpak/Crypto-Exchange/issues/53) |
 | Redis has no database fallback | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |

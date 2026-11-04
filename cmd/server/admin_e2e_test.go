@@ -81,6 +81,7 @@ func (s *capturingSender) count(contact string) int {
 
 type e2eEnv struct {
 	router   *gin.Engine
+	handlers *InfraHandlers
 	sender   *capturingSender
 	accounts *adminauth.Service
 	db       *sql.DB
@@ -213,7 +214,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	require.NoError(t, err)
 	router.Use(middleware.RecoveryMiddleware())
 	require.NoError(t, RouteHandler(router, handlers))
-	return &e2eEnv{router: router, sender: sender, accounts: handlers.Admin.Accounts, db: services.Postgres.DB}
+	return &e2eEnv{router: router, handlers: handlers, sender: sender, accounts: handlers.Admin.Accounts, db: services.Postgres.DB}
 }
 
 type e2eResponse struct {
