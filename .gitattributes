@@ -6,3 +6,6 @@
 Dockerfile text eol=lf
 .dockerignore text eol=lf
 *.sh text eol=lf
+# Docker Compose reads .env, copied from .env.example; a CR would end up in
+# the values.
+.env.example text eol=lf
