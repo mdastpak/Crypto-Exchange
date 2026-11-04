@@ -158,20 +158,27 @@ func (rl *RateLimiter) consumeToken(ctx context.Context, key string, rate, burst
 	return allowed, time.Duration(waitMs) * time.Millisecond
 }
 
+// fixedWindowScript counts a request and returns the count with the time
+// left in the window, in milliseconds. The window starts with the first
+// request and is not extended by later ones, so a blocked client is allowed
+// again when it ends, however often it retries. A counter without an expiry
+// gets one, so that it cannot block a client forever.
+var fixedWindowScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if count == 1 or ttl < 0 then
+	redis.call('PEXPIRE', KEYS[1], ARGV[1])
+	ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+`)
+
 func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window time.Duration) (int64, time.Duration) {
-	pipe := rl.redis.Client.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, window)
-	_, err := pipe.Exec(ctx)
+	result, err := fixedWindowScript.Run(ctx, rl.redis.Client, []string{key}, window.Milliseconds()).Slice()
 	if err != nil {
 		return 0, window
 	}
-	count := incr.Val()
-	ttl, _ := rl.redis.Client.TTL(ctx, key).Result()
-	if ttl < 0 {
-		ttl = window
-	}
-	return count, ttl
+	return result[0].(int64), time.Duration(result[1].(int64)) * time.Millisecond
 }
 
 // getClientIP identifies the client for rate limiting. gin's ClientIP honors

@@ -179,7 +179,9 @@ Writing to the database is not enough to create an administrator: changing `user
 | `auth.login_attempts_per_minute` | `5` | Sign-in code verifications: `POST /public/auth/{uuid}` and `POST /admin/auth/{uuid}`, per client IP and route |
 | `auth.otp_requests_per_hour` | `10` | Sign-in code requests: `POST /public/auth` and `POST /admin/auth`, per client IP and route |
 
-The two `auth` limits are counted in a window of one minute and one hour. User and admin sign-in count separately, and the other `/public/*` routes, such as the currency reads, are only subject to the `rest` limit. The windows are not fixed yet: every request, including a rejected one, restarts the counter's expiry, so a blocked client is only allowed again after a full window without requests ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)).
+The two `auth` limits are counted in fixed windows of one minute and one hour, which start with a client's first request, so a blocked client is allowed again when its window ends. User and admin sign-in count separately, and the other `/public/*` routes, such as the currency reads, are only subject to the `rest` limit.
+
+Clients behind one address, such as a carrier-grade NAT or an office network, share these budgets. Size `auth.otp_requests_per_hour` for the busiest shared address you expect. Raising it does not let anyone flood a single email address or mobile number, because `otp.auth.contact_requests_per_hour` limits the codes sent to each contact.
 
 ## Settings reserved for roadmap features
 

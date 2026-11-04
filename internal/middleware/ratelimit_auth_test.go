@@ -103,3 +103,32 @@ func TestAuthRateLimit_EachRouteAndClientCountsSeparately(t *testing.T) {
 func TestAuthRateLimit_UnknownActionPanics(t *testing.T) {
 	assert.Panics(t, func() { NewRateLimiter(nil).AuthRateLimit("signup") })
 }
+
+// TestFixedWindow_EndsOnTimeWhileTheClientRetries keeps a blocked client
+// retrying until shortly before the window ends. Retrying must not extend
+// the window.
+func TestFixedWindow_EndsOnTimeWhileTheClientRetries(t *testing.T) {
+	engine, rl, client := newAuthLimitEngine(t)
+	const window = 400 * time.Millisecond
+	engine.POST("/limited", rl.fixedWindowMiddleware("test", 2, 2, window, rl.getClientIP), ok)
+
+	start := time.Now()
+	assert.Equal(t, http.StatusOK, post(engine, "/limited", "203.0.113.7").Code)
+	assert.Equal(t, http.StatusOK, post(engine, "/limited", "203.0.113.7").Code)
+	for time.Since(start) < window-100*time.Millisecond {
+		require.Equal(t, http.StatusTooManyRequests, post(engine, "/limited", "203.0.113.7").Code)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	time.Sleep(time.Until(start.Add(window + 50*time.Millisecond)))
+	assert.Equal(t, http.StatusOK, post(engine, "/limited", "203.0.113.7").Code,
+		"the window ends a window after the first request")
+
+	// A counter left without an expiry gets one on the next request.
+	require.NoError(t, client.Set(context.Background(), "ratelimit:test:198.51.100.9", 5, 0).Err())
+	assert.Equal(t, http.StatusTooManyRequests, post(engine, "/limited", "198.51.100.9").Code)
+	ttl, err := client.PTTL(context.Background(), "ratelimit:test:198.51.100.9").Result()
+	require.NoError(t, err)
+	assert.Greater(t, ttl, time.Duration(0))
+	assert.LessOrEqual(t, ttl, window)
+}
