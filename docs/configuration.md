@@ -151,6 +151,16 @@ The worker declares this RabbitMQ topology at startup:
 
 Failed attempts and abandoned codes are also logged with the masked contact. Delivery metrics are part of [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50).
 
+### `admin`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `totp_key` | none | Encrypts the authenticator (TOTP) secrets of administrators in the database with AES-256-GCM: 32 random bytes, base64-encoded, for example from `openssl rand -base64 32`. `ADMIN_TOTP_KEY` overrides it. Without it, admin sign-in is disabled. The server and the `cmd/admin` command must use the same key. If it changes, every administrator must be enrolled again with `reset-totp`. |
+
+Authenticator apps show `exchange.name` as the issuer of the account. Each encrypted secret is bound to its administrator's ID, so it cannot be copied to another user row.
+
+Writing to the database is not enough to create an administrator: changing `users.role` to `admin` does not enable admin sign-in without a secret sealed with this key. Someone with both database access and this key could, so keep it in a secret manager, apart from database credentials.
+
 ### `websocket`
 
 | Key | Default | Description |
@@ -196,6 +206,7 @@ Only the variables below are read. Several variables in `.env.example` are not r
 | `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | `rabbitmq.*` |
 | `JWT_ISSUER` | `jwt.issuer` |
 | `OTP_SECRET` | `otp.auth.secret` |
+| `ADMIN_TOTP_KEY` | `admin.totp_key` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
 | `LOG_LEVEL` | `observability.logging.level` |

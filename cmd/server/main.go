@@ -14,6 +14,7 @@ import (
 
 	"encrypted-db/config"
 	"encrypted-db/docs"
+	"encrypted-db/internal/adminauth"
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/handlers/admin"
@@ -82,6 +83,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("Invalid OTP delivery configuration: %v", err)
 	}
+	adminTOTPKey, err := adminSignInKey()
+	if err != nil {
+		log.Fatalf("Invalid admin sign-in configuration: %v", err)
+	}
 
 	services, cleanup, err := initializeServices()
 	if err != nil {
@@ -92,6 +97,9 @@ func main() {
 	handlers := initializeHandlers(services)
 	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
 	handlers.Public.OTPSender = otpSender
+	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
+		log.Fatalf("Failed to configure admin sign-in: %v", err)
+	}
 	if otpWorker != nil {
 		if err := otpWorker.Start(); err != nil {
 			log.Fatalf("Failed to start the OTP delivery worker: %v", err)
@@ -179,6 +187,37 @@ func main() {
 		}
 	}
 	log.Println("Server stopped gracefully")
+}
+
+// adminSignInKey decodes admin.totp_key. Without it, admin sign-in is
+// disabled and the key is nil.
+func adminSignInKey() ([]byte, error) {
+	if config.Config.Admin.TOTPKey == "" {
+		log.Println("WARNING: admin.totp_key is not set: admin sign-in is disabled")
+		return nil, nil
+	}
+	return adminauth.DecodeKey(config.Config.Admin.TOTPKey)
+}
+
+// configureAdminSignIn enables admin sign-in when totpKey is set. Codes are
+// emailed through sender, like user sign-in codes.
+func configureAdminSignIn(h *InfraHandlers, services *models.InfraServices, totpKey []byte, sender notify.OTPSender) error {
+	h.Admin.OTPSender = sender
+	if totpKey == nil {
+		return nil
+	}
+	accounts, err := adminauth.NewService(services.Postgres.DB, totpKey, config.Config.Exchange.Name)
+	if err != nil {
+		return err
+	}
+	h.Admin.Accounts = accounts
+	if !auth.KeysLoaded(auth.RoleAdmin) {
+		log.Println("WARNING: admin sign-in needs jwt.ssl.admin keys and is unavailable until they are set")
+	}
+	if !sender.Supports(notify.ContactEmail) {
+		log.Println("WARNING: admin sign-in needs email delivery (notifications.email) and is unavailable until it is configured")
+	}
+	return nil
 }
 
 // otpTTL is the lifetime of sign-in codes, including the default that the OTP
@@ -380,13 +419,27 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		})
 	}
 
+	// Admin sign-in is public, rate-limited like user sign-in, and separate
+	// from the admin group, which requires an admin token.
+	adminAuthGroup := r.Group("/admin/auth")
+	adminAuthGroup.Use(rl.AuthRateLimit("login"))
+	{
+		adminAuthGroup.POST("", ih.Admin.RequestSignIn)
+		adminAuthGroup.POST("/:uuid", ih.Admin.VerifySignIn)
+	}
+
 	adminGroup := r.Group("/admin")
 	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
+	adminGroup.Use(ih.Admin.RequireActiveAdmin())
 	adminGroup.Use(rl.TradingRateLimit())
 	{
 		adminGroup.POST("/currencies", ih.Admin.CreateCurrency)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
+		adminGroup.POST("/logout", func(c *gin.Context) {
+			// Admin tokens have no session or refresh token to revoke.
+			auth.LogoutHandler(c, ih.TokenBlacklist, nil)
+		})
 	}
 
 	userGroup := r.Group("/user")

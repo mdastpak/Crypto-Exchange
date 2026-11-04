@@ -36,11 +36,9 @@ var (
 // first request or attempt and is not extended by later ones.
 const contactWindow = time.Hour
 
-// Redis layout. Keys never contain a code or a raw contact.
+// Redis layout. Keys never contain a code or a raw contact. A store with a
+// namespace prefixes its keys with "otp:<namespace>:" instead of "otp:".
 const (
-	sessionKeyPrefix = "otp:session:"
-	contactKeyPrefix = "otp:contact:"
-
 	fieldCode      = "code"       // HMAC of the session ID and the code
 	fieldContact   = "contact"    // the contact, encrypted
 	fieldContactID = "contact_id" // HMAC of the normalized contact
@@ -51,10 +49,11 @@ const (
 // never the code itself, and the contact encrypted with a key derived from the
 // secret, so reading Redis reveals neither.
 type Store struct {
-	client   *redis.Client
-	settings Settings
-	macKey   []byte
-	contacts cipher.AEAD
+	client    *redis.Client
+	settings  Settings
+	keyPrefix string
+	macKey    []byte
+	contacts  cipher.AEAD
 }
 
 // NewStore returns a store with the given settings. Without a secret it uses
@@ -76,11 +75,16 @@ func NewStore(client *redis.Client, settings Settings) *Store {
 	if err != nil {
 		panic(err) // unreachable for AES
 	}
+	keyPrefix := "otp:"
+	if settings.Namespace != "" {
+		keyPrefix += settings.Namespace + ":"
+	}
 	return &Store{
-		client:   client,
-		settings: settings,
-		macKey:   deriveKey(secret, "otp code and contact hashing"),
-		contacts: contacts,
+		client:    client,
+		settings:  settings,
+		keyPrefix: keyPrefix,
+		macKey:    deriveKey(secret, "otp code and contact hashing"),
+		contacts:  contacts,
 	}
 }
 
@@ -103,11 +107,15 @@ func (s *Store) contactID(contact string) string {
 	return hex.EncodeToString(s.mac("contact", strings.ToLower(contact)))
 }
 
-func sessionKey(sessionID string) string { return sessionKeyPrefix + sessionID }
+func (s *Store) sessionKey(sessionID string) string { return s.keyPrefix + "session:" + sessionID }
 
-func contactRequestsKey(contactID string) string { return contactKeyPrefix + contactID + ":requests" }
+func (s *Store) contactRequestsKey(contactID string) string {
+	return s.keyPrefix + "contact:" + contactID + ":requests"
+}
 
-func contactAttemptsKey(contactID string) string { return contactKeyPrefix + contactID + ":attempts" }
+func (s *Store) contactAttemptsKey(contactID string) string {
+	return s.keyPrefix + "contact:" + contactID + ":attempts"
+}
 
 // Issued is a new sign-in session.
 type Issued struct {
@@ -142,7 +150,7 @@ return 1
 func (s *Store) Issue(ctx context.Context, contact string) (Issued, error) {
 	contactID := s.contactID(contact)
 	result, err := issueScript.Run(ctx, s.client,
-		[]string{contactRequestsKey(contactID), contactAttemptsKey(contactID)},
+		[]string{s.contactRequestsKey(contactID), s.contactAttemptsKey(contactID)},
 		s.settings.ContactRequestsPerHour, s.settings.ContactAttemptsPerHour, int(contactWindow/time.Second),
 	).Int()
 	if err != nil {
@@ -165,7 +173,7 @@ func (s *Store) Issue(ctx context.Context, contact string) (Issued, error) {
 		return Issued{}, err
 	}
 
-	key := sessionKey(sessionID)
+	key := s.sessionKey(sessionID)
 	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.HSet(ctx, key,
 			fieldCode, hex.EncodeToString(s.mac("code", sessionID, code)),
@@ -217,7 +225,7 @@ return {attempt, redis.call('HGET', KEYS[1], 'code'), redis.call('HGET', KEYS[1]
 // the contact. The attempt is counted before the code is checked, so
 // concurrent attempts can never exceed the limits.
 func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, error) {
-	key := sessionKey(sessionID)
+	key := s.sessionKey(sessionID)
 	contactID, err := s.client.HGet(ctx, key, fieldContactID).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", ErrInvalidCode
@@ -255,7 +263,7 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 	if deleted == 0 {
 		return "", ErrInvalidCode
 	}
-	if err := s.client.Del(ctx, contactAttemptsKey(contactID)).Err(); err != nil {
+	if err := s.client.Del(ctx, s.contactAttemptsKey(contactID)).Err(); err != nil {
 		return "", fmt.Errorf("reset the contact attempts: %w", err)
 	}
 	return s.decryptContact(sessionID, encrypted)
@@ -265,7 +273,7 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 // returns the attempt number with the stored code HMAC and encrypted contact.
 func (s *Store) reserveAttempt(ctx context.Context, key, contactID string) (attempt int64, storedMAC, encrypted string, err error) {
 	result, err := attemptScript.Run(ctx, s.client,
-		[]string{key, contactAttemptsKey(contactID)},
+		[]string{key, s.contactAttemptsKey(contactID)},
 		s.settings.AttemptsPerCode, s.settings.ContactAttemptsPerHour, int(contactWindow/time.Second),
 	).Slice()
 	if err != nil {

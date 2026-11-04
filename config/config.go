@@ -138,6 +138,13 @@ type Configuration struct {
 
 	Notifications NotificationsConfig `yaml:"notifications"`
 
+	Admin struct {
+		// TOTPKey encrypts the authenticator (TOTP) secrets of
+		// administrators in the database: 32 random bytes, base64-encoded.
+		// Admin sign-in is disabled without it.
+		TOTPKey string `yaml:"totp_key"`
+	} `yaml:"admin"`
+
 	WebSocket struct {
 		AllowedOrigins []string `yaml:"allowed_origins"`
 		PingInterval   int      `yaml:"ping_interval_seconds"`
@@ -636,6 +643,9 @@ func overlayEnvVars() {
 	}
 	if v := os.Getenv("OTP_SECRET"); v != "" {
 		Config.OTP.Auth.Secret = v
+	}
+	if v := os.Getenv("ADMIN_TOTP_KEY"); v != "" {
+		Config.Admin.TOTPKey = v
 	}
 
 	if v := os.Getenv("SMTP_PASSWORD"); v != "" {

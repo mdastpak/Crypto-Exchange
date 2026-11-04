@@ -33,6 +33,9 @@ flowchart TB
 | Package | Responsibility |
 | --- | --- |
 | `cmd/server` | Startup, route registration, graceful shutdown |
+| `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them |
+| `internal/adminauth` | Administrator accounts: creation, TOTP enrollment with encrypted secrets, authenticator checks with replay protection |
+| `internal/totp` | Time-based one-time passwords (RFC 6238) |
 | `config` | YAML loading, defaults, environment overrides (see [configuration.md](configuration.md)) |
 | `internal/auth` | RS256 JWT issuing and verification with separate keys per role, `kid`-based key selection and retired keys for rotation, Redis-backed token blacklist, admin and user middleware |
 | `internal/db` | PostgreSQL connection with startup retries and migrations under an advisory lock, Redis client |
@@ -52,7 +55,8 @@ Middleware is applied in this order: recovery, which answers a panic with `500 I
 | --- | --- |
 | `/ws` | WebSocket rate limit (applied to the upgrade request) |
 | `/public` | Authentication rate limit |
-| `/admin` | `JWTAdminVerification` (Bearer access token signed with an admin key, blacklist check), trading rate limit |
+| `/admin/auth` | Authentication rate limit. Admin sign-in, without a token. |
+| `/admin` | `JWTAdminVerification` (Bearer access token signed with an admin key, blacklist check), `RequireActiveAdmin` (the token's administrator is still active in the database), trading rate limit |
 | `/user` | `JWTUserVerification` (Bearer access token signed with a user key, blacklist check), trading rate limit |
 | `POST /public/auth/logout` | `JWTUserVerification`, like `/user/logout` |
 
@@ -85,6 +89,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 9 | `kyc_profiles`, `kyc_documents`, `kyc_applications`, `sanctions_screenings`, `aml_rules`, `aml_alerts` | Not yet |
 | 10 | `deposit_addresses`, `deposits`, `withdrawals`, `settlements`, `custody_configs` | Not yet |
 | 11 | Aligns the `users.info` constraint with OTP sign-in, and adds unique indexes on contact values | Yes |
+| 12 | Adds `users.role` (`user` or `admin`) and `users.totp_last_step` | Yes (admin sign-in) |
 
 Two models currently coexist: the legacy JSONB `currencies` and `users` tables used by the API, and the typed exchange schema. Unifying them is tracked in [#38](https://github.com/mdastpak/Crypto-Exchange/issues/38) (users) and [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57) (currencies and assets).
 

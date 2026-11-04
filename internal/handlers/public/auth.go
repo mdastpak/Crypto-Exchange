@@ -67,6 +67,7 @@ type User struct {
 	ID        int
 	HK        uuid.UUID
 	Status    string
+	Role      string
 	Info      map[string]interface{}
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -169,6 +170,10 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusForbidden, "This account cannot sign in. Please contact support.", nil)
 		return
 	}
+	if errors.Is(err, errAdminAccount) {
+		helpers.SendResponse(c, http.StatusForbidden, "Administrators must use the admin sign-in.", nil)
+		return
+	}
 	if err != nil || userHK == uuid.Nil {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create user", nil)
 		return
@@ -214,8 +219,8 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 // case-insensitively, like the index, with ASCII-only case folding that does
 // not depend on the database locale.
 var contactLookupQueries = map[string]string{
-	"email":  `SELECT hk, status FROM users WHERE lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`,
-	"mobile": `SELECT hk, status FROM users WHERE info->'contact'->>'mobile' = $1`,
+	"email":  `SELECT hk, status, role FROM users WHERE lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`,
+	"mobile": `SELECT hk, status, role FROM users WHERE info->'contact'->>'mobile' = $1`,
 }
 
 // errUserAlreadyExists reports that another request created a user with the
@@ -225,6 +230,9 @@ var errUserAlreadyExists = errors.New("user with this contact already exists")
 // errAccountUnavailable reports an account that is disabled, deleted or
 // suspended, and therefore cannot sign in.
 var errAccountUnavailable = errors.New("account cannot sign in")
+
+// errAdminAccount reports an administrator account at user sign-in.
+var errAdminAccount = errors.New("administrators cannot use user sign-in")
 
 const uniqueViolationCode = "23505"
 
@@ -237,7 +245,7 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 	}
 	var user User
 
-	err := h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status)
+	err := h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status, &user.Role)
 	if err == sql.ErrNoRows {
 		log.Println("User does not exist, creating new user")
 		userHK, createErr := h.createUser(ctx, contactType, contact)
@@ -247,7 +255,7 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 		// A concurrent sign-in for the same contact won the insert; continue
 		// with that user so its status checks still apply.
 		log.Println("User was created by a concurrent request, loading it")
-		err = h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status)
+		err = h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status, &user.Role)
 	}
 	if err != nil {
 		log.Printf("Database error: %v", err)
@@ -257,6 +265,11 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 	switch user.Status {
 	case "disabled", "deleted", "suspend":
 		return uuid.Nil, fmt.Errorf("%w: status %s", errAccountUnavailable, user.Status)
+	}
+	if user.Role == auth.RoleAdmin {
+		// Administrators sign in at /admin/auth with a second factor; a
+		// user token for their account is never issued.
+		return uuid.Nil, errAdminAccount
 	}
 
 	log.Printf("User already exists with ID: %s", user.HK.String())

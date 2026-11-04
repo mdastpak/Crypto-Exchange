@@ -70,7 +70,7 @@ func TestStore_VerifiesACodeOnce(t *testing.T) {
 
 	_, err = store.Verify(context.Background(), issued.SessionID, issued.Code)
 	assert.ErrorIs(t, err, ErrInvalidCode, "a code signs in only once")
-	exists, err := client.Exists(context.Background(), sessionKey(issued.SessionID)).Result()
+	exists, err := client.Exists(context.Background(), store.sessionKey(issued.SessionID)).Result()
 	require.NoError(t, err)
 	assert.Zero(t, exists, "a used session is deleted")
 }
@@ -82,7 +82,7 @@ func TestStore_UnknownOrExpiredSessions(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidCode)
 
 	issued := issue(t, store, "alice@example.com")
-	require.NoError(t, client.Del(context.Background(), sessionKey(issued.SessionID)).Err())
+	require.NoError(t, client.Del(context.Background(), store.sessionKey(issued.SessionID)).Err())
 	_, err = store.Verify(context.Background(), issued.SessionID, issued.Code)
 	assert.ErrorIs(t, err, ErrInvalidCode, "an expired session behaves like an unknown one")
 }
@@ -96,7 +96,7 @@ func TestStore_LocksASessionAfterItsAttempts(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidCode, "attempt %d", i+1)
 	}
 
-	fields, err := client.HGetAll(context.Background(), sessionKey(issued.SessionID)).Result()
+	fields, err := client.HGetAll(context.Background(), store.sessionKey(issued.SessionID)).Result()
 	require.NoError(t, err)
 	assert.NotContains(t, fields, fieldCode, "the code hash is erased by the last failed attempt")
 	assert.NotContains(t, fields, fieldContact)
@@ -112,7 +112,7 @@ func TestStore_AttemptsAreReservedAtomically(t *testing.T) {
 	store, client := newTestStore(t, Settings{AttemptsPerCode: 3, ContactAttemptsPerHour: 5, ContactRequestsPerHour: 100})
 	ctx := context.Background()
 	issued := issue(t, store, "alice@example.com")
-	key := sessionKey(issued.SessionID)
+	key := store.sessionKey(issued.SessionID)
 	contactID, err := client.HGet(ctx, key, fieldContactID).Result()
 	require.NoError(t, err)
 
@@ -128,7 +128,7 @@ func TestStore_AttemptsAreReservedAtomically(t *testing.T) {
 
 	// The contact has 2 of its 5 attempts left after the 3 reserved above.
 	second := issue(t, store, "alice@example.com")
-	secondKey := sessionKey(second.SessionID)
+	secondKey := store.sessionKey(second.SessionID)
 	for i := 0; i < 2; i++ {
 		_, _, _, err := store.reserveAttempt(ctx, secondKey, contactID)
 		require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestStore_RedisHoldsNeitherCodesNorContacts(t *testing.T) {
 		assert.Greater(t, ttl, time.Duration(0), "key %s must expire", key)
 		assert.LessOrEqual(t, ttl, contactWindow, "key %s", key)
 	}
-	ttl, err := client.TTL(ctx, sessionKey(issued.SessionID)).Result()
+	ttl, err := client.TTL(ctx, store.sessionKey(issued.SessionID)).Result()
 	require.NoError(t, err)
 	assert.LessOrEqual(t, ttl, 2*time.Minute, "a session lives as long as its code")
 }
@@ -307,7 +307,7 @@ func TestStore_ContactsAreEncryptedWithTheSecret(t *testing.T) {
 	store, client := newTestStore(t, Settings{})
 	ctx := context.Background()
 	issued := issue(t, store, "alice@example.com")
-	encrypted, err := client.HGet(ctx, sessionKey(issued.SessionID), fieldContact).Result()
+	encrypted, err := client.HGet(ctx, store.sessionKey(issued.SessionID), fieldContact).Result()
 	require.NoError(t, err)
 
 	contact, err := store.decryptContact(issued.SessionID, encrypted)
@@ -330,4 +330,25 @@ func TestStore_CodesAreBoundToTheSecret(t *testing.T) {
 	_, err := other.Verify(context.Background(), issued.SessionID, issued.Code)
 
 	assert.ErrorIs(t, err, ErrInvalidCode, "a code hash cannot be checked without the secret")
+}
+
+func TestStore_NamespacesAreIndependent(t *testing.T) {
+	users, client := newTestStore(t, Settings{ContactRequestsPerHour: 1})
+	admins := NewStore(client, Settings{Secret: testSecret, Namespace: "admin", ContactRequestsPerHour: 1})
+	ctx := context.Background()
+
+	userCode := issue(t, users, "alice@example.com")
+	adminCode := issue(t, admins, "alice@example.com")
+
+	_, err := admins.Verify(ctx, userCode.SessionID, userCode.Code)
+	assert.ErrorIs(t, err, ErrInvalidCode, "a user sign-in code must not sign in an administrator")
+	_, err = users.Verify(ctx, adminCode.SessionID, adminCode.Code)
+	assert.ErrorIs(t, err, ErrInvalidCode, "an admin sign-in code must not sign in a user")
+
+	keys, err := client.Keys(ctx, "otp:admin:*").Result()
+	require.NoError(t, err)
+	assert.NotEmpty(t, keys, "admin keys live under their own prefix")
+
+	_, err = admins.Verify(ctx, adminCode.SessionID, adminCode.Code)
+	assert.NoError(t, err)
 }
