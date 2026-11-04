@@ -248,8 +248,8 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 | D-11 | P0 / contract | Delete an unknown or already deleted currency | `404`; no repeated side effects | Passes, also for concurrent deletes: the row is locked, so one delete succeeds and publishes one event ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | D-12 | P1 / integration | Cache write fails after DB commit | System returns a defined consistency/degradation result and schedules reconciliation | **Gap:** current handler logs and returns success |
 | D-13 | P1 / integration | RabbitMQ publish fails after DB/cache commit | Event is retried or reconciled; client receives a documented result | **Gap:** publish errors are only logged |
-| D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes for the query, but does not clean stale keys |
-| D-15 | P1 / integration | `CleanupBaseDefinitions` runs with unrelated Redis keys | Only `base_definitions:currency:*` keys are deleted | Passes; verify cursor completion |
+| D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes: entries of currencies that are not approved are removed, without clearing the cache ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)) |
+| D-15 | P1 / integration | `LoadAndCacheCurrencies` runs with unrelated Redis keys | Only stale `base_definitions:currency:*` keys are deleted | Passes. `CleanupBaseDefinitions`, which deleted every currency key at shutdown, was removed ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)) |
 | D-16 | P1 / concurrency | Two updates target the same HK concurrently | Final DB/cache state is deterministic and no change is lost | Passes for the database: the row is locked from read to write ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)). Event ordering is not guaranteed yet. |
 
 ---
@@ -326,7 +326,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | S-09 | P1 / contract | Config file is absent | Embedded example config is loaded and defaults are applied | Passes |
 | S-10 | P0 / contract | Config contains invalid YAML or unsafe values | Startup fails before opening external services | Current validation is partial; add negative tests |
 | S-11 | P0 / security | Config and logs are inspected | Private keys, passwords, OTPs, and tokens are never committed or logged | Current OTP logging violates this |
-| S-12 | P0 / integration | SIGTERM is sent with active WebSocket clients | HTTP server, WebSocket pumps, cache cleanup, Redis, PostgreSQL, and RabbitMQ shut down within the deadline | Current orchestration should be exercised end to end |
+| S-12 | P0 / integration | SIGTERM is sent with active WebSocket clients | HTTP server, WebSocket pumps, Redis, PostgreSQL, and RabbitMQ shut down within the deadline; shared Redis state is kept | The shutdown sequence keeps the shared currency cache, tested with two instances ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)). The signal path itself is not exercised yet |
 
 ---
 

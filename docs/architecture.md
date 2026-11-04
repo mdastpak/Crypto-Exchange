@@ -66,9 +66,9 @@ Middleware is applied in this order: recovery, which answers a panic with `500 I
 2. Connect to PostgreSQL with retries, then apply the migrations under a PostgreSQL advisory lock.
 3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges.
 4. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
-5. Load approved currencies from PostgreSQL into the Redis cache.
+5. Bring the shared currency cache in line with PostgreSQL: cache the approved currencies and remove the entries of currencies that are not approved. The cache is never cleared as a whole, because other instances serve from it.
 6. Start the HTTP server (with TLS when enabled).
-7. On `SIGINT` or `SIGTERM`: close WebSocket clients, delete the shared currency cache ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)), shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
+7. On `SIGINT` or `SIGTERM`: close WebSocket clients, shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. Shared state in Redis, such as the currency cache, is left for the other instances. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
 
 ## Data stores
 
@@ -97,7 +97,7 @@ Two models currently coexist: the legacy JSONB `currencies` and `users` tables u
 
 | Key pattern | Purpose | Lifetime |
 | --- | --- | --- |
-| `base_definitions:currency:<hk>` | Cached currency | 24 hours |
+| `base_definitions:currency:<hk>` | Cached public (approved) currency, shared by all instances | 24 hours, refreshed when an instance starts or the currency changes |
 | `otp:session:<session-uuid>` | Sign-in session: HMAC of the code, encrypted contact, contact ID, and attempt count. The code and the contact are erased when its attempts are used up. | `otp.auth.ttl_seconds` |
 | `otp:contact:<contact-id>:requests` | Codes issued to a contact in the current hour. The contact ID is an HMAC of the normalized contact. | 1 hour from the first code |
 | `otp:contact:<contact-id>:attempts` | Verification attempts for a contact in the current hour, across all of its codes | 1 hour from the first attempt, removed by a successful sign-in |

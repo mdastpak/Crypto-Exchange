@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"encrypted-db/config"
@@ -19,8 +19,13 @@ import (
 	"encrypted-db/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 )
+
+// currencyCachePrefix starts the Redis key of every cached currency. The
+// cache is shared by all server instances.
+const currencyCachePrefix = "base_definitions:currency:"
 
 type AdminHandler struct {
 	PostgresDB      *db.PostgresService
@@ -323,26 +328,6 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "Currency deleted successfully.", nil)
 }
 
-func (h *AdminHandler) CleanupBaseDefinitions(ctx context.Context) error {
-	pattern := "base_definitions:currency:*"
-
-	iter := h.RedisClient.Client.Scan(ctx, 0, pattern, 0).Iterator()
-	for iter.Next(ctx) {
-		if err := h.RedisClient.Client.Del(ctx, iter.Val()).Err(); err != nil {
-			log.Printf("Failed to delete key %s from Redis: %v", iter.Val(), err)
-			return err
-		}
-	}
-
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis key iteration: %v", err)
-		return err
-	}
-
-	log.Println("All base definitions for currencies have been removed from Redis.")
-	return nil
-}
-
 func (h *AdminHandler) AddOrUpdateCurrencyInCache(ctx context.Context, currency models.Currency) error {
 	data, err := json.Marshal(currency)
 	if err != nil {
@@ -350,7 +335,7 @@ func (h *AdminHandler) AddOrUpdateCurrencyInCache(ctx context.Context, currency 
 		return err
 	}
 
-	cacheKey := fmt.Sprintf("base_definitions:currency:%s", currency.HK)
+	cacheKey := currencyCachePrefix + currency.HK
 
 	if err := h.RedisClient.Client.Set(ctx, cacheKey, data, 24*time.Hour).Err(); err != nil {
 		log.Printf("Error updating currency in cache: %v", err)
@@ -362,7 +347,7 @@ func (h *AdminHandler) AddOrUpdateCurrencyInCache(ctx context.Context, currency 
 }
 
 func (h *AdminHandler) DeleteCurrencyFromCache(ctx context.Context, hk string) error {
-	cacheKey := fmt.Sprintf("base_definitions:currency:%s", hk)
+	cacheKey := currencyCachePrefix + hk
 
 	if err := h.RedisClient.Client.Del(ctx, cacheKey).Err(); err != nil {
 		log.Printf("Error deleting currency from cache: %v", err)
@@ -373,14 +358,20 @@ func (h *AdminHandler) DeleteCurrencyFromCache(ctx context.Context, hk string) e
 	return nil
 }
 
+// LoadAndCacheCurrencies brings the shared cache in line with the database
+// when an instance starts. It caches every public currency, as
+// syncPublicView keeps it, and removes the entries of currencies that are
+// not public, for example after a failed cache delete or a change made
+// directly in the database. It never clears the cache as a whole, because
+// the other instances keep serving from it.
 func (h *AdminHandler) LoadAndCacheCurrencies(ctx context.Context) error {
-	// Only public currencies are cached, as syncPublicView keeps it.
 	rows, err := h.PostgresDB.DB.QueryContext(ctx, "SELECT id, hk, status, info FROM currencies WHERE status='approved' AND deleted_at IS NULL")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
+	loaded := make(map[string]bool)
 	for rows.Next() {
 		var currency models.Currency
 		var infoData []byte
@@ -396,8 +387,75 @@ func (h *AdminHandler) LoadAndCacheCurrencies(ctx context.Context) error {
 		if err := h.AddOrUpdateCurrencyInCache(ctx, currency); err != nil {
 			return err
 		}
+		loaded[currency.HK] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := h.removeStaleCurrencies(ctx, loaded); err != nil {
+		return err
 	}
 
 	log.Println("All active currencies have been loaded and cached successfully.")
 	return nil
+}
+
+// deleteIfUnchanged deletes a key only while it holds the given value.
+var deleteIfUnchanged = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+	return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// removeStaleCurrencies removes the cached currencies that are not in loaded
+// and are not public in the database either. Another instance may approve
+// and cache a currency after the load, so each candidate is checked in the
+// database again, and its entry is only deleted if it has not changed since
+// it was read.
+func (h *AdminHandler) removeStaleCurrencies(ctx context.Context, loaded map[string]bool) error {
+	var candidates []string
+	iter := h.RedisClient.Client.Scan(ctx, 0, currencyCachePrefix+"*", 100).Iterator()
+	for iter.Next(ctx) {
+		if !loaded[strings.TrimPrefix(iter.Val(), currencyCachePrefix)] {
+			candidates = append(candidates, iter.Val())
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+
+	for _, key := range candidates {
+		value, err := h.RedisClient.Client.Get(ctx, key).Result()
+		if err == redis.Nil {
+			continue
+		} else if err != nil {
+			return err
+		}
+		public, err := h.isPublicInDatabase(ctx, strings.TrimPrefix(key, currencyCachePrefix))
+		if err != nil {
+			return err
+		}
+		if public {
+			continue
+		}
+		if err := deleteIfUnchanged.Run(ctx, h.RedisClient.Client, []string{key}, value).Err(); err != nil {
+			return err
+		}
+		log.Printf("Removed the stale cache entry %s.", key)
+	}
+	return nil
+}
+
+// isPublicInDatabase reports whether the currency with the given hk is
+// approved and not deleted. An hk that is not a UUID names no currency.
+func (h *AdminHandler) isPublicInDatabase(ctx context.Context, hk string) (bool, error) {
+	if _, err := uuid.Parse(hk); err != nil {
+		return false, nil
+	}
+	var public bool
+	err := h.PostgresDB.DB.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM currencies WHERE hk = $1 AND status = 'approved' AND deleted_at IS NULL)", hk,
+	).Scan(&public)
+	return public, err
 }
