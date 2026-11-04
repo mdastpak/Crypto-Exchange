@@ -88,8 +88,11 @@ func TestRabbitMQService_Publish_WithoutChannelFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	start := time.Now()
 	err := r.Publish(ctx, "some-exchange", "payload")
 	assert.Error(t, err, "publishing without any connection or channel should fail, not panic")
+	assert.Less(t, time.Since(start), 500*time.Millisecond,
+		"a service that never connected has no supervisor to wait for, so it must fail at once")
 }
 
 func TestRabbitMQService_PublishWithRetry_ClosedServiceExhaustsRetries(t *testing.T) {

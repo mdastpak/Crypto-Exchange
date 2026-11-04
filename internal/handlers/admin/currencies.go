@@ -20,7 +20,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 type AdminHandler struct {
@@ -90,13 +89,22 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	var currency models.Currency
-	if err := c.ShouldBindJSON(&currency); err != nil {
+	req, fieldErrs, err := decodeCurrencyRequest(c)
+	if err != nil {
 		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
 		return
 	}
+	if fieldErrs != nil {
+		sendValidationErrors(c, fieldErrs)
+		return
+	}
+	status, info := req.apply(defaultCurrencyStatus, models.CurrencyInfo{})
+	if errs := validateCurrency(status, info); errs != nil {
+		sendValidationErrors(c, errs)
+		return
+	}
 
-	infoJSON, err := json.Marshal(currency.Info)
+	infoJSON, err := json.Marshal(info)
 	if err != nil {
 		log.Printf("Error marshalling CurrencyInfo to JSON: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Internal error: Failed to process currency information.", nil)
@@ -106,33 +114,21 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 	var generatedHK string
 	err = h.PostgresDB.DB.QueryRowContext(ctx,
 		"INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb) RETURNING hk",
-		currency.Status, infoJSON,
+		status, infoJSON,
 	).Scan(&generatedHK)
 	if err != nil {
-		log.Printf("Error creating currency in database: %v", err)
-		if pgError, ok := err.(*pq.Error); ok {
-			switch pgError.Code.Name() {
-			case "unique_violation":
-				helpers.SendResponse(c, http.StatusBadRequest, "Currency with this symbol or contract already exists.", nil)
-				return
-			case "check_violation":
-				helpers.SendResponse(c, http.StatusBadRequest, "Invalid currency structure: Missing required fields.", nil)
-				return
-			}
-		}
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create currency due to an unexpected error.", nil)
+		sendCurrencyWriteError(c, err, "create")
 		return
 	}
 
-	currency.HK = generatedHK
-
+	currency := models.Currency{HK: generatedHK, Status: status, Info: info}
 	if err := h.AddOrUpdateCurrencyInCache(ctx, currency); err != nil {
 		log.Printf("Error caching currency after database update: %v", err)
 	}
 
 	h.publishCurrencyEvent(ctx, "create", generatedHK, currency.Info)
 
-	helpers.SendResponse(c, http.StatusCreated, "Currency created successfully.", nil)
+	helpers.SendResponse(c, http.StatusCreated, "Currency created successfully.", gin.H{"hk": generatedHK, "status": status})
 }
 
 func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
@@ -145,16 +141,31 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
-	var updatedData models.Currency
-	if err := c.ShouldBindJSON(&updatedData); err != nil {
+	req, fieldErrs, err := decodeCurrencyRequest(c)
+	if err != nil {
 		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
 		return
 	}
+	if fieldErrs != nil {
+		sendValidationErrors(c, fieldErrs)
+		return
+	}
+
+	// The row is locked from the read to the write, so that concurrent
+	// partial updates of one currency are applied one after the other
+	// instead of overwriting each other's fields.
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("Error starting a currency update: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update currency due to an unexpected error.", nil)
+		return
+	}
+	defer tx.Rollback()
 
 	var currentStatus string
 	var infoData []byte
-	err := h.PostgresDB.DB.QueryRowContext(ctx,
-		"SELECT status, info FROM currencies WHERE hk = $1 AND deleted_at IS NULL", hk,
+	err = tx.QueryRowContext(ctx,
+		"SELECT status, info FROM currencies WHERE hk = $1 AND deleted_at IS NULL FOR UPDATE", hk,
 	).Scan(&currentStatus, &infoData)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -173,26 +184,12 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
-	if updatedData.Status != "" {
-		currentStatus = updatedData.Status
-	}
-	if updatedData.Info.EnName != "" {
-		currentInfo.EnName = updatedData.Info.EnName
-	}
-	if updatedData.Info.FaName != "" {
-		currentInfo.FaName = updatedData.Info.FaName
-	}
-	if updatedData.Info.Symbol != "" {
-		currentInfo.Symbol = updatedData.Info.Symbol
-	}
-	if updatedData.Info.Contract != "" {
-		currentInfo.Contract = updatedData.Info.Contract
-	}
-	if updatedData.Info.IfFiat {
-		currentInfo.IfFiat = updatedData.Info.IfFiat
-	}
-	if updatedData.Info.IsToken {
-		currentInfo.IsToken = updatedData.Info.IsToken
+	// Only the fields in the request change. The result is validated as a
+	// whole, so an update cannot leave a currency invalid.
+	currentStatus, currentInfo = req.apply(currentStatus, currentInfo)
+	if errs := validateCurrency(currentStatus, currentInfo); errs != nil {
+		sendValidationErrors(c, errs)
+		return
 	}
 
 	infoJSON, err := json.Marshal(currentInfo)
@@ -202,30 +199,19 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
-	_, err = h.PostgresDB.DB.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		"UPDATE currencies SET status=$1, info=$2::jsonb, updated_at=NOW() WHERE hk=$3 AND deleted_at IS NULL",
 		currentStatus, infoJSON, hk,
 	)
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
-		log.Printf("Error updating currency in database: %v", err)
-		if pgError, ok := err.(*pq.Error); ok {
-			switch pgError.Code.Name() {
-			case "unique_violation":
-				helpers.SendResponse(c, http.StatusBadRequest, "Currency with this symbol or contract already exists.", nil)
-				return
-			case "check_violation":
-				helpers.SendResponse(c, http.StatusBadRequest, "Invalid currency structure: Missing required fields.", nil)
-				return
-			}
-		}
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update currency due to an unexpected error.", nil)
+		sendCurrencyWriteError(c, err, "update")
 		return
 	}
 
-	updatedData.HK = hk
-	updatedData.Info = currentInfo
-	updatedData.Status = currentStatus
-
+	updatedData := models.Currency{HK: hk, Status: currentStatus, Info: currentInfo}
 	if err := h.AddOrUpdateCurrencyInCache(ctx, updatedData); err != nil {
 		log.Printf("Error caching currency after database update: %v", err)
 	}

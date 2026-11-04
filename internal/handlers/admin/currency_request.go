@@ -1,0 +1,171 @@
+package admin
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"regexp"
+	"strings"
+	"unicode/utf8"
+
+	"encrypted-db/internal/helpers"
+	"encrypted-db/internal/models"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// defaultCurrencyStatus is the status of a currency created without one.
+const defaultCurrencyStatus = "pending"
+
+// currencyStatuses are the statuses an administrator can set. A currency is
+// only marked deleted by DELETE /admin/currencies/{hk}.
+var currencyStatuses = map[string]bool{"approved": true, "pending": true, "suspend": true}
+
+var (
+	symbolPattern   = regexp.MustCompile(`^[A-Z0-9]{2,15}$`)
+	contractPattern = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,128}$`)
+)
+
+const (
+	maxCurrencyNameLength  = 100
+	maxCurrencyRequestBody = 64 << 10
+)
+
+// currencyInfoFields is the info object of a currency request. Pointers tell
+// an omitted field from an empty or false one, so that an update changes only
+// the fields it sends, and can set a flag back to false.
+type currencyInfoFields struct {
+	EnName   *string `json:"en_name"`
+	FaName   *string `json:"fa_name"`
+	IfFiat   *bool   `json:"if_fiat"`
+	Symbol   *string `json:"symbol"`
+	IsToken  *bool   `json:"is_token"`
+	Contract *string `json:"contract"`
+}
+
+// currencyRequest is the body of POST /admin/currencies and
+// PUT /admin/currencies/{hk}. The server-controlled fields (id, hk, and the
+// timestamps) are not part of it, and decodeCurrencyRequest rejects them.
+type currencyRequest struct {
+	Status *string            `json:"status"`
+	Info   currencyInfoFields `json:"info"`
+}
+
+// fieldErrors maps a field, such as "info.symbol", to what is wrong with it.
+type fieldErrors map[string]string
+
+func sendValidationErrors(c *gin.Context, errs fieldErrors) {
+	helpers.SendResponse(c, http.StatusBadRequest, "Validation failed", gin.H{"errors": errs})
+}
+
+// errMalformedCurrencyRequest reports a body that is not a JSON object of the
+// expected shape.
+var errMalformedCurrencyRequest = errors.New("malformed currency request")
+
+// decodeCurrencyRequest decodes the body strictly. An unknown field, such as
+// a server-controlled id or hk, is a field error. Other decoding failures
+// return errMalformedCurrencyRequest.
+func decodeCurrencyRequest(c *gin.Context) (currencyRequest, fieldErrors, error) {
+	var req currencyRequest
+	decoder := json.NewDecoder(io.LimitReader(c.Request.Body, maxCurrencyRequestBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+			return req, fieldErrors{strings.Trim(name, `"`): "is not accepted"}, nil
+		}
+		return req, nil, errMalformedCurrencyRequest
+	}
+	if decoder.More() {
+		return req, nil, errMalformedCurrencyRequest
+	}
+	return req, nil, nil
+}
+
+// apply returns status and info with the fields of the request applied.
+// Text is trimmed, and the symbol is converted to upper case, so that a
+// symbol is unique whatever case the client sends.
+func (req currencyRequest) apply(status string, info models.CurrencyInfo) (string, models.CurrencyInfo) {
+	if req.Status != nil {
+		status = strings.TrimSpace(*req.Status)
+	}
+	setText := func(dst *string, src *string) {
+		if src != nil {
+			*dst = strings.TrimSpace(*src)
+		}
+	}
+	setText(&info.EnName, req.Info.EnName)
+	setText(&info.FaName, req.Info.FaName)
+	setText(&info.Contract, req.Info.Contract)
+	if req.Info.Symbol != nil {
+		info.Symbol = strings.ToUpper(strings.TrimSpace(*req.Info.Symbol))
+	}
+	if req.Info.IfFiat != nil {
+		info.IfFiat = *req.Info.IfFiat
+	}
+	if req.Info.IsToken != nil {
+		info.IsToken = *req.Info.IsToken
+	}
+	return status, info
+}
+
+// validateCurrency checks a complete currency: a new one, or a stored one
+// with an update applied.
+func validateCurrency(status string, info models.CurrencyInfo) fieldErrors {
+	errs := fieldErrors{}
+	if !currencyStatuses[status] {
+		errs["status"] = "must be approved, pending, or suspend"
+	}
+	checkName := func(field, value string) {
+		switch {
+		case value == "":
+			errs[field] = "is required"
+		case utf8.RuneCountInString(value) > maxCurrencyNameLength:
+			errs[field] = "must be at most 100 characters"
+		}
+	}
+	checkName("info.en_name", info.EnName)
+	checkName("info.fa_name", info.FaName)
+	if !symbolPattern.MatchString(info.Symbol) {
+		errs["info.symbol"] = "must be 2 to 15 upper-case letters or digits"
+	}
+	switch {
+	case info.IsToken && info.Contract == "":
+		errs["info.contract"] = "is required for a token"
+	case info.Contract != "" && !contractPattern.MatchString(info.Contract):
+		errs["info.contract"] = "must be 1 to 128 letters, digits, or ':', '_', '.', '-'"
+	}
+	if info.IfFiat && info.IsToken {
+		errs["info.is_token"] = "must be false for a fiat currency"
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs
+}
+
+// sendCurrencyWriteError answers a failed insert or update. PostgreSQL errors
+// arrive from the pgx driver as *pgconn.PgError and are told apart by their
+// SQLSTATE code.
+func sendCurrencyWriteError(c *gin.Context, err error, action string) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505": // unique_violation
+			field, code, what := "info.symbol", "duplicate_symbol", "symbol"
+			if strings.Contains(pgErr.ConstraintName, "contract") {
+				field, code, what = "info.contract", "duplicate_contract", "contract"
+			}
+			helpers.SendResponse(c, http.StatusConflict, "A currency with this "+what+" already exists.",
+				gin.H{"code": code, "field": field})
+			return
+		case "23514", "22P02": // check_violation, invalid_text_representation
+			sendValidationErrors(c, fieldErrors{"info": "does not satisfy the currency constraints"})
+			return
+		}
+	}
+	log.Printf("Error trying to %s a currency: %v", action, err)
+	helpers.SendResponse(c, http.StatusInternalServerError, "Failed to "+action+" currency due to an unexpected error.", nil)
+}

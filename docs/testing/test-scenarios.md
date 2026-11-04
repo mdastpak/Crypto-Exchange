@@ -237,11 +237,11 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 |---|---|---|---|---|
 | D-01 | P0 / integration | Valid approved currency JSON; admin JWT; empty DB/cache | DB row is created; cache key is written with the documented TTL; create event is published | Current cache/event failures are logged but the response remains `201` |
 | D-02 | P0 / contract | `status: pending` or `status: suspended` | Row is created but currency is not exposed in active-cache reads | **Gap:** create path caches every status |
-| D-03 | P0 / contract | Malformed JSON or invalid enum | `400`; no DB row, cache entry, or event | Binding/database behavior must be verified |
-| D-04 | P1 / integration | Symbol or contract violates uniqueness | `400`; no partial cache/event side effect | Current DB error mapping exists |
+| D-03 | P0 / contract | Malformed JSON, invalid status, invalid field values, or server-controlled fields (`id`, `hk`, timestamps) | `400`; field errors for invalid values; no DB row, cache entry, or event | Passes; a missing `status` defaults to `pending` ([#23](https://github.com/mdastpak/Crypto-Exchange/issues/23)) |
+| D-04 | P1 / integration | Symbol or non-empty contract violates uniqueness | `409` with `duplicate_symbol` or `duplicate_contract`; no partial cache/event side effect | Passes; several currencies without a contract are allowed ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)) |
 | D-05 | P0 / integration | Valid update to an approved currency | DB and cache contain the same final `status` and `info` | Current partial update can preserve stale fields |
 | D-06 | P0 / integration | Update changes approved currency to suspended/deleted | Cache entry is removed or marked inactive; public/user reads exclude it | **Gap:** update path writes the changed object back to the active pattern |
-| D-07 | P0 / contract | Update changes a boolean from `true` to `false` | The requested false value is persisted | **Gap:** `if updatedData.Info.IfFiat` and `IsToken` cannot apply a true-to-false transition |
+| D-07 | P0 / contract | Update changes a boolean from `true` to `false` | The requested false value is persisted | Passes: only the fields sent are changed (part of [#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)) |
 | D-08 | P0 / contract | Update uses a non-UUID HK | `400`; message identifies invalid UUID | Passes |
 | D-09 | P0 / integration | Update uses an unknown or already deleted HK | `404`; no cache/event side effect | Passes for the DB lookup |
 | D-10 | P0 / integration | Delete an existing currency | DB row is soft-deleted; cache key is removed; delete event is published | Cache/event failures are currently non-fatal |
@@ -250,7 +250,7 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 | D-13 | P1 / integration | RabbitMQ publish fails after DB/cache commit | Event is retried or reconciled; client receives a documented result | **Gap:** publish errors are only logged |
 | D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes for the query, but does not clean stale keys |
 | D-15 | P1 / integration | `CleanupBaseDefinitions` runs with unrelated Redis keys | Only `base_definitions:currency:*` keys are deleted | Passes; verify cursor completion |
-| D-16 | P1 / concurrency | Two updates target the same HK concurrently | Final DB/cache state is deterministic and no event is lost | No version/idempotency contract is visible |
+| D-16 | P1 / concurrency | Two updates target the same HK concurrently | Final DB/cache state is deterministic and no change is lost | Passes for the database: the row is locked from read to write ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)). Event ordering is not guaranteed yet. |
 
 ---
 

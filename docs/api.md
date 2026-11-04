@@ -268,7 +268,7 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
 }
 ```
 
-`status` is one of `approved`, `pending`, `suspend`, or `deleted`. `symbol` and `contract` must be unique. The field name `if_fiat` is a known typo ([#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)).
+`status` is one of `approved`, `pending`, `suspend`, or `deleted`. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. The field name `if_fiat` is a known typo ([#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)).
 
 ### `GET /public/currencies`
 
@@ -280,15 +280,53 @@ Returns one cached currency. Errors: `404` when it is not cached.
 
 ### `POST /admin/currencies` (admin)
 
-Creates a currency. The body is a currency object without `id` and `hk`. Always send `status`. Omitting it currently returns `500` ([#23](https://github.com/mdastpak/Crypto-Exchange/issues/23)).
+Creates a currency.
 
-Response `201`. Errors: `400` for an invalid body, `500` for duplicates or other database errors ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)).
+```json
+{
+  "status": "pending",
+  "info": {
+    "en_name": "Tether",
+    "fa_name": "<name in Persian>",
+    "symbol": "USDT",
+    "if_fiat": false,
+    "is_token": true,
+    "contract": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+  }
+}
+```
+
+| Field | Rules |
+| --- | --- |
+| `status` | `approved`, `pending`, or `suspend`. Optional, `pending` by default. A currency is only marked `deleted` by `DELETE`. |
+| `info.en_name`, `info.fa_name` | Required, at most 100 characters. Leading and trailing spaces are removed. |
+| `info.symbol` | Required, 2 to 15 letters or digits. It is stored in upper case, so `usdt` and `USDT` are the same symbol. |
+| `info.is_token`, `info.if_fiat` | Optional, `false` by default. A fiat currency cannot be a token. |
+| `info.contract` | Required for a token. At most 128 letters, digits, or `:`, `_`, `.`, `-`. |
+
+Fields that the server controls, such as `id`, `hk`, and the timestamps, and any other unknown field, are rejected.
+
+Response `201`:
+
+```json
+{
+  "status": 201,
+  "message": "Currency created successfully.",
+  "info": { "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10", "status": "pending" }
+}
+```
+
+Errors:
+
+- `400` with the message `Invalid input: Please check the provided data format.`: the body is not a JSON object of this shape.
+- `400` with the message `Validation failed`: `info.errors` names each invalid field, for example `{"errors": {"info.symbol": "must be 2 to 15 upper-case letters or digits"}}`.
+- `409`: the symbol or the contract belongs to another currency. `info` holds a stable code and the field: `{"code": "duplicate_symbol", "field": "info.symbol"}`, or `duplicate_contract` and `info.contract`.
 
 ### `PUT /admin/currencies/{hk}` (admin)
 
-Partially updates a currency. Only non-empty fields are applied, so boolean flags cannot be reset to `false` yet ([#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)).
+Partially updates a currency with a body of the same shape as `POST`. Only the fields that are sent change, and a flag can be set back to `false`. The updated currency must satisfy the same rules as a new one.
 
-Response `200`. Errors: `400` for an invalid UUID or body, `404` when the currency is not found.
+Response `200`. Errors: `400` for an invalid UUID, an invalid body, or invalid fields, as for `POST`; `404` when the currency is not found; `409` for a duplicate symbol or contract.
 
 ### `DELETE /admin/currencies/{hk}` (admin)
 

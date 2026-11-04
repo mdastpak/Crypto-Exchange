@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,7 +77,9 @@ func (s *AdminCurrenciesTestSuite) SetupSuite() {
 			info ? 'contract'
 		);
 		CREATE UNIQUE INDEX currencies_info_symbol_unique ON currencies ((info->>'symbol'));
-		CREATE UNIQUE INDEX currencies_info_contract_unique ON currencies ((info->>'contract'));
+		-- As migration 13: only non-empty contracts are unique.
+		CREATE UNIQUE INDEX currencies_info_contract_unique ON currencies ((info->>'contract'))
+			WHERE info->>'contract' <> '';
 	`)
 	require.NoError(s.T(), err)
 }
@@ -142,7 +145,7 @@ func sampleCurrencyPayload(symbol, contract string) map[string]interface{} {
 		"status": "pending",
 		"info": map[string]interface{}{
 			"en_name":  "Bitcoin",
-			"fa_name":  "بیت‌کوین",
+			"fa_name":  "Bitcoin (Persian name)",
 			"symbol":   symbol,
 			"if_fiat":  false,
 			"is_token": false,
@@ -191,21 +194,46 @@ func (s *AdminCurrenciesTestSuite) TestCreateCurrency_InvalidJSON() {
 	assert.Equal(s.T(), http.StatusBadRequest, w.Code)
 }
 
-// Note: the handler's duplicate-key detection type-asserts on *pq.Error, but
-// PostgresService is built on the pgx driver, whose errors are *pgconn.PgError.
-// The assertion therefore never matches and duplicate inserts fall through to
-// the generic 500 branch instead of the intended 400. This test documents the
-// current (pre-existing) behavior rather than the apparently-intended one.
+// decodeResponse returns the envelope of a response.
+func (s *AdminCurrenciesTestSuite) decodeResponse(w *httptest.ResponseRecorder) models.APIResponse {
+	var resp models.APIResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+	return resp
+}
+
+// assertConflict checks a 409 answer with its stable code and field.
+func (s *AdminCurrenciesTestSuite) assertConflict(w *httptest.ResponseRecorder, code, field string) {
+	s.T().Helper()
+	assert.Equal(s.T(), http.StatusConflict, w.Code, w.Body.String())
+	info, ok := s.decodeResponse(w).Info.(map[string]interface{})
+	require.True(s.T(), ok, w.Body.String())
+	assert.Equal(s.T(), code, info["code"])
+	assert.Equal(s.T(), field, info["field"])
+}
+
+// assertFieldErrors checks a 400 answer that names exactly these fields.
+func (s *AdminCurrenciesTestSuite) assertFieldErrors(w *httptest.ResponseRecorder, fields ...string) {
+	s.T().Helper()
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code, w.Body.String())
+	resp := s.decodeResponse(w)
+	assert.Equal(s.T(), "Validation failed", resp.Message)
+	info, ok := resp.Info.(map[string]interface{})
+	require.True(s.T(), ok, w.Body.String())
+	errs, ok := info["errors"].(map[string]interface{})
+	require.True(s.T(), ok, w.Body.String())
+	got := make([]string, 0, len(errs))
+	for field := range errs {
+		got = append(got, field)
+	}
+	assert.ElementsMatch(s.T(), fields, got, w.Body.String())
+}
+
 func (s *AdminCurrenciesTestSuite) TestCreateCurrency_DuplicateSymbolRejected() {
 	w := s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("ETH", "native-eth"))
 	require.Equal(s.T(), http.StatusCreated, w.Code)
 
-	w = s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("ETH", "another-contract"))
-	assert.Equal(s.T(), http.StatusInternalServerError, w.Code)
-
-	var resp models.APIResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(s.T(), "Failed to create currency due to an unexpected error.", resp.Message)
+	w = s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("eth", "another-contract"))
+	s.assertConflict(w, "duplicate_symbol", "info.symbol")
 
 	var count int
 	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'ETH'").Scan(&count))
@@ -218,7 +246,7 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_PartialUpdateMergesFields(
 	w := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{
 		"status": "approved",
 		"info": map[string]interface{}{
-			"fa_name": "تتر جدید",
+			"fa_name": "Tether (new Persian name)",
 		},
 	})
 
@@ -231,7 +259,7 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_PartialUpdateMergesFields(
 
 	var info models.CurrencyInfo
 	require.NoError(s.T(), json.Unmarshal(infoData, &info))
-	assert.Equal(s.T(), "تتر جدید", info.FaName)
+	assert.Equal(s.T(), "Tether (new Persian name)", info.FaName)
 	assert.Equal(s.T(), "USDT", info.Symbol, "symbol should be preserved when not part of the update payload")
 	assert.Equal(s.T(), "Bitcoin", info.EnName, "en_name should be preserved when not part of the update payload")
 }
@@ -246,9 +274,6 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_NotFound() {
 	assert.Equal(s.T(), http.StatusNotFound, w.Code)
 }
 
-// See the note on TestCreateCurrency_DuplicateSymbolRejected: the *pq.Error
-// type assertion never matches pgx-driver errors, so this also falls through
-// to the generic 500 branch rather than the intended 400.
 func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_DuplicateSymbolConflict() {
 	s.createCurrency("BNB", "native-bnb")
 	otherHK := s.createCurrency("SOL", "native-sol")
@@ -259,7 +284,7 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_DuplicateSymbolConflict() 
 		},
 	})
 
-	assert.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	s.assertConflict(w, "duplicate_symbol", "info.symbol")
 }
 
 func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_Success() {
@@ -364,4 +389,207 @@ func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_OnlyCachesApproved
 	val, err := s.redisClient.Get(ctx, keys[0]).Result()
 	require.NoError(s.T(), err)
 	assert.Contains(s.T(), val, "AAA")
+}
+
+func (s *AdminCurrenciesTestSuite) TestCreateCurrency_DuplicateContractRejected() {
+	payload := sampleCurrencyPayload("USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+	payload["info"].(map[string]interface{})["is_token"] = true
+	require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", payload).Code)
+
+	other := sampleCurrencyPayload("USDC", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+	other["info"].(map[string]interface{})["is_token"] = true
+	s.assertConflict(s.makeRequest(http.MethodPost, "/currencies", other), "duplicate_contract", "info.contract")
+}
+
+func (s *AdminCurrenciesTestSuite) TestCreateCurrency_CurrenciesWithoutContract() {
+	for _, symbol := range []string{"BTC", "ETH", "USD"} {
+		w := s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload(symbol, ""))
+		assert.Equal(s.T(), http.StatusCreated, w.Code, "%s: several currencies may have no contract", symbol)
+	}
+}
+
+func (s *AdminCurrenciesTestSuite) TestCreateCurrency_DefaultsToPending() {
+	payload := sampleCurrencyPayload("ADA", "")
+	delete(payload, "status")
+
+	w := s.makeRequest(http.MethodPost, "/currencies", payload)
+
+	require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
+	info := s.decodeResponse(w).Info.(map[string]interface{})
+	assert.Equal(s.T(), "pending", info["status"])
+	var status string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT status FROM currencies WHERE hk = $1", info["hk"]).Scan(&status))
+	assert.Equal(s.T(), "pending", status)
+}
+
+func (s *AdminCurrenciesTestSuite) TestCreateCurrency_NormalizesTheSymbol() {
+	w := s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("  dot ", ""))
+
+	require.Equal(s.T(), http.StatusCreated, w.Code, w.Body.String())
+	var count int
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'DOT'").Scan(&count))
+	assert.Equal(s.T(), 1, count)
+}
+
+func (s *AdminCurrenciesTestSuite) TestCreateCurrency_ValidationErrors() {
+	cases := map[string]struct {
+		mutate func(map[string]interface{})
+		fields []string
+	}{
+		"unknown status": {func(p map[string]interface{}) { p["status"] = "live" }, []string{"status"}},
+		"empty status":   {func(p map[string]interface{}) { p["status"] = "" }, []string{"status"}},
+		"deleted status": {func(p map[string]interface{}) { p["status"] = "deleted" }, []string{"status"}},
+		"missing names": {func(p map[string]interface{}) {
+			info := p["info"].(map[string]interface{})
+			delete(info, "en_name")
+			info["fa_name"] = "  "
+		}, []string{"info.en_name", "info.fa_name"}},
+		"long name": {func(p map[string]interface{}) {
+			p["info"].(map[string]interface{})["en_name"] = strings.Repeat("x", 101)
+		}, []string{"info.en_name"}},
+		"invalid symbol": {func(p map[string]interface{}) {
+			p["info"].(map[string]interface{})["symbol"] = "U$D"
+		}, []string{"info.symbol"}},
+		"token without contract": {func(p map[string]interface{}) {
+			info := p["info"].(map[string]interface{})
+			info["is_token"] = true
+			info["contract"] = ""
+		}, []string{"info.contract"}},
+		"invalid contract": {func(p map[string]interface{}) {
+			p["info"].(map[string]interface{})["contract"] = "0x12 34"
+		}, []string{"info.contract"}},
+		"fiat token": {func(p map[string]interface{}) {
+			info := p["info"].(map[string]interface{})
+			info["if_fiat"] = true
+			info["is_token"] = true
+			info["contract"] = "0xabc"
+		}, []string{"info.is_token"}},
+		"server-controlled hk": {func(p map[string]interface{}) { p["hk"] = uuid.NewString() }, []string{"hk"}},
+		"server-controlled id": {func(p map[string]interface{}) { p["id"] = 7 }, []string{"id"}},
+		"timestamps":           {func(p map[string]interface{}) { p["created_at"] = "2026-01-01" }, []string{"created_at"}},
+	}
+	for name, tc := range cases {
+		s.Run(name, func() {
+			payload := sampleCurrencyPayload("XLM", "")
+			tc.mutate(payload)
+
+			s.assertFieldErrors(s.makeRequest(http.MethodPost, "/currencies", payload), tc.fields...)
+
+			var count int
+			require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT COUNT(*) FROM currencies").Scan(&count))
+			assert.Zero(s.T(), count, "nothing may be stored")
+		})
+	}
+}
+
+func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_CanResetFlagsToFalse() {
+	payload := sampleCurrencyPayload("WBTC", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599")
+	payload["info"].(map[string]interface{})["is_token"] = true
+	require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", payload).Code)
+	var hk string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = 'WBTC'").Scan(&hk))
+
+	w := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{
+		"info": map[string]interface{}{"is_token": false, "contract": ""},
+	})
+
+	require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+	var infoData []byte
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT info FROM currencies WHERE hk = $1", hk).Scan(&infoData))
+	var info models.CurrencyInfo
+	require.NoError(s.T(), json.Unmarshal(infoData, &info))
+	assert.False(s.T(), info.IsToken, "an update can set a flag back to false")
+	assert.Empty(s.T(), info.Contract)
+	assert.Equal(s.T(), "WBTC", info.Symbol)
+}
+
+func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ValidationErrors() {
+	hk := s.createCurrency("TRX", "")
+
+	cases := map[string]struct {
+		body   map[string]interface{}
+		fields []string
+	}{
+		"unknown status":         {map[string]interface{}{"status": "live"}, []string{"status"}},
+		"empty name":             {map[string]interface{}{"info": map[string]interface{}{"en_name": ""}}, []string{"info.en_name"}},
+		"token without contract": {map[string]interface{}{"info": map[string]interface{}{"is_token": true}}, []string{"info.contract"}},
+		"server-controlled hk":   {map[string]interface{}{"hk": uuid.NewString()}, []string{"hk"}},
+	}
+	for name, tc := range cases {
+		s.Run(name, func() {
+			s.assertFieldErrors(s.makeRequest(http.MethodPut, "/currencies/"+hk, tc.body), tc.fields...)
+		})
+	}
+
+	var status string
+	var infoData []byte
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT status, info FROM currencies WHERE hk = $1", hk).Scan(&status, &infoData))
+	assert.Equal(s.T(), "pending", status, "a rejected update changes nothing")
+	var info models.CurrencyInfo
+	require.NoError(s.T(), json.Unmarshal(infoData, &info))
+	assert.Equal(s.T(), "Bitcoin", info.EnName)
+	assert.False(s.T(), info.IsToken)
+}
+
+func (s *AdminCurrenciesTestSuite) TestCurrencyRequests_RejectMalformedBodies() {
+	hk := s.createCurrency("XMR", "")
+	for _, body := range []string{`{"status": "pending"} {"status": "approved"}`, `["status"]`, `{"info": "BTC"}`} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			path := "/currencies"
+			if method == http.MethodPut {
+				path += "/" + hk
+			}
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			s.router.ServeHTTP(w, req)
+			assert.Equal(s.T(), http.StatusBadRequest, w.Code, "%s %s", method, body)
+		}
+	}
+}
+
+// TestUpdateCurrency_ConcurrentUpdatesKeepEachOthersFields holds the row lock
+// in a transaction, as a concurrent update would, while the handler updates
+// another field. The handler must wait and apply its change on top of the
+// committed one instead of overwriting it with the row it read before.
+func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ConcurrentUpdatesKeepEachOthersFields() {
+	hk := s.createCurrency("LTC", "")
+	ctx := context.Background()
+
+	tx, err := s.postgresSvc.DB.BeginTx(ctx, nil)
+	require.NoError(s.T(), err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`SELECT 1 FROM currencies WHERE hk = $1 FOR UPDATE`, hk)
+	require.NoError(s.T(), err)
+
+	done := make(chan int, 1)
+	go func() {
+		w := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{
+			"info": map[string]interface{}{"fa_name": "Litecoin (new Persian name)"},
+		})
+		done <- w.Code
+	}()
+
+	// The handler must still be waiting for the lock.
+	select {
+	case code := <-done:
+		s.T().Fatalf("the update finished with %d while the row was locked", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+	_, err = tx.Exec(`UPDATE currencies SET info = jsonb_set(info, '{en_name}', '"Litecoin"') WHERE hk = $1`, hk)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), tx.Commit())
+
+	select {
+	case code := <-done:
+		require.Equal(s.T(), http.StatusOK, code)
+	case <-time.After(10 * time.Second):
+		s.T().Fatal("the update did not finish after the lock was released")
+	}
+	var infoData []byte
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT info FROM currencies WHERE hk = $1", hk).Scan(&infoData))
+	var info models.CurrencyInfo
+	require.NoError(s.T(), json.Unmarshal(infoData, &info))
+	assert.Equal(s.T(), "Litecoin", info.EnName, "the concurrent change must not be lost")
+	assert.Equal(s.T(), "Litecoin (new Persian name)", info.FaName)
 }

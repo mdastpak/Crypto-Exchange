@@ -11,7 +11,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/lib/pq v1.10.9
 	github.com/shopspring/decimal v1.2.0
 	github.com/streadway/amqp v1.1.0
 	github.com/stretchr/testify v1.12.1
@@ -50,6 +49,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
+	github.com/lib/pq v1.10.9 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/moby/term v0.5.2 // indirect
