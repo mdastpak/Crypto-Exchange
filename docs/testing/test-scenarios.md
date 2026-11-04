@@ -303,7 +303,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-13 | P1 / concurrency | Client send buffer is full | Broadcast skips that client without blocking other clients | Passes |
 | W-14 | P0 / contract | Client disconnects | Client is removed; send channel is closed once; connection closes | Passes; race-test cleanup |
 | W-15 | P0 / contract | Shutdown context is active | New connections stop, existing connections close, pumps return, and WaitGroup completes | Passes if shutdown is called once |
-| W-16 | P1 / integration | RabbitMQ connection closes unexpectedly | Service reconnects with bounded backoff and redeclares exchanges | Reconnect loop exists; automate with a broker double |
+| W-16 | P1 / integration | RabbitMQ connection closes unexpectedly, or the broker closes the publishing channel | Service reconnects with bounded backoff, redeclares exchanges, restores the channel, and reports `degraded` meanwhile | Passes with a TCP proxy that simulates broker restarts, also under the race detector ([#21](https://github.com/mdastpak/Crypto-Exchange/issues/21)) |
 | W-17 | P0 / integration | Broker does not confirm a publish | `Publish` returns an error and the caller retries or reconciles | Publisher confirms are implemented |
 | W-18 | P1 / integration | Broker is unavailable for several attempts | Retry count and final error are deterministic; no goroutine leak remains | Verify with a fake or isolated broker |
 | W-19 | P0 / integration | Two server instances consume the same exchange | Clients on both instances receive every event exactly once | Passes: each instance has an exclusive queue ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |

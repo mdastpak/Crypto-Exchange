@@ -10,6 +10,7 @@ import (
 	"encrypted-db/config"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/rabbitmq"
+	"encrypted-db/internal/testutil/tcpproxy"
 
 	"github.com/google/uuid"
 	"github.com/streadway/amqp"
@@ -168,4 +169,31 @@ func TestConsumer_Broker_ShutdownStopsTheConsumer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	assert.NoError(t, h.Shutdown(ctx), "Shutdown must stop the consumer promptly")
+}
+
+func TestConsumer_Broker_ResumesAfterABrokerRestart(t *testing.T) {
+	exchange := withTestBroker(t)
+	proxy, err := tcpproxy.New("localhost:5672")
+	require.NoError(t, err)
+	t.Cleanup(proxy.Close)
+	config.Config.RabbitMQ.Host, config.Config.RabbitMQ.Port = proxy.Host(), proxy.Port()
+
+	h, client := newBrokerHandler(t)
+	require.NoError(t, h.StartConsumer(context.Background()))
+
+	proxy.Cut()
+
+	// Events published while the consumer subscribes again are lost with its
+	// old queue, so publish until one arrives.
+	require.Eventually(t, func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = h.RabbitMQService.Publish(ctx, exchange, `{"entity":"currencies","action":"update"}`)
+		select {
+		case <-client.Send:
+			return true
+		case <-time.After(200 * time.Millisecond):
+			return false
+		}
+	}, 30*time.Second, 10*time.Millisecond, "the consumer must receive events again after a broker restart")
 }

@@ -332,7 +332,7 @@ These endpoints return plain JSON without the envelope.
 }
 ```
 
-`status` is `degraded` when any dependency fails. The HTTP status is currently always `200` ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)).
+`status` is `degraded` when any dependency fails. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored. The HTTP status is currently always `200` ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)).
 
 ### `GET /system/ping`
 
