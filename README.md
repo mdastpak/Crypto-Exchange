@@ -213,8 +213,8 @@ All JSON responses, except the system endpoints, use this envelope:
 | `POST` | `/admin/currencies` | Admin token | Create a currency |
 | `PUT` | `/admin/currencies/{hk}` | Admin token | Update a currency |
 | `DELETE` | `/admin/currencies/{hk}` | Admin token | Soft-delete a currency |
-| `GET` | `/user/profile` | User token | Currently returns the currency list ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)) |
-| `POST` | `/user/update` | User token | Not implemented (returns 501) |
+| `GET` | `/user/profile` | User token | Get the signed-in user's profile |
+| `PATCH` | `/user/profile` | User token | Change the names in the signed-in user's profile |
 | `POST` | `/user/logout` | User token | Revoke the access token |
 | `GET` | `/ws/` | None | WebSocket gateway |
 

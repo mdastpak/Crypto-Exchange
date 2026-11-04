@@ -1,19 +1,12 @@
 package user
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
-	"time"
-
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,137 +15,81 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func setupUserRedis(t *testing.T) *redis.Client {
+// The database-backed profile tests, including authorization, run end to end
+// in cmd/server with real sign-ins.
+
+func TestMaskContact(t *testing.T) {
+	cases := []struct{ contactType, value, want string }{
+		{"email", "alice@example.com", "ali*****@example.com"},
+		{"email", "al@example.com", "al*****@example.com"},
+		{"email", "not-an-address", "*****"},
+		{"mobile", "09121234567", "091*****567"},
+		{"mobile", "0912", "*****"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, maskContact(tc.contactType, tc.value), tc.value)
+	}
+}
+
+func decode(t *testing.T, body string) (profileUpdate, fieldErrors, error) {
 	t.Helper()
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-		DB:   1,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, client.Ping(ctx).Err())
-
-	t.Cleanup(func() {
-		client.FlushDB(context.Background())
-		client.Close()
-	})
-
-	return client
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPatch, "/user/profile", strings.NewReader(body))
+	return decodeProfileUpdate(c)
 }
 
-func performGetActiveCurrencies(h *UserHandler) *httptest.ResponseRecorder {
-	router := gin.New()
-	router.GET("/currencies", h.GetActiveCurrencies)
-
-	req := httptest.NewRequest(http.MethodGet, "/currencies", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	return w
-}
-
-func TestGetActiveCurrencies_Empty(t *testing.T) {
-	client := setupUserRedis(t)
-	h := &UserHandler{RedisClient: &db.RedisService{Client: client}}
-
-	w := performGetActiveCurrencies(h)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp models.APIResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "Active currencies retrieved successfully.", resp.Message)
-	assert.Empty(t, resp.Info)
-}
-
-func TestGetActiveCurrencies_ReturnsCachedCurrencies(t *testing.T) {
-	client := setupUserRedis(t)
-	h := &UserHandler{RedisClient: &db.RedisService{Client: client}}
-
-	currencies := []models.Currency{
-		{HK: "hk-1", Status: "approved", Info: models.CurrencyInfo{EnName: "Bitcoin", Symbol: "BTC"}},
-		{HK: "hk-2", Status: "approved", Info: models.CurrencyInfo{EnName: "Ethereum", Symbol: "ETH"}},
-	}
-
-	ctx := context.Background()
-	for _, c := range currencies {
-		data, err := json.Marshal(c)
+func TestDecodeProfileUpdate_RejectsOtherFields(t *testing.T) {
+	for _, field := range []string{"uuid", "status", "contact", "kyc_tier", "role"} {
+		_, errs, err := decode(t, `{"`+field+`": "x"}`)
 		require.NoError(t, err)
-		key := fmt.Sprintf("base_definitions:currency:%s", c.HK)
-		require.NoError(t, client.Set(ctx, key, data, 0).Err())
+		assert.Equal(t, fieldErrors{field: "is not accepted"}, errs, field)
 	}
-
-	w := performGetActiveCurrencies(h)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp models.APIResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "Active currencies retrieved successfully.", resp.Message)
-
-	got := resp.Info.([]interface{})
-	assert.Len(t, got, 2)
 }
 
-// The cache should only hold public currencies, but an entry that is out of
-// date must not leak a hidden currency either.
-func TestGetActiveCurrencies_SkipsCurrenciesThatAreNotPublic(t *testing.T) {
-	client := setupUserRedis(t)
-	h := &UserHandler{RedisClient: &db.RedisService{Client: client}}
-
-	deletedAt := "2026-01-01T00:00:00Z"
-	currencies := []models.Currency{
-		{HK: "hk-approved", Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BTC"}},
-		{HK: "hk-pending", Status: models.CurrencyStatusPending, Info: models.CurrencyInfo{Symbol: "ETH"}},
-		{HK: "hk-suspend", Status: models.CurrencyStatusSuspend, Info: models.CurrencyInfo{Symbol: "XRP"}},
-		{HK: "hk-deleted", Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "LTC"}, DeletedAt: &deletedAt},
+func TestDecodeProfileUpdate_RejectsMalformedBodies(t *testing.T) {
+	for _, body := range []string{``, `[]`, `{"first_name": 1}`, `{"first_name": "a"} {"last_name": "b"}`, `{`} {
+		_, _, err := decode(t, body)
+		assert.ErrorIs(t, err, errMalformedProfileUpdate, body)
 	}
-	ctx := context.Background()
-	for _, c := range currencies {
-		data, err := json.Marshal(c)
-		require.NoError(t, err)
-		require.NoError(t, client.Set(ctx, "base_definitions:currency:"+c.HK, data, 0).Err())
-	}
-
-	w := performGetActiveCurrencies(h)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var resp struct {
-		Info []models.Currency `json:"info"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Len(t, resp.Info, 1)
-	assert.Equal(t, "hk-approved", resp.Info[0].HK)
 }
 
-func TestGetActiveCurrencies_UnmarshalErrorReturns500(t *testing.T) {
-	client := setupUserRedis(t)
-	h := &UserHandler{RedisClient: &db.RedisService{Client: client}}
+func TestProfileUpdate_Validate(t *testing.T) {
+	text := func(s string) *string { return &s }
+	// U+0628 is a letter that takes two bytes in UTF-8.
+	long := strings.Repeat("\u0628", maxNameLength+1)
 
-	ctx := context.Background()
-	require.NoError(t, client.Set(ctx, "base_definitions:currency:broken", "not-json", 0).Err())
+	assert.Nil(t, profileUpdate{FirstName: text("  Ali  ")}.validate())
+	assert.Nil(t, profileUpdate{DisplayName: text("")}.validate(), "an empty name clears the field")
+	assert.Nil(t, profileUpdate{LastName: text("Ab\u200Ccd")}.validate(), "the zero-width non-joiner (U+200C), which Persian names need, is allowed")
+	assert.Nil(t, profileUpdate{LastName: text(strings.Repeat("\u0628", maxNameLength))}.validate(), "the limit counts characters, not bytes")
 
-	w := performGetActiveCurrencies(h)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-
-	var resp models.APIResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "Failed to process currency information.", resp.Message)
+	assert.Equal(t, fieldErrors{"body": "send at least one of first_name, last_name, and display_name"}, profileUpdate{}.validate())
+	assert.Equal(t, fieldErrors{"first_name": "must be at most 100 characters"}, profileUpdate{FirstName: &long}.validate())
+	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("a\nb")}.validate())
+	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("admin\u202Egnp.exe")}.validate())
+	assert.Equal(t, fieldErrors{"display_name": "must contain a visible character"}, profileUpdate{DisplayName: text("\u200B\u2060\u200C")}.validate())
 }
 
-func TestUpdateProfile_ReturnsNotImplemented(t *testing.T) {
+func TestProfileUpdate_Apply(t *testing.T) {
+	text := func(s string) *string { return &s }
+	p := Profile{FirstName: text("Ali"), LastName: text("Rezaei"), DisplayName: text("ali")}
+
+	profileUpdate{FirstName: text("  Sara "), DisplayName: text("")}.apply(&p)
+
+	assert.Equal(t, "Sara", *p.FirstName, "names are trimmed")
+	assert.Equal(t, "Rezaei", *p.LastName, "a field that is not sent keeps its value")
+	assert.Nil(t, p.DisplayName, "an empty name clears the field")
+}
+
+func TestGetProfile_WithoutClaimsIsUnauthorized(t *testing.T) {
 	h := &UserHandler{}
 	router := gin.New()
-	router.PUT("/profile", h.UpdateProfile)
+	router.GET("/user/profile", h.GetProfile)
+	router.PATCH("/user/profile", h.UpdateProfile)
 
-	req := httptest.NewRequest(http.MethodPut, "/profile", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-
-	var resp models.APIResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "Profile update is not implemented yet.", resp.Message)
+	for _, method := range []string{http.MethodGet, http.MethodPatch} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(method, "/user/profile", strings.NewReader(`{"first_name": "a"}`)))
+		assert.Equal(t, http.StatusUnauthorized, w.Code, method)
+	}
 }

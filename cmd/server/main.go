@@ -458,8 +458,8 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	userGroup.Use(auth.JWTUserVerification(ih.TokenBlacklist))
 	userGroup.Use(rl.TradingRateLimit())
 	{
-		userGroup.GET("/profile", ih.User.GetActiveCurrencies)
-		userGroup.POST("/update", ih.User.UpdateProfile)
+		userGroup.GET("/profile", ih.User.GetProfile)
+		userGroup.PATCH("/profile", ih.User.UpdateProfile)
 		userGroup.POST("/logout", func(c *gin.Context) {
 			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
