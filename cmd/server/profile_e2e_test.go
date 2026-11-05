@@ -172,11 +172,13 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		status, _ := env.profile(t, http.MethodGet, nil, aliceToken)
 		assert.Equal(t, http.StatusForbidden, status, "an administrator account is not served to a user token")
 
+		// The session check of the user routes answers before the handler,
+		// so a deleted user gets 403, like a suspended one (#120).
 		_, err = env.db.Exec(`UPDATE users SET deleted_at = NOW() WHERE hk = $1`, bobID)
 		require.NoError(t, err)
 		status, resp := env.profile(t, http.MethodGet, nil, bobToken)
-		assert.Equal(t, http.StatusNotFound, status)
-		assert.Equal(t, "Profile not found", resp.Message)
+		assert.Equal(t, http.StatusForbidden, status)
+		assert.Equal(t, "This account is not available. Please contact support.", resp.Message)
 	})
 
 	t.Run("created_at is an instant whatever the database time zone", func(t *testing.T) {

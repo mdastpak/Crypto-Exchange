@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -75,6 +77,40 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 		c.Set(claimsContextKey, claims)
 		c.Set(accessTokenContextKey, token)
 		c.Next()
+	}
+}
+
+// accountUnavailableMessage answers a token whose user can no longer sign in.
+// The profile routes give the same answer.
+const accountUnavailableMessage = "This account is not available. Please contact support."
+
+// RequireActiveSession runs after JWTUserVerification and checks the token's
+// session and user in the database on every request. A token stays valid only
+// while its session is active and its user can still sign in, so logging out,
+// refresh token reuse, and disabling, suspending, or deleting the user reject
+// every access token of the session at once, instead of when the tokens
+// expire. Like RequireActiveAdmin, it fails closed without a session store.
+func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims, ok := GetClaims(c)
+		if !ok || claims.SessionID == "" || sessions == nil {
+			unauthorized(c, "Unauthorized - Invalid token")
+			return
+		}
+		err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID)
+		switch {
+		case err == nil:
+			c.Next()
+		case errors.Is(err, ErrSessionInvalid):
+			unauthorized(c, "Unauthorized - Session is not active")
+		case errors.Is(err, ErrAccountUnavailable):
+			helpers.SendResponse(c, http.StatusForbidden, accountUnavailableMessage, nil)
+			c.Abort()
+		default:
+			log.Printf("Failed to verify session %s: %v", claims.SessionID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the session", nil)
+			c.Abort()
+		}
 	}
 }
 

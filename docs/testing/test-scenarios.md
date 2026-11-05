@@ -225,6 +225,9 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 | A-26 | P1 / contract | Old token after a configured key rotation | Verification uses the registered historical public key until retirement | Passes: `ParseToken` selects the key by `kid` and accepts `retired_public_keys` ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
 | A-27 | P0 / security | Two concurrent VerifyOTP requests use the same OTP | Exactly one succeeds; the second is rejected | Passes: only the request that deletes the session may sign in ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
 | A-28 | P1 / contract | Refresh cookie is set over plain HTTP in a browser test | Test explicitly records whether `Secure` prevents storage; production requires HTTPS | Current cookie is always `Secure=true` |
+| A-29 | P0 / security | After logout, an access token of the same session that was issued before the last refresh calls `/user/*` | `401 Unauthorized - Session is not active`; another session of the same user keeps working | Passes: user routes check the session on every request ([#120](https://github.com/mdastpak/Crypto-Exchange/issues/120)) |
+| A-30 | P0 / security | Refresh token reuse revokes a session; its access tokens, the attacker's and the user's, call `/user/*` | `401` for both tokens; the newest refresh token is refused too | Passes ([#120](https://github.com/mdastpak/Crypto-Exchange/issues/120)) |
+| A-31 | P0 / security | The user becomes `INACTIVE`, `SUSPENDED`, or `BANNED`, or is deleted, also by a change made directly in the database, while their tokens are valid | `403 This account is not available. Please contact support.` on the next `/user/*` request and on refresh, which clears the cookie and issues no token; logout still revokes the session, and it stays revoked when the account is restored | Passes ([#120](https://github.com/mdastpak/Crypto-Exchange/issues/120)) |
 
 ---
 

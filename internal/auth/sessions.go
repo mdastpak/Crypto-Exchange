@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 )
 
 var (
@@ -17,6 +19,10 @@ var (
 	// ErrRefreshTokenReused means a refresh token that had already been rotated
 	// was presented again. It may have been stolen, so the session is revoked.
 	ErrRefreshTokenReused = fmt.Errorf("%w: refresh token was already used", ErrSessionInvalid)
+	// ErrAccountUnavailable means the session's user can no longer sign in:
+	// the account was disabled, suspended, banned, deleted, or made an
+	// administrator after the session began.
+	ErrAccountUnavailable = errors.New("account is not available")
 )
 
 // SessionStore persists sign-in sessions so that refresh tokens can be rotated
@@ -25,6 +31,11 @@ type SessionStore interface {
 	Create(ctx context.Context, session Session) error
 	Rotate(ctx context.Context, rotation SessionRotation) error
 	Revoke(ctx context.Context, sessionID, userID string) error
+	// Verify reports whether the tokens of a session may still be used. It
+	// returns ErrSessionInvalid when the session does not exist, belongs to
+	// another user, has expired, or was revoked, and ErrAccountUnavailable
+	// when its user can no longer sign in.
+	Verify(ctx context.Context, sessionID, userID string) error
 }
 
 // Session is a new sign-in session.
@@ -114,6 +125,36 @@ func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation) er
 		return ErrRefreshTokenReused
 	}
 	return ErrSessionInvalid
+}
+
+// Verify reads the session and its user in one lookup by primary key. It
+// reads the database on every call, without a cache, so that a change made
+// directly in the database, such as suspending a user, takes effect on the
+// next request. A session that is no longer active is reported before an
+// account that is no longer available, because its tokens are dead either
+// way.
+func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID string) error {
+	var active, deleted bool
+	var status, role string
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT s.status = 'ACTIVE' AND s.expires_at > NOW(), u.status, u.role, u.deleted_at IS NOT NULL
+		FROM sessions s JOIN users u ON u.hk = s.user_id
+		WHERE s.id = $1 AND s.user_id = $2`,
+		sessionID, userID,
+	).Scan(&active, &status, &role, &deleted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSessionInvalid
+	}
+	if err != nil {
+		return fmt.Errorf("failed to verify session: %w", err)
+	}
+	if !active {
+		return ErrSessionInvalid
+	}
+	if deleted || role != RoleUser || !account.UserStatus(status).CanSignIn() {
+		return ErrAccountUnavailable
+	}
+	return nil
 }
 
 func (s *PostgresSessionStore) Revoke(ctx context.Context, sessionID, userID string) error {

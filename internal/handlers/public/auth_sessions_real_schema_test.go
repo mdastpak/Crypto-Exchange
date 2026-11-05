@@ -2,6 +2,7 @@ package public
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -14,17 +15,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // sessionTestEnv wires the sign-in, refresh and logout routes, plus one
-// protected route, to a database built by the real migrations.
+// protected route behind both user middlewares, to a database built by the
+// real migrations.
 type sessionTestEnv struct {
 	router      *gin.Engine
 	conn        *sql.DB
 	redisClient *redis.Client
 	sender      *recordingOTPSender
+	sessions    auth.SessionStore
 }
 
 func newSessionTestEnv(t *testing.T) *sessionTestEnv {
@@ -41,10 +45,10 @@ func newSessionTestEnv(t *testing.T) *sessionTestEnv {
 	router.POST("/public/auth/logout", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
 		auth.LogoutHandler(c, blacklist, handler.Sessions)
 	})
-	router.GET("/user/ping", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
+	router.GET("/user/ping", auth.JWTUserVerification(blacklist), auth.RequireActiveSession(handler.Sessions), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
-	return &sessionTestEnv{router: router, conn: conn, redisClient: redisClient, sender: sender}
+	return &sessionTestEnv{router: router, conn: conn, redisClient: redisClient, sender: sender, sessions: handler.Sessions}
 }
 
 type requestOption func(*http.Request)
@@ -229,4 +233,66 @@ func TestSession_RealSchema_LogoutEndsTheSession(t *testing.T) {
 		"the access token must be rejected after logout")
 	assert.Equal(t, http.StatusUnauthorized, env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(cookie.Value)).Code,
 		"the refresh token must be rejected after logout")
+}
+
+func TestSession_RealSchema_VerifyChecksTheSessionAndTheUser(t *testing.T) {
+	env := newSessionTestEnv(t)
+	accessToken, _, _ := env.signIn(t, "session-verify@example.com")
+	claims, err := auth.ParseToken(accessToken, auth.RoleUser, auth.TokenTypeAccess)
+	require.NoError(t, err)
+	ctx := context.Background()
+	verify := func() error { return env.sessions.Verify(ctx, claims.SessionID, claims.UUID) }
+	exec := func(query string, arg string) {
+		t.Helper()
+		_, err := env.conn.Exec(query, arg)
+		require.NoError(t, err)
+	}
+	restore := func() {
+		exec(`UPDATE sessions SET status = 'ACTIVE', revoked_at = NULL, expires_at = NOW() + INTERVAL '1 hour' WHERE id = $1`, claims.SessionID)
+		exec(`UPDATE users SET status = 'ACTIVE', role = 'user', deleted_at = NULL WHERE hk = $1`, claims.UUID)
+	}
+
+	require.NoError(t, verify(), "a new session of an active user is valid")
+	assert.ErrorIs(t, env.sessions.Verify(ctx, uuid.NewString(), claims.UUID), auth.ErrSessionInvalid, "an unknown session")
+	assert.ErrorIs(t, env.sessions.Verify(ctx, claims.SessionID, uuid.NewString()), auth.ErrSessionInvalid, "the session of another user")
+
+	for name, change := range map[string]string{
+		"revoked":         `UPDATE sessions SET status = 'REVOKED', revoked_at = NOW() WHERE id = $1`,
+		"marked expired":  `UPDATE sessions SET status = 'EXPIRED' WHERE id = $1`,
+		"past its expiry": `UPDATE sessions SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`,
+	} {
+		t.Run("session "+name, func(t *testing.T) {
+			t.Cleanup(restore)
+			exec(change, claims.SessionID)
+			assert.ErrorIs(t, verify(), auth.ErrSessionInvalid)
+		})
+	}
+
+	for name, change := range map[string]string{
+		"inactive":      `UPDATE users SET status = 'INACTIVE' WHERE hk = $1`,
+		"suspended":     `UPDATE users SET status = 'SUSPENDED' WHERE hk = $1`,
+		"banned":        `UPDATE users SET status = 'BANNED' WHERE hk = $1`,
+		"soft-deleted":  `UPDATE users SET deleted_at = NOW() WHERE hk = $1`,
+		"administrator": `UPDATE users SET role = 'admin' WHERE hk = $1`,
+	} {
+		t.Run("user "+name, func(t *testing.T) {
+			t.Cleanup(restore)
+			exec(change, claims.UUID)
+			assert.ErrorIs(t, verify(), auth.ErrAccountUnavailable)
+			assert.NotErrorIs(t, verify(), auth.ErrSessionInvalid, "the client must not mistake it for an expired session")
+		})
+	}
+
+	t.Run("user pending verification", func(t *testing.T) {
+		t.Cleanup(restore)
+		exec(`UPDATE users SET status = 'PENDING_VERIFICATION' WHERE hk = $1`, claims.UUID)
+		assert.NoError(t, verify(), "a pending user may sign in, so its session stays valid")
+	})
+
+	t.Run("revoked session of a suspended user", func(t *testing.T) {
+		t.Cleanup(restore)
+		exec(`UPDATE sessions SET status = 'REVOKED', revoked_at = NOW() WHERE id = $1`, claims.SessionID)
+		exec(`UPDATE users SET status = 'SUSPENDED' WHERE hk = $1`, claims.UUID)
+		assert.ErrorIs(t, verify(), auth.ErrSessionInvalid, "a dead session is reported first")
+	})
 }

@@ -57,7 +57,7 @@ Middleware is applied to every route, including `/` and `/swagger/*`, in this or
 | `/public` | Authentication rate limit |
 | `/admin/auth` | Authentication rate limit. Admin sign-in, without a token. |
 | `/admin` | `JWTAdminVerification` (Bearer access token signed with an admin key, blacklist check), `RequireActiveAdmin` (the token's administrator is still active in the database), trading rate limit |
-| `/user` | `JWTUserVerification` (Bearer access token signed with a user key, blacklist check), trading rate limit |
+| `/user` | `JWTUserVerification` (Bearer access token signed with a user key, blacklist check), trading rate limit, and on every route except `/user/logout` `RequireActiveSession` (the token's session is active and its user can still sign in, checked in the database) |
 | `POST /public/auth/logout` | `JWTUserVerification`, like `/user/logout` |
 
 ### Startup and shutdown
