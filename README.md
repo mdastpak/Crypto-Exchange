@@ -220,7 +220,7 @@ Request and response details, the authentication flow, and the WebSocket protoco
 Run the unit tests, which need no infrastructure:
 
 ```bash
-go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./pkg/... ./config/...
+go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./pkg/... ./internal/config/...
 ```
 
 Integration tests need PostgreSQL, Redis, RabbitMQ, and an OpenBao dev server on the default ports:
@@ -258,11 +258,13 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 ```text
 cmd/admin/             Command for managing administrators
 cmd/server/            Application entry point, routing, and lifecycle
-config/                Configuration loader, example and default YAML files
-configs/               Asset registry and AML rule definitions (not loaded yet)
+config/                Configuration files: the example and Compose configurations,
+                       the local config.yaml (ignored), and the asset registry and
+                       AML rules (not loaded yet)
 docs/                  Generated Swagger files and project documentation
 internal/adminauth/    Administrator accounts and authenticator (TOTP) enrollment
 internal/auth/         JWT issuing and verification, key rotation, blacklist, middleware
+internal/config/       Configuration loading, environment variables, defaults, validation
 internal/db/           PostgreSQL and Redis clients, SQL migrations
 internal/domain/       Exchange domain model: asset, market, order, trade, balance,
                        account, kyc, custody, shared types

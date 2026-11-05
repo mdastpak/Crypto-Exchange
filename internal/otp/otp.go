@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 )
 
 // Defaults used for settings left at zero.

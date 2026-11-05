@@ -351,7 +351,7 @@ func TestComposeConfig(t *testing.T) {
 		t.Setenv(name, "")
 	}
 
-	SetConfigPath("config.compose.yaml")
+	SetConfigPath(configFile("config.compose.yaml"))
 	require.NoError(t, Load())
 
 	assert.Equal(t, "0.0.0.0", Config.Server.IP, "the server must listen on the container network")

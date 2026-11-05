@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 
 	"github.com/redis/go-redis/v9"
 )

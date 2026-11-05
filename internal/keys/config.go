@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 )
 
 // FromConfig returns the provider that cfg selects, or nil when
