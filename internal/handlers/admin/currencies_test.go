@@ -535,6 +535,60 @@ func (s *AdminCurrenciesTestSuite) TestCreateCurrency_ValidationErrors() {
 	}
 }
 
+// TestUpdateCurrency_EachFieldAlone changes one field per update, for every
+// field and both directions of each flag, and checks that the stored row has
+// the new value and that every other field kept its value.
+func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_EachFieldAlone() {
+	type row struct {
+		status string
+		info   models.CurrencyInfo
+	}
+	coin := row{"pending", models.CurrencyInfo{EnName: "Coin", FaName: "Coin (fa)", IfFiat: false, IsToken: false}}
+	token := row{"pending", models.CurrencyInfo{EnName: "Token", FaName: "Token (fa)", IsToken: true, Contract: "contract-token"}}
+	fiat := row{"approved", models.CurrencyInfo{EnName: "Fiat", FaName: "Fiat (fa)", IfFiat: true}}
+
+	cases := []struct {
+		name   string
+		start  row
+		update map[string]interface{}
+		change func(*row)
+	}{
+		{"status", coin, map[string]interface{}{"status": "suspend"}, func(r *row) { r.status = "suspend" }},
+		{"en_name", coin, map[string]interface{}{"info": map[string]interface{}{"en_name": "Renamed"}}, func(r *row) { r.info.EnName = "Renamed" }},
+		{"fa_name", coin, map[string]interface{}{"info": map[string]interface{}{"fa_name": "Renamed (fa)"}}, func(r *row) { r.info.FaName = "Renamed (fa)" }},
+		{"symbol", coin, map[string]interface{}{"info": map[string]interface{}{"symbol": "newsym"}}, func(r *row) { r.info.Symbol = "NEWSYM" }},
+		{"contract set", coin, map[string]interface{}{"info": map[string]interface{}{"contract": "contract-new"}}, func(r *row) { r.info.Contract = "contract-new" }},
+		{"contract cleared", row{"pending", models.CurrencyInfo{EnName: "Coin", FaName: "Coin (fa)", Contract: "contract-old"}},
+			map[string]interface{}{"info": map[string]interface{}{"contract": ""}}, func(r *row) { r.info.Contract = "" }},
+		{"is_token to false", token, map[string]interface{}{"info": map[string]interface{}{"is_token": false}}, func(r *row) { r.info.IsToken = false }},
+		{"is_token to true", row{"pending", models.CurrencyInfo{EnName: "Coin", FaName: "Coin (fa)", Contract: "contract-coin"}},
+			map[string]interface{}{"info": map[string]interface{}{"is_token": true}}, func(r *row) { r.info.IsToken = true }},
+		{"if_fiat to false", fiat, map[string]interface{}{"info": map[string]interface{}{"if_fiat": false}}, func(r *row) { r.info.IfFiat = false }},
+		{"if_fiat to true", coin, map[string]interface{}{"info": map[string]interface{}{"if_fiat": true}}, func(r *row) { r.info.IfFiat = true }},
+	}
+	for i, tc := range cases {
+		s.Run(tc.name, func() {
+			start := tc.start
+			start.info.Symbol = fmt.Sprintf("FLD%d", i)
+			payload := map[string]interface{}{"status": start.status, "info": start.info}
+			require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", payload).Code)
+			var hk string
+			require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = $1", start.info.Symbol).Scan(&hk))
+
+			w := s.makeRequest(http.MethodPut, "/currencies/"+hk, tc.update)
+			require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+
+			want := start
+			tc.change(&want)
+			var got row
+			var infoData []byte
+			require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT status, info FROM currencies WHERE hk = $1", hk).Scan(&got.status, &infoData))
+			require.NoError(s.T(), json.Unmarshal(infoData, &got.info))
+			assert.Equal(s.T(), want, got)
+		})
+	}
+}
+
 func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_CanResetFlagsToFalse() {
 	payload := sampleCurrencyPayload("WBTC", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599")
 	payload["info"].(map[string]interface{})["is_token"] = true
