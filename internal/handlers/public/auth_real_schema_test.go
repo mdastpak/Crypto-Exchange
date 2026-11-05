@@ -23,6 +23,7 @@ import (
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/models"
+	"encrypted-db/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -37,10 +38,9 @@ import (
 
 const realSchemaTestDBName = "testdb_public_real_schema"
 
-// realSchemaRedisDB is reserved for this file. The other suites use database 1
-// and flush it, which would delete this suite's OTP sessions if packages run
-// in parallel.
-const realSchemaRedisDB = 2
+// realSchemaRedisDB is the database of this package. The suites of a package
+// run one after another, so they can share it.
+const realSchemaRedisDB = redistest.Public
 
 // setupRealSchemaHandler migrates a dedicated database with the repository
 // migrations and returns a handler wired to it and to Redis database 2.

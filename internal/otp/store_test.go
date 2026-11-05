@@ -8,14 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"encrypted-db/internal/testutil/redistest"
+
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// storeTestRedisDB is reserved for this package; the other packages use
-// databases 1 to 3.
-const storeTestRedisDB = 4
+// storeTestRedisDB is the database of this package.
+const storeTestRedisDB = redistest.OTP
 
 const testSecret = "an-otp-test-secret-of-at-least-32-bytes"
 

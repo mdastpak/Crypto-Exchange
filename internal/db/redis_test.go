@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"encrypted-db/config"
+	"encrypted-db/internal/testutil/redistest"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ func TestNewRedisService_Success(t *testing.T) {
 
 	config.Config.Redis.Host = "localhost"
 	config.Config.Redis.Port = "6379"
-	config.Config.Redis.DB = 1
+	config.Config.Redis.DB = redistest.DB
 	config.Config.Redis.ConnectRetries = 1
 	config.Config.Redis.ConnectRetryDelayMs = 10
 
@@ -37,7 +38,7 @@ func TestNewRedisService_UsesTheConfiguredTimeouts(t *testing.T) {
 	originalConfig := config.Config
 	defer func() { config.Config = originalConfig }()
 	connect := func() *redis.Options {
-		config.Config.Redis.Host, config.Config.Redis.Port, config.Config.Redis.DB = "localhost", "6379", 1
+		config.Config.Redis.Host, config.Config.Redis.Port, config.Config.Redis.DB = "localhost", "6379", redistest.DB
 		config.Config.Redis.ConnectRetries, config.Config.Redis.ConnectRetryDelayMs = 1, 10
 		svc, err := NewRedisService()
 		require.NoError(t, err)
@@ -95,7 +96,7 @@ func TestRedisService_CloseNilClient(t *testing.T) {
 }
 
 func TestRedisService_StatsAfterConnect(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 1})
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: redistest.DB})
 	require.NoError(t, client.Ping(context.Background()).Err())
 	svc := &RedisService{Client: client}
 	defer svc.Close()
@@ -105,7 +106,7 @@ func TestRedisService_StatsAfterConnect(t *testing.T) {
 }
 
 func TestRedisPingWithRetry_Succeeds(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 1})
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: redistest.DB})
 	defer client.Close()
 
 	err := redisPingWithRetry(client, 3, 10*time.Millisecond)
@@ -113,7 +114,7 @@ func TestRedisPingWithRetry_Succeeds(t *testing.T) {
 }
 
 func TestRedisPingWithRetry_ExhaustsAttempts(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DB: 1})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DB: redistest.DB})
 	defer client.Close()
 
 	start := time.Now()
@@ -125,7 +126,7 @@ func TestRedisPingWithRetry_ExhaustsAttempts(t *testing.T) {
 }
 
 func TestRedisPingWithRetry_NormalizesInvalidArguments(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 1})
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: redistest.DB})
 	defer client.Close()
 
 	err := redisPingWithRetry(client, 0, 0)

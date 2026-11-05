@@ -17,6 +17,7 @@ import (
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/rabbitmq"
 	"encrypted-db/internal/testutil/pgtest"
+	"encrypted-db/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -85,7 +86,7 @@ func (s *AdminCurrenciesTestSuite) SetupSuite() {
 func (s *AdminCurrenciesTestSuite) SetupTest() {
 	s.redisClient = redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
-		DB:   1,
+		DB:   redistest.Admin,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

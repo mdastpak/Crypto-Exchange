@@ -18,6 +18,7 @@ import (
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/models"
+	"encrypted-db/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -78,7 +79,7 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 	s.redisClient = redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
 		Password: "",
-		DB:       1,
+		DB:       redistest.Public,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
