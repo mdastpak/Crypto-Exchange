@@ -35,15 +35,15 @@ func TestMigrated_BuildsTheSchemaOfTheMigrations(t *testing.T) {
 	var version int
 	var dirty bool
 	require.NoError(t, conn.QueryRow(`SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty))
-	assert.GreaterOrEqual(t, version, 13)
+	assert.GreaterOrEqual(t, version, 14)
 	assert.False(t, dirty)
 
-	var constraint bool
-	require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_info_contact')`).Scan(&constraint))
-	assert.True(t, constraint, "the users table has the constraints of the migrations")
+	var index bool
+	require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'user_contacts_value_unique')`).Scan(&index))
+	assert.True(t, index, "the users tables have the indexes of the migrations")
 
 	// A second call starts from an empty database again.
-	_, err := conn.Exec(`INSERT INTO users (info) VALUES ('{"contact": {"email": "a@example.com"}}')`)
+	_, err := conn.Exec(`INSERT INTO users DEFAULT VALUES`)
 	require.NoError(t, err)
 	conn = Migrated(t, "testdb_pgtest")
 	var users int

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"encrypted-db/internal/otp"
+	"encrypted-db/internal/testutil/usertest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -123,15 +124,18 @@ func TestRequestOTP_RealSchema_NewCodesDoNotResetTheAttempts(t *testing.T) {
 }
 
 func TestVerifyOTP_RealSchema_UnavailableAccountsAreForbidden(t *testing.T) {
-	for _, status := range []string{"disabled", "deleted", "suspend"} {
-		t.Run(status, func(t *testing.T) {
+	for name, user := range map[string]usertest.User{
+		"inactive":  {Status: "INACTIVE"},
+		"suspended": {Status: "SUSPENDED"},
+		"banned":    {Status: "BANNED"},
+		// Deletion is marked by deleted_at alone, whatever the status says.
+		"deleted": {Status: "ACTIVE", Deleted: true},
+	} {
+		t.Run(name, func(t *testing.T) {
 			handler, router, sender := newOTPLimitRouter(t)
-			contact := status + ".account@example.com"
-			_, err := handler.PostgresDB.DB.Exec(
-				`INSERT INTO users (info, status) VALUES ($1::jsonb, $2)`,
-				`{"contact": {"email": "`+contact+`"}}`, status,
-			)
-			require.NoError(t, err)
+			contact := name + ".account@example.com"
+			user.Email = contact
+			usertest.Insert(t, handler.PostgresDB.DB, user)
 			sessionID, code := requestCode(t, router, sender, contact)
 
 			httpStatus, resp := postJSON(t, router, "/public/auth/"+sessionID, map[string]string{"otp": code})

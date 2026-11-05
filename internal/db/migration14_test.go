@@ -60,7 +60,7 @@ func TestMigration14_MovesUsersWithoutLoss(t *testing.T) {
 	require.NoError(t, m.Migrate(14))
 
 	type contact struct {
-		user, kind, value  string
+		user, kind, value string
 		verified, primary bool
 	}
 	var contacts []contact

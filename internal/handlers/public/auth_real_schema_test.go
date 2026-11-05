@@ -161,7 +161,7 @@ func countUsersWithContact(t *testing.T, conn *sql.DB, contactType, contact stri
 	t.Helper()
 	var count int
 	require.NoError(t, conn.QueryRow(
-		"SELECT COUNT(*) FROM users WHERE info->'contact'->>$1 = $2", contactType, contact,
+		"SELECT COUNT(*) FROM user_contacts WHERE type = $1::contact_type AND value = $2", contactType, contact,
 	).Scan(&count))
 	return count
 }
@@ -186,6 +186,16 @@ func TestVerifyOTP_RealSchema_FirstSignInCreatesUser(t *testing.T) {
 	assert.NotContains(t, tokens, "refresh_token", "the refresh token is only delivered in the cookie")
 
 	assert.Equal(t, 1, countUsersWithContact(t, conn, "email", contact))
+	var userStatus, role string
+	var verified, primary bool
+	require.NoError(t, conn.QueryRow(
+		`SELECT u.status::text, u.role, c.verified_at IS NOT NULL, c.is_primary
+		 FROM user_contacts c JOIN users u ON u.hk = c.user_hk WHERE c.type = 'email' AND c.value = $1`, contact,
+	).Scan(&userStatus, &role, &verified, &primary))
+	assert.Equal(t, "ACTIVE", userStatus)
+	assert.Equal(t, "user", role)
+	assert.True(t, verified, "the sign-in code proved control of the contact")
+	assert.True(t, primary)
 }
 
 func TestCheckOrCreateUser_RealSchema_ReusesExistingUser(t *testing.T) {
@@ -264,8 +274,8 @@ func TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert(t *testing.T) 
 		name, contact, status string
 		wantErr               bool
 	}{
-		{name: "active user is reused", contact: "race-approved@example.com", status: "approved"},
-		{name: "disabled user stays blocked", contact: "race-disabled@example.com", status: "disabled", wantErr: true},
+		{name: "active user is reused", contact: "race-active@example.com", status: "ACTIVE"},
+		{name: "inactive user stays blocked", contact: "race-inactive@example.com", status: "INACTIVE", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,9 +287,10 @@ func TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert(t *testing.T) 
 			defer tx.Rollback()
 			var competitor uuid.UUID
 			require.NoError(t, tx.QueryRowContext(ctx,
-				`INSERT INTO users (info, status) VALUES ($1::jsonb, $2) RETURNING hk`,
-				fmt.Sprintf(`{"contact": {"email": %q}}`, tc.contact), tc.status,
+				`INSERT INTO users (status) VALUES ($1) RETURNING hk`, tc.status,
 			).Scan(&competitor))
+			_, err = tx.ExecContext(ctx, `INSERT INTO user_contacts (user_hk, type, value) VALUES ($1, 'email', $2)`, competitor, tc.contact)
+			require.NoError(t, err)
 
 			type result struct {
 				hk  uuid.UUID
@@ -291,13 +302,13 @@ func TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert(t *testing.T) 
 				done <- result{hk, err}
 			}()
 
-			// The handler's insert blocks on the uncommitted row once its lookup has missed.
+			// The handler's contact insert blocks on the uncommitted contact once its lookup has missed.
 			require.Eventually(t, func() bool {
 				var blocked bool
 				err := conn.QueryRowContext(ctx, `SELECT EXISTS (
 					SELECT 1 FROM pg_stat_activity
 					WHERE datname = current_database() AND wait_event_type = 'Lock'
-					  AND query LIKE 'INSERT INTO users (info, status) VALUES ($1, ''approved'')%')`).Scan(&blocked)
+					  AND query LIKE 'INSERT INTO user_contacts %')`).Scan(&blocked)
 				return err == nil && blocked
 			}, 10*time.Second, 20*time.Millisecond, "the handler insert never waited on the competing row")
 			require.NoError(t, tx.Commit())
@@ -317,8 +328,13 @@ func TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert(t *testing.T) 
 func TestUsersSchema_RealSchema_EnforcesContactRules(t *testing.T) {
 	_, conn, _ := setupRealSchemaHandler(t)
 
-	insert := func(info string) error {
-		_, err := conn.Exec("INSERT INTO users (info, status) VALUES ($1::jsonb, 'approved')", info)
+	newUser := func() string {
+		var hk string
+		require.NoError(t, conn.QueryRow(`INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk`).Scan(&hk))
+		return hk
+	}
+	addContact := func(userHK, contactType, value string) error {
+		_, err := conn.Exec(`INSERT INTO user_contacts (user_hk, type, value) VALUES ($1, $2::contact_type, $3)`, userHK, contactType, value)
 		return err
 	}
 	pgCode := func(err error) string {
@@ -334,21 +350,31 @@ func TestUsersSchema_RealSchema_EnforcesContactRules(t *testing.T) {
 	}{
 		{"email", "duplicate@example.com", "duplicate@example.com"},
 		{"email", "Case@Example.com", "case@EXAMPLE.COM"},
-		{"mobile", "09120000000", "09120000000"},
+		{"mobile", "+989120000000", "+989120000000"},
 		{"username", "duplicate_user", "duplicate_user"},
 		{"username", "Case_User", "case_user"},
 	}
 	for _, tc := range uniqueCases {
 		t.Run(fmt.Sprintf("unique %s %s", tc.contactType, tc.second), func(t *testing.T) {
-			require.NoError(t, insert(fmt.Sprintf(`{"contact": {%q: %q}}`, tc.contactType, tc.first)))
-			err := insert(fmt.Sprintf(`{"contact": {%q: %q}}`, tc.contactType, tc.second))
-			assert.Equal(t, "23505", pgCode(err), "%q must conflict with %q", tc.second, tc.first)
+			require.NoError(t, addContact(newUser(), tc.contactType, tc.first))
+			err := addContact(newUser(), tc.contactType, tc.second)
+			assert.Equal(t, "23505", pgCode(err), "%q of another user must conflict with %q", tc.second, tc.first)
 		})
 	}
 
-	for _, info := range []string{`{}`, `{"contact": "not-an-object"}`, `{"contact": null}`, `["contact"]`, `{"username": "legacy", "password": "x"}`} {
-		t.Run("rejects "+info, func(t *testing.T) {
-			assert.Equal(t, "23514", pgCode(insert(info)), "info %s has no contact object", info)
-		})
-	}
+	t.Run("one primary contact of each type", func(t *testing.T) {
+		user := newUser()
+		require.NoError(t, addContact(user, "email", "first@example.com"))
+		assert.Equal(t, "23505", pgCode(addContact(user, "email", "second@example.com")))
+		assert.NoError(t, addContact(user, "mobile", "+989120000009"), "a contact of another type is fine")
+	})
+	t.Run("rejects an empty contact", func(t *testing.T) {
+		assert.Equal(t, "23514", pgCode(addContact(newUser(), "email", "")))
+	})
+	t.Run("rejects an unknown contact type", func(t *testing.T) {
+		assert.Equal(t, "22P02", pgCode(addContact(newUser(), "telegram", "@someone")))
+	})
+	t.Run("rejects a contact without a user", func(t *testing.T) {
+		assert.Equal(t, "23503", pgCode(addContact(uuid.NewString(), "email", "orphan@example.com")))
+	})
 }

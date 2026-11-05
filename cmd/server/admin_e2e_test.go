@@ -296,6 +296,11 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 	claims, err := auth.ParseToken(adminToken, auth.RoleAdmin, auth.TokenTypeAccess)
 	require.NoError(t, err)
 	assert.Equal(t, enrollment.AdminID, claims.UUID)
+	var verified bool
+	require.NoError(t, env.db.QueryRow(
+		`SELECT verified_at IS NOT NULL FROM user_contacts WHERE user_hk = $1 AND type = 'email'`, enrollment.AdminID,
+	).Scan(&verified))
+	assert.True(t, verified, "the emailed code verifies the address that the operator entered")
 
 	status, resp = env.post(t, "/admin/currencies", testCurrency("E2E"), adminToken)
 	assert.Equal(t, http.StatusCreated, status, resp.Message)
@@ -414,7 +419,7 @@ func TestAdminRole_DatabaseChanges(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, resp.Message)
 		var intruderID string
 		require.NoError(t, env.db.QueryRow(
-			`SELECT hk FROM users WHERE info->'contact'->>'email' = 'intruder@example.com'`).Scan(&intruderID))
+			`SELECT user_hk FROM user_contacts WHERE type = 'email' AND value = 'intruder@example.com'`).Scan(&intruderID))
 
 		// The role alone: no enrolled authenticator, so no code is sent.
 		_, err := env.db.Exec(`UPDATE users SET role = 'admin' WHERE hk = $1`, intruderID)
@@ -428,7 +433,7 @@ func TestAdminRole_DatabaseChanges(t *testing.T) {
 		// it is bound to that administrator's ID.
 		other, err := env.accounts.Create(ctx, "victim@example.com")
 		require.NoError(t, err)
-		_, err = env.db.Exec(`UPDATE users SET status = 'approved', totp_enabled = TRUE,
+		_, err = env.db.Exec(`UPDATE users SET status = 'ACTIVE', totp_enabled = TRUE,
 			totp_secret = (SELECT totp_secret FROM users WHERE hk = $1) WHERE hk = $2`, other.AdminID, intruderID)
 		require.NoError(t, err)
 		sessionID, code := env.requestAdminCode(t, "intruder@example.com")

@@ -84,9 +84,18 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		status, resp := env.profile(t, http.MethodGet, nil, aliceToken)
 		require.Equal(t, http.StatusOK, status)
 		assert.Equal(t, aliceID, resp.Info.UUID)
-		assert.Equal(t, "approved", resp.Info.Status)
+		assert.Equal(t, "ACTIVE", resp.Info.Status)
 		assert.Equal(t, map[string]string{"email": "ali*****@example.com"}, resp.Info.Contact)
 		assert.Nil(t, resp.Info.FirstName)
+
+		// A second address, such as one waiting to replace the first, is not
+		// what the user signs in with.
+		_, err := env.db.Exec(`INSERT INTO user_contacts (user_hk, type, value, is_primary) VALUES ($1, 'email', 'zzz.pending@example.com', FALSE)`, aliceID)
+		require.NoError(t, err)
+		_, resp = env.profile(t, http.MethodGet, nil, aliceToken)
+		assert.Equal(t, map[string]string{"email": "ali*****@example.com"}, resp.Info.Contact, "only primary contacts are shown")
+		_, err = env.db.Exec(`DELETE FROM user_contacts WHERE value = 'zzz.pending@example.com'`)
+		require.NoError(t, err)
 		assert.Equal(t, "PENDING", resp.Info.KYCStatus)
 		assert.Equal(t, "NONE", resp.Info.KYCTier)
 		created, err := time.Parse(time.RFC3339, resp.Info.CreatedAt)
@@ -133,7 +142,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 	t.Run("invalid updates are rejected", func(t *testing.T) {
 		for _, body := range []interface{}{
 			map[string]string{"first_name": "a\u202Eb"},
-			map[string]string{"status": "approved"},
+			map[string]string{"status": "ACTIVE"},
 			map[string]string{"kyc_tier": "INSTITUTIONAL"},
 			map[string]string{},
 		} {
@@ -142,12 +151,12 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		}
 		var status, tier string
 		require.NoError(t, env.db.QueryRow(`SELECT status, kyc_tier FROM users WHERE hk = $1`, aliceID).Scan(&status, &tier))
-		assert.Equal(t, "approved", status)
+		assert.Equal(t, "ACTIVE", status)
 		assert.Equal(t, "NONE", tier)
 	})
 
 	t.Run("account changes take effect on issued tokens", func(t *testing.T) {
-		_, err := env.db.Exec(`UPDATE users SET status = 'suspend' WHERE hk = $1`, aliceID)
+		_, err := env.db.Exec(`UPDATE users SET status = 'SUSPENDED' WHERE hk = $1`, aliceID)
 		require.NoError(t, err)
 		for _, method := range []string{http.MethodGet, http.MethodPatch} {
 			status, resp := env.profile(t, method, map[string]string{"first_name": "Changed"}, aliceToken)
@@ -158,7 +167,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		require.NoError(t, env.db.QueryRow(`SELECT first_name FROM users WHERE hk = $1`, aliceID).Scan(&firstName))
 		assert.Equal(t, "Alice", firstName, "a suspended account cannot change its profile")
 
-		_, err = env.db.Exec(`UPDATE users SET status = 'approved', role = 'admin' WHERE hk = $1`, aliceID)
+		_, err = env.db.Exec(`UPDATE users SET status = 'ACTIVE', role = 'admin' WHERE hk = $1`, aliceID)
 		require.NoError(t, err)
 		status, _ := env.profile(t, http.MethodGet, nil, aliceToken)
 		assert.Equal(t, http.StatusForbidden, status, "an administrator account is not served to a user token")
