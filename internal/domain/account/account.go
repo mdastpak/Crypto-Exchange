@@ -1,10 +1,15 @@
 package account
 
 import (
+	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
@@ -194,7 +199,7 @@ type APIKey struct {
 
 	// Key info
 	Name      string     `json:"name" db:"name"`             // User-defined label
-	PublicKey string     `json:"public_key" db:"public_key"` // Key ID (prefix)
+	PublicKey string     `json:"public_key" db:"public_key"` // Key ID, random and independent of the secret
 	KeyType   APIKeyType `json:"key_type" db:"key_type"`     // HMAC, ED25519
 
 	// Permissions (subset of sub-account permissions)
@@ -214,8 +219,11 @@ type APIKey struct {
 	LastUsedIP string            `json:"last_used_ip,omitempty" db:"last_used_ip"`
 	ExpiresAt  *shared.Timestamp `json:"expires_at,omitempty" db:"expires_at"`
 
-	// Secret (only returned on creation, stored hashed)
-	SecretHash string `json:"-" db:"secret_hash"`
+	// Verification material. An HMAC key keeps its secret sealed with a
+	// field-enc key (SealAPIKeySecret); an Ed25519 key keeps only the
+	// client's public key. Neither is ever returned by the API.
+	SealedSecret     []byte `json:"-" db:"secret_sealed"`
+	Ed25519PublicKey []byte `json:"-" db:"ed25519_public_key"`
 
 	CreatedAt shared.Timestamp  `json:"created_at" db:"created_at"`
 	UpdatedAt shared.Timestamp  `json:"updated_at" db:"updated_at"`
@@ -246,46 +254,120 @@ func (a APIKeyStatus) String() string {
 	return string(a)
 }
 
-// GenerateAPIKey creates a new API key pair
-func GenerateAPIKey(keyType APIKeyType) (publicKey, secret string, err error) {
+// apiKeyIDBytes is the random part of a key ID: 128 bits, so that key IDs
+// never collide and cannot be guessed.
+const apiKeyIDBytes = 16
+
+// GeneratedAPIKey is a new API key. Secret is shown to the client once and
+// never stored in plaintext.
+type GeneratedAPIKey struct {
+	// KeyID is the public identifier, random and independent of the secret.
+	KeyID string
+	Type  APIKeyType
+	// Secret is, for HMAC, the shared secret, and for Ed25519, the 32-byte
+	// seed of the private key, both base64url-encoded without padding.
+	Secret string
+	// PublicKey is the Ed25519 public key, which the server keeps to verify
+	// signatures. It is nil for HMAC, whose secret the server keeps sealed
+	// (SealAPIKeySecret).
+	PublicKey ed25519.PublicKey
+}
+
+// NewAPIKeyID returns a random key ID for keyType, such as
+// "hmac_3f2a...". Clients that upload their own Ed25519 public key get one
+// as well.
+func NewAPIKeyID(keyType APIKeyType) (string, error) {
+	prefix := map[APIKeyType]string{APIKeyTypeHMAC: "hmac_", APIKeyTypeEd25519: "ed25519_"}[keyType]
+	if prefix == "" {
+		return "", errors.New("unsupported key type")
+	}
+	random := make([]byte, apiKeyIDBytes)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(random), nil
+}
+
+// GenerateAPIKey creates a new API key: a random key ID and, for HMAC, a
+// random 256-bit secret, or, for Ed25519, a key pair.
+func GenerateAPIKey(keyType APIKeyType) (GeneratedAPIKey, error) {
+	keyID, err := NewAPIKeyID(keyType)
+	if err != nil {
+		return GeneratedAPIKey{}, err
+	}
+	key := GeneratedAPIKey{KeyID: keyID, Type: keyType}
 	switch keyType {
 	case APIKeyTypeHMAC:
-		// Generate 32-byte secret
-		secretBytes := make([]byte, 32)
-		if _, err := rand.Read(secretBytes); err != nil {
-			return "", "", err
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return GeneratedAPIKey{}, err
 		}
-		secret = base64.URLEncoding.EncodeToString(secretBytes)
-		// Public key is first 8 chars of SHA256(secret) for identification
-		publicKey = "hmac_" + hex.EncodeToString(secretBytes[:4])
-
+		key.Secret = base64.RawURLEncoding.EncodeToString(secret)
 	case APIKeyTypeEd25519:
-		// For Ed25519, we'd use crypto/ed25519.GenerateKey
-		// Simplified here - in production use proper key generation
-		secretBytes := make([]byte, 64) // seed + public
-		if _, err := rand.Read(secretBytes); err != nil {
-			return "", "", err
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return GeneratedAPIKey{}, err
 		}
-		secret = base64.URLEncoding.EncodeToString(secretBytes)
-		publicKey = "ed25519_" + hex.EncodeToString(secretBytes[:4])
-
-	default:
-		return "", "", errors.New("unsupported key type")
+		key.Secret = base64.RawURLEncoding.EncodeToString(private.Seed())
+		key.PublicKey = public
 	}
-	return publicKey, secret, nil
+	return key, nil
 }
 
-// HashAPIKeySecret hashes the secret for storage
-func HashAPIKeySecret(secret string) (string, error) {
-	// Use bcrypt or argon2 in production
-	// Simplified for domain model
-	return secret, nil // Placeholder
+// ParseEd25519PublicKey decodes a public key that a client uploads:
+// 32 bytes, base64-encoded in the standard or URL alphabet, with or
+// without padding.
+func ParseEd25519PublicKey(encoded string) (ed25519.PublicKey, error) {
+	encoded = strings.TrimRight(strings.TrimSpace(encoded), "=")
+	for _, encoding := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {
+		if raw, err := encoding.DecodeString(encoded); err == nil && len(raw) == ed25519.PublicKeySize {
+			return ed25519.PublicKey(raw), nil
+		}
+	}
+	return nil, fmt.Errorf("an Ed25519 public key is %d bytes, base64-encoded", ed25519.PublicKeySize)
 }
 
-// VerifyAPIKeySecret verifies a secret against hash
-func VerifyAPIKeySecret(secret, hash string) bool {
-	// In production: bcrypt.CompareHashAndPassword
-	return secret == hash // Placeholder
+// VerifyHMACSignature reports whether signature is the HMAC-SHA-256 of
+// message under secret. It compares in constant time, so the time it takes
+// reveals nothing about the expected signature.
+func VerifyHMACSignature(secret, message, signature []byte) bool {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(message)
+	return hmac.Equal(mac.Sum(nil), signature)
+}
+
+// VerifyEd25519Signature reports whether signature is a valid Ed25519
+// signature of message by publicKey.
+func VerifyEd25519Signature(publicKey ed25519.PublicKey, message, signature []byte) bool {
+	if len(publicKey) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(publicKey, message, signature)
+}
+
+// FieldSealer encrypts values bound to their place in the database.
+// *keys.Keyring implements it with the field-enc keys.
+type FieldSealer interface {
+	SealField(aad, plaintext []byte) ([]byte, error)
+	OpenField(aad, sealed []byte) ([]byte, error)
+}
+
+// apiKeySecretAAD binds a sealed secret to its API key, so that it cannot
+// be copied to the row of another key.
+func apiKeySecretAAD(keyID string) []byte {
+	return []byte("api_keys.secret_sealed:" + keyID)
+}
+
+// SealAPIKeySecret encrypts the secret of an HMAC key for its row in
+// api_keys (secret_sealed).
+func SealAPIKeySecret(sealer FieldSealer, keyID string, secret []byte) ([]byte, error) {
+	return sealer.SealField(apiKeySecretAAD(keyID), secret)
+}
+
+// OpenAPIKeySecret decrypts the secret of the HMAC key keyID, which the
+// server needs to verify the key's signatures.
+func OpenAPIKeySecret(sealer FieldSealer, keyID string, sealed []byte) ([]byte, error) {
+	return sealer.OpenField(apiKeySecretAAD(keyID), sealed)
 }
 
 // Session represents an authenticated session
