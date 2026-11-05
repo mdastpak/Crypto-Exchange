@@ -9,6 +9,7 @@ import (
 
 	"encrypted-db/config"
 	"encrypted-db/internal/db"
+	"encrypted-db/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -61,9 +62,9 @@ func TestGetClientIP_UsesForwardingHeaderFromTrustedProxy(t *testing.T) {
 }
 
 // TestAuthRateLimit_SpoofedForwardedForDoesNotBypassTheLimit needs Redis on
-// localhost:6379 and uses database 3.
+// localhost:6379 and uses the database of this package.
 func TestAuthRateLimit_SpoofedForwardedForDoesNotBypassTheLimit(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 3})
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: redistest.Middleware})
 	if err := client.Ping(context.Background()).Err(); err != nil {
 		t.Skipf("Redis is not reachable at localhost:6379: %v", err)
 	}

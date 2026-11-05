@@ -24,6 +24,7 @@ import (
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/middleware"
 	"encrypted-db/internal/notify"
+	"encrypted-db/internal/testutil/redistest"
 	"encrypted-db/internal/totp"
 
 	"github.com/gin-gonic/gin"
@@ -38,7 +39,7 @@ import (
 // PostgreSQL, Redis, and RabbitMQ, and are skipped when one is not reachable.
 const (
 	e2eDBName     = "testdb_server_e2e"
-	e2eRedisDB    = 5
+	e2eRedisDB    = redistest.Server
 	e2eRabbitMQ   = "amqp://guest:guest@localhost:5672/"
 	e2ePostgresDS = "host=localhost port=5432 user=postgres password=test sslmode=disable dbname="
 )

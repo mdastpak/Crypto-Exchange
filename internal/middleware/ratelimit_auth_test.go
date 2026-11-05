@@ -10,6 +10,7 @@ import (
 
 	"encrypted-db/config"
 	"encrypted-db/internal/db"
+	"encrypted-db/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -18,10 +19,10 @@ import (
 )
 
 // newAuthLimitEngine returns an engine whose routes answer 200, and a Redis
-// client on database 3. The authentication limits are restored afterwards.
+// client on the database of this package. The authentication limits are restored afterwards.
 func newAuthLimitEngine(t *testing.T) (*gin.Engine, *RateLimiter, *redis.Client) {
 	t.Helper()
-	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 3})
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: redistest.Middleware})
 	if err := client.Ping(context.Background()).Err(); err != nil {
 		t.Skipf("Redis is not reachable at localhost:6379: %v", err)
 	}
