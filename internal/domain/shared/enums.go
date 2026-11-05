@@ -428,6 +428,23 @@ const (
 	KYCTierInstitutional KYCTier = "INSTITUTIONAL" // Corporate KYC
 )
 
+// kycTierRanks orders the tiers from no verification to corporate KYC.
+var kycTierRanks = map[KYCTier]int{
+	KYCTierNone:          0,
+	KYCTierBasic:         1,
+	KYCTierStandard:      2,
+	KYCTierEnhanced:      3,
+	KYCTierInstitutional: 4,
+}
+
+// Rank returns the position of t from NONE (0) to INSTITUTIONAL (4), and
+// false for a tier that does not exist. Tiers must be compared by rank: as
+// strings, "BASIC" < "NONE".
+func (t KYCTier) Rank() (int, bool) {
+	rank, ok := kycTierRanks[t]
+	return rank, ok
+}
+
 // SanctionAction represents the action to take on sanctions match
 type SanctionAction string
 
