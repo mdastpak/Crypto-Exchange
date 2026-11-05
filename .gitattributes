@@ -1,6 +1,12 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
+# Go sources and module files keep LF line endings on every platform, so that
+# gofmt -l and go mod tidy -diff give the same result on Windows as in CI.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
 # Files read by Linux containers keep LF line endings on every platform, so
 # that line continuations in Dockerfile commands work after a Windows checkout.
 Dockerfile text eol=lf
