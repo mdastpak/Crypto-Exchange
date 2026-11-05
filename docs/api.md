@@ -478,16 +478,31 @@ The server replies:
 
 ### Server messages
 
-Currency events (see [Currencies](#currencies)) are broadcast to every connected client, with a `server_time` field added:
+Currency events (see [Currencies](#currencies)) are broadcast to every connected client, with `server_time` set by the server that sends them:
 
 ```json
 {
   "entity": "currencies",
   "action": "create",
   "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10",
-  "info": { "symbol": "USDT" },
+  "info": {
+    "en_name": "Tether",
+    "fa_name": "تتر",
+    "if_fiat": false,
+    "symbol": "USDT",
+    "is_token": true,
+    "contract": "0xdac17f958d2ee523a2206206994597c13d831ec7"
+  },
   "server_time": "2026-11-02T10:00:00Z"
 }
 ```
+
+Clients receive exactly these fields. For `create` and `update`, `info` holds the six fields above; for `delete`, it is `{"status": "pending" | "suspend" | "deleted"}`. The server rebuilds every event from this schema before it sends it, so a field that is not part of it never reaches a client. Anything that can publish to the broker's `price_updates` exchange therefore cannot push other content to clients. An event that does not fit the schema is dropped and logged:
+
+- an unknown `entity` or `action`;
+- an `hk` that is not a UUID in canonical form;
+- a missing `info`, or one with fields of the wrong type;
+- a `delete` with another status;
+- an event larger than 16 KiB.
 
 Every server instance consumes the events through a queue of its own, so a client receives every event whichever instance it is connected to. Each message is a separate frame that holds exactly one JSON document.

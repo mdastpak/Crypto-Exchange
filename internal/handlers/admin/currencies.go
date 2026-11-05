@@ -67,22 +67,6 @@ type eventPublisher interface {
 	Publish(ctx context.Context, exchange, message string) error
 }
 
-// Currency event actions. They describe the public view: what clients that
-// are not administrators can see.
-const (
-	currencyEventCreate = "create"
-	currencyEventUpdate = "update"
-	currencyEventDelete = "delete"
-)
-
-type CurrencyEvent struct {
-	Entity     string          `json:"entity"`
-	Action     string          `json:"action"`
-	HK         string          `json:"hk"`
-	Info       json.RawMessage `json:"info,omitempty"`
-	ServerTime string          `json:"server_time"`
-}
-
 func (h *AdminHandler) publishCurrencyEvent(ctx context.Context, action, hk string, info interface{}) {
 	infoJSON, err := json.Marshal(info)
 	if err != nil {
@@ -90,8 +74,8 @@ func (h *AdminHandler) publishCurrencyEvent(ctx context.Context, action, hk stri
 		return
 	}
 
-	event := CurrencyEvent{
-		Entity:     "currencies",
+	event := models.CurrencyEvent{
+		Entity:     models.CurrencyEventEntity,
 		Action:     action,
 		HK:         hk,
 		Info:       infoJSON,
@@ -133,11 +117,11 @@ func (h *AdminHandler) syncPublicView(ctx context.Context, wasPublic bool, curre
 
 	switch {
 	case isPublic && !wasPublic:
-		h.publishCurrencyEvent(ctx, currencyEventCreate, currency.HK, currency.Info)
+		h.publishCurrencyEvent(ctx, models.CurrencyEventCreate, currency.HK, currency.Info)
 	case isPublic && wasPublic:
-		h.publishCurrencyEvent(ctx, currencyEventUpdate, currency.HK, currency.Info)
+		h.publishCurrencyEvent(ctx, models.CurrencyEventUpdate, currency.HK, currency.Info)
 	case !isPublic && wasPublic:
-		h.publishCurrencyEvent(ctx, currencyEventDelete, currency.HK, map[string]string{"status": currency.Status})
+		h.publishCurrencyEvent(ctx, models.CurrencyEventDelete, currency.HK, models.CurrencyRemoval{Status: currency.Status})
 	}
 }
 
