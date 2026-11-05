@@ -411,7 +411,13 @@ Only the fields sent change, and at least one must be sent. Any other field, suc
 
 These endpoints return plain JSON without the envelope.
 
-### `GET /system/healthcheck`
+### `GET /system/live`
+
+Liveness: `200` with `{"status": "ok"}` while the process serves requests. It checks no dependency, so that an orchestrator does not restart an instance because PostgreSQL, Redis, or RabbitMQ is down.
+
+### `GET /system/ready`
+
+Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two seconds, and answers `200` when all of them are available and `503` otherwise, so that load balancers and orchestrators send no traffic to an instance that cannot serve it. The Docker image's `HEALTHCHECK` uses it.
 
 ```json
 {
@@ -424,7 +430,11 @@ These endpoints return plain JSON without the envelope.
 }
 ```
 
-`status` is `degraded` when any dependency fails. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored. The HTTP status is currently always `200` ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)).
+`status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored. In release mode, the response has only `status`, without `details`, because the details describe the internals.
+
+### `GET /system/healthcheck`
+
+The earlier name of `/system/ready`, with the same response.
 
 ### `GET /system/ping`
 

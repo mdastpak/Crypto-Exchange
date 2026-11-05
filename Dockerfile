@@ -43,9 +43,9 @@ USER 10001:10001
 
 EXPOSE 8080
 
-# /system/ping only shows that the process serves requests. The dependency
-# health check always returns 200 until #33.
+# /system/ready answers 503 while PostgreSQL, Redis, or RabbitMQ is
+# unavailable, and wget fails on it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:8080/system/ping || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/system/ready || exit 1
 
 ENTRYPOINT ["/app/server"]

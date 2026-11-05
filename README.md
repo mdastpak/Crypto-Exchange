@@ -136,7 +136,7 @@ Once the server is running:
 
 - API: `http://localhost:8080/`
 - Swagger UI: `http://localhost:8080/swagger/index.html`, outside release mode or when `server.swagger.enabled` is `true`
-- Health check: `http://localhost:8080/system/healthcheck`
+- Readiness: `http://localhost:8080/system/ready`, which answers `503` while a dependency is unavailable
 
 Sign-in codes are delivered by email and SMS once `notifications` is configured (see [docs/configuration.md](docs/configuration.md#notifications)). To try sign-in locally without a provider, set `otp.auth.dev_log_codes: true` in `config/config.local.yaml`; the codes then appear in the server log. Never enable it outside development: the server refuses to start with it in release mode.
 
@@ -166,7 +166,7 @@ The `app` service builds the server image and runs it with [`config/config.compo
 ```bash
 cp .env.example .env
 docker compose up -d --build
-curl http://localhost:8080/system/healthcheck
+curl http://localhost:8080/system/ready
 ```
 
 - Sign-in codes appear in the log of the `app` service (`docker compose logs app`), because the Compose configuration enables `dev_log_codes`.
@@ -190,8 +190,10 @@ All JSON responses, except the system endpoints, use this envelope:
 
 | Method | Path | Authentication | Description |
 | --- | --- | --- | --- |
-| `GET` | `/system/healthcheck` | None | Dependency health |
-| `GET` | `/system/ping` | None | Liveness ping |
+| `GET` | `/system/live` | None | Liveness: the process serves requests |
+| `GET` | `/system/ready` | None | Readiness: `503` while PostgreSQL, Redis, or RabbitMQ is unavailable |
+| `GET` | `/system/healthcheck` | None | Earlier name of `/system/ready` |
+| `GET` | `/system/ping` | None | Ping |
 | `GET` | `/public/currencies` | None | List cached currencies |
 | `GET` | `/public/currencies/{hk}` | None | Get a currency by its UUID |
 | `POST` | `/public/auth` | None | Request an OTP |

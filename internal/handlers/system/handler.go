@@ -1,6 +1,8 @@
 package system
 
 import (
+	"time"
+
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/rabbitmq"
@@ -11,6 +13,11 @@ type SystemHandler struct {
 	Postgres        *db.PostgresService
 	Redis           *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
+
+	// checks replaces the dependency checks in tests.
+	checks []dependency
+	// checkTimeout bounds each check; zero means defaultCheckTimeout.
+	checkTimeout time.Duration
 }
 
 // NewHandler creates a new system handler with injected dependencies
