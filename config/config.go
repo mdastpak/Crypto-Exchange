@@ -163,6 +163,10 @@ type Configuration struct {
 		TOTPKey string `yaml:"totp_key"`
 	} `yaml:"admin"`
 
+	// Keys says where the key-encryption key (KEK) of the data-protection
+	// keys lives. See docs/data-protection.md.
+	Keys KeysConfig `yaml:"keys"`
+
 	WebSocket struct {
 		AllowedOrigins []string `yaml:"allowed_origins"`
 		PingInterval   int      `yaml:"ping_interval_seconds"`
@@ -308,6 +312,35 @@ func (p *KeyPath) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	*p = KeyPath(filepath.Join(segments...))
 	return nil
 }
+
+// KeysConfig configures the provider of the key-encryption key that wraps
+// the data-protection keys.
+type KeysConfig struct {
+	// Provider is "transit" (HashiCorp Vault or OpenBao), "local"
+	// (development only), or empty, which leaves the keys unused.
+	Provider string `yaml:"provider"`
+	Local    struct {
+		// KEK is base64 of 32 random bytes. Release mode refuses it.
+		KEK string `yaml:"kek"`
+	} `yaml:"local"`
+	Transit struct {
+		Address string `yaml:"address"`
+		Token   string `yaml:"token"`
+		// TokenFile is read on every request, so that an agent can renew
+		// the token in place.
+		TokenFile string `yaml:"token_file"`
+		Mount     string `yaml:"mount"`
+		Key       string `yaml:"key"`
+		CACert    string `yaml:"ca_cert"`
+		Timeout   int    `yaml:"timeout_seconds"`
+	} `yaml:"transit"`
+}
+
+// Key providers, as keys.provider spells them.
+const (
+	KeysProviderTransit = "transit"
+	KeysProviderLocal   = "local"
+)
 
 // DefaultJWTIssuer is the "iss" claim when jwt.issuer is not set.
 const DefaultJWTIssuer = "crypto-exchange"
@@ -493,6 +526,9 @@ func Load() error {
 	if err := Config.validateRedisTimeouts(); err != nil {
 		return err
 	}
+	if err := Config.validateKeys(); err != nil {
+		return err
+	}
 	validateConfig()
 	return nil
 }
@@ -535,6 +571,20 @@ func (c *Configuration) validateRateLimits() error {
 		if onError != RateLimitAllow && onError != RateLimitDeny {
 			return fmt.Errorf("%s (%s) is %q; it must be %q or %q", key, envVarFor(key), onError, RateLimitAllow, RateLimitDeny)
 		}
+	}
+	return nil
+}
+
+func (c *Configuration) validateKeys() error {
+	switch c.Keys.Provider {
+	case "", KeysProviderTransit, KeysProviderLocal:
+	default:
+		return fmt.Errorf("keys.provider (%s) is %q; it must be %q, %q, or empty",
+			envVarFor("keys.provider"), c.Keys.Provider, KeysProviderTransit, KeysProviderLocal)
+	}
+	if c.Keys.Transit.Timeout < 0 {
+		return fmt.Errorf("keys.transit.timeout_seconds (%s) is %d; it must be a positive number of seconds",
+			envVarFor("keys.transit.timeout_seconds"), c.Keys.Transit.Timeout)
 	}
 	return nil
 }
@@ -658,6 +708,13 @@ func setDefaults() {
 	}
 
 	setNotificationDefaults(&Config.Notifications)
+
+	if Config.Keys.Transit.Mount == "" {
+		Config.Keys.Transit.Mount = "transit"
+	}
+	if Config.Keys.Transit.Timeout == 0 {
+		Config.Keys.Transit.Timeout = 10
+	}
 
 	if Config.WebSocket.PingInterval == 0 {
 		Config.WebSocket.PingInterval = 30

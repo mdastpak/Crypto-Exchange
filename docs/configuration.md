@@ -169,6 +169,24 @@ Authenticator apps show `exchange.name` as the issuer of the account. Each encry
 
 Writing to the database is not enough to create an administrator: changing `users.role` to `admin` does not enable admin sign-in without a secret sealed with this key. Someone with both database access and this key could, so keep it in a secret manager, apart from database credentials.
 
+### `keys`
+
+The data-protection keys seal rows and encrypt fields, so that someone with access to the database alone can neither change protected rows unnoticed nor read protected data. They are wrapped by a key-encryption key (KEK) that stays in a key management service. [`docs/data-protection.md`](data-protection.md) describes the key hierarchy and how to rotate keys. No feature uses the keys yet: row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) and field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will, and will then require a provider in release mode.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `provider` | none | `transit` for the Transit engine of HashiCorp Vault or OpenBao, `local` for development, or empty. Empty, the server logs a warning and loads no keys. With a provider, the server unwraps the keys at startup and creates the first version of each on the first start; it refuses to start when a key cannot be unwrapped. |
+| `local.kek` | none | Development only: the KEK itself, 32 random bytes, base64-encoded (`openssl rand -base64 32`). Whoever reads it can unwrap every data key, so release mode refuses `local`. |
+| `transit.address` | none | Base URL of the Vault or OpenBao server, such as `https://vault.internal:8200`. Release mode requires `https`. |
+| `transit.token` | none | Token with permission to use `encrypt` and `decrypt` of the key. `VAULT_TOKEN` overrides it. |
+| `transit.token_file` | none | File that holds the token, read on every request instead of `token`, so that Vault Agent or OpenBao Agent can renew it in place |
+| `transit.mount` | `transit` | Path of the Transit engine |
+| `transit.key` | none | Name of the Transit key that wraps the data keys |
+| `transit.ca_cert` | none | PEM file of the certificate authorities to trust for the server, instead of the system ones |
+| `transit.timeout_seconds` | `10` | Timeout of each request to the server |
+
+The key service is only contacted at startup and by the `admin keys` commands: a running server keeps the keys in memory and does not depend on it.
+
 ### `websocket`
 
 | Key | Default | Description |
@@ -269,6 +287,15 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `OTP_AUTH_RETRY_LIMIT` | `otp.auth.retry_limit` |
 | `OTP_SECRET` | `otp.auth.secret` |
 | `ADMIN_TOTP_KEY` | `admin.totp_key` |
+| `KEYS_PROVIDER` | `keys.provider` |
+| `KEYS_LOCAL_KEK` | `keys.local.kek` |
+| `VAULT_ADDR` | `keys.transit.address` |
+| `VAULT_TOKEN` | `keys.transit.token` |
+| `VAULT_CACERT` | `keys.transit.ca_cert` |
+| `KEYS_TRANSIT_TOKEN_FILE` | `keys.transit.token_file` |
+| `KEYS_TRANSIT_MOUNT` | `keys.transit.mount` |
+| `KEYS_TRANSIT_KEY` | `keys.transit.key` |
+| `KEYS_TRANSIT_TIMEOUT_SECONDS` | `keys.transit.timeout_seconds` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |
@@ -304,3 +331,4 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 - Prefer environment variables, or files mounted from a secret manager, for passwords and keys.
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
 - Use a separate `OTP_SECRET` for every environment, and rotate it if it is ever exposed.
+- Give every environment its own KEK, and the server a Transit token that can only `encrypt` and `decrypt` with it, never read or delete it. See [`docs/data-protection.md`](data-protection.md).

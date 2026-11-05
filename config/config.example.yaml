@@ -150,6 +150,23 @@ admin:
   # the cmd/admin command must use the same key.
   totp_key: ""
 
+# Data-protection keys, wrapped by a key-encryption key (KEK) in a key
+# management service; see docs/data-protection.md. No feature uses them yet.
+keys:
+  # "transit" (HashiCorp Vault or OpenBao), "local" (development only, refused
+  # in release mode), or empty to load no keys.
+  provider: ""
+  local:
+    kek: ""                 # Prefer KEYS_LOCAL_KEK (openssl rand -base64 32)
+  transit:
+    address: ""             # VAULT_ADDR, such as https://vault.internal:8200
+    token: ""               # Prefer VAULT_TOKEN, or token_file
+    token_file: ""          # Read on every request, so an agent can renew it
+    mount: "transit"
+    key: ""                 # The Transit key that wraps the data keys
+    ca_cert: ""             # VAULT_CACERT: PEM file of the CAs to trust
+    timeout_seconds: 10
+
 websocket:
   allowed_origins: []
   ping_interval_seconds: 30

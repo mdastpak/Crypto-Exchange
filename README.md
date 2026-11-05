@@ -180,6 +180,8 @@ The image contains only the `server` and `admin` binaries and the migrations, an
 
 Configuration is loaded from a YAML file, missing values are filled with defaults, and selected environment variables override the result. [docs/configuration.md](docs/configuration.md) describes every section, the defaults, and the supported environment variables.
 
+The data-protection keys, which future row seals and field encryption build on, are wrapped by a key-encryption key in HashiCorp Vault or OpenBao (Transit). [docs/data-protection.md](docs/data-protection.md) describes the key hierarchy, the setup, and how to rotate the keys.
+
 ## API overview
 
 All JSON responses, except the system endpoints, use this envelope:
@@ -221,12 +223,13 @@ Run the unit tests, which need no infrastructure:
 go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./pkg/... ./config/...
 ```
 
-Integration tests need a PostgreSQL instance and a Redis instance on the default ports:
+Integration tests need PostgreSQL, Redis, RabbitMQ, and an OpenBao dev server on the default ports:
 
 ```bash
 docker run -d --name ce-test-postgres -e POSTGRES_PASSWORD=test -e POSTGRES_DB=testdb -p 5432:5432 postgres:16-alpine
 docker run -d --name ce-test-redis -p 6379:6379 redis:7-alpine
 docker run -d --name ce-test-rabbitmq -p 5672:5672 rabbitmq:3.13
+docker run -d --name ce-test-openbao -e BAO_DEV_ROOT_TOKEN_ID=test -p 8200:8200 openbao/openbao:2.4.1
 go test ./...
 ```
 
@@ -234,6 +237,8 @@ go test ./...
 > The integration tests create databases whose names start with `testdb_`, empty them and build their schemas with the migrations, and they flush Redis databases 1 to 6, which [`internal/testutil/redistest`](internal/testutil/redistest/redistest.go) assigns, one per package. Never point them at an instance that holds real data. The shared test helper (`internal/testutil/pgtest`) refuses to empty any other database. Stop the Docker Compose PostgreSQL and Redis services first (`docker compose stop postgres redis`): the test containers use the same ports (5432 and 6379), and the tests expect Redis without a password.
 
 CI runs the same suite with the race detector on every pull request, against these images, and fails when a test skips itself because a service is unreachable. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+The key tests (`internal/keys`) use the OpenBao dev server, with the root token `test`, for the Transit engine; each test enables Transit at a mount of its own and removes it afterwards.
 
 Each package has a PostgreSQL database and a Redis database of its own, so `go test` runs the packages in parallel. A new package that uses Redis takes the next database from `internal/testutil/redistest`.
 

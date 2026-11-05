@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -42,6 +44,9 @@ type InfraHandlers struct {
 	Redis          *db.RedisService
 	TokenBlacklist *auth.TokenBlacklist
 	Sessions       auth.SessionStore
+	// DataKeys holds the data-protection keys for row seals (#139) and
+	// field encryption (#140). It is nil without keys.provider.
+	DataKeys *keys.Keyring
 }
 
 var (
@@ -89,6 +94,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("Invalid admin sign-in configuration: %v", err)
 	}
+	keyProvider, err := dataKeyProvider(gin.Mode() == gin.ReleaseMode)
+	if err != nil {
+		log.Fatalf("Invalid key configuration: %v", err)
+	}
 
 	services, cleanup, err := initializeServices()
 	if err != nil {
@@ -97,6 +106,9 @@ func main() {
 	defer cleanup()
 
 	handlers := initializeHandlers(services)
+	if handlers.DataKeys, err = loadDataKeys(services, keyProvider); err != nil {
+		log.Fatalf("Failed to load the data-protection keys: %v", err)
+	}
 	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
 	handlers.Public.OTPSender = otpSender
 	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
@@ -203,6 +215,46 @@ func adminSignInKey() ([]byte, error) {
 		return nil, nil
 	}
 	return adminauth.DecodeKey(config.Config.Admin.TOTPKey)
+}
+
+// dataKeyProvider returns the provider of the key-encryption key that
+// keys.provider selects, or nil when it is not set. Release mode refuses a
+// development provider and a key service reached without TLS.
+func dataKeyProvider(releaseMode bool) (keys.Provider, error) {
+	provider, err := keys.FromConfig(config.Config.Keys)
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil {
+		log.Println("WARNING: keys.provider is not set: the data-protection keys are not loaded")
+		return nil, nil
+	}
+	if err := keys.CheckRelease(provider, releaseMode); err != nil {
+		return nil, err
+	}
+	return provider, nil
+}
+
+// loadDataKeys unwraps the data-protection keys, creating the first version
+// of each purpose on the first start. The key service is only needed here:
+// the keys stay in memory until the process ends.
+func loadDataKeys(services *models.InfraServices, provider keys.Provider) (*keys.Keyring, error) {
+	if provider == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ring, err := (&keys.Store{DB: services.Postgres.DB, Provider: provider}).Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var current []string
+	for _, purpose := range keys.Purposes {
+		key, _ := ring.Current(purpose)
+		current = append(current, key.String())
+	}
+	log.Printf("Loaded the data-protection keys with %s; current versions: %s", provider.ID(), strings.Join(current, ", "))
+	return ring, nil
 }
 
 // configureAdminSignIn enables admin sign-in when totpKey is set. Codes are

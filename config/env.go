@@ -162,6 +162,17 @@ var envVars = []EnvVar{
 	stringVar("OTP_SECRET", "otp.auth.secret", func(c *Configuration) *string { return &c.OTP.Auth.Secret }),
 	stringVar("ADMIN_TOTP_KEY", "admin.totp_key", func(c *Configuration) *string { return &c.Admin.TOTPKey }),
 
+	stringVar("KEYS_PROVIDER", "keys.provider", func(c *Configuration) *string { return &c.Keys.Provider }),
+	stringVar("KEYS_LOCAL_KEK", "keys.local.kek", func(c *Configuration) *string { return &c.Keys.Local.KEK }),
+	// The VAULT_* names are the ones the Vault and OpenBao tools read.
+	stringVar("VAULT_ADDR", "keys.transit.address", func(c *Configuration) *string { return &c.Keys.Transit.Address }),
+	stringVar("VAULT_TOKEN", "keys.transit.token", func(c *Configuration) *string { return &c.Keys.Transit.Token }),
+	stringVar("VAULT_CACERT", "keys.transit.ca_cert", func(c *Configuration) *string { return &c.Keys.Transit.CACert }),
+	stringVar("KEYS_TRANSIT_TOKEN_FILE", "keys.transit.token_file", func(c *Configuration) *string { return &c.Keys.Transit.TokenFile }),
+	stringVar("KEYS_TRANSIT_MOUNT", "keys.transit.mount", func(c *Configuration) *string { return &c.Keys.Transit.Mount }),
+	stringVar("KEYS_TRANSIT_KEY", "keys.transit.key", func(c *Configuration) *string { return &c.Keys.Transit.Key }),
+	intVar("KEYS_TRANSIT_TIMEOUT_SECONDS", "keys.transit.timeout_seconds", func(c *Configuration) *int { return &c.Keys.Transit.Timeout }),
+
 	stringVar("SMTP_PASSWORD", "notifications.email.password", func(c *Configuration) *string { return &c.Notifications.Email.Password }),
 	stringVar("KAVENEGAR_API_KEY", "notifications.sms.kavenegar.api_key", func(c *Configuration) *string { return &c.Notifications.SMS.Kavenegar.APIKey }),
 
