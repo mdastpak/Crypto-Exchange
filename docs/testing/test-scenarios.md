@@ -295,7 +295,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-03 | P0 / security | Upgrade with a disallowed origin | Upgrade is rejected | Passes when config is non-empty |
 | W-04 | P1 / contract | Client sends valid `ping` with a valid timezone | Pong contains `event=pong` and server time in that timezone | Passes |
 | W-05 | P1 / contract | Client sends a valid timezone name that does not exist | Server falls back to UTC without disconnecting | Passes |
-| W-06 | P0 / security | Message exceeds the configured read limit | Connection is closed or rejected; no unbounded allocation | Current read limit is 512 bytes; verify behavior |
+| W-06 | P0 / security | Message exceeds the configured read limit | Connection is closed or rejected; no unbounded allocation | Passes: `websocket.max_message_size_bytes` (4 KiB) is the read limit, and a larger message closes the connection with `1009` ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)) |
 | W-07 | P1 / contract | Malformed JSON client message | Message is ignored/logged; connection remains usable | Passes |
 | W-08 | P1 / contract | JSON has no string `event` | Message is ignored | Passes |
 | W-09 | P1 / contract | Unknown event type | Message is ignored/logged; no broadcast | Passes |
@@ -309,6 +309,9 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-17 | P0 / integration | Broker does not confirm a publish | `Publish` returns an error and the caller retries or reconciles | Publisher confirms are implemented |
 | W-18 | P1 / integration | Broker is unavailable for several attempts | Retry count and final error are deterministic; no goroutine leak remains | Verify with a fake or isolated broker |
 | W-19 | P0 / integration | Two server instances consume the same exchange | Clients on both instances receive every event exactly once | Passes: each instance has an exclusive queue ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |
+| W-20 | P0 / security | A client sends messages faster than `websocket.client_messages_per_second` | The connection is closed with `1008`; other clients are not affected | Passes ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)) |
+| W-21 | P0 / security | More connections than `websocket.max_connections_per_ip` from one address, or `websocket.max_connections` in total | Further upgrades get `429` or `503`; a closed connection frees its place | Passes ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)) |
+| W-22 | P0 / security | Upgrade with a user access token in `Authorization` or the `access_token` subprotocol; with an invalid token, a token of an ended session, or a disabled user | A valid token is bound to the connection; the others get `401` or `403` before the upgrade; a token in the URL is ignored | Passes, end to end with a real sign-in and logout ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)) |
 | W-20 | P0 / contract | Several messages are queued before the write pump runs | Every frame holds exactly one JSON document | Passes ([#20](https://github.com/mdastpak/Crypto-Exchange/issues/20)) |
 
 ---

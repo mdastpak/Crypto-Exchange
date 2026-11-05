@@ -56,3 +56,52 @@ func TestWebSocket_CurrencyEventsReachEveryClient(t *testing.T) {
 		assert.Equal(t, "WSE", info["symbol"], "client %d", i)
 	}
 }
+
+// TestWebSocket_AuthenticatesWithAUserToken connects through the real
+// router with a token from a real sign-in, and checks that the token gets
+// the checks of the user routes.
+func TestWebSocket_AuthenticatesWithAUserToken(t *testing.T) {
+	env := newE2EEnv(t)
+	server := httptest.NewServer(env.router)
+	defer server.Close()
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/"
+	session := env.startSession(t, "ws-user@example.com")
+
+	connect := func(header http.Header) (*websocket.Conn, *http.Response, error) {
+		conn, resp, err := websocket.DefaultDialer.Dial(url, header)
+		if conn != nil {
+			t.Cleanup(func() { conn.Close() })
+		}
+		return conn, resp, err
+	}
+
+	_, _, err := connect(http.Header{"Authorization": {"Bearer " + session.access}})
+	require.NoError(t, err, "a valid user token connects")
+	conn, _, err := connect(http.Header{"Sec-Websocket-Protocol": {"access_token, " + session.access}})
+	require.NoError(t, err, "a browser sends the token as a subprotocol")
+	assert.Equal(t, "access_token", conn.Subprotocol())
+	require.Eventually(t, func() bool {
+		env.handlers.Socket.Mu.RLock()
+		defer env.handlers.Socket.Mu.RUnlock()
+		authenticated := 0
+		for client := range env.handlers.Socket.Clients {
+			if client.UserID == session.userID && client.SessionID == session.sessionID {
+				authenticated++
+			}
+		}
+		return authenticated == 2
+	}, 5*time.Second, 10*time.Millisecond, "the connections know their user and session")
+
+	_, resp, err := connect(http.Header{"Authorization": {"Bearer forged"}})
+	require.Error(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	w := env.send(t, http.MethodPost, "/user/logout", nil, session.access, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	_, resp, err = connect(http.Header{"Authorization": {"Bearer " + session.access}})
+	require.Error(t, err)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "a token of an ended session is refused")
+
+	_, _, err = connect(nil)
+	assert.NoError(t, err, "anonymous connections still work")
+}

@@ -131,8 +131,20 @@ func (c *Configuration) rangeProblems(p *problems) {
 		p.add("jwt.refresh_token.expiration_minutes", "is %d; it must be at least jwt.access_token.expiration_minutes (%d), or the session ends before its access token", refresh, access)
 	}
 
-	atLeast("websocket.ping_interval_seconds", c.WebSocket.PingInterval, 1)
-	atLeast("websocket.max_message_size_bytes", c.WebSocket.MaxMessageSize, 1)
+	ws := c.WebSocket
+	atLeast("websocket.ping_interval_seconds", ws.PingInterval, 1)
+	atLeast("websocket.max_message_size_bytes", ws.MaxMessageSize, 1)
+	if ws.MaxMessageSize > MaxWSMaxMessageSize {
+		p.add("websocket.max_message_size_bytes", "is %d; it must be at most %d (1 MiB)", ws.MaxMessageSize, MaxWSMaxMessageSize)
+	}
+	atLeast("websocket.write_timeout_seconds", ws.WriteTimeout, 1)
+	atLeast("websocket.client_messages_per_second", ws.ClientMessagesPerSecond, 1)
+	atLeast("websocket.client_message_burst", ws.ClientMessageBurst, 1)
+	atLeast("websocket.max_connections", ws.MaxConnections, 1)
+	atLeast("websocket.max_connections_per_ip", ws.MaxConnectionsPerIP, 1)
+	if ws.MaxConnectionsPerIP > ws.MaxConnections && ws.MaxConnections >= 1 {
+		p.add("websocket.max_connections_per_ip", "is %d; it must not exceed websocket.max_connections (%d)", ws.MaxConnectionsPerIP, ws.MaxConnections)
+	}
 	atLeast("notifications.worker.concurrency", c.Notifications.Worker.Concurrency, 1)
 	atLeast("notifications.worker.max_attempts", c.Notifications.Worker.MaxAttempts, 1)
 	limits := c.RateLimits
