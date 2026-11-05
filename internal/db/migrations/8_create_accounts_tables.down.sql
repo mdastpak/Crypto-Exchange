@@ -25,7 +25,23 @@ ALTER TABLE users DROP COLUMN IF EXISTS first_name;
 ALTER TABLE users DROP COLUMN IF EXISTS last_name;
 ALTER TABLE users DROP COLUMN IF EXISTS display_name;
 ALTER TABLE users DROP COLUMN IF EXISTS avatar_url;
-ALTER TABLE users DROP COLUMN IF EXISTS status;
+-- Migration 2 created users.status with the USER_STATUS type, so the up
+-- migration's ADD COLUMN IF NOT EXISTS status never ran, and dropping the
+-- column here deleted the status of every user. Drop it only if this
+-- migration created it, which is when it has this migration's type. The
+-- index on it was created by this migration either way.
+DROP INDEX IF EXISTS idx_users_status;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'users'
+          AND column_name = 'status' AND udt_name = 'account_status_type'
+    ) THEN
+        ALTER TABLE users DROP COLUMN status;
+    END IF;
+END
+$$;
 ALTER TABLE users DROP COLUMN IF EXISTS last_login_at;
 ALTER TABLE users DROP COLUMN IF EXISTS last_login_ip;
 ALTER TABLE users DROP COLUMN IF EXISTS referral_code;
