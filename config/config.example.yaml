@@ -49,6 +49,11 @@ redis:
   db: 0
   pool_size: 10
   min_idle_conns: 2
+  dial_timeout_ms: 1000
+  read_timeout_ms: 1000
+  write_timeout_ms: 1000
+  pool_timeout_ms: 2000
+  max_retries: 1  # -1 turns retries off
 
 rabbitmq:
   username: ""  # Set with RABBITMQ_USER
@@ -393,6 +398,7 @@ observability:
     sample_rate: 0.1
 
 rate_limits:
+  timeout_ms: 250  # How long each limiter waits for Redis
   rest:
     requests_per_second: 100
     burst: 200

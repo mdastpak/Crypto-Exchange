@@ -74,6 +74,12 @@ Replace `10` with the version before the failed migration.
 | `min_idle_conns` | `2` | Minimum idle connections |
 | `connect_retries` | `3` | Startup connection attempts |
 | `connect_retry_delay_ms` | `500` | Delay between startup attempts |
+| `dial_timeout_ms` | `1000` | How long a new connection may take, name resolution included |
+| `read_timeout_ms`, `write_timeout_ms` | `1000`, `1000` | How long a command may wait for Redis to answer, or to accept the command |
+| `pool_timeout_ms` | `2000` | How long a command may wait for a free connection when all of them are in use |
+| `max_retries` | `1` | How often a command is retried after a network error. `-1` turns retries off. |
+
+Redis is on the path of most requests, so these timeouts are short: while Redis cannot be reached, a request that needs it fails within a few seconds instead of waiting for the much longer defaults of the client library. The rate limiters give up even sooner, after `rate_limits.timeout_ms`.
 
 ### `rabbitmq`
 
@@ -175,7 +181,8 @@ Writing to the database is not enough to create an administrator: changing `user
 
 | Key | Default | Applies to |
 | --- | --- | --- |
-| `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route, as a token bucket per client IP |
+| `timeout_ms` | `250` | Every limiter: how long it waits for Redis. A limiter that gets no answer in time treats Redis as unreachable, and its `on_error` decides. The limiters of one request wait at most once together: once one of them finds Redis unreachable, the others decide at once. |
+| `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route, as a token bucket per client IP. The health probes under `/system` are counted in the memory of each instance instead of in Redis, so that they answer while Redis is down. |
 | `ws.messages_per_second`, `ws.burst` | `50`, `100` | The WebSocket upgrade request |
 | `trading.orders_per_second`, `trading.burst` | `10`, `20` | `/admin/*` and `/user/*`, as a token bucket per signed-in user or administrator, identified by the subject and role of the access token |
 | `rest.on_error`, `ws.on_error`, `trading.on_error` | `allow` | What the limiter does with a request while Redis cannot be reached: `allow` lets it through, `deny` rejects it with `503` and `Retry-After: 1` |
@@ -240,6 +247,11 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `REDIS_DB` | `redis.db` |
 | `REDIS_POOL_SIZE` | `redis.pool_size` |
 | `REDIS_MIN_IDLE_CONNS` | `redis.min_idle_conns` |
+| `REDIS_DIAL_TIMEOUT_MS` | `redis.dial_timeout_ms` |
+| `REDIS_READ_TIMEOUT_MS` | `redis.read_timeout_ms` |
+| `REDIS_WRITE_TIMEOUT_MS` | `redis.write_timeout_ms` |
+| `REDIS_POOL_TIMEOUT_MS` | `redis.pool_timeout_ms` |
+| `REDIS_MAX_RETRIES` | `redis.max_retries` |
 | `RABBITMQ_HOST` | `rabbitmq.host` |
 | `RABBITMQ_PORT` | `rabbitmq.port` |
 | `RABBITMQ_USER` | `rabbitmq.username` |
@@ -262,6 +274,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |
 | `WS_PING_INTERVAL_SECONDS` | `websocket.ping_interval_seconds` |
 | `WS_MAX_MESSAGE_SIZE_BYTES` | `websocket.max_message_size_bytes` |
+| `RATE_LIMITS_TIMEOUT_MS` | `rate_limits.timeout_ms` |
 | `RATE_LIMITS_REST_REQUESTS_PER_SECOND` | `rate_limits.rest.requests_per_second` |
 | `RATE_LIMITS_REST_BURST` | `rate_limits.rest.burst` |
 | `RATE_LIMITS_WS_MESSAGES_PER_SECOND` | `rate_limits.ws.messages_per_second` |

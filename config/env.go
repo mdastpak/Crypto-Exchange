@@ -136,6 +136,11 @@ var envVars = []EnvVar{
 	intVar("REDIS_DB", "redis.db", func(c *Configuration) *int { return &c.Redis.DB }),
 	intVar("REDIS_POOL_SIZE", "redis.pool_size", func(c *Configuration) *int { return &c.Redis.PoolSize }),
 	intVar("REDIS_MIN_IDLE_CONNS", "redis.min_idle_conns", func(c *Configuration) *int { return &c.Redis.MinIdleConns }),
+	intVar("REDIS_DIAL_TIMEOUT_MS", "redis.dial_timeout_ms", func(c *Configuration) *int { return &c.Redis.DialTimeoutMs }),
+	intVar("REDIS_READ_TIMEOUT_MS", "redis.read_timeout_ms", func(c *Configuration) *int { return &c.Redis.ReadTimeoutMs }),
+	intVar("REDIS_WRITE_TIMEOUT_MS", "redis.write_timeout_ms", func(c *Configuration) *int { return &c.Redis.WriteTimeoutMs }),
+	intVar("REDIS_POOL_TIMEOUT_MS", "redis.pool_timeout_ms", func(c *Configuration) *int { return &c.Redis.PoolTimeoutMs }),
+	intVar("REDIS_MAX_RETRIES", "redis.max_retries", func(c *Configuration) *int { return &c.Redis.MaxRetries }),
 
 	stringVar("RABBITMQ_HOST", "rabbitmq.host", func(c *Configuration) *string { return &c.RabbitMQ.Host }),
 	stringVar("RABBITMQ_PORT", "rabbitmq.port", func(c *Configuration) *string { return &c.RabbitMQ.Port }),
@@ -164,6 +169,7 @@ var envVars = []EnvVar{
 	intVar("WS_PING_INTERVAL_SECONDS", "websocket.ping_interval_seconds", func(c *Configuration) *int { return &c.WebSocket.PingInterval }),
 	intVar("WS_MAX_MESSAGE_SIZE_BYTES", "websocket.max_message_size_bytes", func(c *Configuration) *int { return &c.WebSocket.MaxMessageSize }),
 
+	intVar("RATE_LIMITS_TIMEOUT_MS", "rate_limits.timeout_ms", func(c *Configuration) *int { return &c.RateLimits.TimeoutMs }),
 	intVar("RATE_LIMITS_REST_REQUESTS_PER_SECOND", "rate_limits.rest.requests_per_second", func(c *Configuration) *int { return &c.RateLimits.REST.RequestsPerSecond }),
 	intVar("RATE_LIMITS_REST_BURST", "rate_limits.rest.burst", func(c *Configuration) *int { return &c.RateLimits.REST.Burst }),
 	intVar("RATE_LIMITS_WS_MESSAGES_PER_SECOND", "rate_limits.ws.messages_per_second", func(c *Configuration) *int { return &c.RateLimits.WS.MessagesPerSecond }),

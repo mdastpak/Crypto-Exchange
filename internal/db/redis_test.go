@@ -30,6 +30,40 @@ func TestNewRedisService_Success(t *testing.T) {
 	assert.NoError(t, svc.Ping(context.Background()))
 }
 
+// TestNewRedisService_UsesTheConfiguredTimeouts checks the client options:
+// the configured timeouts and retries, and short defaults instead of the
+// client library's, which held requests for seconds while Redis was down.
+func TestNewRedisService_UsesTheConfiguredTimeouts(t *testing.T) {
+	originalConfig := config.Config
+	defer func() { config.Config = originalConfig }()
+	connect := func() *redis.Options {
+		config.Config.Redis.Host, config.Config.Redis.Port, config.Config.Redis.DB = "localhost", "6379", 1
+		config.Config.Redis.ConnectRetries, config.Config.Redis.ConnectRetryDelayMs = 1, 10
+		svc, err := NewRedisService()
+		require.NoError(t, err)
+		t.Cleanup(func() { svc.Close() })
+		return svc.Client.Options()
+	}
+
+	config.Config = config.Configuration{}
+	opts := connect()
+	assert.Equal(t, time.Second, opts.DialTimeout, "not set: the defaults of the configuration")
+	assert.Equal(t, time.Second, opts.ReadTimeout)
+	assert.Equal(t, time.Second, opts.WriteTimeout)
+	assert.Equal(t, 2*time.Second, opts.PoolTimeout)
+	assert.Equal(t, 1, opts.MaxRetries)
+
+	config.Config = config.Configuration{}
+	r := &config.Config.Redis
+	r.DialTimeoutMs, r.ReadTimeoutMs, r.WriteTimeoutMs, r.PoolTimeoutMs, r.MaxRetries = 300, 400, 500, 600, -1
+	opts = connect()
+	assert.Equal(t, 300*time.Millisecond, opts.DialTimeout)
+	assert.Equal(t, 400*time.Millisecond, opts.ReadTimeout)
+	assert.Equal(t, 500*time.Millisecond, opts.WriteTimeout)
+	assert.Equal(t, 600*time.Millisecond, opts.PoolTimeout)
+	assert.Equal(t, 0, opts.MaxRetries, "retries turned off: the client stores -1 as 0, and 0 as its default of 3")
+}
+
 func TestNewRedisService_FailsWithBadHost(t *testing.T) {
 	originalConfig := config.Config
 	defer func() { config.Config = originalConfig }()

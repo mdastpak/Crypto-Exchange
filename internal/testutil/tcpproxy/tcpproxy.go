@@ -1,6 +1,7 @@
 // Package tcpproxy is a TCP proxy for tests. It sits between a client and a
 // server, such as RabbitMQ, and simulates network failures and server
-// restarts by cutting the connections and refusing new ones.
+// restarts by cutting the connections and refusing new ones, and a server
+// that hangs by holding new connections without answering.
 package tcpproxy
 
 import (
@@ -15,10 +16,11 @@ type Proxy struct {
 	upstream string
 	listener net.Listener
 
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	down  bool
-	wg    sync.WaitGroup
+	mu      sync.Mutex
+	conns   map[net.Conn]struct{}
+	down    bool
+	stalled bool
+	wg      sync.WaitGroup
 }
 
 // New starts a proxy on a free local port that forwards to upstream.
@@ -49,6 +51,16 @@ func (p *Proxy) SetDown(down bool) {
 	p.mu.Unlock()
 }
 
+// SetStalled makes the proxy accept new connections but forward nothing on
+// them while stalled is true, as a server that hangs or a network that drops
+// packets would: the client waits for an answer until it times out. It does
+// not affect open connections; see Cut.
+func (p *Proxy) SetStalled(stalled bool) {
+	p.mu.Lock()
+	p.stalled = stalled
+	p.mu.Unlock()
+}
+
 // Cut closes every open connection, as a server restart or a network failure
 // would.
 func (p *Proxy) Cut() {
@@ -56,6 +68,7 @@ func (p *Proxy) Cut() {
 	defer p.mu.Unlock()
 	for conn := range p.conns {
 		conn.Close()
+		delete(p.conns, conn)
 	}
 }
 
@@ -74,10 +87,15 @@ func (p *Proxy) accept() {
 			return
 		}
 		p.mu.Lock()
-		down := p.down
+		down, stalled := p.down, p.stalled
 		p.mu.Unlock()
 		if down {
 			client.Close()
+			continue
+		}
+		if stalled {
+			// Held until Cut or Close.
+			p.track(client)
 			continue
 		}
 		server, err := net.DialTimeout("tcp", p.upstream, 5*time.Second)
