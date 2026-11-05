@@ -67,7 +67,7 @@ docs: document the OTP sign-in flow
 
 ## Coding standards
 
-- Format the code with `gofmt`, and make sure `go vet ./...` passes. CI checks both on every pull request. `golangci-lint run` is not clean yet ([#40](https://github.com/mdastpak/Crypto-Exchange/issues/40)).
+- Format the code with `gofmt`, and make sure `go vet ./...` and `golangci-lint run` (v2, configured in `.golangci.yml`) pass. CI checks all three on every pull request. A `//nolint` must name its linter and say why.
 - Pass `context.Context` through every I/O call, and use the request context in handlers.
 - Return errors with context (`fmt.Errorf("...: %w", err)`). Never return internal error details to clients.
 - Use `shared.Decimal` for monetary values. Floating point is not allowed for money.
@@ -95,7 +95,7 @@ docs: document the OTP sign-in flow
 ## Pull request checklist
 
 - [ ] The pull request is linked to an issue and has a clear description.
-- [ ] The CI checks pass: build, vet, formatting, tidy modules, tests with the race detector, the vulnerability scan, and Markdown lint.
+- [ ] The CI checks pass: build, vet, formatting, tidy modules, lint, tests with the race detector, the vulnerability scan, and Markdown lint.
 - [ ] `gofmt -l .` is empty, and `go vet ./...` and `go build ./...` pass.
 - [ ] Tests are added or updated, and `go test -p 1 ./...` passes.
 - [ ] Migrations follow the rules above.
