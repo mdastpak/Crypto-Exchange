@@ -181,7 +181,7 @@ func (c *Configuration) releaseProblems(p *problems) {
 	}
 
 	if !contains(postgresTLSModes, c.Postgres.SSLMode) {
-		p.add("postgres.sslmode", "is %q; release mode needs %s, so that the connection to PostgreSQL is encrypted",
+		p.add("postgres.sslmode", "is %q; release mode needs one of %s, so that the connection to PostgreSQL is encrypted",
 			c.Postgres.SSLMode, strings.Join(postgresTLSModes, ", "))
 	}
 	if c.Postgres.Password == "" || c.Postgres.Password == "postgres" {

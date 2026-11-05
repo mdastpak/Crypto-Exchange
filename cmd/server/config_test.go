@@ -39,7 +39,7 @@ func TestValidateConfiguration_ExampleInReleaseMode(t *testing.T) {
 	want := []string{
 		"  - required settings are not set: rabbitmq.username (RABBITMQ_USER), rabbitmq.password (RABBITMQ_PASSWORD)",
 		"  - server.tls.enabled (SERVER_TLS_ENABLED) is false; release mode needs TLS: enable it, or set server.tls.behind_proxy (SERVER_TLS_BEHIND_PROXY)",
-		`  - postgres.sslmode (POSTGRES_SSLMODE) is "disable"; release mode needs require, verify-ca, verify-full`,
+		`  - postgres.sslmode (POSTGRES_SSLMODE) is "disable"; release mode needs one of require, verify-ca, verify-full`,
 		"  - postgres.password (POSTGRES_PASSWORD) is empty or the default",
 		"  - redis.password (REDIS_PASSWORD) is empty",
 		"  - otp.auth.secret (or OTP_SECRET) is required in release mode",
