@@ -242,22 +242,29 @@ type Configuration struct {
 		} `yaml:"tracing"`
 	} `yaml:"observability"`
 
+	// RateLimits configures the limiters. OnError says what a limiter does
+	// with a request while Redis cannot be reached: "allow" lets it through,
+	// "deny" rejects it with 503.
 	RateLimits struct {
 		REST struct {
-			RequestsPerSecond int `yaml:"requests_per_second"`
-			Burst             int `yaml:"burst"`
+			RequestsPerSecond int    `yaml:"requests_per_second"`
+			Burst             int    `yaml:"burst"`
+			OnError           string `yaml:"on_error"`
 		} `yaml:"rest"`
 		WS struct {
-			MessagesPerSecond int `yaml:"messages_per_second"`
-			Burst             int `yaml:"burst"`
+			MessagesPerSecond int    `yaml:"messages_per_second"`
+			Burst             int    `yaml:"burst"`
+			OnError           string `yaml:"on_error"`
 		} `yaml:"ws"`
 		Trading struct {
-			OrdersPerSecond int `yaml:"orders_per_second"`
-			Burst           int `yaml:"burst"`
+			OrdersPerSecond int    `yaml:"orders_per_second"`
+			Burst           int    `yaml:"burst"`
+			OnError         string `yaml:"on_error"`
 		} `yaml:"trading"`
 		Auth struct {
-			LoginAttemptsPerMinute int `yaml:"login_attempts_per_minute"`
-			OTPRequestsPerHour     int `yaml:"otp_requests_per_hour"`
+			LoginAttemptsPerMinute int    `yaml:"login_attempts_per_minute"`
+			OTPRequestsPerHour     int    `yaml:"otp_requests_per_hour"`
+			OnError                string `yaml:"on_error"`
 		} `yaml:"auth"`
 	} `yaml:"rate_limits"`
 }
@@ -469,7 +476,31 @@ func Load() error {
 	if err := Config.validateMode(); err != nil {
 		return err
 	}
+	if err := Config.validateRateLimits(); err != nil {
+		return err
+	}
 	validateConfig()
+	return nil
+}
+
+// What a rate limiter does with a request while Redis cannot be reached.
+const (
+	RateLimitAllow = "allow"
+	RateLimitDeny  = "deny"
+)
+
+func (c *Configuration) validateRateLimits() error {
+	limits := c.RateLimits
+	for key, onError := range map[string]string{
+		"rate_limits.rest.on_error":    limits.REST.OnError,
+		"rate_limits.ws.on_error":      limits.WS.OnError,
+		"rate_limits.trading.on_error": limits.Trading.OnError,
+		"rate_limits.auth.on_error":    limits.Auth.OnError,
+	} {
+		if onError != RateLimitAllow && onError != RateLimitDeny {
+			return fmt.Errorf("%s (%s) is %q; it must be %q or %q", key, envVarFor(key), onError, RateLimitAllow, RateLimitDeny)
+		}
+	}
 	return nil
 }
 
@@ -654,6 +685,16 @@ func setDefaults() {
 	}
 	if Config.RateLimits.Auth.OTPRequestsPerHour == 0 {
 		Config.RateLimits.Auth.OTPRequestsPerHour = 10
+	}
+	// Sign-in limits protect against guessing, so they fail closed; the
+	// others keep the API available while Redis is unreachable.
+	for _, onError := range []*string{&Config.RateLimits.REST.OnError, &Config.RateLimits.WS.OnError, &Config.RateLimits.Trading.OnError} {
+		if *onError == "" {
+			*onError = RateLimitAllow
+		}
+	}
+	if Config.RateLimits.Auth.OnError == "" {
+		Config.RateLimits.Auth.OnError = RateLimitDeny
 	}
 }
 

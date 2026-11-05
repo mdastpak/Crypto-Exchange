@@ -3,11 +3,16 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"encrypted-db/config"
+	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/helpers"
 
@@ -23,19 +28,27 @@ func NewRateLimiter(redis *db.RedisService) *RateLimiter {
 	return &RateLimiter{redis: redis}
 }
 
+// denies reports whether a limiter rejects requests while Redis cannot be
+// reached, as its on_error setting says. An unset setting allows them.
+func denies(onError string) bool {
+	return onError == config.RateLimitDeny
+}
+
 func (rl *RateLimiter) RESTRateLimit() gin.HandlerFunc {
 	cfg := config.Config.RateLimits.REST
-	return rl.tokenBucketMiddleware("rest", cfg.RequestsPerSecond, cfg.Burst, rl.getClientIP)
+	return rl.tokenBucketMiddleware("rest", cfg.RequestsPerSecond, cfg.Burst, denies(cfg.OnError), rl.getClientIP)
 }
 
 func (rl *RateLimiter) WSRateLimit() gin.HandlerFunc {
 	cfg := config.Config.RateLimits.WS
-	return rl.tokenBucketMiddleware("ws", cfg.MessagesPerSecond, cfg.Burst, rl.getClientIP)
+	return rl.tokenBucketMiddleware("ws", cfg.MessagesPerSecond, cfg.Burst, denies(cfg.OnError), rl.getClientIP)
 }
 
+// TradingRateLimit limits the requests of each signed-in user or
+// administrator. It must run after the authentication middleware.
 func (rl *RateLimiter) TradingRateLimit() gin.HandlerFunc {
 	cfg := config.Config.RateLimits.Trading
-	return rl.tokenBucketMiddleware("trading", cfg.OrdersPerSecond, cfg.Burst, rl.getUserID)
+	return rl.tokenBucketMiddleware("trading", cfg.OrdersPerSecond, cfg.Burst, denies(cfg.OnError), rl.getUserID)
 }
 
 // Authentication limits, for AuthRateLimit.
@@ -64,46 +77,96 @@ func authLimit(action string) (int, time.Duration) {
 // sign-in traffic cannot use up the budget of admin sign-in.
 func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
 	limit, window := authLimit(action)
-	return rl.fixedWindowMiddleware("auth:"+action, limit, limit, window, func(c *gin.Context) string {
+	return rl.fixedWindowMiddleware("auth:"+action, limit, window, denies(config.Config.RateLimits.Auth.OnError), func(c *gin.Context) string {
 		return c.FullPath() + ":" + rl.getClientIP(c)
 	})
 }
 
-func (rl *RateLimiter) tokenBucketMiddleware(prefix string, rate, burst int, keyFunc func(*gin.Context) string) gin.HandlerFunc {
+// limiterErrorLogInterval is how often each limiter logs that Redis cannot
+// be reached, so that an outage writes one line per limiter every few
+// seconds instead of one per request.
+const limiterErrorLogInterval = 10 * time.Second
+
+// limiterErrorLogged maps a limiter to when it last logged an error, in
+// Unix nanoseconds.
+var limiterErrorLogged sync.Map
+
+func logLimiterError(prefix string, err error) {
+	v, _ := limiterErrorLogged.LoadOrStore(prefix, new(atomic.Int64))
+	last := v.(*atomic.Int64)
+	now := time.Now().UnixNano()
+	previous := last.Load()
+	if previous != 0 && now-previous < int64(limiterErrorLogInterval) {
+		return
+	}
+	if last.CompareAndSwap(previous, now) {
+		log.Printf("Rate limiter %s cannot reach Redis: %v", prefix, err)
+	}
+}
+
+// limiterUnavailable handles a request while Redis cannot be reached: it is
+// rejected with 503 when the limiter fails closed, and let through otherwise.
+func limiterUnavailable(c *gin.Context, prefix string, failClosed bool, err error) {
+	logLimiterError(prefix, err)
+	if failClosed {
+		c.Header("Retry-After", "1")
+		helpers.SendResponse(c, http.StatusServiceUnavailable, "Service temporarily unavailable", nil)
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
+// retryAfterSeconds rounds a wait up to whole seconds, as Retry-After needs,
+// so that a client never retries before the limiter would let it through.
+func retryAfterSeconds(wait time.Duration) string {
+	return strconv.FormatInt(int64(math.Max(1, math.Ceil(wait.Seconds()))), 10)
+}
+
+func rejectRateLimited(c *gin.Context, limit int, wait time.Duration) {
+	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
+	c.Header("X-RateLimit-Remaining", "0")
+	c.Header("Retry-After", retryAfterSeconds(wait))
+	helpers.SendResponse(c, http.StatusTooManyRequests, "Rate limit exceeded", nil)
+	c.Abort()
+}
+
+func (rl *RateLimiter) tokenBucketMiddleware(prefix string, rate, burst int, failClosed bool, keyFunc func(*gin.Context) string) gin.HandlerFunc {
 	if rate <= 0 || burst <= 0 {
 		return func(c *gin.Context) { c.Next() }
 	}
 
 	return func(c *gin.Context) {
 		key := fmt.Sprintf("ratelimit:%s:%s", prefix, keyFunc(c))
-		allowed, retryAfter := rl.consumeToken(c.Request.Context(), key, rate, burst)
+		allowed, remaining, wait, err := rl.consumeToken(c.Request.Context(), key, rate, burst, time.Now())
+		if err != nil {
+			limiterUnavailable(c, prefix, failClosed, err)
+			return
+		}
 		if !allowed {
-			c.Header("X-RateLimit-Limit", strconv.Itoa(burst))
-			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
-			helpers.SendResponse(c, http.StatusTooManyRequests, "Rate limit exceeded", nil)
-			c.Abort()
+			rejectRateLimited(c, burst, wait)
 			return
 		}
 		c.Header("X-RateLimit-Limit", strconv.Itoa(burst))
+		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		c.Next()
 	}
 }
 
-func (rl *RateLimiter) fixedWindowMiddleware(prefix string, limit, burst int, window time.Duration, keyFunc func(*gin.Context) string) gin.HandlerFunc {
-	if limit <= 0 || burst <= 0 {
+func (rl *RateLimiter) fixedWindowMiddleware(prefix string, limit int, window time.Duration, failClosed bool, keyFunc func(*gin.Context) string) gin.HandlerFunc {
+	if limit <= 0 {
 		return func(c *gin.Context) { c.Next() }
 	}
 
 	return func(c *gin.Context) {
 		key := fmt.Sprintf("ratelimit:%s:%s", prefix, keyFunc(c))
-		count, ttl := rl.incrementCounter(c.Request.Context(), key, window)
+		count, ttl, err := rl.incrementCounter(c.Request.Context(), key, window)
+		if err != nil {
+			limiterUnavailable(c, prefix, failClosed, err)
+			return
+		}
 		if count > int64(limit) {
-			c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("Retry-After", strconv.Itoa(int(ttl.Seconds())))
-			helpers.SendResponse(c, http.StatusTooManyRequests, "Rate limit exceeded", nil)
-			c.Abort()
+			rejectRateLimited(c, limit, ttl)
 			return
 		}
 		c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
@@ -112,50 +175,54 @@ func (rl *RateLimiter) fixedWindowMiddleware(prefix string, limit, burst int, wi
 	}
 }
 
-func (rl *RateLimiter) consumeToken(ctx context.Context, key string, rate, burst int) (bool, time.Duration) {
-	now := time.Now().UnixMilli()
-	windowMs := int64(1000 / rate)
+// tokenBucketScript takes a token from a bucket that holds up to burst tokens
+// and refills at rate tokens per second. Tokens are fractional, so that any
+// rate, also one above 1000 per second, refills correctly between requests
+// that are less than a millisecond apart. It returns whether a token was
+// taken, the whole tokens left, and the milliseconds until the next token.
+var tokenBucketScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local burst = tonumber(ARGV[3])
 
-	script := redis.NewScript(`
-		local key = KEYS[1]
-		local now = tonumber(ARGV[1])
-		local rate = tonumber(ARGV[2])
-		local burst = tonumber(ARGV[3])
-		local window = tonumber(ARGV[4])
+local bucket = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(bucket[1])
+local ts = tonumber(bucket[2])
+if tokens == nil or ts == nil then
+	tokens = burst
+	ts = now
+end
+if now > ts then
+	tokens = math.min(burst, tokens + (now - ts) * rate / 1000)
+	ts = now
+end
 
-		local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
-		local tokens = tonumber(bucket[1])
-		local lastRefill = tonumber(bucket[2])
+local allowed = 0
+local wait = 0
+if tokens >= 1 then
+	tokens = tokens - 1
+	allowed = 1
+else
+	wait = math.ceil((1 - tokens) * 1000 / rate)
+end
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', ts)
+redis.call('PEXPIRE', KEYS[1], math.ceil(burst * 1000 / rate) + 1000)
+return {allowed, math.floor(tokens), wait}
+`)
 
-		if tokens == nil then
-			tokens = burst
-			lastRefill = now
-		end
-
-		local elapsed = now - lastRefill
-		local refillTokens = math.floor(elapsed / window)
-		tokens = math.min(burst, tokens + refillTokens)
-
-		if tokens >= 1 then
-			tokens = tokens - 1
-			redis.call('HMSET', key, 'tokens', tokens, 'last_refill', now)
-			redis.call('EXPIRE', key, math.ceil(window * burst / 1000) + 1)
-			return {1, 0}
-		else
-			local waitTime = (window * (1 - tokens)) - (elapsed % window)
-			redis.call('HMSET', key, 'tokens', tokens, 'last_refill', lastRefill)
-			return {0, waitTime}
-		end
-	`)
-
-	result, err := script.Run(ctx, rl.redis.Client, []string{key}, now, rate, burst, windowMs).Slice()
-	if err != nil {
-		return true, 0
+// consumeToken takes a token for the request at now.
+func (rl *RateLimiter) consumeToken(ctx context.Context, key string, rate, burst int, now time.Time) (bool, int, time.Duration, error) {
+	if rl.redis == nil || rl.redis.Client == nil {
+		return false, 0, 0, fmt.Errorf("redis is not configured")
 	}
-
+	result, err := tokenBucketScript.Run(ctx, rl.redis.Client, []string{key}, now.UnixMilli(), rate, burst).Slice()
+	if err != nil {
+		return false, 0, 0, err
+	}
 	allowed := result[0].(int64) == 1
-	waitMs := result[1].(int64)
-	return allowed, time.Duration(waitMs) * time.Millisecond
+	remaining := int(result[1].(int64))
+	wait := time.Duration(result[2].(int64)) * time.Millisecond
+	return allowed, remaining, wait, nil
 }
 
 // fixedWindowScript counts a request and returns the count with the time
@@ -173,12 +240,15 @@ end
 return {count, ttl}
 `)
 
-func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window time.Duration) (int64, time.Duration) {
+func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window time.Duration) (int64, time.Duration, error) {
+	if rl.redis == nil || rl.redis.Client == nil {
+		return 0, 0, fmt.Errorf("redis is not configured")
+	}
 	result, err := fixedWindowScript.Run(ctx, rl.redis.Client, []string{key}, window.Milliseconds()).Slice()
 	if err != nil {
-		return 0, window
+		return 0, 0, err
 	}
-	return result[0].(int64), time.Duration(result[1].(int64)) * time.Millisecond
+	return result[0].(int64), time.Duration(result[1].(int64)) * time.Millisecond, nil
 }
 
 // getClientIP identifies the client for rate limiting. gin's ClientIP honors
@@ -189,9 +259,13 @@ func (rl *RateLimiter) getClientIP(c *gin.Context) string {
 	return c.ClientIP()
 }
 
+// getUserID identifies the signed-in user or administrator by the subject
+// and role of the access token, so that each of them has a budget of their
+// own whatever address they use. A request without a token, which the
+// authentication middleware normally rejects first, counts by its address.
 func (rl *RateLimiter) getUserID(c *gin.Context) string {
-	if userID, exists := c.Get("user_id"); exists {
-		return fmt.Sprintf("user:%v", userID)
+	if claims, ok := auth.GetClaims(c); ok && claims.UUID != "" {
+		return claims.Role + ":" + claims.UUID
 	}
-	return rl.getClientIP(c)
+	return "ip:" + rl.getClientIP(c)
 }

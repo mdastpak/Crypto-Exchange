@@ -131,11 +131,11 @@ Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `
 | U-28 | P1 / contract | Valid request with no body and no query | `200`; body content type is `application/json` | Passes |
 | U-29 | P1 / contract | Disallowed CORS origin | No permissive `Access-Control-Allow-Origin`; credentials are not exposed | **Gap:** default CORS reflects arbitrary origins |
 | U-30 | P0 / product | Valid user JWT and user-specific profile data in PostgreSQL | Response contains the authenticated user's profile, never the global currency list | Passes: each user reads and changes only their own profile, and a body cannot name another user, tested end to end with two signed-in users ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)) |
-| U-31 | P1 / contract | Valid request under the rate limit | `200`; `X-RateLimit-Limit` and `X-RateLimit-Remaining` are present | Current token bucket does not set remaining on allowed requests |
-| U-32 | P0 / contract | Requests exceed the trading burst | `429`; `Retry-After` is positive; handler is not entered | Current behavior; automate with controlled time/Redis |
-| U-33 | P1 / contract | Two users send requests concurrently | Limits are isolated by user; one user cannot consume another user's quota | Current key function can do this only if `user_id` is set; no route middleware currently sets it |
+| U-31 | P1 / contract | Valid request under the rate limit | `200`; `X-RateLimit-Limit` and `X-RateLimit-Remaining` are present | Passes: every limited response carries both headers ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
+| U-32 | P0 / contract | Requests exceed the trading burst | `429`; `Retry-After` is positive; handler is not entered | Passes: `Retry-After` is rounded up to whole seconds, so it is never `0`; the bucket is tested with controlled times ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
+| U-33 | P1 / contract | Two users send requests concurrently | Limits are isolated by user; one user cannot consume another user's quota | Passes: the limit is keyed by the subject and role of the access token, tested with two users behind one address ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | U-34 | P0 / security | Untrusted client supplies `X-Forwarded-For` | Rate-limit identity is based on a trusted proxy-derived IP, not a spoofable header | **Gap:** `getClientIP` trusts the header unconditionally |
-| U-35 | P0 / security | Redis rate-limit backend fails | Protected endpoint fails closed or returns a defined degradation response | **Gap:** token-bucket errors currently allow the request |
+| U-35 | P0 / security | Redis rate-limit backend fails | Protected endpoint fails closed or returns a defined degradation response | Passes: `rate_limits.<limiter>.on_error` selects `allow` or `deny` (`503`); the user and admin limits allow by default ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 
 ---
 
@@ -168,7 +168,7 @@ Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/mai
 | C-18 | P0 / contract | Same IP exceeds the public limit | `429`; `Retry-After` is positive | Passes with the REST limit, which is no longer shared with sign-in ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
 | C-19 | P0 / contract | Two public clients use different IPs | One client's limit does not affect the other | Passes: limits are kept per client IP, and sign-in limits also per route ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
 | C-20 | P1 / contract | Wait until the fixed window expires | Next request is allowed and the counter is reset | Passes, also when the client keeps retrying while blocked: the window is no longer extended by each request ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26), item 2 of [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
-| C-21 | P0 / security | Redis rate-limit backend fails | Public endpoint fails closed or returns an explicit degraded response | **Gap:** fixed-window errors currently allow the request |
+| C-21 | P0 / security | Redis rate-limit backend fails | Public endpoint fails closed or returns an explicit degraded response | Passes: the sign-in limits fail closed with `503` by default, and the other public routes fail open as configured ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | C-22 | P1 / contract | Allowed origin from configuration | CORS headers match the configured origin | Passes when config is set |
 | C-23 | P0 / security | Disallowed origin | No reflected `Access-Control-Allow-Origin` or credentials header | **Gap:** empty configuration reflects any origin |
 | C-24 | P1 / contract | `OPTIONS` preflight from an allowed origin | `204`; allowed methods and headers are present | Passes; verify disallowed-origin behavior too |
@@ -274,8 +274,8 @@ Relevant code: `internal/middleware/security.go:11`, `internal/middleware/valida
 | M-13 | P0 / security | Error text contains a password, token, connection string, or stack trace | The response does not contain it | Passes for the OTP endpoints: handlers return fixed messages and only log errors ([#16](https://github.com/mdastpak/Crypto-Exchange/issues/16)). The unused `SanitizeError` helper is tracked in [#56](https://github.com/mdastpak/Crypto-Exchange/issues/56). |
 | M-14 | P0 / contract | Token-bucket request is allowed | Limit and remaining quota are accurate | Current allowed path omits `X-RateLimit-Remaining` |
 | M-15 | P0 / contract | Token-bucket request is rejected | `429`; limit, remaining `0`, and positive `Retry-After` | Current header is `Retry-After`, not `X-RateLimit-Retry-After` |
-| M-16 | P0 / security | Redis script returns an error | Protected request does not silently pass | **Gap:** `consumeToken` returns allowed on error |
-| M-17 | P0 / security | Fixed-window Redis pipeline returns an error | Protected request does not silently pass | **Gap:** `incrementCounter` returns count `0` on error |
+| M-16 | P0 / security | Redis script returns an error | Protected request does not silently pass | Passes: the error reaches the limiter, which follows its `on_error` policy ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
+| M-17 | P0 / security | Fixed-window Redis pipeline returns an error | Protected request does not silently pass | Passes: as M-16 ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | M-18 | P1 / contract | Trading limiter receives a context with `user_id` | Key is `ratelimit:trading:user:<id>` | Current route does not set `user_id`; JWT claims are stored under `claims` only |
 | M-19 | P1 / contract | Trading limiter has no `user_id` | Documented fallback uses trusted client IP | Current fallback is client IP, but XFF handling is unsafe |
 
@@ -343,7 +343,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | OTP generation is predictable | Fixed in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1) (`crypto/rand`) and [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (no modulo bias) |
 | OTP and contact are logged in plaintext | Fixed in [#13](https://github.com/mdastpak/Crypto-Exchange/issues/13) |
 | Refresh tokens bypass blacklist | Fixed in [#10](https://github.com/mdastpak/Crypto-Exchange/issues/10) |
-| Protected rate limiting fails open | Open: [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34) |
+| Protected rate limiting fails open | Fixed in [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34) |
 | User currency reads can block indefinitely | Fixed in [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27): the user handler no longer lists currencies |
 | Stale suspended/deleted currencies remain active | Fixed in [#24](https://github.com/mdastpak/Crypto-Exchange/issues/24) |
 | Malformed OTP data can panic | Fixed in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) (together with A-15, A-16, and A-27) |

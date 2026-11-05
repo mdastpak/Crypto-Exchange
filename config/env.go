@@ -172,6 +172,10 @@ var envVars = []EnvVar{
 	intVar("RATE_LIMITS_TRADING_BURST", "rate_limits.trading.burst", func(c *Configuration) *int { return &c.RateLimits.Trading.Burst }),
 	intVar("RATE_LIMITS_AUTH_LOGIN_ATTEMPTS_PER_MINUTE", "rate_limits.auth.login_attempts_per_minute", func(c *Configuration) *int { return &c.RateLimits.Auth.LoginAttemptsPerMinute }),
 	intVar("RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR", "rate_limits.auth.otp_requests_per_hour", func(c *Configuration) *int { return &c.RateLimits.Auth.OTPRequestsPerHour }),
+	stringVar("RATE_LIMITS_REST_ON_ERROR", "rate_limits.rest.on_error", func(c *Configuration) *string { return &c.RateLimits.REST.OnError }),
+	stringVar("RATE_LIMITS_WS_ON_ERROR", "rate_limits.ws.on_error", func(c *Configuration) *string { return &c.RateLimits.WS.OnError }),
+	stringVar("RATE_LIMITS_TRADING_ON_ERROR", "rate_limits.trading.on_error", func(c *Configuration) *string { return &c.RateLimits.Trading.OnError }),
+	stringVar("RATE_LIMITS_AUTH_ON_ERROR", "rate_limits.auth.on_error", func(c *Configuration) *string { return &c.RateLimits.Auth.OnError }),
 
 	stringVar("LOG_LEVEL", "observability.logging.level", func(c *Configuration) *string { return &c.Observability.Logging.Level }),
 	stringVar("OTEL_ENDPOINT", "observability.tracing.endpoint", func(c *Configuration) *string { return &c.Observability.Tracing.Endpoint }),
