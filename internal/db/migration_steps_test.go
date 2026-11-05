@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -76,10 +78,10 @@ func TestMigrations_EachStepIsReversible(t *testing.T) {
 	snapshots := []map[string][]string{schemaSnapshot(t, conn)}
 	for {
 		err := m.Steps(1)
-		if err != nil {
-			require.ErrorContains(t, err, "file does not exist", "migration %d", len(snapshots))
-			break
+		if errors.Is(err, os.ErrNotExist) {
+			break // no further migration
 		}
+		require.NoError(t, err, "migration %d", len(snapshots))
 		snapshots = append(snapshots, schemaSnapshot(t, conn))
 	}
 	latest := len(snapshots) - 1
