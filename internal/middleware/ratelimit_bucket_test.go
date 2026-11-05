@@ -1,13 +1,18 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,4 +178,19 @@ func TestTradingRateLimit_CountsPerSubject(t *testing.T) {
 	assert.Equal(t, http.StatusOK, send(alice))
 	assert.Equal(t, http.StatusTooManyRequests, send(alice), "the second request of a user in the same second is limited")
 	assert.Equal(t, http.StatusOK, send(bob), "another user behind the same address has a budget of their own")
+}
+
+func TestLimiterErrors_AreLoggedOncePerInterval(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	prefix := "logged-" + uuid.NewString()
+	for i := 0; i < 50; i++ {
+		logLimiterError(prefix, errors.New("connection refused"))
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), prefix), "an outage writes one line per interval")
+
+	logLimiterError("other-"+prefix, errors.New("connection refused"))
+	assert.Equal(t, 2, strings.Count(logs.String(), prefix), "each limiter logs its own errors")
 }

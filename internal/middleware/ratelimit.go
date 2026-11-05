@@ -7,6 +7,8 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"encrypted-db/config"
@@ -80,10 +82,32 @@ func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
 	})
 }
 
+// limiterErrorLogInterval is how often each limiter logs that Redis cannot
+// be reached, so that an outage writes one line per limiter every few
+// seconds instead of one per request.
+const limiterErrorLogInterval = 10 * time.Second
+
+// limiterErrorLogged maps a limiter to when it last logged an error, in
+// Unix nanoseconds.
+var limiterErrorLogged sync.Map
+
+func logLimiterError(prefix string, err error) {
+	v, _ := limiterErrorLogged.LoadOrStore(prefix, new(atomic.Int64))
+	last := v.(*atomic.Int64)
+	now := time.Now().UnixNano()
+	previous := last.Load()
+	if previous != 0 && now-previous < int64(limiterErrorLogInterval) {
+		return
+	}
+	if last.CompareAndSwap(previous, now) {
+		log.Printf("Rate limiter %s cannot reach Redis: %v", prefix, err)
+	}
+}
+
 // limiterUnavailable handles a request while Redis cannot be reached: it is
 // rejected with 503 when the limiter fails closed, and let through otherwise.
 func limiterUnavailable(c *gin.Context, prefix string, failClosed bool, err error) {
-	log.Printf("Rate limiter %s cannot reach Redis: %v", prefix, err)
+	logLimiterError(prefix, err)
 	if failClosed {
 		c.Header("Retry-After", "1")
 		helpers.SendResponse(c, http.StatusServiceUnavailable, "Service temporarily unavailable", nil)
