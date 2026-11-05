@@ -11,13 +11,13 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/mail"
 	"strings"
 	"time"
 
+	"encrypted-db/internal/db"
 	"encrypted-db/internal/totp"
 
 	"github.com/google/uuid"
@@ -115,9 +115,12 @@ type Admin struct {
 	Email string
 }
 
-// emailMatch matches users by email address with the expression of their
-// unique index (migration 11).
-const emailMatch = `lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`
+// ownsEmail matches the user that owns an email address, through the unique
+// index of user_contacts. Its arguments are "email" and the address.
+const ownsEmail = `hk = (SELECT c.user_hk FROM user_contacts c WHERE ` + db.ContactMatch + `)`
+
+// emailContact is the contact type of an administrator's address.
+const emailContact = "email"
 
 // Create creates an administrator with a new TOTP secret. It refuses an email
 // address that already belongs to a user: an existing account is not
@@ -132,19 +135,27 @@ func (s *Service) Create(ctx context.Context, email string) (Enrollment, error) 
 	if err != nil {
 		return Enrollment{}, err
 	}
-	info, err := json.Marshal(map[string]interface{}{"contact": map[string]string{"email": email}})
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Enrollment{}, err
+		return Enrollment{}, fmt.Errorf("create the administrator: %w", err)
 	}
-
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (hk, info, status, role, totp_secret, totp_enabled)
-		 VALUES ($1, $2::jsonb, 'approved', 'admin', $3, TRUE)`,
-		adminID, info, sealed,
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO users (hk, status, role, totp_secret, totp_enabled)
+		 VALUES ($1, 'ACTIVE', 'admin', $2, TRUE)`,
+		adminID, sealed,
 	)
+	if err == nil {
+		// The address is verified at the first sign-in, by its code; see
+		// ConfirmEmail.
+		err = db.InsertContact(ctx, tx, adminID, emailContact, email, false)
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return Enrollment{}, ErrUserExists
+	}
+	if err == nil {
+		err = tx.Commit()
 	}
 	if err != nil {
 		return Enrollment{}, fmt.Errorf("create the administrator: %w", err)
@@ -161,7 +172,7 @@ func (s *Service) ResetTOTP(ctx context.Context, email string) (Enrollment, erro
 	}
 	var adminID string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT hk FROM users WHERE role = 'admin' AND `+emailMatch, email,
+		`SELECT hk FROM users WHERE role = 'admin' AND `+ownsEmail, emailContact, email,
 	).Scan(&adminID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Enrollment{}, ErrNotFound
@@ -193,7 +204,7 @@ func (s *Service) Disable(ctx context.Context, email string) error {
 		return err
 	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE users SET status = 'disabled', updated_at = NOW() WHERE role = 'admin' AND `+emailMatch, email,
+		`UPDATE users SET status = 'INACTIVE', updated_at = NOW() WHERE role = 'admin' AND `+ownsEmail, emailContact, email,
 	)
 	if err != nil {
 		return fmt.Errorf("disable the administrator: %w", err)
@@ -205,7 +216,7 @@ func (s *Service) Disable(ctx context.Context, email string) error {
 }
 
 // FindActive returns the administrator with email who may sign in: role
-// admin, status approved, and an enrolled authenticator.
+// admin, status ACTIVE, not deleted, and an enrolled authenticator.
 func (s *Service) FindActive(ctx context.Context, email string) (Admin, error) {
 	email, err := NormalizeEmail(email)
 	if err != nil {
@@ -214,8 +225,8 @@ func (s *Service) FindActive(ctx context.Context, email string) (Admin, error) {
 	var admin Admin
 	err = s.db.QueryRowContext(ctx,
 		`SELECT hk FROM users
-		 WHERE role = 'admin' AND status = 'approved' AND totp_enabled AND deleted_at IS NULL AND `+emailMatch,
-		email,
+		 WHERE role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL AND `+ownsEmail,
+		emailContact, email,
 	).Scan(&admin.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Admin{}, ErrNotFound
@@ -234,7 +245,7 @@ func (s *Service) IsActive(ctx context.Context, adminID string) (bool, error) {
 	var active bool
 	err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM users
-		 WHERE hk = $1 AND role = 'admin' AND status = 'approved' AND totp_enabled AND deleted_at IS NULL)`,
+		 WHERE hk = $1 AND role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL)`,
 		adminID,
 	).Scan(&active)
 	if err != nil {
@@ -250,7 +261,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, adminID, code string) error {
 	var sealed sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT totp_secret FROM users
-		 WHERE hk = $1 AND role = 'admin' AND status = 'approved' AND totp_enabled AND deleted_at IS NULL`,
+		 WHERE hk = $1 AND role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL`,
 		adminID,
 	).Scan(&sealed)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !sealed.Valid) {
@@ -279,6 +290,21 @@ func (s *Service) VerifyTOTP(ctx context.Context, adminID, code string) error {
 	if n, err := result.RowsAffected(); err != nil || n == 0 {
 		// The code, or a later one, was already used.
 		return ErrInvalidCode
+	}
+	return nil
+}
+
+// ConfirmEmail records that an administrator has proven control of their
+// email address, by the code of a successful sign-in. The first sign-in
+// verifies the address that the operator entered.
+func (s *Service) ConfirmEmail(ctx context.Context, adminID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE user_contacts SET verified_at = NOW(), updated_at = NOW()
+		 WHERE user_hk = $1 AND type = 'email' AND verified_at IS NULL`,
+		adminID,
+	)
+	if err != nil {
+		return fmt.Errorf("confirm the email address: %w", err)
 	}
 	return nil
 }

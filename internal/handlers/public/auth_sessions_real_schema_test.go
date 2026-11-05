@@ -114,7 +114,8 @@ func (e *sessionTestEnv) sessionOf(t *testing.T, email string) storedSession {
 	require.NoError(t, e.conn.QueryRow(`
 		SELECT s.status, s.auth_method, s.access_token_hash, s.refresh_token_hash, s.revoked_at IS NOT NULL
 		FROM sessions s JOIN users u ON u.hk = s.user_id
-		WHERE u.info->'contact'->>'email' = $1`, email,
+		JOIN user_contacts c ON c.user_hk = u.hk
+		WHERE c.type = 'email' AND c.value = $1`, email,
 	).Scan(&s.status, &s.authMethod, &s.accessHash, &s.refreshHash, &s.revoked))
 	return s
 }

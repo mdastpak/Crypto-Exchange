@@ -15,6 +15,7 @@ import (
 
 	"encrypted-db/config"
 	"encrypted-db/internal/db"
+	"encrypted-db/internal/testutil/usertest"
 	"encrypted-db/internal/totp"
 
 	"github.com/stretchr/testify/assert"
@@ -118,8 +119,15 @@ func TestCreate_StoresAnAdministratorWithAnEncryptedSecret(t *testing.T) {
 		`SELECT role, status::text, totp_secret, totp_enabled FROM users WHERE hk = $1`, enrollment.AdminID,
 	).Scan(&role, &status, &stored, &enabled))
 	assert.Equal(t, "admin", role)
-	assert.Equal(t, "approved", status)
+	assert.Equal(t, "ACTIVE", status)
 	assert.True(t, enabled)
+	var address string
+	var verified bool
+	require.NoError(t, conn.QueryRow(
+		`SELECT value, verified_at IS NOT NULL FROM user_contacts WHERE user_hk = $1 AND type = 'email' AND is_primary`, enrollment.AdminID,
+	).Scan(&address, &verified))
+	assert.Equal(t, "admin@example.com", address)
+	assert.False(t, verified, "the operator entered the address; the first sign-in verifies it")
 	assert.True(t, strings.HasPrefix(stored, "v1:"))
 	assert.NotContains(t, stored, enrollment.Secret, "the secret is stored encrypted")
 	assert.False(t, bytes.Contains([]byte(stored), decodeSecret(t, enrollment.Secret)))
@@ -138,8 +146,7 @@ func TestCreate_RefusesExistingAndInvalidAddresses(t *testing.T) {
 	_, err = service.Create(ctx, "ADMIN@example.com")
 	assert.ErrorIs(t, err, ErrUserExists)
 
-	_, err = conn.Exec(`INSERT INTO users (info, status) VALUES ('{"contact": {"email": "trader@example.com"}}', 'approved')`)
-	require.NoError(t, err)
+	usertest.Insert(t, conn, usertest.User{Email: "trader@example.com"})
 	_, err = service.Create(ctx, "trader@example.com")
 	assert.ErrorIs(t, err, ErrUserExists, "an existing user is not silently turned into an administrator")
 	_, err = service.FindActive(ctx, "trader@example.com")
@@ -265,7 +272,8 @@ func TestIsActive(t *testing.T) {
 
 	for name, change := range map[string]string{
 		"demoted":      `UPDATE users SET role = 'user' WHERE hk = $1`,
-		"suspended":    `UPDATE users SET status = 'suspend' WHERE hk = $1`,
+		"suspended":    `UPDATE users SET status = 'SUSPENDED' WHERE hk = $1`,
+		"inactive":     `UPDATE users SET status = 'INACTIVE' WHERE hk = $1`,
 		"without TOTP": `UPDATE users SET totp_enabled = FALSE WHERE hk = $1`,
 		"soft-deleted": `UPDATE users SET deleted_at = NOW() WHERE hk = $1`,
 	} {
@@ -273,7 +281,7 @@ func TestIsActive(t *testing.T) {
 			_, err := conn.Exec(change, enrollment.AdminID)
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				_, err := conn.Exec(`UPDATE users SET role = 'admin', status = 'approved', totp_enabled = TRUE, deleted_at = NULL WHERE hk = $1`, enrollment.AdminID)
+				_, err := conn.Exec(`UPDATE users SET role = 'admin', status = 'ACTIVE', totp_enabled = TRUE, deleted_at = NULL WHERE hk = $1`, enrollment.AdminID)
 				require.NoError(t, err)
 			})
 
@@ -286,4 +294,23 @@ func TestIsActive(t *testing.T) {
 	active, err = service.IsActive(ctx, "5b0c8f0e-58a6-4c3b-9d8e-2f7a1c3e9b10")
 	require.NoError(t, err)
 	assert.False(t, active)
+}
+
+func TestConfirmEmail_VerifiesTheAddressOnce(t *testing.T) {
+	service, conn := newTestService(t)
+	ctx := context.Background()
+	enrollment, err := service.Create(ctx, "admin@example.com")
+	require.NoError(t, err)
+	verifiedAt := func() sql.NullTime {
+		var at sql.NullTime
+		require.NoError(t, conn.QueryRow(`SELECT verified_at FROM user_contacts WHERE user_hk = $1 AND type = 'email'`, enrollment.AdminID).Scan(&at))
+		return at
+	}
+
+	require.NoError(t, service.ConfirmEmail(ctx, enrollment.AdminID))
+	first := verifiedAt()
+	require.True(t, first.Valid, "the first sign-in verifies the address")
+
+	require.NoError(t, service.ConfirmEmail(ctx, enrollment.AdminID))
+	assert.Equal(t, first.Time, verifiedAt().Time, "later sign-ins keep the first verification")
 }

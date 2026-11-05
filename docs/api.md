@@ -377,7 +377,7 @@ Returns the profile of the signed-in user:
   "message": "Profile retrieved successfully.",
   "info": {
     "uuid": "5b0c1a52-3f5e-4c2a-9d1e-2f7f8f0b6a11",
-    "status": "approved",
+    "status": "ACTIVE",
     "contact": { "email": "ali*****@example.com" },
     "first_name": "Ali",
     "last_name": null,
@@ -389,9 +389,9 @@ Returns the profile of the signed-in user:
 }
 ```
 
-`contact` holds the email address and the mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set, and a creation time that was not recorded, are `null`.
+`status` is `ACTIVE`, or `PENDING_VERIFICATION` for an account whose contact is not verified yet: accounts with any other status cannot read their profile. `contact` holds the primary email address and mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set, and a creation time that was not recorded, are `null`.
 
-Errors: `401` for a missing or invalid token; `403` when the account was disabled, deleted, or suspended, or became an administrator account, after the token was issued (`This account is not available. Please contact support.`); `404` when the user was deleted.
+Errors: `401` for a missing or invalid token; `403` when the account became `INACTIVE`, `SUSPENDED`, or `BANNED`, or an administrator account, after the token was issued (`This account is not available. Please contact support.`); `404` when the user was deleted.
 
 ### `PATCH /user/profile`
 

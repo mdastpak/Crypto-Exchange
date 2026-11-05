@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"encrypted-db/internal/auth"
+	"encrypted-db/internal/domain/account"
 	"encrypted-db/internal/helpers"
 
 	"github.com/gin-gonic/gin"
@@ -46,7 +47,10 @@ type queryRower interface {
 // profileQuery reads a profile. users.created_at is a timestamp without time
 // zone, written with NOW() in the database's time zone, so it is converted
 // to an instant in that same time zone.
-const profileQuery = `SELECT hk, status, role, info->'contact', first_name, last_name, display_name, kyc_status, kyc_tier,
+// The contacts come as one JSON object of the primary contact of each type.
+const profileQuery = `SELECT hk, status, role,
+	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary), '{}'),
+	first_name, last_name, display_name, kyc_status, kyc_tier,
 	created_at AT TIME ZONE current_setting('TimeZone')
 	FROM users WHERE hk = $1 AND deleted_at IS NULL`
 
@@ -70,11 +74,7 @@ func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool
 	if err != nil {
 		return p, err
 	}
-	switch p.Status {
-	case "disabled", "deleted", "suspend":
-		return p, errAccountUnavailable
-	}
-	if role != auth.RoleUser {
+	if !account.UserStatus(p.Status).CanSignIn() || role != auth.RoleUser {
 		return p, errAccountUnavailable
 	}
 

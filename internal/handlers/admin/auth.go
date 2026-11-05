@@ -188,6 +188,12 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		return
 	}
 
+	// The code proved control of the address. A failure to record that does
+	// not make the sign-in less valid.
+	if err := h.Accounts.ConfirmEmail(ctx, admin.ID); err != nil {
+		log.Printf("Failed to confirm the email address of administrator %s: %v", admin.ID, err)
+	}
+
 	// Admin tokens have no refresh token: an administrator signs in again
 	// with both factors when the access token expires.
 	accessToken, err := auth.GenerateAccessToken(admin.ID, auth.RoleAdmin, "")

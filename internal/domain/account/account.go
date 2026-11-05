@@ -9,18 +9,19 @@ import (
 	"encrypted-db/internal/domain/shared"
 )
 
-// User represents a platform user
+// User is a platform user or administrator: a row of the users table, with
+// its contacts from user_contacts. It is the only Go type for users.
 type User struct {
-	ID            shared.UUID `json:"id" db:"id"`
-	Email         string      `json:"email" db:"email"`
-	EmailVerified bool        `json:"email_verified" db:"email_verified"`
-	Phone         string      `json:"phone,omitempty" db:"phone"`
-	PhoneVerified bool        `json:"phone_verified" db:"phone_verified"`
+	// ID is users.hk, the ID that every other table references.
+	ID       shared.UUID `json:"id" db:"hk"`
+	Role     string      `json:"role" db:"role"` // "user" or "admin"
+	Contacts []Contact   `json:"contacts"`
 
-	// Authentication
-	PasswordHash string `json:"-" db:"password_hash"`         // bcrypt
-	TotpSecret   string `json:"-" db:"totp_secret,omitempty"` // TOTP for 2FA
+	// Authentication. Users sign in with a one-time code sent to a contact;
+	// administrators also need an authenticator code.
+	TotpSecret   string `json:"-" db:"totp_secret,omitempty"` // Encrypted TOTP secret
 	TotpEnabled  bool   `json:"totp_enabled" db:"totp_enabled"`
+	TotpLastStep *int64 `json:"-" db:"totp_last_step"` // The last accepted TOTP time step
 
 	// Profile
 	FirstName   string `json:"first_name,omitempty" db:"first_name"`
@@ -60,6 +61,41 @@ const (
 
 func (u UserStatus) String() string {
 	return string(u)
+}
+
+// CanSignIn reports whether a user with this status may sign in. A user
+// whose contact is not verified yet may, since signing in verifies it.
+func (u UserStatus) CanSignIn() bool {
+	return u == UserStatusActive || u == UserStatusPending
+}
+
+// Contact is a way to reach a user, and to sign in with: an email address or
+// a mobile number. Usernames of older versions are kept, but cannot sign in.
+type Contact struct {
+	Type ContactType `json:"type" db:"type"`
+	// Value is the email address as entered, or the mobile number in E.164.
+	Value      string            `json:"value" db:"value"`
+	VerifiedAt *shared.Timestamp `json:"verified_at,omitempty" db:"verified_at"`
+	IsPrimary  bool              `json:"is_primary" db:"is_primary"`
+}
+
+// ContactType is the type of a contact, as the contact_type enum names it.
+type ContactType string
+
+const (
+	ContactEmail    ContactType = "email"
+	ContactMobile   ContactType = "mobile"
+	ContactUsername ContactType = "username"
+)
+
+// PrimaryContact returns the user's primary contact of a type.
+func (u *User) PrimaryContact(t ContactType) (Contact, bool) {
+	for _, c := range u.Contacts {
+		if c.Type == t && c.IsPrimary {
+			return c, true
+		}
+	}
+	return Contact{}, false
 }
 
 func (u *User) IsActive() bool {
