@@ -478,11 +478,17 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	userGroup.Use(auth.JWTUserVerification(ih.TokenBlacklist))
 	userGroup.Use(rl.TradingRateLimit())
 	{
-		userGroup.GET("/profile", ih.User.GetProfile)
-		userGroup.PATCH("/profile", ih.User.UpdateProfile)
+		// Logout needs no active session, so that a user whose account was
+		// disabled can still end the session.
 		userGroup.POST("/logout", func(c *gin.Context) {
 			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
 		})
+
+		// Every other user route requires an active session and a user who
+		// can still sign in.
+		activeGroup := userGroup.Group("", auth.RequireActiveSession(ih.Sessions))
+		activeGroup.GET("/profile", ih.User.GetProfile)
+		activeGroup.PATCH("/profile", ih.User.UpdateProfile)
 	}
 	return nil
 }

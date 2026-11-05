@@ -51,6 +51,11 @@ Each role has its own signing keys. User routes accept only user tokens and admi
 
 Each sign-in creates a session in the `sessions` table. Only SHA-256 hashes of the tokens are stored.
 
+On every request, the `/user/*` routes, except `POST /user/logout`, also check the token's session and user in the database. A token stays valid only while its session is active and has not expired, and while its user can still sign in. Logging out, refresh token reuse, and disabling, suspending, banning, or deleting the user therefore reject every access token of the session on the next request, also when the change is made directly in the database:
+
+- `401 Unauthorized - Session is not active` when the session was logged out, revoked for refresh token reuse, or has expired. The client must sign in again.
+- `403 This account is not available. Please contact support.` when the user became `INACTIVE`, `SUSPENDED`, or `BANNED`, was deleted, or became an administrator account.
+
 ### Request IDs
 
 Every response carries an `X-Request-ID` header. A client may send its own ID, to trace a request across services: up to 64 letters, digits, and the characters `.`, `_`, `:`, and `-`. Any other value, or none, is replaced by a new UUIDv7, so that a request ID can never forge entries in the server log.
@@ -179,7 +184,7 @@ Response `200`: `{"info": {"access_token": "<jwt>"}}`, together with a `Set-Cook
 - The session's refresh token is replaced on every refresh (rotation), and its expiry moves forward by `refresh_token.expiration_minutes`.
 - Presenting a refresh token that was already rotated is treated as theft: the whole session is revoked, and its newest refresh token stops working too. This also applies when a client sends the same refresh token in two concurrent requests, so clients must not refresh in parallel.
 
-Errors: `401` when the cookie is missing, invalid, or expired, when it holds an access token, or when the session has been revoked. A `401` also clears the cookie.
+Errors: `401` when the cookie is missing, invalid, or expired, when it holds an access token, or when the session has been revoked; `403` when the user can no longer sign in (`This account is not available. Please contact support.`). A `401` or `403` also clears the cookie.
 
 ### `POST /public/auth/logout` and `POST /user/logout`
 
@@ -189,7 +194,7 @@ Ends the session of the access token sent in the `Authorization` header:
 - The access token is blacklisted until it expires.
 - The refresh token cookie is cleared.
 
-Other access tokens issued earlier for the same session stay valid until they expire (`access_token.expiration_minutes`).
+Every other access token of the session, such as one issued before the last refresh, is rejected from then on, because the user routes check the session on each request. Other sessions of the same user are not affected. Logout does not check the session or the account, so that a user whose account was disabled can still end the session.
 
 Both routes require a user access token as `Authorization: Bearer <token>`. `POST /public/auth/logout` exists because the refresh token cookie is only sent to `/public/auth/*`, so only this route can clear it in the browser.
 
@@ -391,7 +396,7 @@ Returns the profile of the signed-in user:
 
 `status` is `ACTIVE`, or `PENDING_VERIFICATION` for an account whose contact is not verified yet: accounts with any other status cannot read their profile. `contact` holds the primary email address and mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set, and a creation time that was not recorded, are `null`.
 
-Errors: `401` for a missing or invalid token; `403` when the account became `INACTIVE`, `SUSPENDED`, or `BANNED`, or an administrator account, after the token was issued (`This account is not available. Please contact support.`); `404` when the user was deleted.
+Errors: `401` for a missing or invalid token, or one whose session has ended; `403` when the account became `INACTIVE`, `SUSPENDED`, or `BANNED`, was deleted, or became an administrator account after the token was issued (`This account is not available. Please contact support.`). See [Authentication](#authentication).
 
 ### `PATCH /user/profile`
 
@@ -405,7 +410,7 @@ Changes the names in the profile and returns the updated profile, as `GET` does.
 | --- | --- |
 | `first_name`, `last_name`, `display_name` | Optional. Spaces around the name are trimmed, and an empty string clears the field. At most 100 characters, without control characters or characters that reorder text (U+202A to U+202E and U+2066 to U+2069), and with at least one visible character. The zero-width non-joiner is allowed. |
 
-Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401`, `403`, and `404` as for `GET`.
+Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401` and `403` as for `GET`.
 
 ## System
 

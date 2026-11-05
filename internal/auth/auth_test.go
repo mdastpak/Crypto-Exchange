@@ -120,8 +120,10 @@ func sign(t testing.TB, method jwt.SigningMethod, key interface{}, kid string, c
 type fakeSessionStore struct {
 	rotations []SessionRotation
 	revoked   []string
+	verified  []string
 	rotateErr error
 	revokeErr error
+	verifyErr error
 }
 
 func (f *fakeSessionStore) Create(ctx context.Context, session Session) error { return nil }
@@ -134,6 +136,11 @@ func (f *fakeSessionStore) Rotate(ctx context.Context, rotation SessionRotation)
 func (f *fakeSessionStore) Revoke(ctx context.Context, sessionID, userID string) error {
 	f.revoked = append(f.revoked, sessionID+"/"+userID)
 	return f.revokeErr
+}
+
+func (f *fakeSessionStore) Verify(ctx context.Context, sessionID, userID string) error {
+	f.verified = append(f.verified, sessionID+"/"+userID)
+	return f.verifyErr
 }
 
 func refreshCookie(w *httptest.ResponseRecorder) *http.Cookie {
@@ -515,6 +522,93 @@ func TestMiddleware_ProvidesClaimsToHandlers(t *testing.T) {
 	assert.Equal(t, token, seenToken)
 }
 
+func TestRequireActiveSession(t *testing.T) {
+	setupTestKeys(t)
+	gin.SetMode(gin.TestMode)
+
+	// request calls a route behind both user middlewares and reports whether
+	// the handler ran.
+	request := func(sessions SessionStore, token string) (*httptest.ResponseRecorder, bool) {
+		served := false
+		router := gin.New()
+		router.GET("/user/ping", JWTUserVerification(nil), RequireActiveSession(sessions), func(c *gin.Context) {
+			served = true
+			c.Status(http.StatusOK)
+		})
+		req := httptest.NewRequest(http.MethodGet, "/user/ping", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w, served
+	}
+
+	t.Run("active session", func(t *testing.T) {
+		sessions := &fakeSessionStore{}
+		w, served := request(sessions, mustToken(t, RoleUser))
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, served)
+		assert.Equal(t, []string{"test-session/user-123"}, sessions.verified, "the token's own session and user are checked")
+	})
+
+	for name, err := range map[string]error{
+		"revoked or expired session": ErrSessionInvalid,
+		"session revoked for reuse":  ErrRefreshTokenReused,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, served := request(&fakeSessionStore{verifyErr: err}, mustToken(t, RoleUser))
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+			assert.False(t, served)
+			assert.Equal(t, "Bearer", w.Header().Get("WWW-Authenticate"))
+			assert.Contains(t, w.Body.String(), "Session is not active")
+		})
+	}
+
+	t.Run("account no longer available", func(t *testing.T) {
+		w, served := request(&fakeSessionStore{verifyErr: ErrAccountUnavailable}, mustToken(t, RoleUser))
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.False(t, served)
+		assert.Contains(t, w.Body.String(), accountUnavailableMessage)
+	})
+
+	t.Run("session store failure", func(t *testing.T) {
+		w, served := request(&fakeSessionStore{verifyErr: errors.New("database down")}, mustToken(t, RoleUser))
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.False(t, served, "a request whose session cannot be checked must not be served")
+		assert.NotContains(t, w.Body.String(), "database down")
+	})
+
+	t.Run("token without a session", func(t *testing.T) {
+		token, err := GenerateAccessToken("user-123", RoleUser, "")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{}
+
+		w, served := request(sessions, token)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.False(t, served)
+		assert.Empty(t, sessions.verified)
+	})
+
+	t.Run("without a session store", func(t *testing.T) {
+		w, served := request(nil, mustToken(t, RoleUser))
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "the check fails closed")
+		assert.False(t, served)
+	})
+
+	t.Run("without the authentication middleware", func(t *testing.T) {
+		sessions := &fakeSessionStore{}
+		w := serve(RequireActiveSession(sessions), "Bearer "+mustToken(t, RoleUser), nil)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "only tokens verified by JWTUserVerification are checked")
+		assert.Empty(t, sessions.verified)
+	})
+}
+
 func TestLogoutHandler(t *testing.T) {
 	setupTestKeys(t)
 	blacklist := NewTokenBlacklist((*redis.Client)(nil))
@@ -661,6 +755,49 @@ func TestRefreshTokenHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Nil(t, refreshCookie(w), "no new refresh token may be issued when the rotation was not stored")
+	})
+
+	t.Run("account no longer available", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{verifyErr: ErrAccountUnavailable}
+
+		w := refresh(refreshToken, sessions)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), accountUnavailableMessage)
+		assert.NotContains(t, w.Body.String(), "access_token")
+		assert.Equal(t, []string{"test-session/user-123"}, sessions.verified)
+		assert.Empty(t, sessions.rotations, "no new tokens for a user who can no longer sign in")
+		cookie := refreshCookie(w)
+		require.NotNil(t, cookie)
+		assert.Negative(t, cookie.MaxAge, "the cookie is cleared")
+	})
+
+	t.Run("session no longer active", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{verifyErr: ErrSessionInvalid}
+
+		w := refresh(refreshToken, sessions)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Empty(t, sessions.rotations)
+		cookie := refreshCookie(w)
+		require.NotNil(t, cookie)
+		assert.Negative(t, cookie.MaxAge)
+	})
+
+	t.Run("session check failure", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{verifyErr: errors.New("database down")}
+
+		w := refresh(refreshToken, sessions)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Empty(t, sessions.rotations)
+		assert.Nil(t, refreshCookie(w))
 	})
 }
 

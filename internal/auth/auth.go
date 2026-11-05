@@ -151,7 +151,8 @@ func ParseToken(tokenString, role, tokenType string) (*Claims, error) {
 
 // RefreshTokenHandler exchanges the refresh token cookie for a new access token
 // and rotates the refresh token. A refresh token can be used only once:
-// presenting one that was already rotated revokes the whole session.
+// presenting one that was already rotated revokes the whole session. A user
+// who can no longer sign in gets 403 and no new tokens.
 func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	if !KeysLoaded(RoleUser) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to load RSA keys", nil)
@@ -169,6 +170,23 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	if err != nil || claims.SessionID == "" {
 		ClearRefreshTokenCookie(c)
 		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired refresh token", nil)
+		return
+	}
+
+	// No new tokens for a user who can no longer sign in. Rotate checks the
+	// session again, atomically, and detects reuse.
+	switch err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID); {
+	case errors.Is(err, ErrSessionInvalid):
+		ClearRefreshTokenCookie(c)
+		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired refresh token", nil)
+		return
+	case errors.Is(err, ErrAccountUnavailable):
+		ClearRefreshTokenCookie(c)
+		helpers.SendResponse(c, http.StatusForbidden, accountUnavailableMessage, nil)
+		return
+	case err != nil:
+		log.Printf("Error verifying session %s: %v", claims.SessionID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to refresh the session", nil)
 		return
 	}
 
