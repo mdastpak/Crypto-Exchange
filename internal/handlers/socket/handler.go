@@ -125,10 +125,13 @@ func (h *WebSocketHandler) readPump(client *Client) {
 	defer h.unregisterClient(client)
 
 	client.Conn.SetReadLimit(512)
-	client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// A deadline that cannot be set means the connection is broken.
+	if err := client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		return
+	}
 	client.Conn.SetPongHandler(func(string) error {
-		client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		// An error here ends ReadMessage, and with it the connection.
+		return client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
 	for {
@@ -163,9 +166,13 @@ func (h *WebSocketHandler) writePump(client *Client) {
 	for {
 		select {
 		case message, ok := <-client.Send:
-			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				return
+			}
 			if !ok {
-				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// The connection closes either way, so a failed close
+				// frame changes nothing.
+				_ = client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -176,7 +183,9 @@ func (h *WebSocketHandler) writePump(client *Client) {
 			}
 
 		case <-ticker.C:
-			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				return
+			}
 			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

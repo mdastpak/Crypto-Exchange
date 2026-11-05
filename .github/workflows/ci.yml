@@ -54,6 +54,23 @@ jobs:
       - name: Check that go.mod and go.sum are tidy
         run: go mod tidy -diff
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # The linters, the formatter, and every exclusion are in .golangci.yml.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+
   test:
     name: Test
     runs-on: ubuntu-latest

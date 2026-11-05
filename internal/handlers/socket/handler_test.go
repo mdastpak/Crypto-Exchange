@@ -206,7 +206,7 @@ func TestServeWSGin_UpgradesAndRespondsToPing(t *testing.T) {
 
 	require.NoError(t, conn.WriteJSON(map[string]string{"event": "ping"}))
 
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 	var resp map[string]interface{}
 	require.NoError(t, conn.ReadJSON(&resp))
 	assert.Equal(t, "pong", resp["event"])
@@ -303,7 +303,7 @@ func TestWritePump_SendsEachMessageAsItsOwnFrame(t *testing.T) {
 	defer conn.Close()
 
 	for i, want := range messages {
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 		messageType, frame, err := conn.ReadMessage()
 		require.NoError(t, err, "frame %d", i)
 		assert.Equal(t, websocket.TextMessage, messageType)

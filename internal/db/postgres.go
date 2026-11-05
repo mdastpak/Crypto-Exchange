@@ -3,10 +3,12 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encrypted-db/config"
+	"database/sql/driver"
 	"fmt"
 	"log"
 	"time"
+
+	"encrypted-db/config"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
@@ -37,7 +39,15 @@ func withMigrationLock(ctx context.Context, db *sql.DB, fn func() error) error {
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
 		return fmt.Errorf("failed to acquire migration advisory lock: %w", err)
 	}
-	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+	defer func() {
+		if _, err := conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID); err != nil {
+			// The lock belongs to the database session, so a connection
+			// that may still hold it must not go back to the pool, where it
+			// would block every later migration.
+			log.Printf("Releasing the migration lock failed; discarding the connection: %v", err)
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
 
 	return fn()
 }

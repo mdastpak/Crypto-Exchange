@@ -241,13 +241,13 @@ func TestBalance_VersionIncrement(t *testing.T) {
 	}
 
 	initialVersion := balance.Version
-	balance.LockAmount(shared.MustNewDecimalFromString("10"))
+	require.NoError(t, balance.LockAmount(shared.MustNewDecimalFromString("10")))
 	assert.Equal(t, initialVersion+1, balance.Version)
 
-	balance.UnlockAmount(shared.MustNewDecimalFromString("10"))
+	require.NoError(t, balance.UnlockAmount(shared.MustNewDecimalFromString("10")))
 	assert.Equal(t, initialVersion+2, balance.Version)
 
-	balance.AddAvailable(shared.MustNewDecimalFromString("10"))
+	require.NoError(t, balance.AddAvailable(shared.MustNewDecimalFromString("10")))
 	assert.Equal(t, initialVersion+3, balance.Version)
 }
 

@@ -41,7 +41,7 @@ const RefreshTokenCookie = "refresh_token"
 
 // refreshTokenCookiePath limits the cookie to the routes that use it:
 // /public/auth/refresh and /public/auth/logout.
-const refreshTokenCookiePath = "/public/auth"
+const refreshTokenCookiePath = "/public/auth" //nolint:gosec // G101: a URL path, not a credential.
 
 // Claims represents the JWT claims structure.
 type Claims struct {

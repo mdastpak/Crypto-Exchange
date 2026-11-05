@@ -2,49 +2,17 @@ package middleware
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"encrypted-db/config"
+
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
-
-type mockRedisClient struct {
-	mock.Mock
-}
-
-func (m *mockRedisClient) Pipeline() redis.Pipeliner {
-	args := m.Called()
-	return args.Get(0).(redis.Pipeliner)
-}
-
-func (m *mockRedisClient) Incr(ctx context.Context, key string) *redis.IntCmd {
-	args := m.Called(ctx, key)
-	return args.Get(0).(*redis.IntCmd)
-}
-
-func (m *mockRedisClient) Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd {
-	args := m.Called(ctx, key, expiration)
-	return args.Get(0).(*redis.BoolCmd)
-}
-
-func (m *mockRedisClient) Exec(ctx context.Context, cmds []redis.Cmder) error {
-	args := m.Called(ctx, cmds)
-	return args.Error(0)
-}
-
-func (m *mockRedisClient) TTL(ctx context.Context, key string) *redis.DurationCmd {
-	args := m.Called(ctx, key)
-	return args.Get(0).(*redis.DurationCmd)
-}
 
 func TestRateLimiter_RESTRateLimit_AllowsRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
