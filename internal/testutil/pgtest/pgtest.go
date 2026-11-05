@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -122,7 +122,7 @@ func Migrated(t testing.TB, name string) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	url := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", User, Password, Host, Port, name, SSLMode)
+	url := fmt.Sprintf("pgx5://%s:%s@%s:%s/%s?sslmode=%s", User, Password, Host, Port, name, SSLMode)
 	m, err := migrate.New(source, url)
 	if err != nil {
 		t.Fatalf("pgtest: starting the migrations: %v", err)

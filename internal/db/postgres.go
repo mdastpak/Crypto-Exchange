@@ -11,7 +11,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
+	migratepgx "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -116,14 +116,16 @@ func (p *PostgresService) Stats() sql.DBStats {
 }
 
 func runMigrations(db *sql.DB) error {
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	// The pgx driver keeps the schema_migrations table and the advisory
+	// lock of the lib/pq driver used before, so existing databases carry on.
+	driver, err := migratepgx.WithInstance(db, &migratepgx.Config{})
 	if err != nil {
 		return fmt.Errorf("could not start migration driver: %w", err)
 	}
 
 	m, err := migrate.NewWithDatabaseInstance(
 		config.MigrationsPath(),
-		"postgres", driver)
+		"pgx5", driver)
 	if err != nil {
 		return fmt.Errorf("migration instance creation failed: %w", err)
 	}
