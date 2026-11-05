@@ -19,7 +19,9 @@ func TestValidName_AcceptsOnlyTestDatabases(t *testing.T) {
 }
 
 func TestMigrationsURL_PointsAtTheRepositoryMigrations(t *testing.T) {
-	dir := strings.TrimPrefix(MigrationsURL(), "file://")
+	url, err := MigrationsURL()
+	require.NoError(t, err)
+	dir := strings.TrimPrefix(url, "file://")
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	assert.NotEmpty(t, entries)

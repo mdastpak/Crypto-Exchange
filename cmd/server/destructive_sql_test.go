@@ -13,8 +13,9 @@ import (
 )
 
 // destructiveSQL matches the statements that empty or remove database
-// objects. The SQL of this module is written in upper case.
-var destructiveSQL = regexp.MustCompile(`\b(DROP\s+(TABLE|SCHEMA|TYPE|DATABASE)|TRUNCATE\s)`)
+// objects, in any case. TRUNCATE must be followed by a space, so that calls
+// such as Decimal.Truncate(2) do not match.
+var destructiveSQL = regexp.MustCompile(`(?i)\b(DROP\s+(TABLE|SCHEMA|TYPE|DATABASE)|TRUNCATE\s)`)
 
 // TestCommands_ContainNoDestructiveSQL checks the Go code that the server and
 // the admin command are built from. Only the migrations, which are separate
@@ -53,7 +54,7 @@ func TestCommands_ContainNoDestructiveSQL(t *testing.T) {
 }
 
 func TestDestructiveSQL_Pattern(t *testing.T) {
-	for _, statement := range []string{"DROP TABLE IF EXISTS users", "DROP SCHEMA public CASCADE", "DROP TYPE USER_STATUS", "TRUNCATE TABLE currencies", "TRUNCATE users"} {
+	for _, statement := range []string{"DROP TABLE IF EXISTS users", "DROP SCHEMA public CASCADE", "DROP TYPE USER_STATUS", "TRUNCATE TABLE currencies", "TRUNCATE users", "drop table users", "truncate currencies"} {
 		assert.True(t, destructiveSQL.MatchString(statement), statement)
 	}
 	for _, code := range []string{"d.Truncate(2)", "DROP INDEX IF EXISTS idx", "dropTable"} {

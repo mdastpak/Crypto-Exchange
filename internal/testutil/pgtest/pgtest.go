@@ -6,10 +6,11 @@ package pgtest
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -51,11 +52,25 @@ func DSN(name string) string {
 		Host, Port, User, Password, name, SSLMode)
 }
 
-// MigrationsURL returns the file URL of the repository's migrations.
-func MigrationsURL() string {
-	_, file, _, _ := runtime.Caller(0)
-	dir := filepath.Join(filepath.Dir(file), "..", "..", "db", "migrations")
-	return "file://" + filepath.ToSlash(dir)
+// MigrationsURL returns the file URL of the repository's migrations. Tests run
+// in the directory of their package, so the module root is the nearest
+// directory above it with a go.mod file. The source path that the runtime
+// reports would not do: with -trimpath it is not a file path.
+func MigrationsURL() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return "file://" + filepath.ToSlash(filepath.Join(dir, "internal", "db", "migrations")), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errors.New("pgtest: no go.mod above the working directory")
+		}
+		dir = parent
+	}
 }
 
 func open(t testing.TB, name string) *sql.DB {
@@ -103,8 +118,12 @@ func Migrated(t testing.TB, name string) *sql.DB {
 	t.Helper()
 	Reset(t, name)
 
+	source, err := MigrationsURL()
+	if err != nil {
+		t.Fatal(err)
+	}
 	url := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", User, Password, Host, Port, name, SSLMode)
-	m, err := migrate.New(MigrationsURL(), url)
+	m, err := migrate.New(source, url)
 	if err != nil {
 		t.Fatalf("pgtest: starting the migrations: %v", err)
 	}
