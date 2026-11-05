@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -26,12 +26,32 @@ type WebSocketHandler struct {
 	Upgrader        websocket.Upgrader
 	ShutdownCh      chan struct{}
 	Wg              sync.WaitGroup
+	// Authenticate checks the access token that a connection brings. A
+	// connection without a token is anonymous. Without Authenticate, every
+	// token is refused.
+	Authenticate func(ctx context.Context, token string) (*auth.Claims, error)
+
+	limits limits
+	// open and openPerIP count the connections, guarded by Mu, including
+	// upgrades that are still in progress.
+	open         int
+	openPerIP    map[string]int
+	shutdownOnce sync.Once
 }
 
 type Client struct {
 	Conn     *websocket.Conn
 	Send     chan []byte
 	Timezone string
+	// UserID and SessionID name the signed-in user of an authenticated
+	// connection, for the account channels of #66. They are empty for an
+	// anonymous connection.
+	UserID    string
+	SessionID string
+
+	ip       string
+	location *time.Location
+	limiter  *tokenBucket
 }
 
 var (
@@ -54,6 +74,9 @@ var (
 		},
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
+		// Selected when a browser sends its token as a subprotocol, as the
+		// WebSocket handshake requires.
+		Subprotocols: []string{accessTokenProtocol},
 	}
 )
 
@@ -63,48 +86,24 @@ func NewWebSocketHandler(is *models.InfraServices) *WebSocketHandler {
 		Clients:         make(map[*Client]bool),
 		Upgrader:        defaultUpgrader,
 		ShutdownCh:      make(chan struct{}),
+		limits:          limitsFromConfig(),
+		openPerIP:       make(map[string]int),
 	}
 	return h
-}
-
-func (h *WebSocketHandler) ServeWSGin(c *gin.Context) {
-	h.ServeWS(c.Writer, c.Request)
-}
-
-func (h *WebSocketHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := h.Upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
-		return
-	}
-
-	client := &Client{
-		Conn:     conn,
-		Send:     make(chan []byte, 256),
-		Timezone: "UTC",
-	}
-
-	h.registerClient(client)
-	// Note: readPump's own defer unregisters the client on exit; unregistering
-	// again here would double-close client.Send and panic.
-
-	h.Wg.Add(1)
-	go h.writePump(client)
-
-	h.readPump(client)
 }
 
 func (h *WebSocketHandler) registerClient(client *Client) {
 	h.Mu.Lock()
 	h.Clients[client] = true
 	h.Mu.Unlock()
-	log.Printf("WebSocket client connected. Total: %d", h.clientCount())
+	log.Printf("WebSocket client connected (authenticated: %t). Total: %d", client.UserID != "", h.clientCount())
 }
 
 func (h *WebSocketHandler) unregisterClient(client *Client) {
 	h.Mu.Lock()
 	delete(h.Clients, client)
 	h.Mu.Unlock()
+	h.release(client.ip)
 	close(client.Send)
 	client.Conn.Close()
 	log.Printf("WebSocket client disconnected. Total: %d", h.clientCount())
@@ -118,20 +117,21 @@ func (h *WebSocketHandler) clientCount() int {
 
 func (h *WebSocketHandler) readPump(client *Client) {
 	// Note: only writePump is tracked via h.Wg (matching the single
-	// h.Wg.Add(1) call in ServeWS before it is started); readPump runs
+	// h.Wg.Add(1) call in serve before it is started); readPump runs
 	// synchronously on the caller's goroutine and must not call h.Wg.Done()
 	// itself, or the WaitGroup counter goes negative and panics on every
 	// normal client disconnect.
 	defer h.unregisterClient(client)
 
-	client.Conn.SetReadLimit(512)
+	// A message larger than the limit ends the connection.
+	client.Conn.SetReadLimit(h.limits.maxMessageBytes)
 	// A deadline that cannot be set means the connection is broken.
-	if err := client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+	if err := client.Conn.SetReadDeadline(time.Now().Add(h.limits.pongWait)); err != nil {
 		return
 	}
 	client.Conn.SetPongHandler(func(string) error {
 		// An error here ends ReadMessage, and with it the connection.
-		return client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return client.Conn.SetReadDeadline(time.Now().Add(h.limits.pongWait))
 	})
 
 	for {
@@ -147,6 +147,16 @@ func (h *WebSocketHandler) readPump(client *Client) {
 				return
 			}
 
+			if !client.limiter.allow(time.Now()) {
+				// A client that sends faster than its limit is disconnected
+				// with a policy violation. WriteControl may run concurrently
+				// with writePump.
+				_ = client.Conn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many messages"),
+					time.Now().Add(time.Second))
+				return
+			}
+
 			if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
 				continue
 			}
@@ -157,7 +167,7 @@ func (h *WebSocketHandler) readPump(client *Client) {
 }
 
 func (h *WebSocketHandler) writePump(client *Client) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(h.limits.pingInterval)
 	defer func() {
 		ticker.Stop()
 		h.Wg.Done()
@@ -166,7 +176,7 @@ func (h *WebSocketHandler) writePump(client *Client) {
 	for {
 		select {
 		case message, ok := <-client.Send:
-			if err := client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			if err := client.Conn.SetWriteDeadline(time.Now().Add(h.limits.writeTimeout)); err != nil {
 				return
 			}
 			if !ok {
@@ -183,7 +193,7 @@ func (h *WebSocketHandler) writePump(client *Client) {
 			}
 
 		case <-ticker.C:
-			if err := client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			if err := client.Conn.SetWriteDeadline(time.Now().Add(h.limits.writeTimeout)); err != nil {
 				return
 			}
 			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -211,22 +221,23 @@ func (h *WebSocketHandler) handleClientMessage(client *Client, message []byte) {
 	switch evt {
 	case "ping":
 		if tz, ok := event["timezone"].(string); ok {
-			client.Timezone = tz
+			// An unknown zone keeps the previous one.
+			client.setTimezone(tz)
 		}
 		h.handleClientPing(client)
 
 	case "subscribe":
-		// Future: handle channel subscriptions
+		// Future: handle channel subscriptions (#66)
 		log.Printf("Client subscribed to: %v", event["channels"])
 
 	default:
-		log.Printf("Unhandled event type: %s", evt)
+		log.Printf("Unhandled event type: %s", quoted(evt))
 	}
 }
 
 func (h *WebSocketHandler) handleClientPing(client *Client) {
-	loc, err := time.LoadLocation(client.Timezone)
-	if err != nil {
+	loc := client.location
+	if loc == nil {
 		loc = time.UTC
 	}
 	serverTime := time.Now().In(loc).Format(time.RFC3339)
@@ -376,8 +387,10 @@ func (h *WebSocketHandler) drain(ctx context.Context, sub *subscription) error {
 	}
 }
 
+// Shutdown closes every connection and waits for their goroutines, until ctx
+// ends. It may be called more than once.
 func (h *WebSocketHandler) Shutdown(ctx context.Context) error {
-	close(h.ShutdownCh)
+	h.shutdownOnce.Do(func() { close(h.ShutdownCh) })
 	h.Mu.Lock()
 	for client := range h.Clients {
 		client.Conn.Close()

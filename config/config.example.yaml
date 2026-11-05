@@ -180,8 +180,13 @@ websocket:
   # Origins accepted by the WebSocket origin check; empty allows same-origin
   # connections only. Release mode refuses "*" and origins without https.
   allowed_origins: []
-  ping_interval_seconds: 30        # Parsed, but not used yet (#47)
-  max_message_size_bytes: 1048576  # Parsed, but not used yet (#47)
+  ping_interval_seconds: 30        # A client that misses two pings is disconnected
+  max_message_size_bytes: 4096     # Largest client message, at most 1 MiB
+  write_timeout_seconds: 10
+  client_messages_per_second: 10   # Messages per connection; a faster client is disconnected
+  client_message_burst: 20
+  max_connections: 10000           # Per server instance
+  max_connections_per_ip: 20       # Per client address
 
 # The sections from here to observability are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe

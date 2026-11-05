@@ -218,8 +218,14 @@ The key service is only contacted at startup and by the `admin keys` commands: a
 | Key | Default | Description |
 | --- | --- | --- |
 | `allowed_origins` | `[]` | Origins accepted by the WebSocket origin check. HTTP CORS uses `server.cors.allowed_origins` instead. Entries are matched exactly, except `"*"`, which allows every origin ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)). With an empty list, only same-origin connections are accepted. Release mode refuses `"*"` and origins that are not `https://`. |
-| `ping_interval_seconds` | `30` | Parsed, but not used yet. The interval is hard-coded ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)). |
-| `max_message_size_bytes` | `1048576` | Parsed, but not used yet. The read limit is hard-coded to 512 bytes. |
+| `ping_interval_seconds` | `30` | How often the server pings each client. A client that does not answer within two intervals is disconnected. |
+| `max_message_size_bytes` | `4096` | The largest message accepted from a client, at most 1 MiB. A larger one closes the connection. Clients only send small control messages. |
+| `write_timeout_seconds` | `10` | How long a write to a client may take |
+| `client_messages_per_second`, `client_message_burst` | `10`, `20` | The messages each connection may send, as a token bucket. A client that sends faster is disconnected. `rate_limits.ws` limits the upgrade requests per address instead. |
+| `max_connections` | `10000` | Open connections per server instance. Further upgrades get `503`. |
+| `max_connections_per_ip` | `20` | Open connections per client address, at most `max_connections`. Further upgrades get `429`. The client address honors `server.trusted_proxies`. |
+
+A connection may bring a user access token, which gets the checks of the `/user/*` routes; see [WebSocket](api.md#websocket).
 
 ### `rate_limits`
 
@@ -328,6 +334,11 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |
 | `WS_PING_INTERVAL_SECONDS` | `websocket.ping_interval_seconds` |
 | `WS_MAX_MESSAGE_SIZE_BYTES` | `websocket.max_message_size_bytes` |
+| `WS_WRITE_TIMEOUT_SECONDS` | `websocket.write_timeout_seconds` |
+| `WS_CLIENT_MESSAGES_PER_SECOND` | `websocket.client_messages_per_second` |
+| `WS_CLIENT_MESSAGE_BURST` | `websocket.client_message_burst` |
+| `WS_MAX_CONNECTIONS` | `websocket.max_connections` |
+| `WS_MAX_CONNECTIONS_PER_IP` | `websocket.max_connections_per_ip` |
 | `RATE_LIMITS_TIMEOUT_MS` | `rate_limits.timeout_ms` |
 | `RATE_LIMITS_REST_REQUESTS_PER_SECOND` | `rate_limits.rest.requests_per_second` |
 | `RATE_LIMITS_REST_BURST` | `rate_limits.rest.burst` |

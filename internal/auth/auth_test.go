@@ -865,3 +865,46 @@ func BenchmarkParseToken(b *testing.B) {
 		_, _ = ParseToken(token, RoleUser, TokenTypeAccess)
 	}
 }
+
+func TestAuthenticateUserToken(t *testing.T) {
+	setupTestKeys(t)
+	ctx := context.Background()
+	token := mustToken(t, RoleUser)
+
+	sessions := &fakeSessionStore{}
+	claims, err := AuthenticateUserToken(ctx, token, nil, sessions)
+	require.NoError(t, err)
+	assert.Equal(t, "user-123", claims.UUID)
+	assert.Equal(t, []string{"test-session/user-123"}, sessions.verified, "the session is checked like on the user routes")
+
+	for name, tc := range map[string]struct {
+		token    string
+		sessions SessionStore
+		want     error
+	}{
+		"session ended":    {token, &fakeSessionStore{verifyErr: ErrSessionInvalid}, ErrSessionInvalid},
+		"user unavailable": {token, &fakeSessionStore{verifyErr: ErrAccountUnavailable}, ErrAccountUnavailable},
+		"admin token":      {mustToken(t, RoleAdmin), &fakeSessionStore{}, ErrInvalidToken},
+		"not a token":      {"forged", &fakeSessionStore{}, ErrInvalidToken},
+		"no session store": {token, nil, ErrInvalidToken},
+		"refresh token":    {mustRefreshToken(t), &fakeSessionStore{}, ErrWrongTokenType},
+	} {
+		_, err := AuthenticateUserToken(ctx, tc.token, nil, tc.sessions)
+		assert.ErrorIs(t, err, tc.want, name)
+	}
+
+	noSession, err := GenerateAccessToken("user-123", RoleUser, "")
+	require.NoError(t, err)
+	_, err = AuthenticateUserToken(ctx, noSession, nil, &fakeSessionStore{})
+	assert.ErrorIs(t, err, ErrInvalidToken, "a user token without a session")
+
+	_, err = AuthenticateUserToken(ctx, token, nil, &fakeSessionStore{verifyErr: errors.New("database down")})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInvalidToken, "a service failure is not an invalid token")
+}
+
+func mustRefreshToken(t testing.TB) string {
+	token, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+	require.NoError(t, err)
+	return token
+}

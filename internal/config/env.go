@@ -180,6 +180,11 @@ var envVars = []EnvVar{
 	listVar("WS_ALLOWED_ORIGINS", "websocket.allowed_origins", func(c *Configuration) *[]string { return &c.WebSocket.AllowedOrigins }),
 	intVar("WS_PING_INTERVAL_SECONDS", "websocket.ping_interval_seconds", func(c *Configuration) *int { return &c.WebSocket.PingInterval }),
 	intVar("WS_MAX_MESSAGE_SIZE_BYTES", "websocket.max_message_size_bytes", func(c *Configuration) *int { return &c.WebSocket.MaxMessageSize }),
+	intVar("WS_WRITE_TIMEOUT_SECONDS", "websocket.write_timeout_seconds", func(c *Configuration) *int { return &c.WebSocket.WriteTimeout }),
+	intVar("WS_CLIENT_MESSAGES_PER_SECOND", "websocket.client_messages_per_second", func(c *Configuration) *int { return &c.WebSocket.ClientMessagesPerSecond }),
+	intVar("WS_CLIENT_MESSAGE_BURST", "websocket.client_message_burst", func(c *Configuration) *int { return &c.WebSocket.ClientMessageBurst }),
+	intVar("WS_MAX_CONNECTIONS", "websocket.max_connections", func(c *Configuration) *int { return &c.WebSocket.MaxConnections }),
+	intVar("WS_MAX_CONNECTIONS_PER_IP", "websocket.max_connections_per_ip", func(c *Configuration) *int { return &c.WebSocket.MaxConnectionsPerIP }),
 
 	intVar("RATE_LIMITS_TIMEOUT_MS", "rate_limits.timeout_ms", func(c *Configuration) *int { return &c.RateLimits.TimeoutMs }),
 	intVar("RATE_LIMITS_REST_REQUESTS_PER_SECOND", "rate_limits.rest.requests_per_second", func(c *Configuration) *int { return &c.RateLimits.REST.RequestsPerSecond }),

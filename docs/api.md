@@ -451,18 +451,35 @@ The earlier name of `/system/ready`, with the same response.
 
 Connect to `ws://<host>:<port>/ws/`. The trailing slash is required. Browser origins must match `websocket.allowed_origins`, or the request must be same-origin when the list is empty.
 
+### Authentication
+
+A connection may bring a user access token. Without a token, the connection is anonymous and receives the public events. A token is checked like on the `/user/*` routes: its signature, the blacklist, its session, and its user (see [Authentication](#authentication)). The account channels of [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66) will need it. The token can be sent in one of two ways:
+
+- `Authorization: Bearer <access token>`, for clients that can set headers on the upgrade request;
+- from a browser, which cannot, as the subprotocols `access_token` and the token: `new WebSocket(url, ["access_token", token])`. The server selects the subprotocol `access_token` in its answer, as the handshake requires.
+
+A token in the URL is not read, because URLs end up in access logs. A request that brings a token gets a plain HTTP answer instead of the upgrade when the token is refused:
+
+| Status | When |
+| --- | --- |
+| `401` | The token is invalid, or its session has ended (`Unauthorized - Session is not active`). Also when the `Authorization` header has another scheme, or the `access_token` subprotocol comes without a token. |
+| `403` | The user can no longer sign in |
+
 ### Connection behavior
 
 | Setting | Value |
 | --- | --- |
-| Maximum inbound message size | 512 bytes |
-| Server ping interval | 30 seconds |
-| Read deadline | 60 seconds, extended on every pong |
+| Maximum inbound message size | `websocket.max_message_size_bytes`, 4 KiB by default. A larger message closes the connection with `1009` (message too big). |
+| Inbound message rate | `websocket.client_messages_per_second`, 10 by default, with bursts of `websocket.client_message_burst`, 20. A client that sends faster is disconnected with `1008` (policy violation) and the reason `too many messages`. |
+| Server ping interval | `websocket.ping_interval_seconds`, 30 seconds by default |
+| Read deadline | Two ping intervals, extended on every pong |
+| Write timeout | `websocket.write_timeout_seconds`, 10 seconds by default |
+| Connections | At most `websocket.max_connections` per server instance (10000), and `websocket.max_connections_per_ip` per client address (20). Further upgrades get `503` and `429`. The client address honors `server.trusted_proxies`. |
 | Per-client outbound buffer | 256 messages. Messages are dropped when the buffer is full. |
 
 ### Client messages
 
-Ping, optionally with an IANA time zone for the reply timestamp:
+Ping, optionally with an IANA time zone for the reply timestamp. An unknown zone, or a name longer than 64 characters, keeps the previous zone, which is UTC at first:
 
 ```json
 { "event": "ping", "timezone": "Europe/Berlin" }

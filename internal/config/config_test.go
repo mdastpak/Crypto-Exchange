@@ -128,7 +128,12 @@ func TestSetDefaults_FillsZeroValues(t *testing.T) {
 	assert.Equal(t, 500, Config.Redis.ConnectRetryDelayMs)
 
 	assert.Equal(t, 30, Config.WebSocket.PingInterval)
-	assert.Equal(t, 1024*1024, Config.WebSocket.MaxMessageSize)
+	assert.Equal(t, DefaultWSMaxMessageSize, Config.WebSocket.MaxMessageSize)
+	assert.Equal(t, DefaultWSWriteTimeoutSeconds, Config.WebSocket.WriteTimeout)
+	assert.Equal(t, DefaultWSClientMessagesPerSecond, Config.WebSocket.ClientMessagesPerSecond)
+	assert.Equal(t, DefaultWSClientMessageBurst, Config.WebSocket.ClientMessageBurst)
+	assert.Equal(t, DefaultWSMaxConnections, Config.WebSocket.MaxConnections)
+	assert.Equal(t, DefaultWSMaxConnectionsPerIP, Config.WebSocket.MaxConnectionsPerIP)
 
 	assert.Equal(t, "UTC", Config.Exchange.Timezone)
 

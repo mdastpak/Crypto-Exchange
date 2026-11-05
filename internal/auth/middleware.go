@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -112,6 +114,34 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 			c.Abort()
 		}
 	}
+}
+
+// AuthenticateUserToken checks a user access token as JWTUserVerification
+// and RequireActiveSession do together, for callers outside an HTTP route,
+// such as the WebSocket gateway. It returns ErrInvalidToken for a token that
+// does not verify or is blacklisted, ErrSessionInvalid for an ended session,
+// and ErrAccountUnavailable for a user who can no longer sign in.
+func AuthenticateUserToken(ctx context.Context, token string, tb *TokenBlacklist, sessions SessionStore) (*Claims, error) {
+	claims, err := ParseToken(token, RoleUser, TokenTypeAccess)
+	if err != nil {
+		return nil, err
+	}
+	if tb != nil {
+		blacklisted, err := tb.IsTokenBlacklisted(ctx, token)
+		if err != nil {
+			return nil, fmt.Errorf("checking the blacklist: %w", err)
+		}
+		if blacklisted {
+			return nil, ErrInvalidToken
+		}
+	}
+	if claims.SessionID == "" || sessions == nil {
+		return nil, ErrInvalidToken
+	}
+	if err := sessions.Verify(ctx, claims.SessionID, claims.UUID); err != nil {
+		return nil, err
+	}
+	return claims, nil
 }
 
 // JWTAdminVerification accepts only admin access tokens.

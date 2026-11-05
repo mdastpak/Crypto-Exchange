@@ -170,8 +170,22 @@ type Configuration struct {
 
 	WebSocket struct {
 		AllowedOrigins []string `yaml:"allowed_origins"`
-		PingInterval   int      `yaml:"ping_interval_seconds"`
-		MaxMessageSize int      `yaml:"max_message_size_bytes"`
+		// PingInterval is how often the server pings a client. A client
+		// that does not answer within two intervals is disconnected.
+		PingInterval int `yaml:"ping_interval_seconds"`
+		// MaxMessageSize bounds a message from a client; a larger one ends
+		// the connection.
+		MaxMessageSize int `yaml:"max_message_size_bytes"`
+		WriteTimeout   int `yaml:"write_timeout_seconds"`
+		// ClientMessagesPerSecond and ClientMessageBurst limit the messages
+		// of each connection; a client that sends faster is disconnected.
+		// rate_limits.ws limits the upgrade requests instead.
+		ClientMessagesPerSecond int `yaml:"client_messages_per_second"`
+		ClientMessageBurst      int `yaml:"client_message_burst"`
+		// MaxConnections and MaxConnectionsPerIP cap the open connections of
+		// this instance.
+		MaxConnections      int `yaml:"max_connections"`
+		MaxConnectionsPerIP int `yaml:"max_connections_per_ip"`
 	} `yaml:"websocket"`
 
 	Exchange struct {
@@ -690,7 +704,21 @@ func setDefaults() {
 		Config.WebSocket.PingInterval = 30
 	}
 	if Config.WebSocket.MaxMessageSize == 0 {
-		Config.WebSocket.MaxMessageSize = 1024 * 1024
+		Config.WebSocket.MaxMessageSize = DefaultWSMaxMessageSize
+	}
+	for _, setting := range []struct {
+		value    *int
+		fallback int
+	}{
+		{&Config.WebSocket.WriteTimeout, DefaultWSWriteTimeoutSeconds},
+		{&Config.WebSocket.ClientMessagesPerSecond, DefaultWSClientMessagesPerSecond},
+		{&Config.WebSocket.ClientMessageBurst, DefaultWSClientMessageBurst},
+		{&Config.WebSocket.MaxConnections, DefaultWSMaxConnections},
+		{&Config.WebSocket.MaxConnectionsPerIP, DefaultWSMaxConnectionsPerIP},
+	} {
+		if *setting.value == 0 {
+			*setting.value = setting.fallback
+		}
 	}
 
 	if Config.Exchange.Timezone == "" {
@@ -872,6 +900,18 @@ func GetRabbitMQURL() string {
 		Config.RabbitMQ.Port,
 	)
 }
+
+// The defaults of the websocket settings. Clients send small control
+// messages, such as pings and subscriptions, so a message is at most 4 KiB.
+const (
+	DefaultWSMaxMessageSize          = 4 << 10
+	MaxWSMaxMessageSize              = 1 << 20
+	DefaultWSWriteTimeoutSeconds     = 10
+	DefaultWSClientMessagesPerSecond = 10
+	DefaultWSClientMessageBurst      = 20
+	DefaultWSMaxConnections          = 10000
+	DefaultWSMaxConnectionsPerIP     = 20
+)
 
 // DefaultMaxBodyBytes is server.max_body_bytes when it is not set: 1 MiB.
 const DefaultMaxBodyBytes = 1 << 20

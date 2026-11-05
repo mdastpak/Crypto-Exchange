@@ -444,15 +444,22 @@ func initializeServices() (*models.InfraServices, func(), error) {
 
 func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	tb := auth.NewTokenBlacklist(services.Redis.Client)
+	sessions := auth.NewPostgresSessionStore(services.Postgres.DB)
+	ws := socket.NewWebSocketHandler(services)
+	// A WebSocket connection that brings a user access token gets the
+	// checks of the /user routes.
+	ws.Authenticate = func(ctx context.Context, token string) (*auth.Claims, error) {
+		return auth.AuthenticateUserToken(ctx, token, tb, sessions)
+	}
 	return &InfraHandlers{
-		Socket:         socket.NewWebSocketHandler(services),
+		Socket:         ws,
 		System:         system.NewHandler(services),
 		Admin:          admin.NewHandler(services),
 		Public:         public.NewHandler(services),
 		User:           user.NewHandler(services),
 		Redis:          services.Redis,
 		TokenBlacklist: tb,
-		Sessions:       auth.NewPostgresSessionStore(services.Postgres.DB),
+		Sessions:       sessions,
 	}
 }
 
