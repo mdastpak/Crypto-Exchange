@@ -426,6 +426,8 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 
 	systemGroup := r.Group("/system")
 	{
+		systemGroup.GET("/live", ih.System.LivenessHandler)
+		systemGroup.GET("/ready", ih.System.ReadinessHandler)
 		systemGroup.GET("/healthcheck", ih.System.HealthCheckHandler)
 		systemGroup.GET("/ping", ih.System.PingPongHandler)
 	}
