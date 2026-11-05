@@ -51,6 +51,9 @@ type Configuration struct {
 			Enabled  bool   `yaml:"enabled"`
 			CertFile string `yaml:"cert_file"`
 			KeyFile  string `yaml:"key_file"`
+			// BehindProxy says that a reverse proxy terminates TLS in front
+			// of the server. Release mode needs it or Enabled.
+			BehindProxy bool `yaml:"behind_proxy"`
 		} `yaml:"tls"`
 		CORS struct {
 			// AllowedOrigins lists the browser origins (scheme://host[:port])
@@ -601,34 +604,6 @@ func (c *Configuration) validateMode() error {
 // all at once, each with the environment variable that can set it.
 func ValidateServer() error {
 	return Config.validateServer()
-}
-
-func (c *Configuration) validateServer() error {
-	var missing []string
-	require := func(ok bool, key string) {
-		if !ok {
-			missing = append(missing, fmt.Sprintf("%s (%s)", key, envVarFor(key)))
-		}
-	}
-	require(c.Server.Port != "", "server.port")
-	require(c.Postgres.Host != "", "postgres.host")
-	require(c.Postgres.Port != "", "postgres.port")
-	require(c.Postgres.User != "", "postgres.user")
-	require(c.Postgres.DBName != "", "postgres.dbname")
-	require(c.Redis.Host != "", "redis.host")
-	require(c.Redis.Port != "", "redis.port")
-	require(c.RabbitMQ.Host != "", "rabbitmq.host")
-	require(c.RabbitMQ.Port != "", "rabbitmq.port")
-	require(c.RabbitMQ.Username != "", "rabbitmq.username")
-	require(c.RabbitMQ.Password != "", "rabbitmq.password")
-	require(c.JWT.SSL.User.PrivateKey != "", "jwt.ssl.user.private_key")
-	require(c.JWT.SSL.User.PublicKey != "", "jwt.ssl.user.public_key")
-	require(c.JWT.AccessToken.Expiration > 0, "jwt.access_token.expiration_minutes")
-	require(c.JWT.RefreshToken.Expiration > 0, "jwt.refresh_token.expiration_minutes")
-	if len(missing) > 0 {
-		return fmt.Errorf("required settings are not set: %s", strings.Join(missing, ", "))
-	}
-	return nil
 }
 
 func setDefaults() {

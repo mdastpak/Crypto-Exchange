@@ -8,11 +8,15 @@
 # in the comments. Every environment variable is listed in
 # docs/configuration.md, and an empty variable leaves the setting unchanged.
 # ${VAR} placeholders are not expanded in this file.
+#
+# With mode "release", the server refuses insecure settings, such as no TLS,
+# sslmode "disable", or default credentials, and lists every problem at once;
+# see "Release mode" in docs/configuration.md.
 
 server:
-  ip: "0.0.0.0"
+  ip: "0.0.0.0"                # Listen address; empty listens on every interface
   port: "8080"
-  read_timeout_seconds: 10
+  read_timeout_seconds: 10     # HTTP read, write, and keep-alive idle timeouts
   write_timeout_seconds: 10
   idle_timeout_seconds: 120
   mode: "debug"  # debug, release, or test. Set with SERVER_MODE.
@@ -21,9 +25,13 @@ server:
   # connect directly; otherwise they could spoof their address.
   trusted_proxies: []
   tls:
+    # Serve HTTPS with this certificate and key, which are checked at startup.
     enabled: false
     cert_file: "config/ssl/cert.pem"
     key_file: "config/ssl/key.pem"
+    # Or: a reverse proxy terminates TLS in front of the server. Release mode
+    # needs one of the two, and trusted_proxies with this one.
+    behind_proxy: false
   cors:
     # Exact browser origins (scheme://host[:port]) allowed to call the API with
     # credentials, for example "https://app.example.com". Empty: no
@@ -36,9 +44,10 @@ postgres:
   user: "postgres"
   password: ""  # Set with POSTGRES_PASSWORD
   dbname: "exchange"
+  # Release mode needs require, verify-ca, or verify-full.
   sslmode: "disable"
-  max_open_conns: 25
-  max_idle_conns: 5
+  max_open_conns: 25            # Connection pool limits
+  max_idle_conns: 5             # At most max_open_conns
   conn_max_lifetime_minutes: 5
   conn_max_idle_time_minutes: 5
 
@@ -47,9 +56,9 @@ redis:
   port: "6379"
   password: ""  # Set with REDIS_PASSWORD
   db: 0
-  pool_size: 10
-  min_idle_conns: 2
-  dial_timeout_ms: 1000
+  pool_size: 10                 # Connection pool size
+  min_idle_conns: 2             # At most pool_size
+  dial_timeout_ms: 1000         # Short timeouts, so that requests fail fast while Redis is down
   read_timeout_ms: 1000
   write_timeout_ms: 1000
   pool_timeout_ms: 2000
@@ -60,8 +69,8 @@ rabbitmq:
   password: ""  # Set with RABBITMQ_PASSWORD
   host: "localhost"
   port: "5672"
-  exchanges:
-    price_updates: "price_updates"
+  exchanges:                    # Fan-out exchanges, declared at startup
+    price_updates: "price_updates"  # Currency events for WebSocket clients
     trade_events: "trade_events"
     order_events: "order_events"
     settlement: "settlement"
@@ -88,16 +97,16 @@ jwt:
       # Earlier user public keys, for key rotation, for example:
       # - "internal/ssl/user/2026-10/public_key.pem"
       retired_public_keys: []
-  issuer: "crypto-exchange"
+  issuer: "crypto-exchange"     # The iss claim, required on every token
   access_token:
-    expiration_minutes: 15
+    expiration_minutes: 15     # At most 1440 (a day)
   refresh_token:
-    expiration_minutes: 10080  # 7 days
+    expiration_minutes: 10080  # 7 days; at least the access token lifetime
 
 otp:
   auth:
-    name: "AUTH"
-    ttl_seconds: 60
+    name: "AUTH"                 # Parsed, but not used yet
+    ttl_seconds: 60              # Lifetime of a code and its sign-in session
     length: 6                    # 4 to 10 digits
     retry_limit: 3               # Verification attempts per code
     # Keys the hashes of sign-in codes and the encryption of contacts in
@@ -168,10 +177,16 @@ keys:
     timeout_seconds: 10
 
 websocket:
+  # Origins accepted by the WebSocket origin check; empty allows same-origin
+  # connections only. Release mode refuses "*" and origins without https.
   allowed_origins: []
-  ping_interval_seconds: 30
-  max_message_size_bytes: 1048576
+  ping_interval_seconds: 30        # Parsed, but not used yet (#47)
+  max_message_size_bytes: 1048576  # Parsed, but not used yet (#47)
 
+# The sections from here to observability are parsed but not used yet, except
+# exchange.name, which authenticator apps show as the issuer. They describe
+# the configuration of roadmap features; see "Settings reserved for roadmap
+# features" in docs/configuration.md.
 exchange:
   name: "Crypto Exchange"
   timezone: "UTC"
@@ -414,17 +429,20 @@ observability:
     service_name: "crypto-exchange"
     sample_rate: 0.1
 
+# Rate limits in Redis. on_error of each limiter (allow or deny) says what
+# happens while Redis is unreachable: rest, ws, and trading allow by default,
+# auth denies. See docs/configuration.md.
 rate_limits:
   timeout_ms: 250  # How long each limiter waits for Redis
-  rest:
+  rest:            # Every route, per client IP
     requests_per_second: 100
     burst: 200
-  ws:
+  ws:              # WebSocket upgrades, per client IP
     messages_per_second: 50
     burst: 100
-  trading:
+  trading:         # /admin/* and /user/*, per signed-in user or administrator
     orders_per_second: 10
     burst: 20
-  auth:
-    login_attempts_per_minute: 5
-    otp_requests_per_hour: 10
+  auth:            # Sign-in, per client IP and route
+    login_attempts_per_minute: 5   # Code verifications
+    otp_requests_per_hour: 10      # Code requests

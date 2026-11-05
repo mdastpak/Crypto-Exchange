@@ -116,6 +116,7 @@ var envVars = []EnvVar{
 	boolVar("SERVER_TLS_ENABLED", "server.tls.enabled", func(c *Configuration) *bool { return &c.Server.TLS.Enabled }),
 	stringVar("SERVER_TLS_CERT_FILE", "server.tls.cert_file", func(c *Configuration) *string { return &c.Server.TLS.CertFile }),
 	stringVar("SERVER_TLS_KEY_FILE", "server.tls.key_file", func(c *Configuration) *string { return &c.Server.TLS.KeyFile }),
+	boolVar("SERVER_TLS_BEHIND_PROXY", "server.tls.behind_proxy", func(c *Configuration) *bool { return &c.Server.TLS.BehindProxy }),
 	optionalBoolVar("SERVER_SWAGGER_ENABLED", "server.swagger.enabled", func(c *Configuration) **bool { return &c.Server.Swagger.Enabled }),
 	int64Var("SERVER_MAX_BODY_BYTES", "server.max_body_bytes", func(c *Configuration) *int64 { return &c.Server.MaxBodyBytes }),
 
