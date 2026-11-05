@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // otpJobType identifies sign-in code jobs on the notifications exchange.

@@ -62,9 +62,9 @@ See [docs/architecture.md](docs/architecture.md) for package responsibilities, d
 | --- | --- |
 | Language | Go 1.26 |
 | HTTP | [Gin](https://github.com/gin-gonic/gin), [gorilla/websocket](https://github.com/gorilla/websocket) |
-| Database | PostgreSQL 16 (TimescaleDB image), [pgx v5](https://github.com/jackc/pgx) through `database/sql`, [golang-migrate](https://github.com/golang-migrate/migrate) |
-| Cache | Redis 7 ([go-redis v8](https://github.com/redis/go-redis)) |
-| Messaging | RabbitMQ 3.13 ([streadway/amqp](https://github.com/streadway/amqp)) |
+| Database | PostgreSQL 16 (TimescaleDB image), [pgx v5](https://github.com/jackc/pgx) through `database/sql`, [golang-migrate](https://github.com/golang-migrate/migrate) with its pgx driver |
+| Cache | Redis 7 ([go-redis v9](https://github.com/redis/go-redis)) |
+| Messaging | RabbitMQ 3.13 ([amqp091-go](https://github.com/rabbitmq/amqp091-go)) |
 | Authentication | RS256 JWT ([golang-jwt v5](https://github.com/golang-jwt/jwt)) |
 | Money | [shopspring/decimal](https://github.com/shopspring/decimal) |
 | API documentation | [swaggo](https://github.com/swaggo/swag) |

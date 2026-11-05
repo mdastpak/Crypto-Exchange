@@ -8,7 +8,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/config"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type RedisService struct {
@@ -32,6 +32,10 @@ func NewRedisService() (*RedisService, error) {
 		WriteTimeout: config.Milliseconds(cfg.WriteTimeoutMs, config.DefaultRedisWriteTimeoutMs),
 		PoolTimeout:  config.Milliseconds(cfg.PoolTimeoutMs, config.DefaultRedisPoolTimeoutMs),
 		MaxRetries:   maxRetries,
+		// The deadline of a request's context also bounds its Redis calls,
+		// such as rate_limits.timeout_ms for the limiters. go-redis v8 did
+		// this by default; v9 needs it turned on.
+		ContextTimeoutEnabled: true,
 	}
 
 	client := redis.NewClient(opts)

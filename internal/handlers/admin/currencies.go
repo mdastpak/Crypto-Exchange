@@ -19,8 +19,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 // currencyCachePrefix starts the Redis key of every cached currency. The

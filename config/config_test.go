@@ -62,6 +62,31 @@ postgres:
 	assert.Equal(t, "disable", Config.Postgres.SSLMode)
 }
 
+// TestLoad_RejectsADuplicatedKey checks that a key set twice in one mapping
+// stops the server, instead of one of the values silently winning.
+func TestLoad_RejectsADuplicatedKey(t *testing.T) {
+	defer resetConfig()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	yamlContent := `
+server:
+  mode: "release"
+postgres:
+  host: "db-host"
+server:
+  mode: "debug"
+`
+	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0o600))
+	originalPath := configPath
+	defer func() { configPath = originalPath }()
+	SetConfigPath(path)
+
+	err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"server" already defined`)
+	assert.Contains(t, err.Error(), "line 6", "the message points at the duplicate")
+}
+
 func TestLoadConfig_FallsBackToEmbedded(t *testing.T) {
 	defer resetConfig()
 

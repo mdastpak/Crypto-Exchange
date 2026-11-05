@@ -18,7 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type RateLimiter struct {

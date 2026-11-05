@@ -12,7 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,7 +62,8 @@ func TestMemoryBuckets_DropBucketsThatHaveRefilled(t *testing.T) {
 // stalledRedis returns a Redis client whose server accepts connections and
 // never answers, as a hung Redis or a network that drops packets would. The
 // client keeps the library's default timeouts and retries, which are much
-// longer than the limiter's deadline.
+// longer than the limiter's deadline. Like the server's client
+// (db.NewRedisService), it respects context deadlines.
 func stalledRedis(t *testing.T) *db.RedisService {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -80,7 +81,7 @@ func stalledRedis(t *testing.T) *db.RedisService {
 			mu.Unlock()
 		}
 	}()
-	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String()})
+	client := redis.NewClient(&redis.Options{Addr: listener.Addr().String(), ContextTimeoutEnabled: true})
 	t.Cleanup(func() {
 		client.Close()
 		listener.Close()

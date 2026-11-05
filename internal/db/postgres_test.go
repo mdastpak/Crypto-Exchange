@@ -174,7 +174,7 @@ func TestMigrations_FullUpDownUpCycle(t *testing.T) {
 	require.NoError(t, err)
 	migrationsAbs := filepath.Join(cwd, "migrations")
 	sourceURL := "file://" + strings.ReplaceAll(migrationsAbs, "\\", "/")
-	dbURL := "postgres://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
+	dbURL := "pgx5://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
 		testPGUser, testPGPassword, testPGHost, testPGPort, migrationsTestDBName, testPGSSLMode)
 
 	m, err := migrate.New(sourceURL, dbURL)
@@ -279,7 +279,7 @@ func newMigrationsTestMigrator(t *testing.T) *migrate.Migrate {
 	cwd, err := filepath.Abs(".")
 	require.NoError(t, err)
 	sourceURL := "file://" + strings.ReplaceAll(filepath.Join(cwd, "migrations"), "\\", "/")
-	dbURL := "postgres://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
+	dbURL := "pgx5://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
 		testPGUser, testPGPassword, testPGHost, testPGPort, migrationsTestDBName, testPGSSLMode)
 
 	m, err := migrate.New(sourceURL, dbURL)
