@@ -49,7 +49,7 @@ flowchart TB
 
 ### Request pipeline
 
-Middleware is applied in this order: recovery, which answers a panic with `500 Internal server error` in the standard envelope and logs the details, request ID, Gin logger, security headers, CORS, then the REST rate limiter. Route groups add their own layers:
+Middleware is applied to every route, including `/` and `/swagger/*`, in this order: Gin logger; recovery, which answers a panic with `500 Internal server error` in the standard envelope and logs the details; request ID; security headers; CORS; the REST rate limiter; and the request body limit. `RouteHandler` registers it before any route, because Gin applies middleware only to the routes registered after it. Route groups add their own layers:
 
 | Group | Additional middleware |
 | --- | --- |

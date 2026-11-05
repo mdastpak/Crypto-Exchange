@@ -31,6 +31,8 @@ This document describes how the server is configured and which settings it curre
 | `idle_timeout_seconds` | `120` | HTTP keep-alive idle timeout |
 | `mode` | `debug` | `debug`, `release`, or `test`. Sets Gin's mode, and `release` turns on the release checks: `otp.auth.secret` is required, and `otp.auth.dev_log_codes` is refused. Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
+| `swagger.enabled` | unset | Serves the Swagger UI at `/swagger/index.html`. When it is not set, the UI is served outside release mode only. |
+| `max_body_bytes` | `1048576` | The largest request body accepted, in bytes. A larger body gets `413`. |
 | `tls.enabled` | `false` | Serve HTTPS with `ListenAndServeTLS` |
 | `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled |
 | `cors.allowed_origins` | `[]` | Browser origins (`scheme://host[:port]`, for example `https://app.example.com` or `http://localhost:3000`) that may call the API across origins with credentials. Matching is exact and case-insensitive. With an empty list, no cross-origin access is granted. A wildcard (`"*"`), a path, or any other malformed entry stops the server at startup, because a wildcard combined with credentials would let any site read authenticated responses. |
@@ -173,7 +175,7 @@ Writing to the database is not enough to create an administrator: changing `user
 
 | Key | Default | Applies to |
 | --- | --- | --- |
-| `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route except `/` and `/swagger/*` ([#32](https://github.com/mdastpak/Crypto-Exchange/issues/32)), as a token bucket per client IP |
+| `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route, as a token bucket per client IP |
 | `ws.messages_per_second`, `ws.burst` | `50`, `100` | The WebSocket upgrade request |
 | `trading.orders_per_second`, `trading.burst` | `10`, `20` | `/admin/*` and `/user/*` |
 | `auth.login_attempts_per_minute` | `5` | Sign-in code verifications: `POST /public/auth/{uuid}` and `POST /admin/auth/{uuid}`, per client IP and route |
@@ -216,6 +218,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SERVER_TLS_ENABLED` | `server.tls.enabled` |
 | `SERVER_TLS_CERT_FILE` | `server.tls.cert_file` |
 | `SERVER_TLS_KEY_FILE` | `server.tls.key_file` |
+| `SERVER_SWAGGER_ENABLED` | `server.swagger.enabled` |
+| `SERVER_MAX_BODY_BYTES` | `server.max_body_bytes` |
 | `POSTGRES_HOST` | `postgres.host` |
 | `POSTGRES_PORT` | `postgres.port` |
 | `POSTGRES_USER` | `postgres.user` |

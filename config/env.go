@@ -53,6 +53,29 @@ func boolVar(name, key string, field func(*Configuration) *bool) EnvVar {
 	}}
 }
 
+// optionalBoolVar sets a setting whose absence has a meaning of its own.
+func optionalBoolVar(name, key string, field func(*Configuration) **bool) EnvVar {
+	return EnvVar{name, key, func(c *Configuration, value string) error {
+		b, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("%q is not true or false", value)
+		}
+		*field(c) = &b
+		return nil
+	}}
+}
+
+func int64Var(name, key string, field func(*Configuration) *int64) EnvVar {
+	return EnvVar{name, key, func(c *Configuration, value string) error {
+		n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return fmt.Errorf("%q is not an integer", value)
+		}
+		*field(c) = n
+		return nil
+	}}
+}
+
 // listVar reads a comma-separated list. Spaces around the items and empty
 // items are dropped.
 func listVar(name, key string, field func(*Configuration) *[]string) EnvVar {
@@ -93,6 +116,8 @@ var envVars = []EnvVar{
 	boolVar("SERVER_TLS_ENABLED", "server.tls.enabled", func(c *Configuration) *bool { return &c.Server.TLS.Enabled }),
 	stringVar("SERVER_TLS_CERT_FILE", "server.tls.cert_file", func(c *Configuration) *string { return &c.Server.TLS.CertFile }),
 	stringVar("SERVER_TLS_KEY_FILE", "server.tls.key_file", func(c *Configuration) *string { return &c.Server.TLS.KeyFile }),
+	optionalBoolVar("SERVER_SWAGGER_ENABLED", "server.swagger.enabled", func(c *Configuration) **bool { return &c.Server.Swagger.Enabled }),
+	int64Var("SERVER_MAX_BODY_BYTES", "server.max_body_bytes", func(c *Configuration) *int64 { return &c.Server.MaxBodyBytes }),
 
 	stringVar("POSTGRES_HOST", "postgres.host", func(c *Configuration) *string { return &c.Postgres.Host }),
 	stringVar("POSTGRES_PORT", "postgres.port", func(c *Configuration) *string { return &c.Postgres.Port }),

@@ -254,3 +254,30 @@ func TestComposeConfig_WithEnvExample(t *testing.T) {
 	assert.Empty(t, Config.JWT.SSL.Admin.PrivateKey)
 	assert.Equal(t, "debug", Config.Server.Mode)
 }
+
+func TestSwaggerEnabled_DefaultsToOffInReleaseMode(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		mode    string
+		enabled *bool
+		want    bool
+	}{
+		{"debug", nil, true},
+		{"test", nil, true},
+		{"release", nil, false},
+		{"release", &on, true},
+		{"debug", &off, false},
+	}
+	for _, tc := range cases {
+		var c Configuration
+		c.Server.Mode = tc.mode
+		c.Server.Swagger.Enabled = tc.enabled
+		assert.Equal(t, tc.want, c.SwaggerEnabled(), "mode %s, enabled %v", tc.mode, tc.enabled)
+	}
+
+	var c Configuration
+	c.Server.Mode = "release"
+	require.NoError(t, overlayEnv(&c, lookupIn(map[string]string{"SERVER_SWAGGER_ENABLED": "true", "SERVER_MAX_BODY_BYTES": "2048"})))
+	assert.True(t, c.SwaggerEnabled(), "SERVER_SWAGGER_ENABLED turns it on in release mode")
+	assert.Equal(t, int64(2048), c.Server.MaxBodyBytes)
+}

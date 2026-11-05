@@ -59,6 +59,13 @@ type Configuration struct {
 			// that may call the API with credentials. Empty means none.
 			AllowedOrigins []string `yaml:"allowed_origins"`
 		} `yaml:"cors"`
+		Swagger struct {
+			// Enabled serves the Swagger UI at /swagger/. Unset, it is
+			// served outside release mode only.
+			Enabled *bool `yaml:"enabled"`
+		} `yaml:"swagger"`
+		// MaxBodyBytes is the largest request body the server accepts.
+		MaxBodyBytes int64 `yaml:"max_body_bytes"`
 	} `yaml:"server"`
 
 	Postgres struct {
@@ -526,6 +533,9 @@ func setDefaults() {
 	if Config.Server.Mode == "" {
 		Config.Server.Mode = "debug"
 	}
+	if Config.Server.MaxBodyBytes == 0 {
+		Config.Server.MaxBodyBytes = DefaultMaxBodyBytes
+	}
 
 	if Config.JWT.Issuer == "" {
 		Config.JWT.Issuer = DefaultJWTIssuer
@@ -743,6 +753,18 @@ func GetRabbitMQURL() string {
 		Config.RabbitMQ.Host,
 		Config.RabbitMQ.Port,
 	)
+}
+
+// DefaultMaxBodyBytes is server.max_body_bytes when it is not set: 1 MiB.
+const DefaultMaxBodyBytes = 1 << 20
+
+// SwaggerEnabled reports whether the Swagger UI is served: as
+// server.swagger.enabled says, or, when it is not set, outside release mode.
+func (c *Configuration) SwaggerEnabled() bool {
+	if c.Server.Swagger.Enabled != nil {
+		return *c.Server.Swagger.Enabled
+	}
+	return c.Server.Mode != "release"
 }
 
 func GetServerAddr() string {
