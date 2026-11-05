@@ -73,16 +73,24 @@ func (p *KYCProfile) IsExpired() bool {
 	return p.ExpiresAt.Before(time.Now())
 }
 
-// CanUpgrade returns true if the profile can be upgraded to the requested tier
+// CanUpgrade reports whether the profile may apply for targetTier. The
+// target must rank above the current tier; both must be known tiers. A
+// profile at NONE may apply unless an application is under review, since it
+// has no verification to build on. A higher tier must be approved first: a
+// pending, rejected, expired, or reviewed verification cannot be upgraded.
 func (p *KYCProfile) CanUpgrade(targetTier shared.KYCTier) bool {
-	if p.Status != shared.KYCStatusApproved {
+	current, ok := p.Tier.Rank()
+	if !ok {
 		return false
 	}
-	if p.Tier == shared.KYCTierInstitutional {
-		return false // Already at max tier
+	target, ok := targetTier.Rank()
+	if !ok || target <= current {
+		return false
 	}
-	// Can upgrade if current tier is lower than target
-	return p.Tier < targetTier
+	if p.Tier == shared.KYCTierNone {
+		return p.Status != shared.KYCStatusUnderReview
+	}
+	return p.Status == shared.KYCStatusApproved
 }
 
 type KYCDocument struct {

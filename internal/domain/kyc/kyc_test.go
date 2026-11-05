@@ -39,24 +39,54 @@ func TestKYCProfile_IsExpired(t *testing.T) {
 	assert.False(t, profile3.IsExpired())
 }
 
+// tiers lists every tier, lowest first.
+var tiers = []shared.KYCTier{
+	shared.KYCTierNone, shared.KYCTierBasic, shared.KYCTierStandard, shared.KYCTierEnhanced, shared.KYCTierInstitutional,
+}
+
+var statuses = []shared.KYCStatus{
+	shared.KYCStatusPending, shared.KYCStatusApproved, shared.KYCStatusRejected, shared.KYCStatusExpired, shared.KYCStatusUnderReview,
+}
+
+func TestKYCTier_Rank(t *testing.T) {
+	for i, tier := range tiers {
+		rank, ok := tier.Rank()
+		assert.True(t, ok, tier)
+		assert.Equal(t, i, rank, tier)
+	}
+	for _, unknown := range []shared.KYCTier{"", "basic", "PLATINUM"} {
+		_, ok := unknown.Rank()
+		assert.False(t, ok, "%q", unknown)
+	}
+}
+
+// TestKYCProfile_CanUpgrade checks every pair of tiers with every status.
+// As strings, "BASIC" < "NONE", so a string comparison let a user at BASIC
+// "upgrade" to NONE and kept a new user at NONE from ever upgrading.
 func TestKYCProfile_CanUpgrade(t *testing.T) {
-	profile := &KYCProfile{
-		Status: shared.KYCStatusApproved,
-		Tier:   shared.KYCTierBasic,
+	for currentRank, current := range tiers {
+		for targetRank, target := range tiers {
+			for _, status := range statuses {
+				var want bool
+				switch {
+				case targetRank <= currentRank:
+					want = false // never sideways or down
+				case current == shared.KYCTierNone:
+					want = status != shared.KYCStatusUnderReview
+				default:
+					want = status == shared.KYCStatusApproved
+				}
+				profile := &KYCProfile{Tier: current, Status: status}
+				assert.Equal(t, want, profile.CanUpgrade(target), "%s (%s) to %s", current, status, target)
+			}
+		}
 	}
-	assert.True(t, profile.CanUpgrade(shared.KYCTierEnhanced))
 
-	profile2 := &KYCProfile{
-		Status: shared.KYCStatusPending,
-		Tier:   shared.KYCTierBasic,
-	}
-	assert.False(t, profile2.CanUpgrade(shared.KYCTierEnhanced))
-
-	profile3 := &KYCProfile{
-		Status: shared.KYCStatusApproved,
-		Tier:   shared.KYCTierInstitutional,
-	}
-	assert.False(t, profile3.CanUpgrade(shared.KYCTierEnhanced)) // Already at max
+	newUser := &KYCProfile{Tier: shared.KYCTierNone, Status: shared.KYCStatusPending}
+	assert.True(t, newUser.CanUpgrade(shared.KYCTierBasic), "a new user can start their KYC")
+	assert.False(t, (&KYCProfile{Tier: shared.KYCTierBasic, Status: shared.KYCStatusApproved}).CanUpgrade(shared.KYCTierNone))
+	assert.False(t, (&KYCProfile{Tier: "PLATINUM", Status: shared.KYCStatusApproved}).CanUpgrade(shared.KYCTierInstitutional), "an unknown current tier")
+	assert.False(t, (&KYCProfile{Tier: shared.KYCTierBasic, Status: shared.KYCStatusApproved}).CanUpgrade("PLATINUM"), "an unknown target tier")
 }
 
 func TestKYCDocument(t *testing.T) {
