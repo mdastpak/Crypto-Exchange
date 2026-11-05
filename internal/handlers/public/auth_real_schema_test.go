@@ -33,9 +33,7 @@ import (
 )
 
 // The tests in this file run the OTP sign-in flow against a database built by
-// the real migrations. The suite in auth_integration_test.go uses the
-// hand-written schema from db.NewTestPostgresService, which lacks the
-// production constraints on users and therefore cannot catch schema defects.
+// the real migrations, so that they see the production constraints on users.
 
 const realSchemaTestDBName = "testdb_public_real_schema"
 

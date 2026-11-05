@@ -26,35 +26,10 @@ const (
 	testPGSSLMode  = "disable"
 
 	// migrationsTestDBName is a dedicated database used only by the
-	// full-migration tests below. go test runs different packages in
-	// parallel, and several other packages call NewTestPostgresService
-	// against the shared testPGDBName database; running full schema
-	// resets/migrations there would race with them. Using an isolated
-	// database sidesteps that entirely instead of relying on cross-process
-	// locking.
+	// migration tests below, so that their schema resets cannot race the
+	// tests of other packages, which go test runs in parallel.
 	migrationsTestDBName = "testdb_migrations"
 )
-
-func TestNewTestPostgresService_Success(t *testing.T) {
-	svc, err := NewTestPostgresService(testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
-	require.NoError(t, err)
-	require.NotNil(t, svc)
-	defer svc.Close()
-
-	assert.NoError(t, svc.Ping(context.Background()))
-}
-
-func TestNewTestPostgresService_InvalidHost(t *testing.T) {
-	svc, err := NewTestPostgresService("no-such-host-xyz", testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
-	assert.Error(t, err)
-	assert.Nil(t, svc)
-}
-
-func TestNewTestPostgresService_InvalidCredentials(t *testing.T) {
-	svc, err := NewTestPostgresService(testPGHost, testPGPort, testPGUser, "definitely-wrong-password", testPGDBName, testPGSSLMode)
-	assert.Error(t, err)
-	assert.Nil(t, svc)
-}
 
 func TestPostgresService_PingNilDB(t *testing.T) {
 	svc := &PostgresService{}
@@ -73,9 +48,19 @@ func TestPostgresService_CloseNilDB(t *testing.T) {
 	assert.NoError(t, svc.Close())
 }
 
-func TestPostgresService_StatsAfterConnect(t *testing.T) {
-	svc, err := NewTestPostgresService(testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
+// openTestDB connects to the shared test database. The tests that use it
+// need a connection, not a schema.
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	conn, err := sql.Open("pgx", fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode))
 	require.NoError(t, err)
+	require.NoError(t, conn.Ping())
+	return conn
+}
+
+func TestPostgresService_StatsAfterConnect(t *testing.T) {
+	svc := &PostgresService{DB: openTestDB(t)}
 	defer svc.Close()
 
 	stats := svc.Stats()
@@ -106,7 +91,7 @@ func TestNewPostgresService_UsesConfigAndAppliesPoolSettings(t *testing.T) {
 	// slashes for a valid file:// URL on Windows). This test runs against
 	// its own dedicated database (migrationsTestDBName), migrated forward
 	// to the latest version to match production schema, so it cannot race
-	// other packages' tests that use the shared testPGDBName database.
+	// the tests of other packages.
 	cwd, err := filepath.Abs(".")
 	require.NoError(t, err)
 	migrationsAbs := filepath.Join(cwd, "migrations")
@@ -322,22 +307,20 @@ func TestNewPostgresService_FailsFastWithBadHost(t *testing.T) {
 }
 
 func TestPingWithRetry_SucceedsAfterTransientFailures(t *testing.T) {
-	svc, err := NewTestPostgresService(testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
-	require.NoError(t, err)
-	defer svc.Close()
+	conn := openTestDB(t)
+	defer conn.Close()
 
 	// A healthy DB should succeed immediately regardless of the retry budget.
-	err = pingWithRetry(svc.DB, 3, 10*time.Millisecond)
+	err := pingWithRetry(conn, 3, 10*time.Millisecond)
 	assert.NoError(t, err)
 }
 
 func TestPingWithRetry_ExhaustsAttemptsAndReturnsLastError(t *testing.T) {
-	svc, err := NewTestPostgresService(testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
-	require.NoError(t, err)
-	svc.Close() // closed DB handle: subsequent pings must fail
+	conn := openTestDB(t)
+	conn.Close() // closed DB handle: subsequent pings must fail
 
 	start := time.Now()
-	err = pingWithRetry(svc.DB, 3, 20*time.Millisecond)
+	err := pingWithRetry(conn, 3, 20*time.Millisecond)
 	elapsed := time.Since(start)
 
 	assert.Error(t, err)
@@ -346,12 +329,11 @@ func TestPingWithRetry_ExhaustsAttemptsAndReturnsLastError(t *testing.T) {
 }
 
 func TestPingWithRetry_NormalizesInvalidArguments(t *testing.T) {
-	svc, err := NewTestPostgresService(testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
-	require.NoError(t, err)
-	defer svc.Close()
+	conn := openTestDB(t)
+	defer conn.Close()
 
 	// maxAttempts <= 0 and delay <= 0 should be normalized instead of looping forever.
-	err = pingWithRetry(svc.DB, 0, 0)
+	err := pingWithRetry(conn, 0, 0)
 	assert.NoError(t, err)
 }
 

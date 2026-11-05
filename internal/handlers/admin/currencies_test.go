@@ -16,6 +16,7 @@ import (
 	"encrypted-db/internal/db"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/rabbitmq"
+	"encrypted-db/internal/testutil/pgtest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -25,14 +26,9 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-const (
-	testPGHost     = "localhost"
-	testPGPort     = "5432"
-	testPGUser     = "postgres"
-	testPGPassword = "test"
-	testPGDBName   = "testdb"
-	testPGSSLMode  = "disable"
-)
+// currenciesTestDBName is the database of this suite, so that its resets do
+// not race the tests of other packages.
+const currenciesTestDBName = "testdb_admin_currencies"
 
 // AdminCurrenciesTestSuite exercises the currency admin handlers against a
 // real Postgres and Redis instance (the same shared test infrastructure used
@@ -81,38 +77,9 @@ func (p *recordingPublisher) take() []string {
 func (s *AdminCurrenciesTestSuite) SetupSuite() {
 	gin.SetMode(gin.TestMode)
 
-	svc, err := db.NewTestPostgresService(testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
-	require.NoError(s.T(), err)
-	s.postgresSvc = svc
-
-	_, err = s.postgresSvc.DB.Exec(`
-		DROP TABLE IF EXISTS currencies;
-		DROP TYPE IF EXISTS STATUS_ENUM;
-		CREATE TYPE STATUS_ENUM AS ENUM ('approved', 'deleted', 'pending', 'suspend');
-		CREATE TABLE currencies (
-			id SERIAL PRIMARY KEY,
-			hk UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
-			status STATUS_ENUM DEFAULT 'pending',
-			info JSONB NOT NULL,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
-			deleted_at TIMESTAMP NULL
-		);
-		ALTER TABLE currencies
-		ADD CONSTRAINT info_structure CHECK (
-			info ? 'fa_name' AND
-			info ? 'en_name' AND
-			info ? 'symbol' AND
-			info ? 'if_fiat' AND
-			info ? 'is_token' AND
-			info ? 'contract'
-		);
-		CREATE UNIQUE INDEX currencies_info_symbol_unique ON currencies ((info->>'symbol'));
-		-- As migration 13: only non-empty contracts are unique.
-		CREATE UNIQUE INDEX currencies_info_contract_unique ON currencies ((info->>'contract'))
-			WHERE info->>'contract' <> '';
-	`)
-	require.NoError(s.T(), err)
+	// The schema comes from the repository migrations, so the suite sees the
+	// constraints and indexes of production.
+	s.postgresSvc = &db.PostgresService{DB: pgtest.Migrated(s.T(), currenciesTestDBName)}
 }
 
 func (s *AdminCurrenciesTestSuite) SetupTest() {
@@ -146,14 +113,6 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 func (s *AdminCurrenciesTestSuite) TearDownTest() {
 	s.redisClient.FlushDB(context.Background())
 	s.redisClient.Close()
-}
-
-func (s *AdminCurrenciesTestSuite) TearDownSuite() {
-	if s.postgresSvc != nil {
-		s.postgresSvc.DB.Exec("DROP TABLE IF EXISTS currencies")
-		s.postgresSvc.DB.Exec("DROP TYPE IF EXISTS STATUS_ENUM")
-		s.postgresSvc.Close()
-	}
 }
 
 func TestAdminCurrenciesSuite(t *testing.T) {
