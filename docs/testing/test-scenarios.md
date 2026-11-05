@@ -88,7 +88,7 @@ Protected routes require `Authorization: Bearer <token>` since [#17](https://git
 
 ---
 
-# 1. User Handler and `/user/profile`
+## 1. User Handler and `/user/profile`
 
 Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `cmd/server/main.go`.
 
@@ -139,7 +139,7 @@ Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `
 
 ---
 
-# 2. Public Active Currencies
+## 2. Public Active Currencies
 
 Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/main.go:241`.
 
@@ -174,7 +174,7 @@ Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/mai
 | C-24 | P1 / contract | `OPTIONS` preflight from an allowed origin | `204`; allowed methods and headers are present | Passes; verify disallowed-origin behavior too |
 | C-25 | P1 / contract | Response schema is compared with Swagger | Actual JSON matches the documented schema | **Gap:** Swagger documents a raw array, while handlers return `models.APIResponse` |
 
-## Currency by HK
+### Currency by HK
 
 Implementation: `internal/handlers/public/auth.go:350`.
 
@@ -191,7 +191,7 @@ Implementation: `internal/handlers/public/auth.go:350`.
 
 ---
 
-# 3. OTP, JWT, Refresh, and Logout
+## 3. OTP, JWT, Refresh, and Logout
 
 Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`, `internal/auth/middleware.go:99`, `internal/auth/blacklist.go:29`.
 
@@ -228,7 +228,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 
 ---
 
-# 4. Admin Currency and Cache Lifecycle
+## 4. Admin Currency and Cache Lifecycle
 
 Implementation: `internal/handlers/admin/currencies.go:71`.
 
@@ -253,7 +253,7 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 
 ---
 
-# 5. Middleware, Security, and API Contract
+## 5. Middleware, Security, and API Contract
 
 Relevant code: `internal/middleware/security.go:11`, `internal/middleware/validation.go:34`, `internal/middleware/ratelimit.go:65`, `cmd/server/main.go:275`.
 
@@ -281,7 +281,7 @@ Relevant code: `internal/middleware/security.go:11`, `internal/middleware/valida
 
 ---
 
-# 6. WebSocket and RabbitMQ Currency Updates
+## 6. WebSocket and RabbitMQ Currency Updates
 
 Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/socket/currencies.go:9`, `internal/rabbitmq/rabbitmq.go:227`.
 
@@ -310,7 +310,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 
 ---
 
-# 7. Health, Migrations, Configuration, and Shutdown
+## 7. Health, Migrations, Configuration, and Shutdown
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
@@ -330,9 +330,9 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 
 ---
 
-# 8. Critical Review Findings
+## 8. Critical Review Findings
 
-## Finding status
+### Finding status
 
 Status as of 2026-11-05. The tables after this one are the original findings, unchanged.
 
@@ -361,7 +361,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | Observability and maintainability (P2) | Open: [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50) |
 | Minimum CI gates (section 9) | Open: [#36](https://github.com/mdastpak/Crypto-Exchange/issues/36) |
 
-## P0 — Fix before merge
+### P0 — Fix before merge
 
 | Finding | Evidence | Affected scenarios | Recommended correction |
 |---|---|---|---|
@@ -376,7 +376,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | Malformed OTP data can panic | `otpInfo["auth"].(string)` at `internal/handlers/public/auth.go:155` | A-13 | Type-check and handle missing/wrong types |
 | User migration references the wrong table | `internal/db/migrations/2_create_users_table.up.sql:23` indexes `currencies` | S-06 | Change the index target to `users` and test a fresh migration |
 
-## P1 — Fix in the next hardening pass
+### P1 — Fix in the next hardening pass
 
 | Finding | Evidence | Affected scenarios | Recommended correction |
 |---|---|---|---|
@@ -391,7 +391,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | Cache and event failures are silently non-fatal | Admin handlers log cache/publish errors and still return success | D-01, D-12, D-13 | Add an outbox/reconciliation path and explicit degradation semantics |
 | Global config and RSA keys make tests order-dependent | `config.Config` and auth key variables are package-level | All auth/rate-limit tests | Inject configuration/keys or provide a test reset helper |
 
-## P2 — Observability and maintainability
+### P2 — Observability and maintainability
 
 - Add scenario assertions for structured logs, request IDs, latency metrics, and rate-limit metrics.
 - Add benchmarks for large cache scans, JSON marshaling, and WebSocket fanout.
@@ -400,9 +400,9 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 
 ---
 
-# 9. Automation Plan
+## 9. Automation Plan
 
-## Test layers
+### Test layers
 
 | Layer | Recommended harness | Scenarios |
 |---|---|---|
@@ -411,7 +411,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | Integration | Isolated PostgreSQL, Redis, and RabbitMQ containers; unique schema/database | A-01–A-27, D-01–D-16, W-10–W-18, S-01–S-12 |
 | E2E | Start the server, call HTTP/WebSocket clients, exercise lifecycle and shutdown | U-30, C-17–C-24, A-08–A-21, W-01–W-15, S-12 |
 
-## Minimum CI gates
+### Minimum CI gates
 
 1. `go test ./...`
 2. `go test -race ./internal/auth ./internal/middleware ./internal/handlers/...`
@@ -421,7 +421,7 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 6. Integration suite with fresh PostgreSQL/Redis/RabbitMQ services
 7. Contract test comparing actual JSON schemas with Swagger/OpenAPI
 
-## Coverage targets
+### Coverage targets
 
 | Area | Target |
 |---|---|
@@ -431,6 +431,6 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | WebSocket/RabbitMQ | 80%+ branch coverage plus race and shutdown tests |
 | Domain models | Focus on business invariants; do not count wrapper delegation to external libraries as meaningful coverage |
 
-## Known baseline
+### Known baseline
 
 The current clean worktree has passing tests only in `internal/domain/shared` and `internal/middleware`; handler, auth, database, RabbitMQ, and WebSocket packages have no tests. The candidate integration suite in the related worktree requires external services, has uninitialized JWT state, and contains a nil-response panic on an empty currency list. Those issues are represented by the P0 scenarios above.

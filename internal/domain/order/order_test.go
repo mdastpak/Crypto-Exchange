@@ -162,7 +162,7 @@ func TestOrderEvent(t *testing.T) {
 
 func TestOrderBookSnapshot(t *testing.T) {
 	snapshot := &OrderBookSnapshot{
-		MarketID: shared.NewUUID(),
+		MarketID:  shared.NewUUID(),
 		Timestamp: shared.Timestamp{},
 		Sequence:  100,
 		Bids: []OrderBookLevel{
@@ -188,12 +188,12 @@ func TestOrder_WithMarket(t *testing.T) {
 	order := &Order{
 		MarketID: shared.NewUUID(),
 		Market: &market.Market{
-			ID:            shared.NewUUID(),
-			Status:        market.MarketStatusActive,
-			TickSize:      shared.MustNewDecimalFromString("0.01"),
-			LotSize:       shared.MustNewDecimalFromString("0.001"),
-			MinOrderSize:  shared.MustNewDecimalFromString("0.001"),
-			MaxOrderSize:  shared.MustNewDecimalFromString("1000"),
+			ID:           shared.NewUUID(),
+			Status:       market.MarketStatusActive,
+			TickSize:     shared.MustNewDecimalFromString("0.01"),
+			LotSize:      shared.MustNewDecimalFromString("0.001"),
+			MinOrderSize: shared.MustNewDecimalFromString("0.001"),
+			MaxOrderSize: shared.MustNewDecimalFromString("1000"),
 		},
 	}
 
@@ -206,15 +206,15 @@ func TestOrder_WithMarket(t *testing.T) {
 
 func TestOrder_FeeCalculation(t *testing.T) {
 	order := &Order{
-		Quantity:       shared.MustNewDecimalFromString("10"),
-		Price:          shared.MustNewDecimalFromString("100"),
-		FeeRateBPS:     10, // 0.1%
-		FeeAssetID:     shared.NewUUID(),
+		Quantity:   shared.MustNewDecimalFromString("10"),
+		Price:      shared.MustNewDecimalFromString("100"),
+		FeeRateBPS: 10, // 0.1%
+		FeeAssetID: shared.NewUUID(),
 	}
 
 	notional := order.Price.Mul(order.Quantity)
 	expectedFee := notional.Mul(shared.MustNewDecimalFromString("0.001")) // 10 bps = 0.1%
-	
+
 	// Fee = Notional * FeeRateBPS / 10000
 	fee := notional.Mul(shared.MustNewDecimalFromString("10")).Div(shared.MustNewDecimalFromString("10000"))
 	assert.Equal(t, expectedFee.String(), fee.String())
@@ -232,9 +232,9 @@ func TestOrderEventType_String(t *testing.T) {
 
 func TestOrderBookLevel(t *testing.T) {
 	level := OrderBookLevel{
-		Price:       shared.MustNewDecimalFromString("100.50"),
-		Quantity:    shared.MustNewDecimalFromString("10"),
-		OrderCount:  3,
+		Price:      shared.MustNewDecimalFromString("100.50"),
+		Quantity:   shared.MustNewDecimalFromString("10"),
+		OrderCount: 3,
 	}
 
 	// Decimal.String() may not preserve trailing zeros

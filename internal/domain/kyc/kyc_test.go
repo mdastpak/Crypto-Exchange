@@ -61,15 +61,15 @@ func TestKYCProfile_CanUpgrade(t *testing.T) {
 
 func TestKYCDocument(t *testing.T) {
 	doc := &KYCDocument{
-		ID:            shared.NewUUID(),
-		KYCProfileID:  shared.NewUUID(),
-		Type:          DocumentTypePassport,
-		Status:        DocumentStatusPending,
-		FileName:      "passport.jpg",
-		FileSize:      1024000,
-		MimeType:      "image/jpeg",
-		StoragePath:   "s3://bucket/kyc/passport.jpg",
-		CreatedAt:     shared.Timestamp{},
+		ID:           shared.NewUUID(),
+		KYCProfileID: shared.NewUUID(),
+		Type:         DocumentTypePassport,
+		Status:       DocumentStatusPending,
+		FileName:     "passport.jpg",
+		FileSize:     1024000,
+		MimeType:     "image/jpeg",
+		StoragePath:  "s3://bucket/kyc/passport.jpg",
+		CreatedAt:    shared.Timestamp{},
 	}
 
 	assert.Equal(t, DocumentTypePassport, doc.Type)
@@ -112,14 +112,14 @@ func TestDocumentStatus_String(t *testing.T) {
 
 func TestKYCApplication(t *testing.T) {
 	app := &KYCApplication{
-		ID:             shared.NewUUID(),
-		UserID:         shared.NewUUID(),
-		RequestedTier:  shared.KYCTierEnhanced,
-		Status:         shared.KYCStatusPending,
-		FormData:       `{"first_name":"John","last_name":"Doe"}`,
-		Documents:      []shared.UUID{shared.NewUUID(), shared.NewUUID()},
-		Provider:       "sumsub",
-		CreatedAt:      shared.Timestamp{},
+		ID:            shared.NewUUID(),
+		UserID:        shared.NewUUID(),
+		RequestedTier: shared.KYCTierEnhanced,
+		Status:        shared.KYCStatusPending,
+		FormData:      `{"first_name":"John","last_name":"Doe"}`,
+		Documents:     []shared.UUID{shared.NewUUID(), shared.NewUUID()},
+		Provider:      "sumsub",
+		CreatedAt:     shared.Timestamp{},
 	}
 
 	assert.Equal(t, shared.KYCTierEnhanced, app.RequestedTier)
@@ -140,16 +140,16 @@ func TestKYCApplication_StatusTransitions(t *testing.T) {
 
 func TestSanctionsScreening(t *testing.T) {
 	screening := &SanctionsScreening{
-		ID:              shared.NewUUID(),
-		UserID:          func() *shared.UUID { id := shared.NewUUID(); return &id }(),
-		ScreenType:      ScreenTypeUserOnboarding,
-		Provider:        "chainalysis",
-		ProviderRefID:   "ref-123",
-		Action:          shared.SanctionActionAllow,
-		RiskScore:       10.5,
-		MatchedLists:    []string{},
-		MatchedEntries:  []string{},
-		CreatedAt:       shared.Timestamp{},
+		ID:             shared.NewUUID(),
+		UserID:         func() *shared.UUID { id := shared.NewUUID(); return &id }(),
+		ScreenType:     ScreenTypeUserOnboarding,
+		Provider:       "chainalysis",
+		ProviderRefID:  "ref-123",
+		Action:         shared.SanctionActionAllow,
+		RiskScore:      10.5,
+		MatchedLists:   []string{},
+		MatchedEntries: []string{},
+		CreatedAt:      shared.Timestamp{},
 	}
 
 	assert.Equal(t, ScreenTypeUserOnboarding, screening.ScreenType)
@@ -233,13 +233,13 @@ func TestAMLAction_String(t *testing.T) {
 
 func TestAMLAlert(t *testing.T) {
 	alert := &AMLAlert{
-		ID:           shared.NewUUID(),
-		RuleID:       shared.NewUUID(),
-		UserID:       shared.NewUUID(),
-		TriggerData:  `{"tx_count": 15, "time_window": "1h"}`,
-		RiskScore:    75.0,
-		Status:       AMLAlertStatusOpen,
-		CreatedAt:    shared.Timestamp{},
+		ID:          shared.NewUUID(),
+		RuleID:      shared.NewUUID(),
+		UserID:      shared.NewUUID(),
+		TriggerData: `{"tx_count": 15, "time_window": "1h"}`,
+		RiskScore:   75.0,
+		Status:      AMLAlertStatusOpen,
+		CreatedAt:   shared.Timestamp{},
 	}
 
 	assert.Equal(t, AMLAlertStatusOpen, alert.Status)

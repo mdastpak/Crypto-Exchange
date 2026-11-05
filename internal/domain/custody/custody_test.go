@@ -29,11 +29,11 @@ func TestDepositAddress(t *testing.T) {
 
 func TestDepositAddress_Minimal(t *testing.T) {
 	addr := &DepositAddress{
-		ID:       shared.NewUUID(),
-		UserID:   shared.NewUUID(),
-		AssetID:  shared.NewUUID(),
-		Address:  "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-		Active:   true,
+		ID:      shared.NewUUID(),
+		UserID:  shared.NewUUID(),
+		AssetID: shared.NewUUID(),
+		Address: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+		Active:  true,
 	}
 
 	assert.NotEmpty(t, addr.ID)
@@ -44,20 +44,20 @@ func TestDepositAddress_Minimal(t *testing.T) {
 
 func TestDepositStatus(t *testing.T) {
 	status := &DepositStatus{
-		TxHash:             "0xabc123...",
-		AssetID:            shared.NewUUID(),
-		Address:            "0x123...",
-		Amount:             shared.MustNewDecimalFromString("1.5"),
-		ConfirmedAmount:    shared.MustNewDecimalFromString("1.5"),
-		Confirmations:      12,
-		RequiredConfirms:   12,
-		Status:             DepositStatusConfirmed,
-		DetectedAt:         shared.Timestamp{},
-		ConfirmedAt:        func() *shared.Timestamp { t := shared.Timestamp{}; return &t }(),
-		CreditedAt:         func() *shared.Timestamp { t := shared.Timestamp{}; return &t }(),
-		BlockHeight:        18000000,
-		BlockHash:          "0xblockhash...",
-		RawData:            `{"confirmations": 12}`,
+		TxHash:           "0xabc123...",
+		AssetID:          shared.NewUUID(),
+		Address:          "0x123...",
+		Amount:           shared.MustNewDecimalFromString("1.5"),
+		ConfirmedAmount:  shared.MustNewDecimalFromString("1.5"),
+		Confirmations:    12,
+		RequiredConfirms: 12,
+		Status:           DepositStatusConfirmed,
+		DetectedAt:       shared.Timestamp{},
+		ConfirmedAt:      func() *shared.Timestamp { t := shared.Timestamp{}; return &t }(),
+		CreditedAt:       func() *shared.Timestamp { t := shared.Timestamp{}; return &t }(),
+		BlockHeight:      18000000,
+		BlockHash:        "0xblockhash...",
+		RawData:          `{"confirmations": 12}`,
 	}
 
 	assert.Equal(t, DepositStatusConfirmed, status.Status)
@@ -108,18 +108,18 @@ func TestDepositStatusType_String(t *testing.T) {
 
 func TestWithdrawalRequest(t *testing.T) {
 	req := &WithdrawalRequest{
-		ID:              shared.NewUUID(),
-		UserID:          shared.NewUUID(),
-		SubAccountID:    func() *shared.UUID { id := shared.NewUUID(); return &id }(),
-		AssetID:         shared.NewUUID(),
-		Amount:          shared.MustNewDecimalFromString("10"),
-		Address:         "0xabcdef...",
-		Tag:             "memo123",
-		FeeLevel:        FeeLevelNormal,
-		SubtractFee:     false,
-		Priority:        true,
-		IdempotencyKey:  "idem-key-123",
-		CreatedAt:       shared.Timestamp{},
+		ID:             shared.NewUUID(),
+		UserID:         shared.NewUUID(),
+		SubAccountID:   func() *shared.UUID { id := shared.NewUUID(); return &id }(),
+		AssetID:        shared.NewUUID(),
+		Amount:         shared.MustNewDecimalFromString("10"),
+		Address:        "0xabcdef...",
+		Tag:            "memo123",
+		FeeLevel:       FeeLevelNormal,
+		SubtractFee:    false,
+		Priority:       true,
+		IdempotencyKey: "idem-key-123",
+		CreatedAt:      shared.Timestamp{},
 	}
 
 	assert.Equal(t, FeeLevelNormal, req.FeeLevel)
@@ -131,8 +131,8 @@ func TestWithdrawalRequest(t *testing.T) {
 func TestWithdrawalRequest_CustomFee(t *testing.T) {
 	customFee := shared.MustNewDecimalFromString("0.001")
 	req := &WithdrawalRequest{
-		FeeLevel:   FeeLevelCustom,
-		CustomFee:  &customFee,
+		FeeLevel:    FeeLevelCustom,
+		CustomFee:   &customFee,
 		SubtractFee: true,
 	}
 
@@ -152,12 +152,12 @@ func TestFeeLevel_String(t *testing.T) {
 func TestWithdrawalResult(t *testing.T) {
 	txHash := "0xtxhash..."
 	result := &WithdrawalResult{
-		WithdrawalID:  shared.NewUUID(),
-		TxHash:        &txHash,
-		Status:        WithdrawalStatusPending,
-		EstimatedFee:  shared.MustNewDecimalFromString("0.0005"),
-		NetAmount:     shared.MustNewDecimalFromString("9.9995"),
-		CreatedAt:     shared.Timestamp{},
+		WithdrawalID: shared.NewUUID(),
+		TxHash:       &txHash,
+		Status:       WithdrawalStatusPending,
+		EstimatedFee: shared.MustNewDecimalFromString("0.0005"),
+		NetAmount:    shared.MustNewDecimalFromString("9.9995"),
+		CreatedAt:    shared.Timestamp{},
 	}
 
 	assert.NotEmpty(t, result.WithdrawalID)
@@ -193,13 +193,13 @@ func TestWithdrawalStatusType_String(t *testing.T) {
 
 func TestFeeEstimate(t *testing.T) {
 	estimate := &FeeEstimate{
-		AssetID:      shared.NewUUID(),
-		FeeLevel:     FeeLevelNormal,
-		EstimatedFee: shared.MustNewDecimalFromString("0.0005"),
+		AssetID:       shared.NewUUID(),
+		FeeLevel:      FeeLevelNormal,
+		EstimatedFee:  shared.MustNewDecimalFromString("0.0005"),
 		EstimatedTime: "10-30 minutes",
-		MinFee:       shared.MustNewDecimalFromString("0.0003"),
-		MaxFee:       shared.MustNewDecimalFromString("0.001"),
-		UpdatedAt:    shared.Timestamp{},
+		MinFee:        shared.MustNewDecimalFromString("0.0003"),
+		MaxFee:        shared.MustNewDecimalFromString("0.001"),
+		UpdatedAt:     shared.Timestamp{},
 	}
 
 	assert.Equal(t, FeeLevelNormal, estimate.FeeLevel)
@@ -259,15 +259,15 @@ func TestSettlementType_String(t *testing.T) {
 
 func TestSettlementInstruction(t *testing.T) {
 	instr := &SettlementInstruction{
-		ID:             shared.NewUUID(),
-		Type:           SettlementTypeTransfer,
-		FromUserID:     shared.NewUUID(),
-		ToUserID:       shared.NewUUID(),
-		AssetID:        shared.NewUUID(),
-		Amount:         shared.MustNewDecimalFromString("100"),
-		Mode:           shared.SettlementModeOffChain,
-		Status:         SettlementStatusPending,
-		CreatedAt:      shared.Timestamp{},
+		ID:         shared.NewUUID(),
+		Type:       SettlementTypeTransfer,
+		FromUserID: shared.NewUUID(),
+		ToUserID:   shared.NewUUID(),
+		AssetID:    shared.NewUUID(),
+		Amount:     shared.MustNewDecimalFromString("100"),
+		Mode:       shared.SettlementModeOffChain,
+		Status:     SettlementStatusPending,
+		CreatedAt:  shared.Timestamp{},
 	}
 
 	assert.Equal(t, SettlementTypeTransfer, instr.Type)

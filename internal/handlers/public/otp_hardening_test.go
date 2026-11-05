@@ -81,7 +81,11 @@ func TestVerifyOTP_RealSchema_ConcurrentUseOfACodeSignsInOnce(t *testing.T) {
 	statuses := verifyInParallel(t, router, sessionID, code, 10)
 
 	assert.Equal(t, 1, statuses[http.StatusOK], "a code signs in only once: %v", statuses)
-	assert.Equal(t, 9, statuses[http.StatusUnauthorized], "%v", statuses)
+	// The other attempts are refused: as unknown once the winner has ended
+	// the session, or as too many when they come before that, but after the
+	// five that retry_limit allows. Which of the two depends on timing.
+	assert.Equal(t, 9, statuses[http.StatusUnauthorized]+statuses[http.StatusTooManyRequests], "%v", statuses)
+	assert.LessOrEqual(t, statuses[http.StatusTooManyRequests], 10-5, "only attempts beyond retry_limit count as too many: %v", statuses)
 }
 
 func TestRequestOTP_RealSchema_LimitsCodesPerContact(t *testing.T) {

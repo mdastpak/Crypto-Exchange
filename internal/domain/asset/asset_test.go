@@ -58,7 +58,7 @@ func TestAsset_RequiresTag(t *testing.T) {
 
 func TestAsset_RoundQuantity(t *testing.T) {
 	asset := &Asset{Decimals: 8}
-	
+
 	// Test rounding to 8 decimals
 	qty := shared.MustNewDecimalFromString("1.00000000")
 	rounded := asset.RoundQuantity(qty)
@@ -73,9 +73,9 @@ func TestAsset_RoundQuantity(t *testing.T) {
 
 func TestAsset_ValidateWithdrawal(t *testing.T) {
 	asset := &Asset{
-		MinWithdrawal:   shared.MustNewDecimalFromString("0.001"),
-		MaxWithdrawal:   shared.MustNewDecimalFromString("1000"),
-		WithdrawalFee:   shared.MustNewDecimalFromString("0.0005"),
+		MinWithdrawal:     shared.MustNewDecimalFromString("0.001"),
+		MaxWithdrawal:     shared.MustNewDecimalFromString("1000"),
+		WithdrawalFee:     shared.MustNewDecimalFromString("0.0005"),
 		WithdrawalEnabled: true,
 	}
 
