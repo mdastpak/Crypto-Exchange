@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
 	"github.com/redis/go-redis/v9"

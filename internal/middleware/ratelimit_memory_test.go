@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 
 	"github.com/gin-gonic/gin"

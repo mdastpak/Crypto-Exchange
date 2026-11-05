@@ -20,7 +20,7 @@ var envAssignment = regexp.MustCompile(`^(#\s*)?([A-Z][A-Z0-9_]*)=(.*)$`)
 // ones that are commented out.
 func envExample(t *testing.T) (map[string]string, []string) {
 	t.Helper()
-	file, err := os.Open(filepath.Join("..", ".env.example"))
+	file, err := os.Open(filepath.Join("..", "..", ".env.example"))
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -96,7 +96,7 @@ func keys(m map[string]string) []string {
 }
 
 func TestEnvVars_AreDocumented(t *testing.T) {
-	doc, err := os.ReadFile(filepath.Join("..", "docs", "configuration.md"))
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration.md"))
 	require.NoError(t, err)
 	seen := map[string]bool{}
 	for _, v := range envVars {
@@ -146,6 +146,12 @@ func TestOverlayEnv_ServerModeWinsOverGinMode(t *testing.T) {
 	assert.Equal(t, "test", c.Server.Mode)
 }
 
+// configFile returns the path of a file in config/, where the configuration
+// files are, from the directory of this package.
+func configFile(name string) string {
+	return filepath.Join("..", "..", "config", name)
+}
+
 // loadFile loads a configuration file with only the given environment
 // variables set among the ones the configuration reads.
 func loadFile(t *testing.T, path string, env map[string]string) error {
@@ -160,16 +166,16 @@ func loadFile(t *testing.T, path string, env map[string]string) error {
 }
 
 func TestLoad_RejectsAnUnknownServerMode(t *testing.T) {
-	err := loadFile(t, "config.compose.yaml", map[string]string{"SERVER_MODE": "production"})
+	err := loadFile(t, configFile("config.compose.yaml"), map[string]string{"SERVER_MODE": "production"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `server.mode (SERVER_MODE) is "production"`)
 
-	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{"GIN_MODE": "release"}))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{"GIN_MODE": "release"}))
 	assert.Equal(t, "release", Config.Server.Mode)
 }
 
 func TestLoad_ReportsInvalidEnvironmentVariables(t *testing.T) {
-	err := loadFile(t, "config.compose.yaml", map[string]string{"POSTGRES_MAX_OPEN_CONNS": "many"})
+	err := loadFile(t, configFile("config.compose.yaml"), map[string]string{"POSTGRES_MAX_OPEN_CONNS": "many"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "POSTGRES_MAX_OPEN_CONNS")
 }
@@ -216,17 +222,17 @@ func TestValidateServer_NamesEveryMissingSetting(t *testing.T) {
 // TestConfigExample_StartsWithCredentialsFromTheEnvironment loads the
 // example file, which is also the embedded fallback, as a local run would.
 func TestConfigExample_StartsWithCredentialsFromTheEnvironment(t *testing.T) {
-	data, err := os.ReadFile("config.example.yaml")
+	data, err := os.ReadFile(configFile("config.example.yaml"))
 	require.NoError(t, err)
 	assert.NotRegexp(t, `(?m)^[^#]*:\s*"?\$\{`, string(data), "placeholders are not expanded, so values must not use them")
 
-	err = loadFile(t, "config.example.yaml", nil)
+	err = loadFile(t, configFile("config.example.yaml"), nil)
 	require.NoError(t, err)
 	err = ValidateServer()
 	require.Error(t, err, "RabbitMQ credentials come from the environment")
 	assert.Contains(t, err.Error(), "rabbitmq.username (RABBITMQ_USER)")
 
-	require.NoError(t, loadFile(t, "config.example.yaml", map[string]string{
+	require.NoError(t, loadFile(t, configFile("config.example.yaml"), map[string]string{
 		"RABBITMQ_USER": "guest", "RABBITMQ_PASSWORD": "guest",
 	}))
 	assert.NoError(t, ValidateServer())
@@ -247,7 +253,7 @@ func TestComposeConfig_WithEnvExample(t *testing.T) {
 	} {
 		values[name] = value
 	}
-	require.NoError(t, loadFile(t, "config.compose.yaml", values))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), values))
 	require.NoError(t, ValidateServer())
 	assert.Equal(t, "exchange", Config.Postgres.DBName)
 	assert.Equal(t, "guest", Config.RabbitMQ.Username)
@@ -284,24 +290,24 @@ func TestSwaggerEnabled_DefaultsToOffInReleaseMode(t *testing.T) {
 }
 
 func TestRateLimitOnError_DefaultsAndValidation(t *testing.T) {
-	require.NoError(t, loadFile(t, "config.compose.yaml", nil))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
 	limits := Config.RateLimits
 	assert.Equal(t, RateLimitAllow, limits.REST.OnError, "the API stays available while Redis is unreachable")
 	assert.Equal(t, RateLimitAllow, limits.WS.OnError)
 	assert.Equal(t, RateLimitAllow, limits.Trading.OnError)
 	assert.Equal(t, RateLimitDeny, limits.Auth.OnError, "sign-in limits fail closed")
 
-	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_REST_ON_ERROR": "deny", "RATE_LIMITS_AUTH_ON_ERROR": "allow"}))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{"RATE_LIMITS_REST_ON_ERROR": "deny", "RATE_LIMITS_AUTH_ON_ERROR": "allow"}))
 	assert.Equal(t, RateLimitDeny, Config.RateLimits.REST.OnError)
 	assert.Equal(t, RateLimitAllow, Config.RateLimits.Auth.OnError)
 
-	err := loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_WS_ON_ERROR": "ignore"})
+	err := loadFile(t, configFile("config.compose.yaml"), map[string]string{"RATE_LIMITS_WS_ON_ERROR": "ignore"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `rate_limits.ws.on_error (RATE_LIMITS_WS_ON_ERROR) is "ignore"`)
 }
 
 func TestRedisTimeouts_DefaultsAndValidation(t *testing.T) {
-	require.NoError(t, loadFile(t, "config.compose.yaml", nil))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
 	assert.Equal(t, DefaultRedisDialTimeoutMs, Config.Redis.DialTimeoutMs)
 	assert.Equal(t, DefaultRedisReadTimeoutMs, Config.Redis.ReadTimeoutMs)
 	assert.Equal(t, DefaultRedisWriteTimeoutMs, Config.Redis.WriteTimeoutMs)
@@ -309,7 +315,7 @@ func TestRedisTimeouts_DefaultsAndValidation(t *testing.T) {
 	assert.Equal(t, DefaultRedisMaxRetries, Config.Redis.MaxRetries)
 	assert.Equal(t, DefaultRateLimitTimeoutMs, Config.RateLimits.TimeoutMs)
 
-	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
 		"REDIS_DIAL_TIMEOUT_MS": "300", "REDIS_READ_TIMEOUT_MS": "400", "REDIS_WRITE_TIMEOUT_MS": "500",
 		"REDIS_POOL_TIMEOUT_MS": "600", "REDIS_MAX_RETRIES": "-1", "RATE_LIMITS_TIMEOUT_MS": "50",
 	}))
@@ -320,13 +326,13 @@ func TestRedisTimeouts_DefaultsAndValidation(t *testing.T) {
 	assert.Equal(t, -1, Config.Redis.MaxRetries, "-1 turns retries off")
 	assert.Equal(t, 50, Config.RateLimits.TimeoutMs)
 
-	err := loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_TIMEOUT_MS": "-5"})
+	err := loadFile(t, configFile("config.compose.yaml"), map[string]string{"RATE_LIMITS_TIMEOUT_MS": "-5"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate_limits.timeout_ms (RATE_LIMITS_TIMEOUT_MS) is -5")
-	err = loadFile(t, "config.compose.yaml", map[string]string{"REDIS_READ_TIMEOUT_MS": "-1"})
+	err = loadFile(t, configFile("config.compose.yaml"), map[string]string{"REDIS_READ_TIMEOUT_MS": "-1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis.read_timeout_ms (REDIS_READ_TIMEOUT_MS) is -1")
-	err = loadFile(t, "config.compose.yaml", map[string]string{"REDIS_MAX_RETRIES": "-2"})
+	err = loadFile(t, configFile("config.compose.yaml"), map[string]string{"REDIS_MAX_RETRIES": "-2"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "redis.max_retries (REDIS_MAX_RETRIES) is -2")
 }
@@ -337,12 +343,12 @@ func TestMilliseconds_FallsBackWhenNotSet(t *testing.T) {
 }
 
 func TestKeys_DefaultsAndValidation(t *testing.T) {
-	require.NoError(t, loadFile(t, "config.compose.yaml", nil))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
 	assert.Equal(t, "", Config.Keys.Provider, "the data-protection keys are off unless configured")
 	assert.Equal(t, "transit", Config.Keys.Transit.Mount)
 	assert.Equal(t, 10, Config.Keys.Transit.Timeout)
 
-	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
 		"KEYS_PROVIDER": "transit", "VAULT_ADDR": "https://vault:8200", "VAULT_TOKEN": "s.token", "VAULT_CACERT": "/run/ca.pem",
 		"KEYS_TRANSIT_TOKEN_FILE": "/run/token", "KEYS_TRANSIT_MOUNT": "kms", "KEYS_TRANSIT_KEY": "data-keys", "KEYS_TRANSIT_TIMEOUT_SECONDS": "3",
 	}))
@@ -352,13 +358,13 @@ func TestKeys_DefaultsAndValidation(t *testing.T) {
 		[]string{transit.Address, transit.Token, transit.CACert, transit.TokenFile, transit.Mount, transit.Key})
 	assert.Equal(t, 3, transit.Timeout)
 
-	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{"KEYS_PROVIDER": "local", "KEYS_LOCAL_KEK": "a2V5"}))
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{"KEYS_PROVIDER": "local", "KEYS_LOCAL_KEK": "a2V5"}))
 	assert.Equal(t, "a2V5", Config.Keys.Local.KEK)
 
-	err := loadFile(t, "config.compose.yaml", map[string]string{"KEYS_PROVIDER": "aws"})
+	err := loadFile(t, configFile("config.compose.yaml"), map[string]string{"KEYS_PROVIDER": "aws"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `keys.provider (KEYS_PROVIDER) is "aws"`)
-	err = loadFile(t, "config.compose.yaml", map[string]string{"KEYS_TRANSIT_TIMEOUT_SECONDS": "-1"})
+	err = loadFile(t, configFile("config.compose.yaml"), map[string]string{"KEYS_TRANSIT_TIMEOUT_SECONDS": "-1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "keys.transit.timeout_seconds (KEYS_TRANSIT_TIMEOUT_SECONDS) is -1")
 }

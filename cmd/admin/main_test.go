@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 
 	_ "github.com/jackc/pgx/v5/stdlib"

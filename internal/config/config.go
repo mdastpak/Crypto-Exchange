@@ -1,7 +1,6 @@
 package config
 
 import (
-	"embed"
 	"errors"
 	"fmt"
 	"log"
@@ -10,11 +9,10 @@ import (
 	"strings"
 	"time"
 
+	configfiles "github.com/mdastpak/crypto-exchange/config"
+
 	"go.yaml.in/yaml/v3"
 )
-
-//go:embed config.example.yaml
-var configEmbed embed.FS
 
 var Config Configuration
 
@@ -502,11 +500,8 @@ func Load() error {
 			return fmt.Errorf("reading %s: %w", configPath, err)
 		}
 	} else {
-		log.Printf("%s does not exist: using the embedded config.example.yaml", configPath)
-		data, err = configEmbed.ReadFile("config.example.yaml")
-		if err != nil {
-			return fmt.Errorf("reading the embedded configuration: %w", err)
-		}
+		log.Printf("%s does not exist: using the embedded config/config.example.yaml", configPath)
+		data = configfiles.Example
 	}
 
 	Config = Configuration{}

@@ -19,7 +19,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 )
 
 // EmailDeliverer sends sign-in codes by SMTP.

@@ -182,7 +182,7 @@ exchange:
     timezone: "UTC"
 
 assets:
-  registry_path: "configs/assets.yaml"
+  registry_path: "config/assets.yaml"
   auto_sync: true
 
 markets:
@@ -373,7 +373,7 @@ compliance:
 
   aml:
     enabled: true
-    rules_path: "configs/aml_rules.yaml"
+    rules_path: "config/aml_rules.yaml"
 
   kyc:
     providers:
