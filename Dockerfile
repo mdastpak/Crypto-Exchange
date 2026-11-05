@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # The runtime stage installs no packages: the base image already has the CA
 # certificates, and the timetzdata tag embeds the time zone database in the
 # binaries.
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN addgroup -g 10001 -S app && \
     adduser -u 10001 -S -G app -H -s /sbin/nologin app
