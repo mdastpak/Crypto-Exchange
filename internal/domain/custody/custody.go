@@ -1,12 +1,15 @@
 package custody
 
 import (
-	"time"
+	"context"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
-// CustodyProvider defines the interface for asset custody operations
+// CustodyProvider defines the interface for asset custody operations. Every
+// call takes a context.Context, whose deadline and cancellation bound the
+// calls to nodes and providers; request-scoped values such as the request
+// ID travel in it as well.
 type CustodyProvider interface {
 	// Provider info
 	GetProviderType() CustodyProviderType
@@ -14,35 +17,27 @@ type CustodyProvider interface {
 	GetSupportedNetworks() []string
 
 	// Deposit operations
-	GenerateDepositAddress(ctx Context, userID, subAccountID shared.UUID, assetID shared.UUID) (*DepositAddress, error)
-	GetDepositAddress(ctx Context, userID, subAccountID shared.UUID, assetID shared.UUID) (*DepositAddress, error)
+	GenerateDepositAddress(ctx context.Context, userID, subAccountID shared.UUID, assetID shared.UUID) (*DepositAddress, error)
+	GetDepositAddress(ctx context.Context, userID, subAccountID shared.UUID, assetID shared.UUID) (*DepositAddress, error)
 	ValidateDepositAddress(address string, assetID shared.UUID) error
 
 	// Deposit monitoring
-	StartDepositMonitoring(ctx Context, assetID shared.UUID) error
-	StopDepositMonitoring(ctx Context, assetID shared.UUID) error
-	GetDepositStatus(ctx Context, txHash string) (*DepositStatus, error)
+	StartDepositMonitoring(ctx context.Context, assetID shared.UUID) error
+	StopDepositMonitoring(ctx context.Context, assetID shared.UUID) error
+	GetDepositStatus(ctx context.Context, txHash string) (*DepositStatus, error)
 
 	// Withdrawal operations
-	CreateWithdrawal(ctx Context, req *WithdrawalRequest) (*WithdrawalResult, error)
+	CreateWithdrawal(ctx context.Context, req *WithdrawalRequest) (*WithdrawalResult, error)
 	ValidateWithdrawalAddress(address string, assetID shared.UUID) error
-	EstimateWithdrawalFee(ctx Context, assetID shared.UUID, amount shared.Decimal, address string) (*FeeEstimate, error)
-	GetWithdrawalStatus(ctx Context, withdrawalID shared.UUID) (*WithdrawalStatus, error)
+	EstimateWithdrawalFee(ctx context.Context, assetID shared.UUID, amount shared.Decimal, address string) (*FeeEstimate, error)
+	GetWithdrawalStatus(ctx context.Context, withdrawalID shared.UUID) (*WithdrawalStatus, error)
 
 	// Balance
-	GetOnChainBalance(ctx Context, address string, assetID shared.UUID) (shared.Decimal, error)
-	GetAddressesForUser(ctx Context, userID shared.UUID, assetID shared.UUID) ([]string, error)
+	GetOnChainBalance(ctx context.Context, address string, assetID shared.UUID) (shared.Decimal, error)
+	GetAddressesForUser(ctx context.Context, userID shared.UUID, assetID shared.UUID) ([]string, error)
 
 	// Health
-	HealthCheck(ctx Context) error
-}
-
-// Context for custody operations
-type Context struct {
-	// Request-scoped values
-	RequestID string
-	UserID    shared.UUID
-	Timeout   time.Duration
+	HealthCheck(ctx context.Context) error
 }
 
 // CustodyProviderType identifies the custody implementation
@@ -446,7 +441,7 @@ var (
 		NativeAsset:     "ETH",
 		NativeDecimals:  18,
 		BlockTime:       12,
-		FinalityBlocks:  2, // ~2 epochs
+		FinalityBlocks:  64, // two epochs of 32 slots, about 13 minutes
 		FeeAsset:        "ETH",
 		SupportsTokens:  true,
 		TokenStandard:   "ERC20",

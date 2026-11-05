@@ -110,9 +110,10 @@ func (m *Market) IsActive() bool {
 	return m.Status == MarketStatusActive
 }
 
-// RoundPrice rounds price to tick size
+// RoundPrice rounds price to the nearest multiple of the tick size. A tick
+// size that is not positive means no tick, and the price is unchanged.
 func (m *Market) RoundPrice(price shared.Decimal) shared.Decimal {
-	if m.TickSize.IsZero() {
+	if !m.TickSize.IsPositive() {
 		return price
 	}
 	d := price.Decimal()
@@ -123,9 +124,10 @@ func (m *Market) RoundPrice(price shared.Decimal) shared.Decimal {
 	return shared.Decimal(rounded)
 }
 
-// RoundQuantity rounds quantity to lot size
+// RoundQuantity rounds quantity to the nearest multiple of the lot size. A
+// lot size that is not positive means no lot, and the quantity is unchanged.
 func (m *Market) RoundQuantity(qty shared.Decimal) shared.Decimal {
-	if m.LotSize.IsZero() {
+	if !m.LotSize.IsPositive() {
 		return qty
 	}
 	d := qty.Decimal()
@@ -135,17 +137,26 @@ func (m *Market) RoundQuantity(qty shared.Decimal) shared.Decimal {
 	return shared.Decimal(rounded)
 }
 
-// ValidateOrder checks if order meets market requirements
+// ValidateOrder checks if an order meets the market's requirements. A
+// maximum order size of 0, the column's default, means no maximum. price is
+// the limit price of a limit or stop-limit order; for a market or stop
+// order, the caller passes the price it expects to fill at, such as the
+// best opposite price, so that the minimum notional is checked too, or 0 to
+// skip that check.
 func (m *Market) ValidateOrder(side shared.OrderSide, orderType shared.OrderType, price, qty shared.Decimal) error {
 	if !m.IsActive() {
 		return ErrMarketInactive
+	}
+
+	if !qty.IsPositive() {
+		return ErrInvalidQuantity
 	}
 
 	if qty.LessThan(m.MinOrderSize) {
 		return ErrOrderSizeTooSmall
 	}
 
-	if qty.GreaterThan(m.MaxOrderSize) {
+	if m.MaxOrderSize.IsPositive() && qty.GreaterThan(m.MaxOrderSize) {
 		return ErrOrderSizeTooLarge
 	}
 
@@ -160,12 +171,13 @@ func (m *Market) ValidateOrder(side shared.OrderSide, orderType shared.OrderType
 		}
 	}
 
-	// Check notional for limit orders
-	if orderType == shared.OrderTypeLimit || orderType == shared.OrderTypeStopLimit {
-		notional := price.Mul(qty)
-		if notional.LessThan(m.MinNotional) {
-			return ErrNotionalTooSmall
-		}
+	// The notional of a limit order uses its price; a market order uses the
+	// expected price, when the caller knows it.
+	if price.IsNegative() {
+		return ErrInvalidPrice
+	}
+	if price.IsPositive() && price.Mul(qty).LessThan(m.MinNotional) {
+		return ErrNotionalTooSmall
 	}
 
 	// Check quantity precision
@@ -180,6 +192,7 @@ func (m *Market) ValidateOrder(side shared.OrderSide, orderType shared.OrderType
 // Market errors
 var (
 	ErrMarketInactive    = NewMarketError("market is not active")
+	ErrInvalidQuantity   = NewMarketError("order quantity must be positive")
 	ErrOrderSizeTooSmall = NewMarketError("order size below minimum")
 	ErrOrderSizeTooLarge = NewMarketError("order size exceeds maximum")
 	ErrInvalidPrice      = NewMarketError("invalid price")

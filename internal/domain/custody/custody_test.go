@@ -225,6 +225,7 @@ func TestChainConfig(t *testing.T) {
 	assert.True(t, eth.SupportsTokens)
 	assert.True(t, eth.SupportsEIP1559)
 	assert.Equal(t, "ERC20", eth.TokenStandard)
+	assert.Equal(t, 64, eth.FinalityBlocks, "two epochs of 32 slots")
 	assert.Equal(t, "0x", eth.AddressPrefix)
 	assert.False(t, eth.RequiresTag)
 

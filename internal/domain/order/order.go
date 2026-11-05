@@ -79,11 +79,11 @@ func (o *Order) IsTerminal() bool {
 
 // FillPercentage returns fill progress as percentage (0-100)
 func (o *Order) FillPercentage() float64 {
-	if o.Quantity.IsZero() {
-		return 0
+	share, err := o.FilledQuantity.Div(o.Quantity)
+	if err != nil {
+		return 0 // an order without quantity has nothing to fill
 	}
-	hundred := shared.NewDecimalFromInt64(100)
-	return o.FilledQuantity.Div(o.Quantity).Mul(hundred).InexactFloat64()
+	return share.Mul(shared.NewDecimalFromInt64(100)).InexactFloat64()
 }
 
 // CanCancel checks if order can be cancelled

@@ -7,6 +7,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOrder_RemainingQuantity(t *testing.T) {
@@ -216,7 +217,8 @@ func TestOrder_FeeCalculation(t *testing.T) {
 	expectedFee := notional.Mul(shared.MustNewDecimalFromString("0.001")) // 10 bps = 0.1%
 
 	// Fee = Notional * FeeRateBPS / 10000
-	fee := notional.Mul(shared.MustNewDecimalFromString("10")).Div(shared.MustNewDecimalFromString("10000"))
+	fee, err := notional.Mul(shared.MustNewDecimalFromString("10")).Div(shared.MustNewDecimalFromString("10000"))
+	require.NoError(t, err)
 	assert.Equal(t, expectedFee.String(), fee.String())
 }
 
