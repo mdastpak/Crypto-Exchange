@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -149,37 +150,65 @@ func TestDecimal_Mul(t *testing.T) {
 }
 
 func TestDecimal_Div(t *testing.T) {
-	d1 := NewDecimalFromInt64(10)
-	d2 := NewDecimalFromInt64(2)
-	result := d1.Div(d2)
-
-	expected := NewDecimalFromInt64(5)
-	if !result.Equal(expected) {
-		t.Errorf("expected 10 / 2 = 5, got %s", result.String())
+	result, err := NewDecimalFromInt64(10).Div(NewDecimalFromInt64(4))
+	if err != nil || !result.Equal(MustNewDecimalFromString("2.5")) {
+		t.Errorf("expected 10 / 4 = 2.5, got %s, %v", result.String(), err)
+	}
+	for _, zero := range []Decimal{{}, NewDecimalFromInt64(0), MustNewDecimalFromString("0.000")} {
+		if _, err := NewDecimalFromInt64(1).Div(zero); !errors.Is(err, ErrDivisionByZero) {
+			t.Errorf("1 / %s: expected ErrDivisionByZero, got %v", zero.String(), err)
+		}
 	}
 }
 
 func TestDecimal_QuoRem(t *testing.T) {
-	d1 := NewDecimalFromInt64(10)
-	d2 := NewDecimalFromInt64(3)
-	q, r := d1.QuoRem(d2)
-
-	if !q.Equal(NewDecimalFromInt64(3)) {
-		t.Errorf("expected quotient 3, got %s", q.String())
+	q, r, err := NewDecimalFromInt64(10).QuoRem(NewDecimalFromInt64(3))
+	if err != nil || !q.Equal(NewDecimalFromInt64(3)) || !r.Equal(NewDecimalFromInt64(1)) {
+		t.Errorf("expected 10 = 3*3 + 1, got %s, %s, %v", q.String(), r.String(), err)
 	}
-
-	if !r.Equal(NewDecimalFromInt64(1)) {
-		t.Errorf("expected remainder 1, got %s", r.String())
+	if _, _, err := NewDecimalFromInt64(10).QuoRem(Decimal{}); !errors.Is(err, ErrDivisionByZero) {
+		t.Errorf("expected ErrDivisionByZero, got %v", err)
 	}
 }
 
 func TestDecimal_Pow(t *testing.T) {
-	d := NewDecimalFromInt64(2)
-	result := d.Pow(NewDecimalFromInt64(3))
+	for _, tc := range []struct{ base, exp, want string }{
+		{"2", "3", "8"},
+		{"10", "-2", "0.01"},
+		{"4", "0.5", "2"},
+		{"-2", "3", "-8"},
+	} {
+		got, err := MustNewDecimalFromString(tc.base).Pow(MustNewDecimalFromString(tc.exp))
+		if err != nil || !got.Equal(MustNewDecimalFromString(tc.want)) {
+			t.Errorf("%s ^ %s: expected %s, got %s, %v", tc.base, tc.exp, tc.want, got.String(), err)
+		}
+	}
+	for _, tc := range []struct{ base, exp string }{{"0", "0"}, {"0", "-1"}, {"-4", "0.5"}} {
+		if _, err := MustNewDecimalFromString(tc.base).Pow(MustNewDecimalFromString(tc.exp)); err == nil {
+			t.Errorf("%s ^ %s is undefined and must fail instead of returning 0", tc.base, tc.exp)
+		}
+	}
+}
 
-	expected := NewDecimalFromInt64(8)
-	if !result.Equal(expected) {
-		t.Errorf("expected 2^3 = 8, got %s", result.String())
+func TestDecimal_UnmarshalJSON(t *testing.T) {
+	for input, want := range map[string]string{
+		`"1.5"`:                                 "1.5",
+		`1.5`:                                   "1.5",
+		`-0.000000000000000001`:                 "-0.000000000000000001",
+		`123456789012345678.123456789012345678`: "123456789012345678.123456789012345678",
+		`1e3`:                                   "1000",
+		`"0"`:                                   "0",
+	} {
+		var d Decimal
+		if err := d.UnmarshalJSON([]byte(input)); err != nil || d.String() != want {
+			t.Errorf("%s: expected %s, got %s, %v", input, want, d.String(), err)
+		}
+	}
+	for _, input := range []string{`null`, `true`, `"abc"`, `""`, `[1]`, `{"a":1}`, `1.2.3`, ``} {
+		var d Decimal
+		if err := d.UnmarshalJSON([]byte(input)); err == nil {
+			t.Errorf("%s: expected an error, got %s", input, d.String())
+		}
 	}
 }
 
@@ -271,17 +300,5 @@ func TestDecimal_MarshalJSON(t *testing.T) {
 	// MarshalJSON returns quoted string (e.g., "123")
 	if string(data) != "\"123\"" {
 		t.Errorf("expected JSON '\"123\"', got %s", string(data))
-	}
-}
-
-func TestDecimal_UnmarshalJSON(t *testing.T) {
-	var d Decimal
-	err := d.UnmarshalJSON([]byte("\"456\""))
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	if !d.Equal(NewDecimalFromInt64(456)) {
-		t.Errorf("expected 456, got %s", d.String())
 	}
 }

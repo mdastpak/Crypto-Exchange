@@ -3,6 +3,7 @@ package shared
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -78,6 +79,8 @@ func NewDecimalFromString(s string) (Decimal, error) {
 	return Decimal(d), err
 }
 
+// MustNewDecimalFromString parses a constant and panics on a malformed one.
+// It is for constants and tests only: never pass it input from a request.
 func MustNewDecimalFromString(s string) Decimal {
 	d, err := NewDecimalFromString(s)
 	if err != nil {
@@ -102,10 +105,18 @@ func (d Decimal) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.String())
 }
 
+// UnmarshalJSON accepts a decimal as a JSON string, such as "1.5", which
+// MarshalJSON writes, or as a JSON number, such as 1.5. A number is parsed
+// from its text, never through float64, so no precision is lost. null and
+// other values are refused; an optional decimal is a *Decimal.
 func (d *Decimal) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
+	s := string(data)
+	if len(data) > 0 && data[0] == '"' {
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+	} else if !json.Valid(data) || s == "null" || s == "true" || s == "false" || data[0] == '[' || data[0] == '{' {
+		return fmt.Errorf("a decimal must be a JSON string or number, not %s", s)
 	}
 	parsed, err := NewDecimalFromString(s)
 	if err != nil {
@@ -246,17 +257,41 @@ func (d Decimal) Mul(other Decimal) Decimal {
 	return Decimal(d.Decimal().Mul(other.Decimal()))
 }
 
-func (d Decimal) Div(other Decimal) Decimal {
-	return Decimal(d.Decimal().Div(other.Decimal()))
+// powPrecision is the number of decimal places of a power with a negative
+// or fractional exponent, as decimal.Pow uses.
+const powPrecision = 16
+
+// ErrDivisionByZero is returned by Div and QuoRem for a zero divisor, which
+// the underlying library would panic on.
+var ErrDivisionByZero = errors.New("division by zero")
+
+// Div returns d / other, or ErrDivisionByZero.
+func (d Decimal) Div(other Decimal) (Decimal, error) {
+	if other.IsZero() {
+		return Decimal{}, ErrDivisionByZero
+	}
+	return Decimal(d.Decimal().Div(other.Decimal())), nil
 }
 
-func (d Decimal) QuoRem(other Decimal) (Decimal, Decimal) {
+// QuoRem returns the integer quotient and the remainder of d / other, or
+// ErrDivisionByZero.
+func (d Decimal) QuoRem(other Decimal) (Decimal, Decimal, error) {
+	if other.IsZero() {
+		return Decimal{}, Decimal{}, ErrDivisionByZero
+	}
 	q, r := d.Decimal().QuoRem(other.Decimal(), 0)
-	return Decimal(q), Decimal(r)
+	return Decimal(q), Decimal(r), nil
 }
 
-func (d Decimal) Pow(n Decimal) Decimal {
-	return Decimal(d.Decimal().Pow(n.Decimal()))
+// Pow returns d to the power n. It refuses undefined results, such as 0^0,
+// 0^-1, or a non-integer power of a negative number, which the underlying
+// library would silently turn into 0.
+func (d Decimal) Pow(n Decimal) (Decimal, error) {
+	result, err := d.Decimal().PowWithPrecision(n.Decimal(), powPrecision)
+	if err != nil {
+		return Decimal{}, err
+	}
+	return Decimal(result), nil
 }
 
 func (d Decimal) Abs() Decimal {
@@ -398,8 +433,6 @@ type SettlementMode string
 const (
 	SettlementModeOffChain SettlementMode = "OFF_CHAIN"
 	SettlementModeOnChain  SettlementMode = "ON_CHAIN"
-	SettlementModeLayer2   SettlementMode = "LAYER2"
-	SettlementModeBatch    SettlementMode = "BATCH"
 )
 
 func (s SettlementMode) String() string {

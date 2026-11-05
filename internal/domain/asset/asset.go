@@ -126,11 +126,12 @@ func (a *Asset) IsStablecoin() bool {
 	return a.Type == shared.AssetTypeStable
 }
 
-// RoundQuantity rounds quantity to asset's decimal precision
+// RoundQuantity rounds quantity to the asset's decimal places. An asset
+// with 0 decimals, such as IRR, is rounded to whole units. A negative number
+// of decimals is invalid, and one above what the database stores (a
+// SMALLINT) cannot be rounded to; the quantity is then unchanged.
 func (a *Asset) RoundQuantity(qty shared.Decimal) shared.Decimal {
-	// The database stores decimals as a SMALLINT; a larger value cannot be
-	// rounded to, so the quantity is already as precise as it can be.
-	if a.Decimals <= 0 || a.Decimals > math.MaxInt16 {
+	if a.Decimals < 0 || a.Decimals > math.MaxInt16 {
 		return qty
 	}
 	d := qty.Decimal()
@@ -150,7 +151,8 @@ func (a *Asset) ValidateWithdrawal(amount shared.Decimal) error {
 	if amount.LessThan(a.MinWithdrawal) {
 		return ErrWithdrawalBelowMinimum
 	}
-	if amount.GreaterThan(a.MaxWithdrawal) {
+	// A maximum of 0, the column's default, means no maximum.
+	if a.MaxWithdrawal.IsPositive() && amount.GreaterThan(a.MaxWithdrawal) {
 		return ErrWithdrawalAboveMaximum
 	}
 	return nil

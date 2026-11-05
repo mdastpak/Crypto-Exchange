@@ -194,3 +194,48 @@ func TestAsset_MustNewDecimalFromString(t *testing.T) {
 		shared.MustNewDecimalFromString("invalid")
 	})
 }
+
+func TestAsset_RoundQuantity_EdgeValues(t *testing.T) {
+	for _, tc := range []struct {
+		decimals int
+		qty      string
+		want     string
+	}{
+		{0, "1234.6", "1235"}, // zero-decimal assets such as IRR round to whole units
+		{0, "1234.4", "1234"},
+		{2, "1.005", "1.01"},
+		{8, "0.123456789", "0.12345679"},
+		{-1, "1.5", "1.5"},     // invalid: unchanged
+		{40000, "1.5", "1.5"},  // above what the database stores: unchanged
+		{2, "-1.005", "-1.01"}, // rounds half away from zero
+	} {
+		a := &Asset{Decimals: tc.decimals}
+		assert.Equal(t, tc.want, a.RoundQuantity(shared.MustNewDecimalFromString(tc.qty)).String(), "%d decimals, %s", tc.decimals, tc.qty)
+	}
+}
+
+func TestAsset_ValidateWithdrawal_EdgeValues(t *testing.T) {
+	base := Asset{WithdrawalEnabled: true, MinWithdrawal: shared.MustNewDecimalFromString("0.01"), MaxWithdrawal: shared.MustNewDecimalFromString("100")}
+	for name, tc := range map[string]struct {
+		change func(a *Asset)
+		amount string
+		want   error
+	}{
+		"within the limits":       {nil, "1", nil},
+		"at the minimum":          {nil, "0.01", nil},
+		"at the maximum":          {nil, "100", nil},
+		"under the minimum":       {nil, "0.009", ErrWithdrawalBelowMinimum},
+		"over the maximum":        {nil, "100.0001", ErrWithdrawalAboveMaximum},
+		"no maximum (0)":          {func(a *Asset) { a.MaxWithdrawal = shared.MustNewDecimalFromString("0") }, "1000000", nil},
+		"zero amount":             {nil, "0", ErrInvalidWithdrawalAmount},
+		"negative amount":         {nil, "-1", ErrInvalidWithdrawalAmount},
+		"zero amount, no minimum": {func(a *Asset) { a.MinWithdrawal = shared.MustNewDecimalFromString("0") }, "0", ErrInvalidWithdrawalAmount},
+		"withdrawals disabled":    {func(a *Asset) { a.WithdrawalEnabled = false }, "1", ErrWithdrawalDisabled},
+	} {
+		a := base
+		if tc.change != nil {
+			tc.change(&a)
+		}
+		assert.Equal(t, tc.want, a.ValidateWithdrawal(shared.MustNewDecimalFromString(tc.amount)), name)
+	}
+}

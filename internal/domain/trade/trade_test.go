@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTrade_Notional(t *testing.T) {
@@ -95,8 +96,6 @@ func TestTradeSide_String(t *testing.T) {
 func TestSettlementMode_String(t *testing.T) {
 	assert.Equal(t, "OFF_CHAIN", shared.SettlementModeOffChain.String())
 	assert.Equal(t, "ON_CHAIN", shared.SettlementModeOnChain.String())
-	assert.Equal(t, "LAYER2", shared.SettlementModeLayer2.String())
-	assert.Equal(t, "BATCH", shared.SettlementModeBatch.String())
 }
 
 func TestTradeEvent(t *testing.T) {
@@ -149,7 +148,8 @@ func TestTradeAggregate(t *testing.T) {
 	}
 
 	// VWAP verification
-	expectedVWAP := agg.QuoteVolume.Div(agg.BaseVolume)
+	expectedVWAP, err := agg.QuoteVolume.Div(agg.BaseVolume)
+	require.NoError(t, err)
 	assert.Equal(t, expectedVWAP.String(), agg.VWAP.String())
 
 	// Volume consistency

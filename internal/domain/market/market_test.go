@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMarket_IsActive(t *testing.T) {
@@ -254,8 +255,11 @@ func TestMarketStats_Calculations(t *testing.T) {
 	// Mid = (50001 + 49999) / 2 = 50000
 	// Spread = 2
 	// BPS = (2 / 50000) * 10000 = 0.4
-	mid := stats.AskPrice.Add(stats.BidPrice).Div(shared.MustNewDecimalFromString("2"))
-	spreadBPS := spread.Div(mid).Mul(shared.MustNewDecimalFromString("10000"))
+	mid, err := stats.AskPrice.Add(stats.BidPrice).Div(shared.MustNewDecimalFromString("2"))
+	require.NoError(t, err)
+	share, err := spread.Div(mid)
+	require.NoError(t, err)
+	spreadBPS := share.Mul(shared.MustNewDecimalFromString("10000"))
 	assert.InDelta(t, 0.4, spreadBPS.InexactFloat64(), 0.1)
 }
 
@@ -272,7 +276,9 @@ func TestMarketStats_PriceChange(t *testing.T) {
 	assert.Equal(t, stats.PriceChange.String(), expectedChange.String())
 
 	// Verify percentage
-	expectedPct := stats.PriceChange.Div(stats.OpenPrice).Mul(shared.MustNewDecimalFromString("100"))
+	ratio, err := stats.PriceChange.Div(stats.OpenPrice)
+	require.NoError(t, err)
+	expectedPct := ratio.Mul(shared.MustNewDecimalFromString("100"))
 	assert.Equal(t, stats.PriceChangePct.String(), expectedPct.String())
 }
 
@@ -314,4 +320,58 @@ func TestMarketStats_ZeroValues(t *testing.T) {
 	assert.True(t, stats.LastPrice.IsZero())
 	assert.True(t, stats.BaseVolume.IsZero())
 	assert.Equal(t, int64(0), stats.TradeCount)
+}
+
+func dec(s string) shared.Decimal { return shared.MustNewDecimalFromString(s) }
+
+// TestMarket_ValidateOrder_EdgeValues covers zero, negative, and boundary
+// values, with the column defaults: a maximum order size of 0 means no
+// maximum.
+func TestMarket_ValidateOrder_EdgeValues(t *testing.T) {
+	base := Market{
+		Status:       MarketStatusActive,
+		MinOrderSize: dec("0.001"),
+		MaxOrderSize: dec("100"),
+		MinNotional:  dec("10"),
+		TickSize:     dec("0.01"),
+		LotSize:      dec("0.001"),
+	}
+	for name, tc := range map[string]struct {
+		change    func(m *Market)
+		orderType shared.OrderType
+		price     string
+		qty       string
+		want      error
+	}{
+		"limit within every limit":      {nil, shared.OrderTypeLimit, "50000", "1", nil},
+		"quantity at the minimum":       {nil, shared.OrderTypeLimit, "50000", "0.001", nil},
+		"quantity at the maximum":       {nil, shared.OrderTypeLimit, "50000", "100", nil},
+		"quantity over the maximum":     {nil, shared.OrderTypeLimit, "50000", "100.001", ErrOrderSizeTooLarge},
+		"no maximum (0)":                {func(m *Market) { m.MaxOrderSize = dec("0") }, shared.OrderTypeLimit, "50000", "1000000", nil},
+		"zero quantity, no minimum":     {func(m *Market) { m.MinOrderSize = dec("0") }, shared.OrderTypeLimit, "50000", "0", ErrInvalidQuantity},
+		"negative quantity, no minimum": {func(m *Market) { m.MinOrderSize = dec("0") }, shared.OrderTypeMarket, "0", "-1", ErrInvalidQuantity},
+		"notional at the minimum":       {nil, shared.OrderTypeLimit, "10", "1", nil},
+		"notional under the minimum":    {nil, shared.OrderTypeLimit, "9.99", "1", ErrNotionalTooSmall},
+		"market order, expected price":  {nil, shared.OrderTypeMarket, "9.99", "1", ErrNotionalTooSmall},
+		"market order, no price known":  {nil, shared.OrderTypeMarket, "0", "1", nil},
+		"market order, negative price":  {nil, shared.OrderTypeMarket, "-1", "1", ErrInvalidPrice},
+		"limit order without a price":   {nil, shared.OrderTypeLimit, "0", "1", ErrInvalidPrice},
+		"limit off the tick":            {nil, shared.OrderTypeLimit, "50000.005", "1", ErrPricePrecision},
+		"quantity off the lot":          {nil, shared.OrderTypeLimit, "50000", "1.0005", ErrQuantityPrecision},
+		"no tick or lot size (0)":       {func(m *Market) { m.TickSize, m.LotSize = dec("0"), dec("0") }, shared.OrderTypeLimit, "50000.123456", "1.23456", nil},
+		"negative tick and lot size":    {func(m *Market) { m.TickSize, m.LotSize = dec("-1"), dec("-1") }, shared.OrderTypeLimit, "50000.123456", "1.23456", nil},
+		"inactive market":               {func(m *Market) { m.Status = MarketStatusSuspended }, shared.OrderTypeLimit, "50000", "1", ErrMarketInactive},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := base
+			if tc.change != nil {
+				tc.change(&m)
+			}
+			var err error
+			assert.NotPanics(t, func() {
+				err = m.ValidateOrder(shared.OrderSideBuy, tc.orderType, dec(tc.price), dec(tc.qty))
+			})
+			assert.Equal(t, tc.want, err)
+		})
+	}
 }
