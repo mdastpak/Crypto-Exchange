@@ -130,7 +130,7 @@ go run ./cmd/server -config config/config.local.yaml
 | `-config` | `config/config.yaml` | Path to the YAML configuration file |
 | `-migrations` | `file://internal/db/migrations` | Migration source URL |
 
-Without `-config`, the server reads `config/config.yaml`, or an embedded copy of the example when that file does not exist. Most settings can also be set with an environment variable, such as `SERVER_PORT` or `SERVER_MODE=release`; [docs/configuration.md](docs/configuration.md#environment-variables) lists them all. When a required setting is missing, the server stops and names it, together with its variable.
+Without `-config`, the server reads `config/config.yaml`, or an embedded copy of the example when that file does not exist. Most settings can also be set with an environment variable, such as `SERVER_PORT` or `SERVER_MODE=release`; [docs/configuration.md](docs/configuration.md#environment-variables) lists them all. When a required setting is missing or a value is invalid, the server stops and lists every problem, each with its variable. In release mode it also refuses insecure settings, such as no TLS or default passwords ([release mode](docs/configuration.md#release-mode)).
 
 Once the server is running:
 

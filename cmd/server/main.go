@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -64,27 +65,24 @@ func main() {
 	config.SetConfigPath(configPath)
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
-	if err := config.ValidateServer(); err != nil {
-		log.Fatalf("Invalid configuration: %v", err)
+
+	// Check the whole configuration before connecting to anything, and
+	// report every problem at once.
+	keyProvider, err := validateConfiguration()
+	if err != nil {
+		log.Fatalf("Invalid configuration:\n%s", problemList(err))
 	}
 
 	// server.mode, which SERVER_MODE or GIN_MODE can set, selects the
-	// release checks below as well as Gin's mode.
+	// release checks above as well as Gin's mode.
 	gin.SetMode(config.Config.Server.Mode)
 
 	if err := initAuthKeys(); err != nil {
 		log.Fatalf("Failed to initialize auth keys: %v", err)
 	}
 
-	// Validate the sign-in configuration before connecting to anything.
-	if err := otp.SettingsFromConfig().Validate(gin.Mode() == gin.ReleaseMode); err != nil {
-		log.Fatalf("Invalid OTP configuration: %v", err)
-	}
 	if config.Config.OTP.Auth.Secret == "" {
 		log.Println("WARNING: otp.auth.secret is not set: using a random secret, so sign-in codes can only be verified by this process until it restarts")
-	}
-	if err := notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, gin.Mode() == gin.ReleaseMode); err != nil {
-		log.Fatalf("Invalid OTP delivery configuration: %v", err)
 	}
 	otpChannels, err := notify.NewChannels(config.Config.Notifications, otpTTL())
 	if err != nil {
@@ -93,10 +91,6 @@ func main() {
 	adminTOTPKey, err := adminSignInKey()
 	if err != nil {
 		log.Fatalf("Invalid admin sign-in configuration: %v", err)
-	}
-	keyProvider, err := dataKeyProvider(gin.Mode() == gin.ReleaseMode)
-	if err != nil {
-		log.Fatalf("Invalid key configuration: %v", err)
 	}
 
 	services, cleanup, err := initializeServices()
@@ -215,6 +209,35 @@ func adminSignInKey() ([]byte, error) {
 		return nil, nil
 	}
 	return adminauth.DecodeKey(config.Config.Admin.TOTPKey)
+}
+
+// validateConfiguration checks the loaded configuration as the server needs
+// it: the settings of internal/config, the sign-in settings, and the key
+// provider, with the release checks in release mode. It returns every
+// problem at once, and the key provider when there is none.
+func validateConfiguration() (keys.Provider, error) {
+	release := config.Config.Server.Mode == gin.ReleaseMode
+	provider, keyErr := dataKeyProvider(release)
+	err := errors.Join(
+		config.ValidateServer(),
+		otp.SettingsFromConfig().Validate(release),
+		notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, release),
+		keyErr,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return provider, nil
+}
+
+// problemList formats the problems of an error from validateConfiguration,
+// one per line.
+func problemList(err error) string {
+	lines := strings.Split(err.Error(), "\n")
+	for i, line := range lines {
+		lines[i] = "  - " + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // dataKeyProvider returns the provider of the key-encryption key that

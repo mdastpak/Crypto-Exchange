@@ -7,9 +7,34 @@ This document describes how the server is configured and which settings it curre
 1. **File.** The YAML file passed with `-config` is read. The default is `config/config.yaml`, which is not part of the repository. If the file does not exist, the embedded copy of [`config/config.example.yaml`](../config/config.example.yaml) is used instead, and the log says so. The `app` service of `docker-compose.yml` uses `config/config.compose.yaml`, which holds no secrets.
 2. **Environment variables.** The variables listed in [Environment variables](#environment-variables) override the corresponding settings. A variable that is unset or empty leaves the setting unchanged.
 3. **Defaults.** Numeric and string settings that are still zero or empty receive the defaults listed below.
-4. **Validation.** The server stops with one message that names every problem when a value in an environment variable cannot be parsed, when `server.mode` is not a known mode, or when a setting it cannot start without is not set. Each message names the setting and its environment variable, for example `rabbitmq.username (RABBITMQ_USER)`. The required settings are marked **required** below. Other problems, such as an empty database password, are logged as warnings. Stricter validation is tracked in [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41).
+4. **Validation.** The server stops with one message that lists every problem, one per line, each naming the setting and its environment variable, for example `rabbitmq.username (RABBITMQ_USER)`. A problem is any of the following:
+   - a value in an environment variable that cannot be parsed, or a `server.mode` that is not a known mode;
+   - a setting the server cannot start without, marked **required** below;
+   - a value out of range, such as a port above 65535, a negative pool size, or an access token that lives longer than a day;
+   - a TLS certificate and key that do not load;
+   - in release mode, an insecure setting (see [Release mode](#release-mode)).
+
+   Some problems are only logged as warnings outside release mode, such as an empty database password.
 
 `${VAR}` placeholders in YAML files are **not** expanded. Keep secrets out of the file and set them with the environment variables.
+
+## Release mode
+
+With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start with settings that are fine for development but not for production. It lists them all at once:
+
+| Setting | Release mode needs |
+| --- | --- |
+| `server.tls.enabled`, `server.tls.behind_proxy` | TLS: either the server serves HTTPS itself, or `behind_proxy` says that a reverse proxy terminates TLS in front of it |
+| `server.trusted_proxies` | Not empty when `server.tls.behind_proxy` is set, so that clients are not all seen with the proxy's address, also by the rate limits |
+| `postgres.sslmode` | `require`, `verify-ca`, or `verify-full`. `disable`, `allow`, and `prefer` can talk to PostgreSQL without encryption. |
+| `postgres.password` | Not empty, and not the default `postgres` |
+| `redis.password` | Not empty |
+| `rabbitmq.username`, `rabbitmq.password` | Not the default `guest` account |
+| `server.cors.allowed_origins`, `websocket.allowed_origins` | No `"*"`, and only `https://` origins |
+| `jwt.ssl.user.private_key`, `jwt.ssl.admin.private_key`, `server.tls.key_file` | Files that only their owner may write to (not checked on Windows). Read access is not checked, because container platforms mount secrets readable by every user of the container. |
+| `otp.auth.secret` | Set, at least 32 bytes |
+| `otp.auth.dev_log_codes` | `false` |
+| `keys.provider` | Not `local`, and a Transit address with `https` |
 
 ## Command-line flags and process environment
 
@@ -29,12 +54,13 @@ This document describes how the server is configured and which settings it curre
 | `read_timeout_seconds` | `10` | HTTP read timeout |
 | `write_timeout_seconds` | `10` | HTTP write timeout |
 | `idle_timeout_seconds` | `120` | HTTP keep-alive idle timeout |
-| `mode` | `debug` | `debug`, `release`, or `test`. Sets Gin's mode, and `release` turns on the release checks: `otp.auth.secret` is required, and `otp.auth.dev_log_codes` is refused. Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
+| `mode` | `debug` | `debug`, `release`, or `test`. Sets Gin's mode, and `release` turns on the [release checks](#release-mode). Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
 | `swagger.enabled` | unset | Serves the Swagger UI at `/swagger/index.html`. When it is not set, the UI is served outside release mode only. |
 | `max_body_bytes` | `1048576` | The largest request body accepted, in bytes. A larger body gets `413`. |
 | `tls.enabled` | `false` | Serve HTTPS with `ListenAndServeTLS` |
-| `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled |
+| `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled. The server checks at startup that they load as a pair. |
+| `tls.behind_proxy` | `false` | A reverse proxy terminates TLS in front of the server, which then serves plain HTTP to it. Release mode needs TLS one way or the other. |
 | `cors.allowed_origins` | `[]` | Browser origins (`scheme://host[:port]`, for example `https://app.example.com` or `http://localhost:3000`) that may call the API across origins with credentials. Matching is exact and case-insensitive. With an empty list, no cross-origin access is granted. A wildcard (`"*"`), a path, or any other malformed entry stops the server at startup, because a wildcard combined with credentials would let any site read authenticated responses. |
 
 ### `postgres`
@@ -43,7 +69,7 @@ This document describes how the server is configured and which settings it curre
 | --- | --- | --- |
 | `host`, `port`, `user`, `dbname` | **required** | Connection settings |
 | `password` | none | Database password. Set it with `POSTGRES_PASSWORD`. |
-| `sslmode` | `disable` | libpq SSL mode. Use `verify-full` outside local development. |
+| `sslmode` | `disable` | libpq SSL mode. Release mode needs `require`, `verify-ca`, or `verify-full`; use `verify-full` where possible. |
 | `max_open_conns` | `25` | Maximum open connections |
 | `max_idle_conns` | `5` | Maximum idle connections |
 | `conn_max_lifetime_minutes` | `5` | Maximum connection lifetime |
@@ -101,8 +127,8 @@ Redis is on the path of most requests, so these timeouts are short: while Redis 
 | `ssl.admin.private_key`, `ssl.admin.public_key` | none | The key pair that signs admin tokens. Without it, admin routes reject every token, and the server logs a warning. It must differ from the user key pair. |
 | `ssl.admin.retired_public_keys` | `[]` | Public keys of earlier admin key pairs |
 | `issuer` | `crypto-exchange` | Issuer claim written into tokens and required on every token |
-| `access_token.expiration_minutes` | **required** | Access token lifetime. There is no default. |
-| `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age` |
+| `access_token.expiration_minutes` | **required** | Access token lifetime, at most 1440 (a day). There is no default. |
+| `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age`. It must be at least the access token lifetime. |
 
 Keys must be RSA keys of at least 2048 bits, and a public key must belong to its private key. Tokens name their signing key in the `kid` header, which is derived from a SHA-256 hash of the public key, so key IDs need no configuration. The server refuses to start if a key is invalid or shared between the roles.
 
@@ -191,7 +217,7 @@ The key service is only contacted at startup and by the `admin keys` commands: a
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `allowed_origins` | `[]` | Origins accepted by the WebSocket origin check. HTTP CORS uses `server.cors.allowed_origins` instead. Entries are matched exactly, except `"*"`, which allows every origin ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)). With an empty list, only same-origin connections are accepted. Never use `"*"`. |
+| `allowed_origins` | `[]` | Origins accepted by the WebSocket origin check. HTTP CORS uses `server.cors.allowed_origins` instead. Entries are matched exactly, except `"*"`, which allows every origin ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)). With an empty list, only same-origin connections are accepted. Release mode refuses `"*"` and origins that are not `https://`. |
 | `ping_interval_seconds` | `30` | Parsed, but not used yet. The interval is hard-coded ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)). |
 | `max_message_size_bytes` | `1048576` | Parsed, but not used yet. The read limit is hard-coded to 512 bytes. |
 
@@ -247,6 +273,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SERVER_TLS_ENABLED` | `server.tls.enabled` |
 | `SERVER_TLS_CERT_FILE` | `server.tls.cert_file` |
 | `SERVER_TLS_KEY_FILE` | `server.tls.key_file` |
+| `SERVER_TLS_BEHIND_PROXY` | `server.tls.behind_proxy` |
 | `SERVER_SWAGGER_ENABLED` | `server.swagger.enabled` |
 | `SERVER_MAX_BODY_BYTES` | `server.max_body_bytes` |
 | `POSTGRES_HOST` | `postgres.host` |
