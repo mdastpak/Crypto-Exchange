@@ -1,8 +1,8 @@
 package order
 
 import (
-	"encrypted-db/internal/domain/market"
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/market"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // Order represents a trading order

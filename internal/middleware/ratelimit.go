@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"

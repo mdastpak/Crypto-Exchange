@@ -1,8 +1,8 @@
 package models
 
 import (
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 )
 
 type InfraServices struct {

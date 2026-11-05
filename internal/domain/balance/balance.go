@@ -3,8 +3,8 @@ package balance
 import (
 	"errors"
 
-	"encrypted-db/internal/domain/asset"
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // Balance represents a user's balance for a specific asset

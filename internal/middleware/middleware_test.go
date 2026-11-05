@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

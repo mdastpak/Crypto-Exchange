@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/domain/account"
-	"encrypted-db/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/domain/account"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

@@ -2,7 +2,7 @@
 
 ## Current State
 
-- Repository: `D:\Projects\dpm\encrypted-db`
+- Repository: `D:\Projects\dpm\crypto-exchange`
 - Current worktree branch: `feat/exchange-core`
 - Current HEAD: `33e80e0` (`feat: security hardening - TLS, JWT blacklist, validation, error sanitization, key rotation`)
 - `main` and `origin/main`: `68ccdbe` (`refactor: comprehensive audit fixes - auth, websocket, rabbitmq, db, handlers, config`)

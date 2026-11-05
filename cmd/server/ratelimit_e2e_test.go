@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

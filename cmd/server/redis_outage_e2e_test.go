@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/testutil/tcpproxy"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

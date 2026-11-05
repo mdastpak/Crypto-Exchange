@@ -2,7 +2,7 @@
 package helpers
 
 import (
-	"encrypted-db/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 )

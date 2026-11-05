@@ -31,14 +31,14 @@ jwt:
       # Mounted by the jwt_user_* Compose secrets.
       private_key: "/run/secrets/jwt_user_private_key"
       public_key: "/run/secrets/jwt_user_public_key"
-  issuer: "encrypted-db-exchange"
+  issuer: "crypto-exchange"
   access_token:
     expiration_minutes: 15
   refresh_token:
     expiration_minutes: 10080
 
 exchange:
-  name: "EncryptedDB Exchange (local)"
+  name: "Crypto Exchange (local)"
 
 otp:
   auth:

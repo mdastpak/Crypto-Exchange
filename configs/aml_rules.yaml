@@ -367,7 +367,7 @@ engine:
     email:
       enabled: true
       recipients:
-        - "compliance@encrypted-db.com"
+        - "compliance@example.com"
     webhook:
       enabled: false
       url: ""

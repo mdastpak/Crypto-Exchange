@@ -17,7 +17,7 @@ assets:
     withdrawal_enabled: true
     custody_mode: "OFF_CHAIN"
     description: "United States Dollar"
-    logo_url: "https://assets.encrypted-db.com/fiat/usd.png"
+    logo_url: "https://assets.example.com/fiat/usd.png"
 
   - symbol: "EUR"
     name: "Euro"
@@ -32,7 +32,7 @@ assets:
     withdrawal_enabled: true
     custody_mode: "OFF_CHAIN"
     description: "European Euro"
-    logo_url: "https://assets.encrypted-db.com/fiat/eur.png"
+    logo_url: "https://assets.example.com/fiat/eur.png"
 
   - symbol: "IRR"
     name: "Iranian Rial"
@@ -47,7 +47,7 @@ assets:
     withdrawal_enabled: true
     custody_mode: "OFF_CHAIN"
     description: "Iranian Rial (Toman = 10 Rials)"
-    logo_url: "https://assets.encrypted-db.com/fiat/irr.png"
+    logo_url: "https://assets.example.com/fiat/irr.png"
 
   # Major Cryptocurrencies (Coins)
   - symbol: "BTC"
@@ -65,7 +65,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "Bitcoin - The original cryptocurrency"
-    logo_url: "https://assets.encrypted-db.com/crypto/btc.png"
+    logo_url: "https://assets.example.com/crypto/btc.png"
     website: "https://bitcoin.org"
     explorer_url: "https://blockstream.info/tx/"
 
@@ -84,7 +84,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "Ethereum - Smart contract platform"
-    logo_url: "https://assets.encrypted-db.com/crypto/eth.png"
+    logo_url: "https://assets.example.com/crypto/eth.png"
     website: "https://ethereum.org"
     explorer_url: "https://etherscan.io/tx/"
 
@@ -103,7 +103,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "TRON - High throughput blockchain"
-    logo_url: "https://assets.encrypted-db.com/crypto/trx.png"
+    logo_url: "https://assets.example.com/crypto/trx.png"
     website: "https://tron.network"
     explorer_url: "https://tronscan.org/#/transaction/"
 
@@ -124,7 +124,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "Tether USD on TRON (TRC20)"
-    logo_url: "https://assets.encrypted-db.com/crypto/usdt.png"
+    logo_url: "https://assets.example.com/crypto/usdt.png"
     website: "https://tether.to"
     explorer_url: "https://tronscan.org/#/token/"
 
@@ -144,7 +144,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "Tether USD on Ethereum (ERC20)"
-    logo_url: "https://assets.encrypted-db.com/crypto/usdt.png"
+    logo_url: "https://assets.example.com/crypto/usdt.png"
 
   - symbol: "USDC"
     name: "USD Coin"
@@ -162,7 +162,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "USD Coin on Ethereum (ERC20)"
-    logo_url: "https://assets.encrypted-db.com/crypto/usdc.png"
+    logo_url: "https://assets.example.com/crypto/usdc.png"
 
   # Wrapped Assets
   - symbol: "WBTC"
@@ -181,7 +181,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "Wrapped Bitcoin on Ethereum (ERC20)"
-    logo_url: "https://assets.encrypted-db.com/crypto/wbtc.png"
+    logo_url: "https://assets.example.com/crypto/wbtc.png"
 
   # TRC20 Tokens
   - symbol: "USDT"
@@ -200,7 +200,7 @@ assets:
     custody_mode: "ON_CHAIN"
     requires_tag: false
     description: "Tether USD on TRON (TRC20)"
-    logo_url: "https://assets.encrypted-db.com/crypto/usdt.png"
+    logo_url: "https://assets.example.com/crypto/usdt.png"
 
 # Asset Pairs (Markets) - Base/Quote
 # These will be created as markets in the database

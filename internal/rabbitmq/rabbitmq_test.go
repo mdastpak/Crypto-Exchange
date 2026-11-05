@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

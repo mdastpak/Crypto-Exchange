@@ -100,7 +100,7 @@ Redis is on the path of most requests, so these timeouts are short: while Redis 
 | `ssl.user.retired_public_keys` | `[]` | Paths of the public keys of earlier user key pairs. Tokens they signed stay valid until they expire. See [Rotating signing keys](#rotating-signing-keys). |
 | `ssl.admin.private_key`, `ssl.admin.public_key` | none | The key pair that signs admin tokens. Without it, admin routes reject every token, and the server logs a warning. It must differ from the user key pair. |
 | `ssl.admin.retired_public_keys` | `[]` | Public keys of earlier admin key pairs |
-| `issuer` | `encrypted-db-exchange` | Issuer claim written into tokens and required on every token |
+| `issuer` | `crypto-exchange` | Issuer claim written into tokens and required on every token |
 | `access_token.expiration_minutes` | **required** | Access token lifetime. There is no default. |
 | `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age` |
 

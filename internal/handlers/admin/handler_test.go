@@ -3,9 +3,9 @@ package admin
 import (
 	"testing"
 
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/models"
-	"encrypted-db/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/stretchr/testify/assert"
 )

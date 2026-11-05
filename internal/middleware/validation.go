@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"encrypted-db/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/testutil/redistest"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"

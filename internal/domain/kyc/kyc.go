@@ -3,7 +3,7 @@ package kyc
 import (
 	"time"
 
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // KYCProfile represents a user's KYC verification profile

@@ -88,7 +88,7 @@ jwt:
       # Earlier user public keys, for key rotation, for example:
       # - "internal/ssl/user/2026-10/public_key.pem"
       retired_public_keys: []
-  issuer: "encrypted-db-exchange"
+  issuer: "crypto-exchange"
   access_token:
     expiration_minutes: 15
   refresh_token:
@@ -156,7 +156,7 @@ websocket:
   max_message_size_bytes: 1048576
 
 exchange:
-  name: "EncryptedDB Exchange"
+  name: "Crypto Exchange"
   timezone: "UTC"
   maintenance_window:
     enabled: false
@@ -394,7 +394,7 @@ observability:
   tracing:
     enabled: false
     endpoint: ""  # Set with OTEL_ENDPOINT
-    service_name: "encrypted-db-exchange"
+    service_name: "crypto-exchange"
     sample_rate: 0.1
 
 rate_limits:

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"encrypted-db/internal/helpers"
-	"encrypted-db/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"

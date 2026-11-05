@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // Asset represents a tradable asset (fiat, crypto, token, stablecoin)

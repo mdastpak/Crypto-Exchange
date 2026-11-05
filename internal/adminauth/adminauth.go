@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/totp"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/totp"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"

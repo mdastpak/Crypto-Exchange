@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/notify"
-	"encrypted-db/internal/otp"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/otp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

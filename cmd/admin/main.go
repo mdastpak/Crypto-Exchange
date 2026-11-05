@@ -20,9 +20,9 @@ import (
 	"os"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/adminauth"
-	"encrypted-db/internal/db"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/db"
 )
 
 const usage = `Usage: admin [-config path] [-migrations url] <command> -email <address>

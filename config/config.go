@@ -310,7 +310,7 @@ func (p *KeyPath) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 // DefaultJWTIssuer is the "iss" claim when jwt.issuer is not set.
-const DefaultJWTIssuer = "encrypted-db-exchange"
+const DefaultJWTIssuer = "crypto-exchange"
 
 // NotificationsConfig configures how messages such as sign-in codes reach
 // users. A channel without configuration is disabled.
@@ -706,7 +706,7 @@ func setDefaults() {
 		Config.Observability.Metrics.Path = "/metrics"
 	}
 	if Config.Observability.Tracing.ServiceName == "" {
-		Config.Observability.Tracing.ServiceName = "encrypted-db-exchange"
+		Config.Observability.Tracing.ServiceName = "crypto-exchange"
 	}
 	if Config.Observability.Tracing.SampleRate == 0 {
 		Config.Observability.Tracing.SampleRate = 0.1

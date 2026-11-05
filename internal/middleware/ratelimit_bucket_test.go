@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/db"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/db"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"

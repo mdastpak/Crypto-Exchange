@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 )
 
 // Deliverer sends a sign-in code over one channel, such as email or SMS.

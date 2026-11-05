@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"encrypted-db/internal/otp"
-	"encrypted-db/internal/testutil/usertest"
+	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

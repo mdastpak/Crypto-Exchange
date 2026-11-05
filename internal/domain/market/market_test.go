@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/internal/domain/asset"
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
 )

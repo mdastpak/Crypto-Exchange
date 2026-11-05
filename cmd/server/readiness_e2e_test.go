@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/testutil/tcpproxy"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

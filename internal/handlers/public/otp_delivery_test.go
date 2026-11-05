@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	"encrypted-db/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

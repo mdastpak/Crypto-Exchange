@@ -3,7 +3,7 @@ package custody
 import (
 	"testing"
 
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -3,9 +3,9 @@ package trade
 import (
 	"testing"
 
-	"encrypted-db/internal/domain/market"
-	"encrypted-db/internal/domain/order"
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/market"
+	"github.com/mdastpak/crypto-exchange/internal/domain/order"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
 )
