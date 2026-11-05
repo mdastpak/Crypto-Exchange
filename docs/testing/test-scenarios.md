@@ -319,13 +319,14 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | S-03 | P0 / integration | Redis unavailable, PostgreSQL healthy | Response is `degraded`; redis detail is `error` | Current handler still returns `200` |
 | S-04 | P0 / integration | Both dependencies unavailable | Both details are present; response is not a misleading `ok` | Current status is `degraded`, HTTP `200` |
 | S-05 | P1 / contract | `/system/ping` | `200`; JSON contains `pong` and a UTC timestamp | Passes |
-| S-06 | P0 / integration | Fresh PostgreSQL database | All migrations apply once and startup succeeds | **Gap:** users migration creates `user_info_username_unique` on `currencies`, not `users` |
+| S-06 | P0 / integration | Fresh PostgreSQL database | All migrations apply once and startup succeeds | Passes: the index is on `users` since [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4), and the full and step-wise migration tests start from an empty database |
 | S-07 | P0 / integration | Startup is repeated against an already migrated database | `migrate.ErrNoChange` is treated as success | Passes |
 | S-08 | P0 / integration | A migration fails halfway | Startup fails, resources close, and the error is actionable | Verify transaction/rollback behavior |
 | S-09 | P1 / contract | Config file is absent | Embedded example config is loaded and defaults are applied | Passes |
 | S-10 | P0 / contract | Config contains invalid YAML or unsafe values | Startup fails before opening external services | Current validation is partial; add negative tests |
 | S-11 | P0 / security | Config and logs are inspected | Private keys, passwords, OTPs, and tokens are never committed or logged | Current OTP logging violates this |
 | S-12 | P0 / integration | SIGTERM is sent with active WebSocket clients | HTTP server, WebSocket pumps, Redis, PostgreSQL, and RabbitMQ shut down within the deadline; shared Redis state is kept | The shutdown sequence keeps the shared currency cache, tested with two instances ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)). The signal path itself is not exercised yet |
+| S-13 | P0 / integration | Each migration is rolled back and applied again, one step at a time, from the latest version down to the first | Every down migration restores the schema of the version before it, every up migration restores its own schema, and the users of a rolled-back version keep their data | Passes: `TestMigrations_EachStepIsReversible` compares the schema after every step ([#30](https://github.com/mdastpak/Crypto-Exchange/issues/30)) |
 
 ---
 
