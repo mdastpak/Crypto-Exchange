@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"encrypted-db/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"

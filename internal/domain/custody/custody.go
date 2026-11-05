@@ -3,7 +3,7 @@ package custody
 import (
 	"time"
 
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // CustodyProvider defines the interface for asset custody operations

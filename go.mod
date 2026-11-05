@@ -1,4 +1,4 @@
-module encrypted-db
+module github.com/mdastpak/crypto-exchange
 
 go 1.26.0
 

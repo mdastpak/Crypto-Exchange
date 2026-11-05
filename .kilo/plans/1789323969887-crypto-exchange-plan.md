@@ -252,7 +252,7 @@ SettlementService (InternalLedger | EVM | UTXO | Fiat)
 ## File Structure (Target)
 
 ```
-encrypted-db/
+crypto-exchange/
 ├── cmd/
 │   ├── server/           # Main API server
 │   ├── price-aggregator/ # Standalone price service (future)

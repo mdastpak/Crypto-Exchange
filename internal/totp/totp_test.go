@@ -70,16 +70,16 @@ func TestGenerateSecret(t *testing.T) {
 }
 
 func TestProvisioningURI(t *testing.T) {
-	uri := ProvisioningURI("EncryptedDB Exchange", "admin@example.com", rfcSecret)
+	uri := ProvisioningURI("Crypto Exchange", "admin@example.com", rfcSecret)
 
 	parsed, err := url.Parse(uri)
 	require.NoError(t, err)
 	assert.Equal(t, "otpauth", parsed.Scheme)
 	assert.Equal(t, "totp", parsed.Host)
-	assert.Equal(t, "/EncryptedDB Exchange:admin@example.com", parsed.Path)
+	assert.Equal(t, "/Crypto Exchange:admin@example.com", parsed.Path)
 	query := parsed.Query()
 	assert.Equal(t, EncodeSecret(rfcSecret), query.Get("secret"))
-	assert.Equal(t, "EncryptedDB Exchange", query.Get("issuer"))
+	assert.Equal(t, "Crypto Exchange", query.Get("issuer"))
 	assert.Equal(t, "SHA1", query.Get("algorithm"))
 	assert.Equal(t, "6", query.Get("digits"))
 	assert.Equal(t, "30", query.Get("period"))

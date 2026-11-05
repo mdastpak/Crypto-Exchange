@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 )
 
 // Defaults used for settings left at zero.

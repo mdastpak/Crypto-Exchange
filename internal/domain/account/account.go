@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // User is a platform user or administrator: a row of the users table, with

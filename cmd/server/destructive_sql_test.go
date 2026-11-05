@@ -28,13 +28,13 @@ func TestCommands_ContainNoDestructiveSQL(t *testing.T) {
 		t.Skip("the go tool is not available")
 	}
 	out, err := exec.Command(goTool, "list", "-deps", "-f", "{{.ImportPath}}|{{.Dir}}|{{join .GoFiles \",\"}}",
-		"encrypted-db/cmd/server", "encrypted-db/cmd/admin").CombinedOutput()
+		"github.com/mdastpak/crypto-exchange/cmd/server", "github.com/mdastpak/crypto-exchange/cmd/admin").CombinedOutput()
 	require.NoError(t, err, string(out))
 
 	checked := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		fields := strings.SplitN(strings.TrimSpace(line), "|", 3)
-		if len(fields) != 3 || !strings.HasPrefix(fields[0], "encrypted-db/") {
+		if len(fields) != 3 || !strings.HasPrefix(fields[0], "github.com/mdastpak/crypto-exchange/") {
 			continue
 		}
 		assert.NotContains(t, fields[0], "/testutil/", "a command must not depend on a test helper")

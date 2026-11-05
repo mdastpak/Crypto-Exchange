@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -93,8 +93,8 @@ func TestUnauthenticatedPathsUseNoPasswordHashing(t *testing.T) {
 		t.Skip("the go tool is not available")
 	}
 	packages := []string{
-		"encrypted-db/internal/handlers/public",
-		"encrypted-db/internal/middleware",
+		"github.com/mdastpak/crypto-exchange/internal/handlers/public",
+		"github.com/mdastpak/crypto-exchange/internal/middleware",
 	}
 	args := append([]string{"list", "-deps", "-f", "{{.ImportPath}} {{join .Imports \" \"}}"}, packages...)
 	out, err := exec.Command(goTool, args...).CombinedOutput()
@@ -103,7 +103,7 @@ func TestUnauthenticatedPathsUseNoPasswordHashing(t *testing.T) {
 	checked := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || !strings.HasPrefix(fields[0], "encrypted-db/") {
+		if len(fields) == 0 || !strings.HasPrefix(fields[0], "github.com/mdastpak/crypto-exchange/") {
 			continue
 		}
 		checked++

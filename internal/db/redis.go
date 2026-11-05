@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/go-redis/redis/v8"
 )

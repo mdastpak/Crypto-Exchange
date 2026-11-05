@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/models"
-	"encrypted-db/internal/rabbitmq"
-	"encrypted-db/internal/testutil/tcpproxy"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/google/uuid"
 	"github.com/streadway/amqp"

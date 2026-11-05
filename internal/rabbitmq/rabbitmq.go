@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/streadway/amqp"
 )

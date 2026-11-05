@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/testutil/usertest"
-	"encrypted-db/internal/totp"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
+	"github.com/mdastpak/crypto-exchange/internal/totp"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,7 +82,7 @@ func newKey(t *testing.T) []byte {
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
 	conn := migratedTestDB(t)
-	service, err := NewService(conn, newKey(t), "EncryptedDB Exchange")
+	service, err := NewService(conn, newKey(t), "Crypto Exchange")
 	require.NoError(t, err)
 	return service, conn
 }
@@ -110,7 +110,7 @@ func TestCreate_StoresAnAdministratorWithAnEncryptedSecret(t *testing.T) {
 
 	assert.Equal(t, "admin@example.com", enrollment.Email, "addresses are stored in lower case")
 	assert.Len(t, enrollment.Secret, 32)
-	assert.Contains(t, enrollment.URI, "otpauth://totp/EncryptedDB%20Exchange:admin@example.com?")
+	assert.Contains(t, enrollment.URI, "otpauth://totp/Crypto%20Exchange:admin@example.com?")
 	assert.Contains(t, enrollment.URI, "secret="+enrollment.Secret)
 
 	var role, status, stored string
@@ -188,7 +188,7 @@ func TestVerifyTOTP_NeedsTheKeyAndTheRightAdministrator(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Unix(1_900_000_000, 0)
 
-	otherKey, err := NewService(conn, newKey(t), "EncryptedDB Exchange")
+	otherKey, err := NewService(conn, newKey(t), "Crypto Exchange")
 	require.NoError(t, err)
 	otherKey.now = func() time.Time { return now }
 	err = otherKey.VerifyTOTP(ctx, first.AdminID, at(t, service, now, first))

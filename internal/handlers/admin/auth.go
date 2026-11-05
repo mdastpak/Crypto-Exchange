@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"encrypted-db/internal/adminauth"
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/helpers"
-	"encrypted-db/internal/notify"
-	"encrypted-db/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/otp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

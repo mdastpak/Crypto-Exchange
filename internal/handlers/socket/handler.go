@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/models"
-	"encrypted-db/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"

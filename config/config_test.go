@@ -120,7 +120,7 @@ func TestSetDefaults_FillsZeroValues(t *testing.T) {
 	assert.Equal(t, "json", Config.Observability.Logging.Format)
 	assert.Equal(t, 9090, Config.Observability.Metrics.Port)
 	assert.Equal(t, "/metrics", Config.Observability.Metrics.Path)
-	assert.Equal(t, "encrypted-db-exchange", Config.Observability.Tracing.ServiceName)
+	assert.Equal(t, "crypto-exchange", Config.Observability.Tracing.ServiceName)
 	assert.Equal(t, 0.1, Config.Observability.Tracing.SampleRate)
 
 	assert.Equal(t, 100, Config.RateLimits.REST.RequestsPerSecond)

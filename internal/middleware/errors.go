@@ -3,8 +3,8 @@ package middleware
 import (
 	"net/http"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
 )

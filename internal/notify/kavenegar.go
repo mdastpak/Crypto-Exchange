@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 )
 
 // KavenegarDeliverer sends sign-in codes by SMS through the Kavenegar verify

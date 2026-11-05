@@ -3,8 +3,8 @@ package market
 import (
 	"time"
 
-	"encrypted-db/internal/domain/asset"
-	"encrypted-db/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // Market represents a trading market (pair of assets with trading rules)

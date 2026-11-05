@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/models"
-	"encrypted-db/internal/rabbitmq"
-	"encrypted-db/internal/testutil/pgtest"
-	"encrypted-db/internal/testutil/redistest"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"

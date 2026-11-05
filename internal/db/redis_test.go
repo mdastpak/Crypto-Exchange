@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/testutil/redistest"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"

@@ -11,22 +11,22 @@ import (
 	"syscall"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/docs"
-	"encrypted-db/internal/adminauth"
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/db"
-	"encrypted-db/internal/handlers/admin"
-	"encrypted-db/internal/handlers/public"
-	"encrypted-db/internal/handlers/socket"
-	"encrypted-db/internal/handlers/system"
-	"encrypted-db/internal/handlers/user"
-	"encrypted-db/internal/helpers"
-	"encrypted-db/internal/middleware"
-	"encrypted-db/internal/models"
-	"encrypted-db/internal/notify"
-	"encrypted-db/internal/otp"
-	"encrypted-db/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/docs"
+	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
+	"github.com/mdastpak/crypto-exchange/internal/handlers/public"
+	"github.com/mdastpak/crypto-exchange/internal/handlers/socket"
+	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
+	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/middleware"
+	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -415,7 +415,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	r.Use(middleware.BodyLimit(bodyLimit))
 
 	r.GET("/", func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusOK, "Welcome to the Encrypted-DB API", nil)
+		helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
 	})
 	if config.Config.SwaggerEnabled() {
 		docs.SwaggerInfo.BasePath = "/"

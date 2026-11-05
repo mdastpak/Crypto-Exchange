@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
-	"encrypted-db/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/google/uuid"
 	"github.com/streadway/amqp"

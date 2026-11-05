@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/internal/testutil/tcpproxy"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/google/uuid"
 	"github.com/streadway/amqp"

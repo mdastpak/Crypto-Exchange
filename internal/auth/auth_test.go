@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/config"
+	"github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"encrypted-db/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

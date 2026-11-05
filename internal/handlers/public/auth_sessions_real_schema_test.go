@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"encrypted-db/internal/auth"
-	"encrypted-db/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
