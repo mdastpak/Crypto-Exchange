@@ -62,6 +62,33 @@ func TestUserStatus_String(t *testing.T) {
 	assert.Equal(t, "PENDING_VERIFICATION", UserStatusPending.String())
 }
 
+func TestUserStatus_CanSignIn(t *testing.T) {
+	for status, want := range map[UserStatus]bool{
+		UserStatusActive:    true,
+		UserStatusPending:   true,
+		UserStatusInactive:  false,
+		UserStatusSuspended: false,
+		UserStatusBanned:    false,
+		"":                  false,
+	} {
+		assert.Equal(t, want, status.CanSignIn(), "status %q", status)
+	}
+}
+
+func TestUser_PrimaryContact(t *testing.T) {
+	user := &User{Contacts: []Contact{
+		{Type: ContactEmail, Value: "old@example.com"},
+		{Type: ContactEmail, Value: "new@example.com", IsPrimary: true},
+		{Type: ContactUsername, Value: "legacy", IsPrimary: true},
+	}}
+
+	email, ok := user.PrimaryContact(ContactEmail)
+	assert.True(t, ok)
+	assert.Equal(t, "new@example.com", email.Value, "a contact that is not primary is skipped")
+	_, ok = user.PrimaryContact(ContactMobile)
+	assert.False(t, ok)
+}
+
 func TestSubAccount_IsActive(t *testing.T) {
 	active := &SubAccount{Status: SubAccountStatusActive}
 	inactive := &SubAccount{Status: SubAccountStatusInactive}

@@ -14,6 +14,7 @@ import (
 
 	"encrypted-db/internal/auth"
 	"encrypted-db/internal/db"
+	"encrypted-db/internal/domain/account"
 	"encrypted-db/internal/helpers"
 	"encrypted-db/internal/models"
 	"encrypted-db/internal/notify"
@@ -61,17 +62,6 @@ type OTPRequest struct {
 type VerifyOTPRequest struct {
 	UUID string `json:"uuid"`
 	OTP  string `json:"otp"`
-}
-
-type User struct {
-	ID        int
-	HK        uuid.UUID
-	Status    string
-	Role      string
-	Info      map[string]interface{}
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt sql.NullTime
 }
 
 func (h *PublicHandler) RequestOTP(c *gin.Context) {
@@ -214,21 +204,20 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken})
 }
 
-// contactLookupQueries uses the same expressions as the unique contact indexes
-// (migration 11), so each lookup is served by an index. Email addresses match
-// case-insensitively, like the index, with ASCII-only case folding that does
-// not depend on the database locale.
-var contactLookupQueries = map[string]string{
-	"email":  `SELECT hk, status, role FROM users WHERE lower((info->'contact'->>'email') COLLATE "C") = lower($1 COLLATE "C")`,
-	"mobile": `SELECT hk, status, role FROM users WHERE info->'contact'->>'mobile' = $1`,
-}
+// userByContactQuery finds the user that owns a contact, through the unique
+// index of user_contacts.
+const userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL
+	FROM user_contacts c JOIN users u ON u.hk = c.user_hk WHERE ` + db.ContactMatch
+
+// signInContactTypes are the contacts that a user can sign in with.
+var signInContactTypes = map[string]bool{string(account.ContactEmail): true, string(account.ContactMobile): true}
 
 // errUserAlreadyExists reports that another request created a user with the
 // same contact between the lookup and the insert.
 var errUserAlreadyExists = errors.New("user with this contact already exists")
 
-// errAccountUnavailable reports an account that is disabled, deleted or
-// suspended, and therefore cannot sign in.
+// errAccountUnavailable reports an account that is deleted, or whose status
+// does not allow signing in.
 var errAccountUnavailable = errors.New("account cannot sign in")
 
 // errAdminAccount reports an administrator account at user sign-in.
@@ -239,13 +228,17 @@ const uniqueViolationCode = "23505"
 func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, contact string) (uuid.UUID, error) {
 	log.Println("Checking if user exists or creating a new user")
 
-	query, ok := contactLookupQueries[contactType]
-	if !ok {
+	if !signInContactTypes[contactType] {
 		return uuid.Nil, fmt.Errorf("unsupported contact type: %s", contactType)
 	}
-	var user User
+	var userHK uuid.UUID
+	var status, role string
+	var deleted bool
+	find := func() error {
+		return h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&userHK, &status, &role, &deleted)
+	}
 
-	err := h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status, &user.Role)
+	err := find()
 	if err == sql.ErrNoRows {
 		log.Println("User does not exist, creating new user")
 		userHK, createErr := h.createUser(ctx, contactType, contact)
@@ -255,51 +248,53 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 		// A concurrent sign-in for the same contact won the insert; continue
 		// with that user so its status checks still apply.
 		log.Println("User was created by a concurrent request, loading it")
-		err = h.PostgresDB.DB.QueryRowContext(ctx, query, contact).Scan(&user.HK, &user.Status, &user.Role)
+		err = find()
 	}
 	if err != nil {
 		log.Printf("Database error: %v", err)
 		return uuid.Nil, fmt.Errorf("database error. please try again")
 	}
 
-	switch user.Status {
-	case "disabled", "deleted", "suspend":
-		return uuid.Nil, fmt.Errorf("%w: status %s", errAccountUnavailable, user.Status)
+	if deleted || !account.UserStatus(status).CanSignIn() {
+		return uuid.Nil, fmt.Errorf("%w: status %s, deleted %t", errAccountUnavailable, status, deleted)
 	}
-	if user.Role == auth.RoleAdmin {
+	if role == auth.RoleAdmin {
 		// Administrators sign in at /admin/auth with a second factor; a
 		// user token for their account is never issued.
 		return uuid.Nil, errAdminAccount
 	}
 
-	log.Printf("User already exists with ID: %s", user.HK.String())
-	return user.HK, nil
+	log.Printf("User already exists with ID: %s", userHK.String())
+	return userHK, nil
 }
 
+// createUser creates an active user with its first contact, in one
+// transaction. The contact is verified: users are created after a correct
+// sign-in code, which proves control of it.
 func (h *PublicHandler) createUser(ctx context.Context, contactType, contact string) (uuid.UUID, error) {
-	info := map[string]interface{}{
-		"contact": map[string]interface{}{
-			contactType: contact,
-		},
-	}
-	infoData, err := json.Marshal(info)
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to marshal user info: %w", err)
+		return uuid.Nil, fmt.Errorf("start the transaction: %w", err)
 	}
+	defer tx.Rollback()
 
-	query := `INSERT INTO users (info, status) VALUES ($1, 'approved') RETURNING hk`
 	var userHK uuid.UUID
-	err = h.PostgresDB.DB.QueryRowContext(ctx, query, infoData).Scan(&userHK)
-	if err != nil {
+	if err := tx.QueryRowContext(ctx, `INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk`).Scan(&userHK); err != nil {
+		log.Printf("Failed to insert new user: %v", err)
+		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
+	}
+	if err := db.InsertContact(ctx, tx, userHK.String(), contactType, contact, true); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode {
 			return uuid.Nil, errUserAlreadyExists
 		}
-		log.Printf("Failed to insert new user: %v", err)
+		log.Printf("Failed to insert the contact of a new user: %v", err)
 		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
 	}
-
-	log.Printf("New user created successfully with ID: %s", userHK)
+	if err := tx.Commit(); err != nil {
+		log.Printf("Failed to commit a new user: %v", err)
+		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
+	}
 	return userHK, nil
 }
 
