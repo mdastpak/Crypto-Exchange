@@ -33,8 +33,9 @@ func TestGenerateCode_RejectsInvalidLengths(t *testing.T) {
 }
 
 // TestGenerateCode_DigitsAreUniform runs a chi-squared test over the digits of
-// 100,000 codes. A modulo bias of 256 % 10 gives a statistic far above 200,
-// while uniform digits exceed the threshold with a probability of 1 in 10,000.
+// 100,000 codes. A modulo bias of 256 % 10 gives a statistic of about 220,
+// while uniform digits exceed the threshold with a probability of 1 in 10^9,
+// so the test catches a bias and almost never fails by chance.
 func TestGenerateCode_DigitsAreUniform(t *testing.T) {
 	const codes, length = 100_000, 6
 	var counts [10]int
@@ -53,8 +54,8 @@ func TestGenerateCode_DigitsAreUniform(t *testing.T) {
 		chiSquared += diff * diff / expected
 	}
 	// The critical value of the chi-squared distribution with 9 degrees of
-	// freedom at p = 0.0001.
-	const critical = 33.72
+	// freedom at p = 10^-9. At p = 0.0001 (33.72), CI runs failed by chance.
+	const critical = 60.66
 	assert.Less(t, chiSquared, critical, "digit counts %v are not uniform", counts)
 }
 
