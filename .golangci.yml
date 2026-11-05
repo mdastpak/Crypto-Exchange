@@ -1,36 +1,57 @@
+version: "2"
+
 run:
   timeout: 5m
-  issues-exit-code: 1
-  include:
-    - type: unconvert
 
 linters:
+  # The standard linters (errcheck, govet, ineffassign, staticcheck, unused)
+  # and these.
   enable:
-    - govet
-    - revive
     - gosec
-    - errcheck
+    - nolintlint
+    - revive
+  settings:
+    nolintlint:
+      # Every //nolint names its linter and says why, and one that no
+      # longer suppresses anything is reported.
+      require-explanation: true
+      require-specific: true
+    errcheck:
+      exclude-functions:
+        # A deferred Rollback runs after Commit too, when it returns
+        # sql.ErrTxDone. A rollback that fails on a broken connection
+        # cannot be retried, and the pool discards that connection.
+        - (*database/sql.Tx).Rollback
+    gosec:
+      excludes:
+        # Unhandled errors are errcheck's job, with the exclusions below.
+        # G104 reports the same calls again, without them.
+        - G104
+    revive:
+      max-open-files: 200
+  exclusions:
+    rules:
+      # Closing a connection, channel, statement, result set, or listener
+      # only releases it, so an error leaves nothing to do. A Close that
+      # completes a write, such as that of the SMTP data writer, must be
+      # checked, and is.
+      - linters: [errcheck]
+        text: "Error return value of `[^`]*\\.Close` is not checked"
+      # The admin command prints to the operator's terminal; when that
+      # fails, there is nothing left to tell anyone.
+      - path: ^cmd/admin/
+        linters: [errcheck]
+        text: "Error return value of `fmt\\.Fprint"
+      # Tests use fixed credentials for the local service containers,
+      # throwaway keys and cookies, test servers, and subprocesses of the go
+      # tool. None of it runs in production.
+      - path: _test\.go
+        linters: [gosec]
+
+formatters:
+  enable:
     - goimports
-    - staticcheck
-    - unused
-
-linters-settings:
-  revive:
-    max-open-files: 200
-  goimports:
-    local-prefixes: "encrypted-db"
-
-output:
-  format: colored-line-number
-
-issues:
-  exclude-rules:
-    - linters:
-        - revive
-      text: "package-comments"
-    - linters:
-        - revive
-      text: "exported"
-    - linters:
-        - revive
-      text: "var-naming"
+  settings:
+    goimports:
+      local-prefixes:
+        - encrypted-db

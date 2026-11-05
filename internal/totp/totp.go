@@ -6,7 +6,7 @@ package totp
 import (
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // G505: RFC 6238 and authenticator apps use HMAC-SHA1, which SHA-1 collisions do not weaken.
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
@@ -57,7 +57,7 @@ func Code(secret []byte, step int64) string {
 // code implements HOTP (RFC 4226) with step as the counter.
 func code(secret []byte, step int64, digits int) string {
 	var counter [8]byte
-	binary.BigEndian.PutUint64(counter[:], uint64(step))
+	binary.BigEndian.PutUint64(counter[:], uint64(step)) //nolint:gosec // G115: steps count from 1970, so they are never negative.
 	mac := hmac.New(sha1.New, secret)
 	mac.Write(counter[:])
 	sum := mac.Sum(nil)

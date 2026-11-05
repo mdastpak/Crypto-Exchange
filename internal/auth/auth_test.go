@@ -178,7 +178,7 @@ func TestGenerateAccessToken(t *testing.T) {
 	assert.Equal(t, "test-issuer", claims.Issuer)
 	assert.Equal(t, jwt.ClaimStrings{"user-api"}, claims.Audience)
 	assert.NotEmpty(t, claims.ID)
-	assert.True(t, claims.ExpiresAt.Time.After(time.Now()))
+	assert.True(t, claims.ExpiresAt.After(time.Now()))
 
 	parsed, _, err := jwt.NewParser().ParseUnverified(token, &Claims{})
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestGenerateRefreshToken(t *testing.T) {
 	claims, err := ParseToken(token, RoleUser, TokenTypeRefresh)
 	require.NoError(t, err)
 	assert.Equal(t, TokenTypeRefresh, claims.Type)
-	assert.True(t, claims.ExpiresAt.Time.After(time.Now().Add(6*24*time.Hour)))
+	assert.True(t, claims.ExpiresAt.After(time.Now().Add(6*24*time.Hour)))
 }
 
 func TestGenerateRefreshToken_TokensIssuedTogetherAreDistinct(t *testing.T) {
@@ -697,7 +697,7 @@ func TestClaims_JSONSerialization(t *testing.T) {
 	assert.Equal(t, claims.Role, unmarshalled.Role)
 	assert.Equal(t, claims.Type, unmarshalled.Type)
 	assert.Equal(t, claims.Audience, unmarshalled.Audience)
-	assert.Equal(t, claims.ExpiresAt.Time.Unix(), unmarshalled.ExpiresAt.Time.Unix())
+	assert.Equal(t, claims.ExpiresAt.Unix(), unmarshalled.ExpiresAt.Unix())
 }
 
 func TestTokenBlacklist_KeyGeneration(t *testing.T) {

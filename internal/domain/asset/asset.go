@@ -3,6 +3,7 @@ package asset
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"time"
 
 	"encrypted-db/internal/domain/shared"
@@ -127,7 +128,9 @@ func (a *Asset) IsStablecoin() bool {
 
 // RoundQuantity rounds quantity to asset's decimal precision
 func (a *Asset) RoundQuantity(qty shared.Decimal) shared.Decimal {
-	if a.Decimals <= 0 {
+	// The database stores decimals as a SMALLINT; a larger value cannot be
+	// rounded to, so the quantity is already as precise as it can be.
+	if a.Decimals <= 0 || a.Decimals > math.MaxInt16 {
 		return qty
 	}
 	d := qty.Decimal()

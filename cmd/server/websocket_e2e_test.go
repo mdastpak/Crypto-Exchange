@@ -22,7 +22,7 @@ func dialWebSocket(t *testing.T, serverURL string) *websocket.Conn {
 	t.Cleanup(func() { conn.Close() })
 
 	require.NoError(t, conn.WriteJSON(map[string]string{"event": "ping"}))
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
 	var pong map[string]interface{}
 	require.NoError(t, conn.ReadJSON(&pong))
 	require.Equal(t, "pong", pong["event"])
@@ -44,7 +44,7 @@ func TestWebSocket_CurrencyEventsReachEveryClient(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, resp.Message)
 
 	for i, conn := range clients {
-		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 		var event map[string]interface{}
 		require.NoError(t, conn.ReadJSON(&event), "client %d received no event", i)
 		assert.Equal(t, "currencies", event["entity"], "client %d", i)

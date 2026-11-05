@@ -26,7 +26,7 @@ func ErrorSanitizer() gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			for _, e := range c.Errors {
 				if config.Config.Server.Mode == "release" {
-					e.SetMeta(map[string]bool{"sanitized": true})
+					e.Meta = map[string]bool{"sanitized": true}
 				}
 			}
 		}
