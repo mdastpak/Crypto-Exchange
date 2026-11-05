@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -297,4 +298,40 @@ func TestRateLimitOnError_DefaultsAndValidation(t *testing.T) {
 	err := loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_WS_ON_ERROR": "ignore"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `rate_limits.ws.on_error (RATE_LIMITS_WS_ON_ERROR) is "ignore"`)
+}
+
+func TestRedisTimeouts_DefaultsAndValidation(t *testing.T) {
+	require.NoError(t, loadFile(t, "config.compose.yaml", nil))
+	assert.Equal(t, DefaultRedisDialTimeoutMs, Config.Redis.DialTimeoutMs)
+	assert.Equal(t, DefaultRedisReadTimeoutMs, Config.Redis.ReadTimeoutMs)
+	assert.Equal(t, DefaultRedisWriteTimeoutMs, Config.Redis.WriteTimeoutMs)
+	assert.Equal(t, DefaultRedisPoolTimeoutMs, Config.Redis.PoolTimeoutMs)
+	assert.Equal(t, DefaultRedisMaxRetries, Config.Redis.MaxRetries)
+	assert.Equal(t, DefaultRateLimitTimeoutMs, Config.RateLimits.TimeoutMs)
+
+	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{
+		"REDIS_DIAL_TIMEOUT_MS": "300", "REDIS_READ_TIMEOUT_MS": "400", "REDIS_WRITE_TIMEOUT_MS": "500",
+		"REDIS_POOL_TIMEOUT_MS": "600", "REDIS_MAX_RETRIES": "-1", "RATE_LIMITS_TIMEOUT_MS": "50",
+	}))
+	assert.Equal(t, 300, Config.Redis.DialTimeoutMs)
+	assert.Equal(t, 400, Config.Redis.ReadTimeoutMs)
+	assert.Equal(t, 500, Config.Redis.WriteTimeoutMs)
+	assert.Equal(t, 600, Config.Redis.PoolTimeoutMs)
+	assert.Equal(t, -1, Config.Redis.MaxRetries, "-1 turns retries off")
+	assert.Equal(t, 50, Config.RateLimits.TimeoutMs)
+
+	err := loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_TIMEOUT_MS": "-5"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rate_limits.timeout_ms (RATE_LIMITS_TIMEOUT_MS) is -5")
+	err = loadFile(t, "config.compose.yaml", map[string]string{"REDIS_READ_TIMEOUT_MS": "-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redis.read_timeout_ms (REDIS_READ_TIMEOUT_MS) is -1")
+	err = loadFile(t, "config.compose.yaml", map[string]string{"REDIS_MAX_RETRIES": "-2"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redis.max_retries (REDIS_MAX_RETRIES) is -2")
+}
+
+func TestMilliseconds_FallsBackWhenNotSet(t *testing.T) {
+	assert.Equal(t, 300*time.Millisecond, Milliseconds(300, 1000))
+	assert.Equal(t, time.Second, Milliseconds(0, 1000), "a configuration that Load did not fill in")
 }

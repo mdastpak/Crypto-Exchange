@@ -16,16 +16,22 @@ type RedisService struct {
 }
 
 func NewRedisService() (*RedisService, error) {
+	cfg := config.Config.Redis
+	maxRetries := cfg.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = config.DefaultRedisMaxRetries
+	}
 	opts := &redis.Options{
-		Addr:         fmt.Sprintf("%s:%s", config.Config.Redis.Host, config.Config.Redis.Port),
-		Password:     config.Config.Redis.Password,
-		DB:           config.Config.Redis.DB,
-		PoolSize:     config.Config.Redis.PoolSize,
-		MinIdleConns: config.Config.Redis.MinIdleConns,
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-		PoolTimeout:  4 * time.Second,
+		Addr:         fmt.Sprintf("%s:%s", cfg.Host, cfg.Port),
+		Password:     cfg.Password,
+		DB:           cfg.DB,
+		PoolSize:     cfg.PoolSize,
+		MinIdleConns: cfg.MinIdleConns,
+		DialTimeout:  config.Milliseconds(cfg.DialTimeoutMs, config.DefaultRedisDialTimeoutMs),
+		ReadTimeout:  config.Milliseconds(cfg.ReadTimeoutMs, config.DefaultRedisReadTimeoutMs),
+		WriteTimeout: config.Milliseconds(cfg.WriteTimeoutMs, config.DefaultRedisWriteTimeoutMs),
+		PoolTimeout:  config.Milliseconds(cfg.PoolTimeoutMs, config.DefaultRedisPoolTimeoutMs),
+		MaxRetries:   maxRetries,
 	}
 
 	client := redis.NewClient(opts)

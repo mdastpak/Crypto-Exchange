@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -22,10 +23,16 @@ import (
 
 type RateLimiter struct {
 	redis *db.RedisService
+	// timeout bounds each call to Redis, so that a Redis outage delays a
+	// request by at most this long before on_error decides.
+	timeout time.Duration
 }
 
 func NewRateLimiter(redis *db.RedisService) *RateLimiter {
-	return &RateLimiter{redis: redis}
+	return &RateLimiter{
+		redis:   redis,
+		timeout: config.Milliseconds(config.Config.RateLimits.TimeoutMs, config.DefaultRateLimitTimeoutMs),
+	}
 }
 
 // denies reports whether a limiter rejects requests while Redis cannot be
@@ -34,9 +41,27 @@ func denies(onError string) bool {
 	return onError == config.RateLimitDeny
 }
 
-func (rl *RateLimiter) RESTRateLimit() gin.HandlerFunc {
+// RESTRateLimit limits the requests of each client IP. The routes in probes
+// are counted in the memory of this instance instead of in Redis, so that the
+// health probes answer at once while Redis is down.
+func (rl *RateLimiter) RESTRateLimit(probes ...string) gin.HandlerFunc {
 	cfg := config.Config.RateLimits.REST
-	return rl.tokenBucketMiddleware("rest", cfg.RequestsPerSecond, cfg.Burst, denies(cfg.OnError), rl.getClientIP)
+	shared := rl.tokenBucketMiddleware("rest", cfg.RequestsPerSecond, cfg.Burst, denies(cfg.OnError), rl.getClientIP)
+	if len(probes) == 0 {
+		return shared
+	}
+	local := memoryTokenBucketMiddleware(cfg.RequestsPerSecond, cfg.Burst, rl.getClientIP)
+	isProbe := make(map[string]bool, len(probes))
+	for _, route := range probes {
+		isProbe[route] = true
+	}
+	return func(c *gin.Context) {
+		if isProbe[c.FullPath()] {
+			local(c)
+			return
+		}
+		shared(c)
+	}
 }
 
 func (rl *RateLimiter) WSRateLimit() gin.HandlerFunc {
@@ -104,9 +129,23 @@ func logLimiterError(prefix string, err error) {
 	}
 }
 
+// redisUnreachableKey marks a request for which a limiter could not reach
+// Redis, so that the next limiters of its route do not wait for Redis again:
+// together, they wait at most once.
+const redisUnreachableKey = "ratelimit.redis_unreachable"
+
+var errRedisUnreachable = errors.New("an earlier limiter of this request could not reach it")
+
+// redisUnreachable reports whether an earlier limiter of the request could
+// not reach Redis.
+func redisUnreachable(c *gin.Context) bool {
+	return c.GetBool(redisUnreachableKey)
+}
+
 // limiterUnavailable handles a request while Redis cannot be reached: it is
 // rejected with 503 when the limiter fails closed, and let through otherwise.
 func limiterUnavailable(c *gin.Context, prefix string, failClosed bool, err error) {
+	c.Set(redisUnreachableKey, true)
 	logLimiterError(prefix, err)
 	if failClosed {
 		c.Header("Retry-After", "1")
@@ -137,8 +176,14 @@ func (rl *RateLimiter) tokenBucketMiddleware(prefix string, rate, burst int, fai
 	}
 
 	return func(c *gin.Context) {
+		if redisUnreachable(c) {
+			limiterUnavailable(c, prefix, failClosed, errRedisUnreachable)
+			return
+		}
 		key := fmt.Sprintf("ratelimit:%s:%s", prefix, keyFunc(c))
-		allowed, remaining, wait, err := rl.consumeToken(c.Request.Context(), key, rate, burst, time.Now())
+		ctx, cancel := context.WithTimeout(c.Request.Context(), rl.timeout)
+		allowed, remaining, wait, err := rl.consumeToken(ctx, key, rate, burst, time.Now())
+		cancel()
 		if err != nil {
 			limiterUnavailable(c, prefix, failClosed, err)
 			return
@@ -159,8 +204,14 @@ func (rl *RateLimiter) fixedWindowMiddleware(prefix string, limit int, window ti
 	}
 
 	return func(c *gin.Context) {
+		if redisUnreachable(c) {
+			limiterUnavailable(c, prefix, failClosed, errRedisUnreachable)
+			return
+		}
 		key := fmt.Sprintf("ratelimit:%s:%s", prefix, keyFunc(c))
-		count, ttl, err := rl.incrementCounter(c.Request.Context(), key, window)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), rl.timeout)
+		count, ttl, err := rl.incrementCounter(ctx, key, window)
+		cancel()
 		if err != nil {
 			limiterUnavailable(c, prefix, failClosed, err)
 			return

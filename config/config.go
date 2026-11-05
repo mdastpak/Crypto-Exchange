@@ -92,6 +92,15 @@ type Configuration struct {
 		MinIdleConns        int    `yaml:"min_idle_conns"`
 		ConnectRetries      int    `yaml:"connect_retries"`
 		ConnectRetryDelayMs int    `yaml:"connect_retry_delay_ms"`
+		// The client's timeouts, in milliseconds. Redis is on the path of
+		// most requests, so a command that waits holds the request.
+		DialTimeoutMs  int `yaml:"dial_timeout_ms"`
+		ReadTimeoutMs  int `yaml:"read_timeout_ms"`
+		WriteTimeoutMs int `yaml:"write_timeout_ms"`
+		PoolTimeoutMs  int `yaml:"pool_timeout_ms"`
+		// MaxRetries is how often a command is retried after a network
+		// error; -1 turns retries off.
+		MaxRetries int `yaml:"max_retries"`
 	} `yaml:"redis"`
 
 	RabbitMQ struct {
@@ -244,9 +253,11 @@ type Configuration struct {
 
 	// RateLimits configures the limiters. OnError says what a limiter does
 	// with a request while Redis cannot be reached: "allow" lets it through,
-	// "deny" rejects it with 503.
+	// "deny" rejects it with 503. TimeoutMs bounds each limiter's call to
+	// Redis; a call that takes longer counts as Redis being unreachable.
 	RateLimits struct {
-		REST struct {
+		TimeoutMs int `yaml:"timeout_ms"`
+		REST      struct {
 			RequestsPerSecond int    `yaml:"requests_per_second"`
 			Burst             int    `yaml:"burst"`
 			OnError           string `yaml:"on_error"`
@@ -479,7 +490,31 @@ func Load() error {
 	if err := Config.validateRateLimits(); err != nil {
 		return err
 	}
+	if err := Config.validateRedisTimeouts(); err != nil {
+		return err
+	}
 	validateConfig()
+	return nil
+}
+
+func (c *Configuration) validateRedisTimeouts() error {
+	for _, setting := range []struct {
+		key string
+		ms  int
+	}{
+		{"redis.dial_timeout_ms", c.Redis.DialTimeoutMs},
+		{"redis.read_timeout_ms", c.Redis.ReadTimeoutMs},
+		{"redis.write_timeout_ms", c.Redis.WriteTimeoutMs},
+		{"redis.pool_timeout_ms", c.Redis.PoolTimeoutMs},
+		{"rate_limits.timeout_ms", c.RateLimits.TimeoutMs},
+	} {
+		if setting.ms < 0 {
+			return fmt.Errorf("%s (%s) is %d; it must be a positive number of milliseconds", setting.key, envVarFor(setting.key), setting.ms)
+		}
+	}
+	if c.Redis.MaxRetries < -1 {
+		return fmt.Errorf("redis.max_retries (%s) is %d; it must be -1, which turns retries off, or more", envVarFor("redis.max_retries"), c.Redis.MaxRetries)
+	}
 	return nil
 }
 
@@ -605,6 +640,21 @@ func setDefaults() {
 	}
 	if Config.Redis.ConnectRetryDelayMs == 0 {
 		Config.Redis.ConnectRetryDelayMs = 500
+	}
+	for _, ms := range []struct {
+		value    *int
+		fallback int
+	}{
+		{&Config.Redis.DialTimeoutMs, DefaultRedisDialTimeoutMs},
+		{&Config.Redis.ReadTimeoutMs, DefaultRedisReadTimeoutMs},
+		{&Config.Redis.WriteTimeoutMs, DefaultRedisWriteTimeoutMs},
+		{&Config.Redis.PoolTimeoutMs, DefaultRedisPoolTimeoutMs},
+		{&Config.Redis.MaxRetries, DefaultRedisMaxRetries},
+		{&Config.RateLimits.TimeoutMs, DefaultRateLimitTimeoutMs},
+	} {
+		if *ms.value == 0 {
+			*ms.value = ms.fallback
+		}
 	}
 
 	setNotificationDefaults(&Config.Notifications)
@@ -798,6 +848,27 @@ func GetRabbitMQURL() string {
 
 // DefaultMaxBodyBytes is server.max_body_bytes when it is not set: 1 MiB.
 const DefaultMaxBodyBytes = 1 << 20
+
+// The defaults of the Redis client and of rate_limits.timeout_ms. They are
+// short, so that a Redis outage delays requests by a moment instead of the
+// seconds that the client library waits by default.
+const (
+	DefaultRedisDialTimeoutMs  = 1000
+	DefaultRedisReadTimeoutMs  = 1000
+	DefaultRedisWriteTimeoutMs = 1000
+	DefaultRedisPoolTimeoutMs  = 2000
+	DefaultRedisMaxRetries     = 1
+	DefaultRateLimitTimeoutMs  = 250
+)
+
+// Milliseconds returns ms milliseconds, or fallback milliseconds when ms is
+// not set, as in a configuration that Load did not fill in.
+func Milliseconds(ms, fallback int) time.Duration {
+	if ms <= 0 {
+		ms = fallback
+	}
+	return time.Duration(ms) * time.Millisecond
+}
 
 // SwaggerEnabled reports whether the Swagger UI is served: as
 // server.swagger.enabled says, or, when it is not set, outside release mode.

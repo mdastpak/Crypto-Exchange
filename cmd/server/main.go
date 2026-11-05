@@ -387,6 +387,10 @@ func initializeCache(ih *InfraHandlers) error {
 	return ih.Admin.LoadAndCacheCurrencies(ctx)
 }
 
+// probeRoutes are the health probes. They must answer while Redis is down,
+// so the REST limit counts them in memory instead of in Redis.
+var probeRoutes = []string{"/system/live", "/system/ready", "/system/healthcheck", "/system/ping"}
+
 // RouteHandler registers the global middleware and then every route. Gin
 // applies middleware only to the routes registered after it, so no route may
 // be registered before this function runs.
@@ -403,7 +407,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	r.Use(cors)
 	// The rate limit comes before the body limit, so that a flood of
 	// requests is rejected before their bodies are read.
-	r.Use(rl.RESTRateLimit())
+	r.Use(rl.RESTRateLimit(probeRoutes...))
 	bodyLimit := config.Config.Server.MaxBodyBytes
 	if bodyLimit <= 0 {
 		bodyLimit = config.DefaultMaxBodyBytes
