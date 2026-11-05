@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The latest patch release of the Go version in go.mod, as the Dockerfile
+  # uses. The "checks" job fails when the two disagree.
+  GO_VERSION: "1.26"
+
+jobs:
+  checks:
+    name: Build, vet, and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: Check that GO_VERSION is the Go version of go.mod
+        run: |
+          go_mod=$(awk '/^go /{split($2, v, "."); print v[1] "." v[2]}' go.mod)
+          echo "go.mod: $go_mod, GO_VERSION: $GO_VERSION"
+          test "$go_mod" = "$GO_VERSION"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not formatted; run gofmt -w on them:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Check that go.mod and go.sum are tidy
+        run: go mod tidy -diff
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
+          --health-interval 10s --health-timeout 10s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # The integration tests share databases, so packages run one at a time.
+      - name: Test with the race detector
+        run: |
+          set -o pipefail
+          go test -race -p 1 -count=1 -v -covermode=atomic -coverprofile=coverage.out ./... 2>&1 | tee test.log
+
+      # Tests skip themselves when a service is unreachable, which would turn
+      # a broken service container into a green check.
+      - name: Check that no test was skipped for a missing service
+        if: ${{ !cancelled() }}
+        run: |
+          if grep -E 'is not reachable|the go tool is not available' test.log; then
+            echo "::error::Tests were skipped because a service or tool was missing"
+            exit 1
+          fi
+
+      - name: Summarize coverage
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Test coverage"
+            echo
+            echo '```'
+            go tool cover -func=coverage.out | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: test-results
+          path: |
+            coverage.out
+            test.log
+          retention-days: 14
+
+  vulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  markdown:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # The files to skip are listed in .markdownlint-cli2.jsonc.
+      - name: Run markdownlint
+        run: npx --yes markdownlint-cli2@0.13.0 "**/*.md"
