@@ -96,12 +96,29 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 14 | Unifies the user model: contacts move from `users.info` into `user_contacts`, `users.status` becomes `account_status_type`, and `users.info` and the unused contact columns of migration 8 are dropped | Yes |
 | 15 | `data_keys`: the data-protection keys, wrapped by the key-encryption key | Yes, when `keys.provider` is set |
 | 16 | Replaces the plaintext `api_keys.secret_hash` with `secret_sealed` (HMAC secrets, sealed with a `field-enc` key) and `ed25519_public_key`, with a constraint that each key type keeps only what verifying it needs | Not yet (API keys are #63) |
+| 17 | Balance invariants: no negative amounts, `total` computed as `available + locked`, `on_chain` dropped, one balance per user, asset, and sub-account also without a sub-account | Not yet (the ledger is #60) |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
 - `users` holds the account: `hk` is the ID that every other table references, `status` is `account_status_type` (`ACTIVE`, `PENDING_VERIFICATION`, `INACTIVE`, `SUSPENDED`, `BANNED`), and `deleted_at` alone marks a deleted account.
 - `user_contacts` holds the contacts: the type (`email`, `mobile`, or the legacy `username`), the value, `verified_at`, and `is_primary`. The database makes each contact value belong to one user, with emails and usernames compared case-insensitively, and allows one primary contact of each type per user.
 - The Go type is `account.User`.
+
+A balance (`internal/domain/balance`) is a state machine of one asset in one account ([#43](https://github.com/mdastpak/Crypto-Exchange/issues/43)). Available funds can be traded and withdrawn, locked funds are reserved by open orders and pending withdrawals, and pending deposits are detected but not credited yet. The total, what the user owns, is available plus locked. Every change is one transition of a positive amount, which fails without changing anything when a component would become negative:
+
+| Transition | Available | Locked | Pending | Total | When |
+| --- | --- | --- | --- | --- | --- |
+| `PENDING_DEPOSIT` | | | +a | | A deposit is detected |
+| `DEPOSIT` | +a | | -a | +a | The deposit is credited |
+| `DEPOSIT_FAILED` | | | -a | | The deposit will not be credited |
+| `LOCK` | -a | +a | | | An order is placed, or a withdrawal requested |
+| `UNLOCK` | +a | -a | | | The order is cancelled, or the withdrawal fails |
+| `TRADE_CREDIT` | +a | | | +a | An asset is received in a trade |
+| `TRADE_DEBIT` | | -a | | -a | An asset is given in a trade |
+| `FEE` | | -a | | -a | A fee is charged, from the funds locked with the order |
+| `WITHDRAWAL` | | -a | | -a | A withdrawal is completed |
+
+Funds enter the total only through a credited deposit or a trade credit, and leave it only from locked funds. A property test applies random sequences of transitions and checks that the total changes by exactly the funds that entered or left. Each transition returns a change event with the components before and after and the version, which a repository uses for optimistic locking (`UPDATE ... WHERE version = $n`). The database enforces the same invariants (migration 17). Where funds are held on chain is tracked per wallet by custody, not in the user's balance.
 
 Currencies still use the legacy JSONB table next to the typed `assets` table. Unifying them is tracked in [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57).
 

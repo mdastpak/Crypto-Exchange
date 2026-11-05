@@ -1,7 +1,36 @@
+// Package balance models the balance of one asset in one account as a state
+// machine.
+//
+// A balance has three components. Available funds can be traded and
+// withdrawn. Locked funds are reserved by an open order or a pending
+// withdrawal. Pending deposits are detected but not credited yet, so the
+// user does not own them yet. The total, which is what the user owns, is
+// available plus locked.
+//
+// Every change goes through Apply with one of the transitions below. A
+// transition moves a positive amount between the components, or into or out
+// of the balance, and fails without changing anything when a component
+// would become negative:
+//
+//	transition          available  locked  pending  total
+//	PENDING_DEPOSIT                          +a
+//	DEPOSIT              +a                  -a       +a   (deposit credited)
+//	DEPOSIT_FAILED                           -a
+//	LOCK                 -a         +a                     (order placed, withdrawal requested)
+//	UNLOCK               +a         -a                     (order cancelled, withdrawal failed)
+//	TRADE_CREDIT         +a                           +a   (asset received in a trade)
+//	TRADE_DEBIT                     -a                -a   (asset given in a trade)
+//	FEE                             -a                -a   (fee, locked with the order)
+//	WITHDRAWAL                      -a                -a   (withdrawal completed)
+//
+// Funds therefore only enter the total through a credited deposit or a trade
+// credit, and only leave it from the locked funds. Each transition returns
+// a BalanceChangeEvent, from which the ledger (#60) records the change.
 package balance
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
@@ -15,15 +44,17 @@ type Balance struct {
 	AssetID      shared.UUID  `json:"asset_id" db:"asset_id"`
 
 	// Balance components
-	Available      shared.Decimal `json:"available" db:"available"`             // Free to trade/withdraw
-	Locked         shared.Decimal `json:"locked" db:"locked"`                   // Locked in orders/withdrawals
-	OnChain        shared.Decimal `json:"on_chain" db:"on_chain"`               // Confirmed on-chain (for deposits)
-	PendingDeposit shared.Decimal `json:"pending_deposit" db:"pending_deposit"` // Unconfirmed deposits
+	Available      shared.Decimal `json:"available" db:"available"`             // Free to trade and withdraw
+	Locked         shared.Decimal `json:"locked" db:"locked"`                   // Reserved by open orders and pending withdrawals
+	PendingDeposit shared.Decimal `json:"pending_deposit" db:"pending_deposit"` // Detected, not credited yet
 
-	// Totals
-	Total shared.Decimal `json:"total" db:"total"` // Available + Locked + OnChain + PendingDeposit
+	// Total is Available + Locked, what the user owns. The database computes
+	// it as a generated column.
+	Total shared.Decimal `json:"total" db:"total"`
 
-	// Version for optimistic locking
+	// Version is raised by every transition. A repository stores a balance
+	// with UPDATE ... WHERE version = <the version it read>, so that two
+	// concurrent changes cannot both apply.
 	Version int `json:"version" db:"version"`
 
 	// Relations
@@ -32,123 +63,114 @@ type Balance struct {
 	UpdatedAt shared.Timestamp `json:"updated_at" db:"updated_at"`
 }
 
-// LockAmount locks amount for trading/withdrawal
-// Returns error if insufficient available balance
-func (b *Balance) LockAmount(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
+// delta is the sign of a transition's effect on each component.
+type delta struct {
+	available, locked, pending int
+}
+
+// transitions are the only ways a balance changes.
+var transitions = map[BalanceChangeType]delta{
+	BalanceChangePendingDep:    {pending: +1},
+	BalanceChangeDeposit:       {available: +1, pending: -1},
+	BalanceChangeDepositFailed: {pending: -1},
+	BalanceChangeLock:          {available: -1, locked: +1},
+	BalanceChangeUnlock:        {available: +1, locked: -1},
+	BalanceChangeTradeCredit:   {available: +1},
+	BalanceChangeTradeDebit:    {locked: -1},
+	BalanceChangeFee:           {locked: -1},
+	BalanceChangeWithdrawal:    {locked: -1},
+}
+
+// TotalEffect is the sign of a transition's effect on the total: +1 for
+// funds that enter the balance, -1 for funds that leave it, 0 for funds that
+// move within it or are not owned yet. It reports false for an unknown
+// transition.
+func (t BalanceChangeType) TotalEffect() (int, bool) {
+	d, ok := transitions[t]
+	return d.available + d.locked, ok
+}
+
+// Reference names what caused a change, such as an order, a trade, a
+// deposit, or a withdrawal.
+type Reference struct {
+	ID   *shared.UUID
+	Type string // "ORDER", "TRADE", "DEPOSIT", "WITHDRAWAL"
+}
+
+// Apply performs one transition of amount, which must be positive, and
+// returns the event that describes it. When the transition would make a
+// component negative, it returns an error and changes nothing.
+func (b *Balance) Apply(change BalanceChangeType, amount shared.Decimal, ref Reference) (BalanceChangeEvent, error) {
+	d, ok := transitions[change]
+	if !ok {
+		return BalanceChangeEvent{}, fmt.Errorf("%w: %q", ErrUnknownTransition, change)
 	}
-	if b.Available.LessThan(amount) {
-		return ErrInsufficientBalance
+	if !amount.IsPositive() {
+		return BalanceChangeEvent{}, ErrInvalidAmount
 	}
-	b.Available = b.Available.Sub(amount)
-	b.Locked = b.Locked.Add(amount)
-	b.recalcTotal()
+
+	available, err := move(b.Available, d.available, amount, ErrInsufficientBalance)
+	if err != nil {
+		return BalanceChangeEvent{}, err
+	}
+	locked, err := move(b.Locked, d.locked, amount, ErrInsufficientLocked)
+	if err != nil {
+		return BalanceChangeEvent{}, err
+	}
+	pending, err := move(b.PendingDeposit, d.pending, amount, ErrInsufficientPending)
+	if err != nil {
+		return BalanceChangeEvent{}, err
+	}
+
+	event := BalanceChangeEvent{
+		BalanceID:     b.ID,
+		UserID:        b.UserID,
+		SubAccountID:  b.SubAccountID,
+		AssetID:       b.AssetID,
+		ChangeType:    change,
+		Amount:        amount,
+		OldAvailable:  b.Available,
+		NewAvailable:  available,
+		OldLocked:     b.Locked,
+		NewLocked:     locked,
+		OldPending:    b.PendingDeposit,
+		NewPending:    pending,
+		OldVersion:    b.Version,
+		NewVersion:    b.Version + 1,
+		ReferenceID:   ref.ID,
+		ReferenceType: ref.Type,
+		Timestamp:     shared.Now(),
+	}
+	b.Available, b.Locked, b.PendingDeposit = available, locked, pending
+	b.Total = b.Available.Add(b.Locked)
 	b.Version++
-	return nil
+	return event, nil
 }
 
-// UnlockAmount releases locked amount back to available
-func (b *Balance) UnlockAmount(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
+// move adds or subtracts amount from value as sign says, and refuses a
+// negative result with insufficient.
+func move(value shared.Decimal, sign int, amount shared.Decimal, insufficient error) (shared.Decimal, error) {
+	switch sign {
+	case +1:
+		return value.Add(amount), nil
+	case -1:
+		if value.LessThan(amount) {
+			return value, insufficient
+		}
+		return value.Sub(amount), nil
 	}
-	if b.Locked.LessThan(amount) {
-		return ErrInsufficientLocked
-	}
-	b.Locked = b.Locked.Sub(amount)
-	b.Available = b.Available.Add(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
+	return value, nil
 }
 
-// AddAvailable increases available balance (e.g., from trade fill, deposit)
-func (b *Balance) AddAvailable(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
-	}
-	b.Available = b.Available.Add(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
-}
-
-// AddLocked increases locked balance (e.g., new order placed)
-func (b *Balance) AddLocked(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
-	}
-	b.Locked = b.Locked.Add(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
-}
-
-// AddOnChain increases on-chain balance (confirmed deposit)
-func (b *Balance) AddOnChain(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
-	}
-	b.OnChain = b.OnChain.Add(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
-}
-
-// AddPendingDeposit increases pending deposit (unconfirmed)
-func (b *Balance) AddPendingDeposit(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
-	}
-	b.PendingDeposit = b.PendingDeposit.Add(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
-}
-
-// ConfirmDeposit moves amount from pending to on-chain
-func (b *Balance) ConfirmDeposit(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
-	}
-	if b.PendingDeposit.LessThan(amount) {
-		return ErrInsufficientPending
-	}
-	b.PendingDeposit = b.PendingDeposit.Sub(amount)
-	b.OnChain = b.OnChain.Add(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
-}
-
-// SettleWithdrawal reduces on-chain balance for withdrawal
-func (b *Balance) SettleWithdrawal(amount shared.Decimal) error {
-	if amount.IsNegative() {
-		return ErrNegativeAmount
-	}
-	if b.OnChain.LessThan(amount) {
-		return ErrInsufficientOnChain
-	}
-	b.OnChain = b.OnChain.Sub(amount)
-	b.recalcTotal()
-	b.Version++
-	return nil
-}
-
-// recalcTotal recalculates total balance
-func (b *Balance) recalcTotal() {
-	b.Total = b.Available.Add(b.Locked).Add(b.OnChain).Add(b.PendingDeposit)
-}
-
-// CanWithdraw checks if amount can be withdrawn
+// CanWithdraw reports whether a positive amount can be locked for a
+// withdrawal.
 func (b *Balance) CanWithdraw(amount shared.Decimal) bool {
-	return b.Available.GreaterThanOrEqual(amount)
+	return amount.IsPositive() && b.Available.GreaterThanOrEqual(amount)
 }
 
-// CanTrade checks if amount is available for trading
+// CanTrade reports whether a positive amount can be locked for an order.
 func (b *Balance) CanTrade(amount shared.Decimal) bool {
-	return b.Available.GreaterThanOrEqual(amount)
+	return amount.IsPositive() && b.Available.GreaterThanOrEqual(amount)
 }
 
 // BalanceSnapshot for event sourcing
@@ -159,14 +181,14 @@ type BalanceSnapshot struct {
 	AssetID        shared.UUID      `json:"asset_id"`
 	Available      shared.Decimal   `json:"available"`
 	Locked         shared.Decimal   `json:"locked"`
-	OnChain        shared.Decimal   `json:"on_chain"`
 	PendingDeposit shared.Decimal   `json:"pending_deposit"`
 	Total          shared.Decimal   `json:"total"`
 	Version        int              `json:"version"`
 	Timestamp      shared.Timestamp `json:"timestamp"`
 }
 
-// BalanceChangeEvent for event sourcing
+// BalanceChangeEvent describes one transition, with the components before
+// and after it.
 type BalanceChangeEvent struct {
 	EventID      shared.UUID       `json:"event_id"`
 	BalanceID    shared.UUID       `json:"balance_id"`
@@ -181,10 +203,12 @@ type BalanceChangeEvent struct {
 	NewAvailable shared.Decimal `json:"new_available"`
 	OldLocked    shared.Decimal `json:"old_locked"`
 	NewLocked    shared.Decimal `json:"new_locked"`
-	OldOnChain   shared.Decimal `json:"old_on_chain"`
-	NewOnChain   shared.Decimal `json:"new_on_chain"`
 	OldPending   shared.Decimal `json:"old_pending_deposit"`
 	NewPending   shared.Decimal `json:"new_pending_deposit"`
+
+	// The versions before and after, for the optimistic lock of the store.
+	OldVersion int `json:"old_version"`
+	NewVersion int `json:"new_version"`
 
 	// Reference
 	ReferenceID   *shared.UUID `json:"reference_id,omitempty"`   // OrderID, TradeID, WithdrawalID
@@ -196,15 +220,15 @@ type BalanceChangeEvent struct {
 type BalanceChangeType string
 
 const (
-	BalanceChangeLock        BalanceChangeType = "LOCK"            // Order placed
-	BalanceChangeUnlock      BalanceChangeType = "UNLOCK"          // Order cancelled
-	BalanceChangeTradeCredit BalanceChangeType = "TRADE_CREDIT"    // Trade fill credit
-	BalanceChangeTradeDebit  BalanceChangeType = "TRADE_DEBIT"     // Trade fill debit
-	BalanceChangeFee         BalanceChangeType = "FEE"             // Fee charged
-	BalanceChangeDeposit     BalanceChangeType = "DEPOSIT"         // Deposit confirmed
-	BalanceChangePendingDep  BalanceChangeType = "PENDING_DEPOSIT" // Deposit detected
-	BalanceChangeWithdrawal  BalanceChangeType = "WITHDRAWAL"      // Withdrawal processed
-	BalanceChangeSettlement  BalanceChangeType = "SETTLEMENT"      // On-chain settlement
+	BalanceChangePendingDep    BalanceChangeType = "PENDING_DEPOSIT" // Deposit detected
+	BalanceChangeDeposit       BalanceChangeType = "DEPOSIT"         // Deposit credited
+	BalanceChangeDepositFailed BalanceChangeType = "DEPOSIT_FAILED"  // Detected deposit that will not be credited
+	BalanceChangeLock          BalanceChangeType = "LOCK"            // Order placed or withdrawal requested
+	BalanceChangeUnlock        BalanceChangeType = "UNLOCK"          // Order cancelled or withdrawal failed
+	BalanceChangeTradeCredit   BalanceChangeType = "TRADE_CREDIT"    // Asset received in a trade
+	BalanceChangeTradeDebit    BalanceChangeType = "TRADE_DEBIT"     // Asset given in a trade, from the lock
+	BalanceChangeFee           BalanceChangeType = "FEE"             // Fee charged, from the lock
+	BalanceChangeWithdrawal    BalanceChangeType = "WITHDRAWAL"      // Withdrawal completed, from the lock
 )
 
 func (b BalanceChangeType) String() string {
@@ -214,7 +238,7 @@ func (b BalanceChangeType) String() string {
 var (
 	ErrInsufficientBalance = errors.New("insufficient available balance")
 	ErrInsufficientLocked  = errors.New("insufficient locked balance")
-	ErrInsufficientOnChain = errors.New("insufficient on-chain balance")
 	ErrInsufficientPending = errors.New("insufficient pending deposit")
-	ErrNegativeAmount      = errors.New("amount cannot be negative")
+	ErrInvalidAmount       = errors.New("amount must be positive")
+	ErrUnknownTransition   = errors.New("unknown balance transition")
 )
