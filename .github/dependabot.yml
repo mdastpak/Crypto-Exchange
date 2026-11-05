@@ -1,9 +1,14 @@
 version: 2
+# Each update waits until its release is two weeks old, so that a broken or
+# compromised release is likely to be found and withdrawn before it is
+# proposed here. Security updates do not wait.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -16,6 +21,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "ci(deps)"
     groups:
@@ -26,5 +33,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "build(deps)"
