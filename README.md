@@ -25,7 +25,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Capability | Status | Notes |
 | --- | --- | --- |
 | OTP sign-in (email, mobile) | Implemented | Codes are delivered by email (SMTP) and SMS (Kavenegar) through a RabbitMQ queue with retries. Codes are stored hashed, and attempts are limited per code and per contact. |
-| JWT access and refresh tokens, sessions, logout | Implemented | Typed tokens with issuer, audience, and `kid` checks, separate signing keys for users and admins, key rotation, `Bearer` authentication, refresh token rotation with reuse detection, and session revocation on logout. Admins cannot sign in yet ([#18](https://github.com/mdastpak/Crypto-Exchange/issues/18)). |
+| JWT access and refresh tokens, sessions, logout | Implemented | Typed tokens with issuer, audience, and `kid` checks, separate signing keys for users and admins, key rotation, `Bearer` authentication, refresh token rotation with reuse detection, and session revocation on logout. Every user request checks that its session is active and its user can still sign in ([#120](https://github.com/mdastpak/Crypto-Exchange/issues/120)). |
 | Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | Administrators are created with the `cmd/admin` command and sign in with an emailed code and an authenticator app (TOTP). |
 | Public currency listing | Implemented | Served from the Redis cache. |
 | WebSocket gateway | Partial | Ping and pong, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
@@ -199,7 +199,7 @@ All JSON responses, except the system endpoints, use this envelope:
 | `POST` | `/public/auth` | None | Request an OTP |
 | `POST` | `/public/auth/{uuid}` | None | Verify an OTP and receive tokens |
 | `POST` | `/public/auth/refresh` | Refresh token cookie | Issue a new access token |
-| `POST` | `/public/auth/logout` | Access token | Revoke the access token |
+| `POST` | `/public/auth/logout` | Access token | End the session and clear the refresh token cookie |
 | `POST` | `/admin/auth` | None | Request an admin sign-in code |
 | `POST` | `/admin/auth/{uuid}` | None | Verify the emailed code and the authenticator code, and receive an admin token |
 | `POST` | `/admin/logout` | Admin token | Revoke the admin token |
@@ -208,7 +208,7 @@ All JSON responses, except the system endpoints, use this envelope:
 | `DELETE` | `/admin/currencies/{hk}` | Admin token | Soft-delete a currency |
 | `GET` | `/user/profile` | User token | Get the signed-in user's profile |
 | `PATCH` | `/user/profile` | User token | Change the names in the signed-in user's profile |
-| `POST` | `/user/logout` | User token | Revoke the access token |
+| `POST` | `/user/logout` | User token | End the session |
 | `GET` | `/ws/` | None | WebSocket gateway |
 
 Request and response details, the authentication flow, and the WebSocket protocol are described in [docs/api.md](docs/api.md).
