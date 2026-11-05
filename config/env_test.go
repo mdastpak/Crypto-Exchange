@@ -281,3 +281,20 @@ func TestSwaggerEnabled_DefaultsToOffInReleaseMode(t *testing.T) {
 	assert.True(t, c.SwaggerEnabled(), "SERVER_SWAGGER_ENABLED turns it on in release mode")
 	assert.Equal(t, int64(2048), c.Server.MaxBodyBytes)
 }
+
+func TestRateLimitOnError_DefaultsAndValidation(t *testing.T) {
+	require.NoError(t, loadFile(t, "config.compose.yaml", nil))
+	limits := Config.RateLimits
+	assert.Equal(t, RateLimitAllow, limits.REST.OnError, "the API stays available while Redis is unreachable")
+	assert.Equal(t, RateLimitAllow, limits.WS.OnError)
+	assert.Equal(t, RateLimitAllow, limits.Trading.OnError)
+	assert.Equal(t, RateLimitDeny, limits.Auth.OnError, "sign-in limits fail closed")
+
+	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_REST_ON_ERROR": "deny", "RATE_LIMITS_AUTH_ON_ERROR": "allow"}))
+	assert.Equal(t, RateLimitDeny, Config.RateLimits.REST.OnError)
+	assert.Equal(t, RateLimitAllow, Config.RateLimits.Auth.OnError)
+
+	err := loadFile(t, "config.compose.yaml", map[string]string{"RATE_LIMITS_WS_ON_ERROR": "ignore"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `rate_limits.ws.on_error (RATE_LIMITS_WS_ON_ERROR) is "ignore"`)
+}

@@ -110,7 +110,7 @@ func TestAuthRateLimit_UnknownActionPanics(t *testing.T) {
 func TestFixedWindow_EndsOnTimeWhileTheClientRetries(t *testing.T) {
 	engine, rl, client := newAuthLimitEngine(t)
 	const window = 400 * time.Millisecond
-	engine.POST("/limited", rl.fixedWindowMiddleware("test", 2, 2, window, rl.getClientIP), ok)
+	engine.POST("/limited", rl.fixedWindowMiddleware("test", 2, window, false, rl.getClientIP), ok)
 
 	start := time.Now()
 	assert.Equal(t, http.StatusOK, post(engine, "/limited", "203.0.113.7").Code)

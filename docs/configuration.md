@@ -177,9 +177,13 @@ Writing to the database is not enough to create an administrator: changing `user
 | --- | --- | --- |
 | `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route, as a token bucket per client IP |
 | `ws.messages_per_second`, `ws.burst` | `50`, `100` | The WebSocket upgrade request |
-| `trading.orders_per_second`, `trading.burst` | `10`, `20` | `/admin/*` and `/user/*` |
+| `trading.orders_per_second`, `trading.burst` | `10`, `20` | `/admin/*` and `/user/*`, as a token bucket per signed-in user or administrator, identified by the subject and role of the access token |
+| `rest.on_error`, `ws.on_error`, `trading.on_error` | `allow` | What the limiter does with a request while Redis cannot be reached: `allow` lets it through, `deny` rejects it with `503` and `Retry-After: 1` |
+| `auth.on_error` | `deny` | The same for the two sign-in limits, which fail closed by default, because they protect the codes against guessing |
 | `auth.login_attempts_per_minute` | `5` | Sign-in code verifications: `POST /public/auth/{uuid}` and `POST /admin/auth/{uuid}`, per client IP and route |
 | `auth.otp_requests_per_hour` | `10` | Sign-in code requests: `POST /public/auth` and `POST /admin/auth`, per client IP and route |
+
+The token buckets refill continuously and count fractions of a token, so any rate works, also one above 1000 per second. Every response of a limited route carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`, and a `429` carries `Retry-After` in whole seconds, rounded up.
 
 The two `auth` limits are counted in fixed windows of one minute and one hour, which start with a client's first request, so a blocked client is allowed again when its window ends. User and admin sign-in count separately, and the other `/public/*` routes, such as the currency reads, are only subject to the `rest` limit.
 
@@ -266,6 +270,10 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `RATE_LIMITS_TRADING_BURST` | `rate_limits.trading.burst` |
 | `RATE_LIMITS_AUTH_LOGIN_ATTEMPTS_PER_MINUTE` | `rate_limits.auth.login_attempts_per_minute` |
 | `RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR` | `rate_limits.auth.otp_requests_per_hour` |
+| `RATE_LIMITS_REST_ON_ERROR` | `rate_limits.rest.on_error` |
+| `RATE_LIMITS_WS_ON_ERROR` | `rate_limits.ws.on_error` |
+| `RATE_LIMITS_TRADING_ON_ERROR` | `rate_limits.trading.on_error` |
+| `RATE_LIMITS_AUTH_ON_ERROR` | `rate_limits.auth.on_error` |
 | `LOG_LEVEL` | `observability.logging.level` |
 | `OTEL_ENDPOINT` | `observability.tracing.endpoint` |
 | `BINANCE_API_KEY` | `api_key` of the `binance` provider in `price_aggregator` |
