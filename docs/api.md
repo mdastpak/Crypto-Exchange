@@ -51,6 +51,14 @@ Each role has its own signing keys. User routes accept only user tokens and admi
 
 Each sign-in creates a session in the `sessions` table. Only SHA-256 hashes of the tokens are stored.
 
+### Request IDs
+
+Every response carries an `X-Request-ID` header. A client may send its own ID, to trace a request across services: up to 64 letters, digits, and the characters `.`, `_`, `:`, and `-`. Any other value, or none, is replaced by a new UUIDv7, so that a request ID can never forge entries in the server log.
+
+### Request bodies
+
+A request body larger than `server.max_body_bytes` (1 MiB by default) is rejected with `413 Request body too large`, also when the client does not announce its length.
+
 ### Rate limiting
 
 Rate-limited responses return `429 Too Many Requests` with the `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` headers. Every route is subject to the general REST limit per client IP. Sign-in adds two limits per client IP: code requests per hour and code verifications per minute. [docs/configuration.md](configuration.md#rate_limits) lists the limits and their routes.

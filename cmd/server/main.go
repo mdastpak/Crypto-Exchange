@@ -123,17 +123,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create the HTTP engine: %v", err)
 	}
-	r.Use(middleware.RecoveryMiddleware())
-	r.Use(requestIDMiddleware())
 	r.Use(gin.Logger())
-
-	docs.SwaggerInfo.BasePath = "/"
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
-	r.GET("/", func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusOK, "Welcome to the Encrypted-DB API", nil)
-	})
-
 	if err := RouteHandler(r, handlers); err != nil {
 		log.Fatalf("Failed to register routes: %v", err)
 	}
@@ -143,7 +133,9 @@ func main() {
 		protocol = "https"
 	}
 	log.Printf("Starting server on: %s://%s", protocol, serverAddr)
-	log.Printf("Swagger documentation available at: %s://%s/swagger/index.html", protocol, serverAddr)
+	if config.Config.SwaggerEnabled() {
+		log.Printf("Swagger documentation available at: %s://%s/swagger/index.html", protocol, serverAddr)
+	}
 
 	srv := &http.Server{
 		Addr:         serverAddr,
@@ -395,6 +387,9 @@ func initializeCache(ih *InfraHandlers) error {
 	return ih.Admin.LoadAndCacheCurrencies(ctx)
 }
 
+// RouteHandler registers the global middleware and then every route. Gin
+// applies middleware only to the routes registered after it, so no route may
+// be registered before this function runs.
 func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	rl := middleware.NewRateLimiter(ih.Redis)
 	cors, err := middleware.NewCORSMiddleware(config.Config.Server.CORS.AllowedOrigins)
@@ -402,9 +397,26 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
 	}
 
+	r.Use(middleware.RecoveryMiddleware())
+	r.Use(middleware.RequestID())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(cors)
+	// The rate limit comes before the body limit, so that a flood of
+	// requests is rejected before their bodies are read.
 	r.Use(rl.RESTRateLimit())
+	bodyLimit := config.Config.Server.MaxBodyBytes
+	if bodyLimit <= 0 {
+		bodyLimit = config.DefaultMaxBodyBytes
+	}
+	r.Use(middleware.BodyLimit(bodyLimit))
+
+	r.GET("/", func(c *gin.Context) {
+		helpers.SendResponse(c, http.StatusOK, "Welcome to the Encrypted-DB API", nil)
+	})
+	if config.Config.SwaggerEnabled() {
+		docs.SwaggerInfo.BasePath = "/"
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	socketGroup := r.Group("/ws")
 	{
@@ -467,16 +479,4 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		})
 	}
 	return nil
-}
-
-func requestIDMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
-			requestID = fmt.Sprintf("%d", time.Now().UnixNano())
-		}
-		c.Set("request_id", requestID)
-		c.Header("X-Request-ID", requestID)
-		c.Next()
-	}
 }

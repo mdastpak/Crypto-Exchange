@@ -135,7 +135,7 @@ Without `-config`, the server reads `config/config.yaml`, or an embedded copy of
 Once the server is running:
 
 - API: `http://localhost:8080/`
-- Swagger UI: `http://localhost:8080/swagger/index.html`
+- Swagger UI: `http://localhost:8080/swagger/index.html`, outside release mode or when `server.swagger.enabled` is `true`
 - Health check: `http://localhost:8080/system/healthcheck`
 
 Sign-in codes are delivered by email and SMS once `notifications` is configured (see [docs/configuration.md](docs/configuration.md#notifications)). To try sign-in locally without a provider, set `otp.auth.dev_log_codes: true` in `config/config.local.yaml`; the codes then appear in the server log. Never enable it outside development: the server refuses to start with it in release mode.
