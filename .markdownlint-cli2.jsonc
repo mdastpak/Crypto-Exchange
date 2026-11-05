@@ -1,0 +1,5 @@
+{
+  // The files that markdownlint-cli2 skips. Keep in sync with
+  // .markdownlintignore, which the editor extension reads.
+  "ignores": ["docs/audits/**", ".kilo/**", "node_modules/**"]
+}

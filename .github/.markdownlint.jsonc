@@ -1,0 +1,6 @@
+{
+  // Pull request and issue templates are inserted into a page that has its
+  // own title, so they start with second-level headings.
+  "extends": "../.markdownlint.jsonc",
+  "MD041": false
+}
