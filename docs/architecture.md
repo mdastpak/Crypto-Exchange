@@ -33,9 +33,10 @@ flowchart TB
 | Package | Responsibility |
 | --- | --- |
 | `cmd/server` | Startup, route registration, graceful shutdown |
-| `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them |
+| `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them, and list, rotate, retire, and re-wrap the data-protection keys |
 | `internal/adminauth` | Administrator accounts: creation, TOTP enrollment with encrypted secrets, authenticator checks with replay protection |
 | `internal/totp` | Time-based one-time passwords (RFC 6238) |
+| `internal/keys` | Data-protection keys: a `Provider` interface for the key-encryption key, with Transit (Vault or OpenBao) and a local development provider, the wrapped keys in `data_keys`, and a keyring whose keys only offer the operation of their purpose (see [data-protection.md](data-protection.md)) |
 | `config` | YAML loading, defaults, environment overrides (see [configuration.md](configuration.md)) |
 | `internal/auth` | RS256 JWT issuing and verification with separate keys per role, `kid`-based key selection and retired keys for rotation, Redis-backed token blacklist, admin and user middleware |
 | `internal/db` | PostgreSQL connection with startup retries and migrations under an advisory lock, Redis client |
@@ -65,10 +66,11 @@ Middleware is applied to every route, including `/` and `/swagger/*`, in this or
 1. Load the configuration and the RSA key pair.
 2. Connect to PostgreSQL with retries, then apply the migrations under a PostgreSQL advisory lock.
 3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges.
-4. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
-5. Bring the shared currency cache in line with PostgreSQL: cache the approved currencies and remove the entries of currencies that are not approved. The cache is never cleared as a whole, because other instances serve from it.
-6. Start the HTTP server (with TLS when enabled).
-7. On `SIGINT` or `SIGTERM`: close WebSocket clients, shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. Shared state in Redis, such as the currency cache, is left for the other instances. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
+4. Load the data-protection keys when `keys.provider` is set: unwrap them through the key management service, creating the first version of each on the first start. The server refuses to start when a key cannot be unwrapped.
+5. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
+6. Bring the shared currency cache in line with PostgreSQL: cache the approved currencies and remove the entries of currencies that are not approved. The cache is never cleared as a whole, because other instances serve from it.
+7. Start the HTTP server (with TLS when enabled).
+8. On `SIGINT` or `SIGTERM`: close WebSocket clients, shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. Shared state in Redis, such as the currency cache, is left for the other instances. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
 
 ## Data stores
 
@@ -92,6 +94,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 12 | Adds `users.role` (`user` or `admin`) and `users.totp_last_step` | Yes (admin sign-in) |
 | 13 | Makes only non-empty currency contracts unique | Yes |
 | 14 | Unifies the user model: contacts move from `users.info` into `user_contacts`, `users.status` becomes `account_status_type`, and `users.info` and the unused contact columns of migration 8 are dropped | Yes |
+| 15 | `data_keys`: the data-protection keys, wrapped by the key-encryption key | Yes, when `keys.provider` is set |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 

@@ -97,6 +97,15 @@ jobs:
         options: >-
           --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
           --health-interval 10s --health-timeout 10s --health-retries 30
+      # The Transit engine for internal/keys; OpenBao and Vault share its API.
+      openbao:
+        image: openbao/openbao:2.4.1
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: test
+        ports: ["8200:8200"]
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://127.0.0.1:8200/v1/sys/health"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v7
 

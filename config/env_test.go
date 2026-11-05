@@ -335,3 +335,30 @@ func TestMilliseconds_FallsBackWhenNotSet(t *testing.T) {
 	assert.Equal(t, 300*time.Millisecond, Milliseconds(300, 1000))
 	assert.Equal(t, time.Second, Milliseconds(0, 1000), "a configuration that Load did not fill in")
 }
+
+func TestKeys_DefaultsAndValidation(t *testing.T) {
+	require.NoError(t, loadFile(t, "config.compose.yaml", nil))
+	assert.Equal(t, "", Config.Keys.Provider, "the data-protection keys are off unless configured")
+	assert.Equal(t, "transit", Config.Keys.Transit.Mount)
+	assert.Equal(t, 10, Config.Keys.Transit.Timeout)
+
+	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{
+		"KEYS_PROVIDER": "transit", "VAULT_ADDR": "https://vault:8200", "VAULT_TOKEN": "s.token", "VAULT_CACERT": "/run/ca.pem",
+		"KEYS_TRANSIT_TOKEN_FILE": "/run/token", "KEYS_TRANSIT_MOUNT": "kms", "KEYS_TRANSIT_KEY": "data-keys", "KEYS_TRANSIT_TIMEOUT_SECONDS": "3",
+	}))
+	transit := Config.Keys.Transit
+	assert.Equal(t, KeysProviderTransit, Config.Keys.Provider)
+	assert.Equal(t, []string{"https://vault:8200", "s.token", "/run/ca.pem", "/run/token", "kms", "data-keys"},
+		[]string{transit.Address, transit.Token, transit.CACert, transit.TokenFile, transit.Mount, transit.Key})
+	assert.Equal(t, 3, transit.Timeout)
+
+	require.NoError(t, loadFile(t, "config.compose.yaml", map[string]string{"KEYS_PROVIDER": "local", "KEYS_LOCAL_KEK": "a2V5"}))
+	assert.Equal(t, "a2V5", Config.Keys.Local.KEK)
+
+	err := loadFile(t, "config.compose.yaml", map[string]string{"KEYS_PROVIDER": "aws"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `keys.provider (KEYS_PROVIDER) is "aws"`)
+	err = loadFile(t, "config.compose.yaml", map[string]string{"KEYS_TRANSIT_TIMEOUT_SECONDS": "-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keys.transit.timeout_seconds (KEYS_TRANSIT_TIMEOUT_SECONDS) is -1")
+}
