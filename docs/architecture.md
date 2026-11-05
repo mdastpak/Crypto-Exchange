@@ -95,6 +95,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 13 | Makes only non-empty currency contracts unique | Yes |
 | 14 | Unifies the user model: contacts move from `users.info` into `user_contacts`, `users.status` becomes `account_status_type`, and `users.info` and the unused contact columns of migration 8 are dropped | Yes |
 | 15 | `data_keys`: the data-protection keys, wrapped by the key-encryption key | Yes, when `keys.provider` is set |
+| 16 | Replaces the plaintext `api_keys.secret_hash` with `secret_sealed` (HMAC secrets, sealed with a `field-enc` key) and `ed25519_public_key`, with a constraint that each key type keeps only what verifying it needs | Not yet (API keys are #63) |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 

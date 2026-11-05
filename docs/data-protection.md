@@ -8,7 +8,7 @@ A crypto exchange holds identity documents and money, so access to its database 
 | Row seals: a keyed MAC over each protected row, so that a change made outside the backend is detected | Planned ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) |
 | Field encryption: personal, identity, and financial fields stored as ciphertext, with blind indexes for lookups | Planned ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
 
-No feature uses the keys yet. Until row seals and field encryption land, the server loads the keys when a provider is configured, and only logs a warning when none is.
+The first use is the secret of HMAC API keys, which is stored sealed with a `field-enc` key ([#45](https://github.com/mdastpak/Crypto-Exchange/issues/45)). The API does not issue API keys yet ([#63](https://github.com/mdastpak/Crypto-Exchange/issues/63)). Until it does, and until row seals and field encryption land, the server loads the keys when a provider is configured, and only logs a warning when none is.
 
 ## Key hierarchy
 
@@ -27,7 +27,7 @@ flowchart LR
 | Purpose | Algorithm | Used by |
 | --- | --- | --- |
 | `row-mac` | HMAC-SHA-256 | Row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) |
-| `field-enc` | AES-256-GCM | Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
+| `field-enc` | AES-256-GCM | Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)), and the secrets of HMAC API keys (`api_keys.secret_sealed`) |
 | `blind-index` | HMAC-SHA-256 | Equality lookups of encrypted values ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
 
 Every key has one purpose and only offers the operation of that purpose. A MAC key cannot encrypt, and an encryption key cannot seal.
@@ -42,6 +42,10 @@ Every key has one purpose and only offers the operation of that purpose. A MAC k
 | `created_at`, `retired_at` | A retired key is no longer loaded. |
 
 The wrapped plaintext contains the purpose and the version besides the key. After unwrapping, the server checks that both match the row, so a wrapped key copied to another row is refused. For example, copying a MAC key into the row of the current encryption key does not work.
+
+### Sealed values
+
+`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
 
 ### Versions
 

@@ -1,7 +1,15 @@
 package account
 
 import (
+	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
@@ -149,42 +157,132 @@ func TestAPIKeyStatus_String(t *testing.T) {
 }
 
 func TestGenerateAPIKey_HMAC(t *testing.T) {
-	publicKey, secret, err := GenerateAPIKey(APIKeyTypeHMAC)
+	key, err := GenerateAPIKey(APIKeyTypeHMAC)
 	require.NoError(t, err)
-	assert.NotEmpty(t, publicKey)
-	assert.NotEmpty(t, secret)
-	assert.True(t, len(publicKey) > 4) // "hmac_" + 8 chars
-	assert.True(t, len(secret) > 0)
+	assert.Equal(t, APIKeyTypeHMAC, key.Type)
+	assert.Regexp(t, `^hmac_[0-9a-f]{32}$`, key.KeyID)
+	secret, err := base64.RawURLEncoding.DecodeString(key.Secret)
+	require.NoError(t, err)
+	assert.Len(t, secret, 32, "a 256-bit secret")
+	assert.Nil(t, key.PublicKey)
+	assert.NotContains(t, key.KeyID, hex.EncodeToString(secret[:4]), "the key ID must not reveal the secret")
 }
 
 func TestGenerateAPIKey_Ed25519(t *testing.T) {
-	publicKey, secret, err := GenerateAPIKey(APIKeyTypeEd25519)
+	key, err := GenerateAPIKey(APIKeyTypeEd25519)
 	require.NoError(t, err)
-	assert.NotEmpty(t, publicKey)
-	assert.NotEmpty(t, secret)
-	assert.True(t, len(publicKey) > 4) // "ed25519_" + 8 chars
+	assert.Regexp(t, `^ed25519_[0-9a-f]{32}$`, key.KeyID)
+	seed, err := base64.RawURLEncoding.DecodeString(key.Secret)
+	require.NoError(t, err)
+	require.Len(t, seed, ed25519.SeedSize)
+
+	// The client signs with the private key from the seed, and the server
+	// verifies with the public key it stored.
+	private := ed25519.NewKeyFromSeed(seed)
+	assert.Equal(t, key.PublicKey, private.Public(), "the public key belongs to the seed")
+	message := []byte("GET /user/profile 1730800000")
+	assert.True(t, VerifyEd25519Signature(key.PublicKey, message, ed25519.Sign(private, message)))
+	assert.NotContains(t, key.KeyID, hex.EncodeToString(seed[:4]))
+}
+
+func TestGenerateAPIKey_KeyIDsAreUnique(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 1000; i++ {
+		key, err := GenerateAPIKey(APIKeyTypeHMAC)
+		require.NoError(t, err)
+		require.False(t, seen[key.KeyID], "duplicate key ID")
+		seen[key.KeyID] = true
+	}
 }
 
 func TestGenerateAPIKey_InvalidType(t *testing.T) {
-	_, _, err := GenerateAPIKey("INVALID")
+	_, err := GenerateAPIKey("INVALID")
+	assert.EqualError(t, err, "unsupported key type")
+	_, err = NewAPIKeyID("RSA")
 	assert.Error(t, err)
-	assert.Equal(t, errors.New("unsupported key type"), err)
 }
 
-func TestHashAPIKeySecret(t *testing.T) {
-	secret := "test-secret"
-	hash, err := HashAPIKeySecret(secret)
+func TestParseEd25519PublicKey(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	// In test implementation, it just returns the secret
-	assert.Equal(t, secret, hash)
+	for _, encoded := range []string{
+		base64.StdEncoding.EncodeToString(public),
+		base64.RawStdEncoding.EncodeToString(public),
+		base64.URLEncoding.EncodeToString(public),
+		" " + base64.RawURLEncoding.EncodeToString(public) + "\n",
+	} {
+		got, err := ParseEd25519PublicKey(encoded)
+		require.NoError(t, err, encoded)
+		assert.Equal(t, public, got)
+	}
+	for _, encoded := range []string{"", "not base64!", base64.StdEncoding.EncodeToString(public[:31]), base64.StdEncoding.EncodeToString(append(public, 0))} {
+		_, err := ParseEd25519PublicKey(encoded)
+		assert.Error(t, err, encoded)
+	}
 }
 
-func TestVerifyAPIKeySecret(t *testing.T) {
-	secret := "test-secret"
-	hash := "test-secret"
+func TestVerifyHMACSignature(t *testing.T) {
+	secret, message := []byte("shared secret"), []byte("POST /orders 1730800000 {}")
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(message)
+	signature := mac.Sum(nil)
 
-	assert.True(t, VerifyAPIKeySecret(secret, hash))
-	assert.False(t, VerifyAPIKeySecret("wrong-secret", hash))
+	assert.True(t, VerifyHMACSignature(secret, message, signature))
+	assert.False(t, VerifyHMACSignature([]byte("other secret"), message, signature))
+	assert.False(t, VerifyHMACSignature(secret, []byte("POST /orders 1730800001 {}"), signature))
+	assert.False(t, VerifyHMACSignature(secret, message, signature[:31]), "a truncated signature")
+	assert.False(t, VerifyHMACSignature(secret, message, nil))
+}
+
+func TestVerifyEd25519Signature_RejectsMalformedInput(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	message := []byte("message")
+	signature := ed25519.Sign(private, message)
+
+	assert.False(t, VerifyEd25519Signature(public, []byte("other"), signature))
+	assert.False(t, VerifyEd25519Signature(public[:31], message, signature), "a short key does not panic")
+	assert.False(t, VerifyEd25519Signature(public, message, signature[:63]))
+	assert.False(t, VerifyEd25519Signature(nil, message, signature))
+}
+
+// recordingSealer records the associated data and seals with a fixed,
+// reversible transformation, to check what SealAPIKeySecret binds.
+type recordingSealer struct{ aads []string }
+
+func (s *recordingSealer) SealField(aad, plaintext []byte) ([]byte, error) {
+	s.aads = append(s.aads, string(aad))
+	return append([]byte(string(aad)+"|"), plaintext...), nil
+}
+
+func (s *recordingSealer) OpenField(aad, sealed []byte) ([]byte, error) {
+	s.aads = append(s.aads, string(aad))
+	prefix := string(aad) + "|"
+	if !strings.HasPrefix(string(sealed), prefix) {
+		return nil, errors.New("does not decrypt")
+	}
+	return sealed[len(prefix):], nil
+}
+
+func TestSealAPIKeySecret_BindsTheSecretToItsKey(t *testing.T) {
+	sealer := &recordingSealer{}
+	sealed, err := SealAPIKeySecret(sealer, "hmac_aa", []byte("secret"))
+	require.NoError(t, err)
+
+	opened, err := OpenAPIKeySecret(sealer, "hmac_aa", sealed)
+	require.NoError(t, err)
+	assert.Equal(t, "secret", string(opened))
+	_, err = OpenAPIKeySecret(sealer, "hmac_bb", sealed)
+	assert.Error(t, err, "a secret copied to another key's row does not open")
+	assert.Equal(t, []string{"api_keys.secret_sealed:hmac_aa", "api_keys.secret_sealed:hmac_aa", "api_keys.secret_sealed:hmac_bb"}, sealer.aads)
+}
+
+func TestAPIKey_NeverSerializesItsSecrets(t *testing.T) {
+	encoded, err := json.Marshal(APIKey{PublicKey: "hmac_aa", SealedSecret: []byte("sealed"), Ed25519PublicKey: []byte("public")})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "c2VhbGVk", "the sealed secret, base64-encoded")
+	assert.NotContains(t, string(encoded), "cHVibGlj")
+	assert.Contains(t, string(encoded), `"public_key":"hmac_aa"`)
 }
 
 func TestAuthMethod_String(t *testing.T) {
