@@ -49,11 +49,11 @@ type AdminCurrenciesTestSuite struct {
 // recordingPublisher records the currency events instead of publishing them.
 type recordingPublisher struct {
 	mu     sync.Mutex
-	events []CurrencyEvent
+	events []models.CurrencyEvent
 }
 
 func (p *recordingPublisher) Publish(ctx context.Context, exchange, message string) error {
-	var event CurrencyEvent
+	var event models.CurrencyEvent
 	if err := json.Unmarshal([]byte(message), &event); err != nil {
 		return err
 	}

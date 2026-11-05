@@ -301,7 +301,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-09 | P1 / contract | Unknown event type | Message is ignored/logged; no broadcast | Passes |
 | W-10 | P0 / contract | Valid RabbitMQ currency event | One broadcast is sent to each connected client with a UTC `server_time` | Passes, end to end: a currency created through the admin API reaches every connected client ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)) |
 | W-11 | P0 / contract | RabbitMQ body is invalid JSON | No broadcast; the event is not redelivered forever | Passes: the event is logged and acknowledged, because redelivering a malformed event cannot succeed |
-| W-12 | P1 / security | RabbitMQ event contains unexpected or malicious fields | Schema is validated/sanitized before broadcast | **Gap:** raw map is rebroadcast |
+| W-12 | P1 / security | RabbitMQ event contains unexpected or malicious fields | Schema is validated/sanitized before broadcast | Passes: the gateway rebuilds each event from the currency event schema, so unknown fields are dropped, and it drops and logs events with an unknown entity or action, an invalid `hk` or `info`, or more than 16 KiB ([#121](https://github.com/mdastpak/Crypto-Exchange/issues/121)) |
 | W-13 | P1 / concurrency | Client send buffer is full | Broadcast skips that client without blocking other clients | Passes |
 | W-14 | P0 / contract | Client disconnects | Client is removed; send channel is closed once; connection closes | Passes; race-test cleanup |
 | W-15 | P0 / contract | Shutdown context is active | New connections stop, existing connections close, pumps return, and WaitGroup completes | Passes if shutdown is called once |
