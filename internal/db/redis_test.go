@@ -8,7 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +53,7 @@ func TestNewRedisService_UsesTheConfiguredTimeouts(t *testing.T) {
 	assert.Equal(t, time.Second, opts.WriteTimeout)
 	assert.Equal(t, 2*time.Second, opts.PoolTimeout)
 	assert.Equal(t, 1, opts.MaxRetries)
+	assert.True(t, opts.ContextTimeoutEnabled, "request deadlines, such as rate_limits.timeout_ms, bound Redis calls")
 
 	config.Config = config.Configuration{}
 	r := &config.Config.Redis
