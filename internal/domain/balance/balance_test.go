@@ -11,14 +11,14 @@ import (
 
 func TestBalance_LockAmount(t *testing.T) {
 	balance := &Balance{
-		ID:        shared.NewUUID(),
-		UserID:    shared.NewUUID(),
-		AssetID:   shared.NewUUID(),
-		Available: shared.MustNewDecimalFromString("100"),
-		Locked:    shared.Decimal{},
-		OnChain:   shared.Decimal{},
+		ID:             shared.NewUUID(),
+		UserID:         shared.NewUUID(),
+		AssetID:        shared.NewUUID(),
+		Available:      shared.MustNewDecimalFromString("100"),
+		Locked:         shared.Decimal{},
+		OnChain:        shared.Decimal{},
 		PendingDeposit: shared.Decimal{},
-		Version:   1,
+		Version:        1,
 	}
 
 	// Lock valid amount
@@ -139,9 +139,9 @@ func TestBalance_AddOnChain(t *testing.T) {
 
 func TestBalance_AddPendingDeposit(t *testing.T) {
 	balance := &Balance{
-		Available:       shared.MustNewDecimalFromString("50"),
-		PendingDeposit:  shared.MustNewDecimalFromString("50"),
-		Version:         1,
+		Available:      shared.MustNewDecimalFromString("50"),
+		PendingDeposit: shared.MustNewDecimalFromString("50"),
+		Version:        1,
 	}
 
 	err := balance.AddPendingDeposit(shared.MustNewDecimalFromString("25"))
@@ -224,10 +224,10 @@ func TestBalance_CanTrade(t *testing.T) {
 
 func TestBalance_TotalCalculation(t *testing.T) {
 	balance := &Balance{
-		Available:       shared.MustNewDecimalFromString("100"),
-		Locked:          shared.MustNewDecimalFromString("50"),
-		OnChain:         shared.MustNewDecimalFromString("25"),
-		PendingDeposit:  shared.MustNewDecimalFromString("10"),
+		Available:      shared.MustNewDecimalFromString("100"),
+		Locked:         shared.MustNewDecimalFromString("50"),
+		OnChain:        shared.MustNewDecimalFromString("25"),
+		PendingDeposit: shared.MustNewDecimalFromString("10"),
 	}
 
 	balance.recalcTotal()
@@ -283,19 +283,19 @@ func TestBalanceSnapshot(t *testing.T) {
 
 func TestBalanceChangeEvent(t *testing.T) {
 	event := BalanceChangeEvent{
-		EventID:         shared.NewUUID(),
-		BalanceID:       shared.NewUUID(),
-		UserID:          shared.NewUUID(),
-		AssetID:         shared.NewUUID(),
-		ChangeType:      BalanceChangeLock,
-		Amount:          shared.MustNewDecimalFromString("50"),
-		OldAvailable:    shared.MustNewDecimalFromString("100"),
-		NewAvailable:    shared.MustNewDecimalFromString("50"),
-		OldLocked:       shared.Decimal{},
-		NewLocked:       shared.MustNewDecimalFromString("50"),
-		ReferenceID:     func() *shared.UUID { id := shared.NewUUID(); return &id }(),
-		ReferenceType:   "ORDER",
-		Timestamp:       shared.Timestamp{},
+		EventID:       shared.NewUUID(),
+		BalanceID:     shared.NewUUID(),
+		UserID:        shared.NewUUID(),
+		AssetID:       shared.NewUUID(),
+		ChangeType:    BalanceChangeLock,
+		Amount:        shared.MustNewDecimalFromString("50"),
+		OldAvailable:  shared.MustNewDecimalFromString("100"),
+		NewAvailable:  shared.MustNewDecimalFromString("50"),
+		OldLocked:     shared.Decimal{},
+		NewLocked:     shared.MustNewDecimalFromString("50"),
+		ReferenceID:   func() *shared.UUID { id := shared.NewUUID(); return &id }(),
+		ReferenceType: "ORDER",
+		Timestamp:     shared.Timestamp{},
 	}
 
 	assert.Equal(t, BalanceChangeLock, event.ChangeType)

@@ -26,30 +26,30 @@ func TestUser_IsActive(t *testing.T) {
 
 func TestUser_CanTrade(t *testing.T) {
 	user := &User{
-		Status:     UserStatusActive,
-		KYCStatus:  shared.KYCStatusApproved,
+		Status:    UserStatusActive,
+		KYCStatus: shared.KYCStatusApproved,
 	}
 
 	assert.True(t, user.CanTrade())
 
 	// Inactive user
 	user2 := &User{
-		Status:     UserStatusInactive,
-		KYCStatus:  shared.KYCStatusApproved,
+		Status:    UserStatusInactive,
+		KYCStatus: shared.KYCStatusApproved,
 	}
 	assert.False(t, user2.CanTrade())
 
 	// Active but KYC not approved
 	user3 := &User{
-		Status:     UserStatusActive,
-		KYCStatus:  shared.KYCStatusPending,
+		Status:    UserStatusActive,
+		KYCStatus: shared.KYCStatusPending,
 	}
 	assert.False(t, user3.CanTrade())
 
 	// Active but KYC rejected
 	user4 := &User{
-		Status:     UserStatusActive,
-		KYCStatus:  shared.KYCStatusRejected,
+		Status:    UserStatusActive,
+		KYCStatus: shared.KYCStatusRejected,
 	}
 	assert.False(t, user4.CanTrade())
 }
@@ -181,7 +181,7 @@ func TestGenerateReferralCode(t *testing.T) {
 	assert.NotEmpty(t, code1)
 	assert.NotEmpty(t, code2)
 	assert.NotEqual(t, code1, code2) // Very unlikely to be equal
-	assert.Len(t, code1, 12) // 6 bytes = 12 hex chars
+	assert.Len(t, code1, 12)         // 6 bytes = 12 hex chars
 }
 
 func TestGenerateDeviceID(t *testing.T) {

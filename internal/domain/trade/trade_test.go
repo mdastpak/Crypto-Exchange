@@ -101,20 +101,20 @@ func TestSettlementMode_String(t *testing.T) {
 
 func TestTradeEvent(t *testing.T) {
 	event := &TradeEvent{
-		EventID:       shared.NewUUID(),
-		TradeID:       shared.NewUUID(),
-		EventType:     TradeEventExecuted,
-		Timestamp:     shared.Timestamp{},
-		MarketID:      shared.NewUUID(),
-		Side:          shared.TradeSideBuy,
-		Price:         shared.MustNewDecimalFromString("50000"),
-		Quantity:      shared.MustNewDecimalFromString("0.1"),
-		MakerOrderID:  shared.NewUUID(),
-		TakerOrderID:  shared.NewUUID(),
-		MakerUserID:   shared.NewUUID(),
-		TakerUserID:   shared.NewUUID(),
-		MakerFee:      shared.MustNewDecimalFromString("2.5"),
-		TakerFee:      shared.MustNewDecimalFromString("5.0"),
+		EventID:        shared.NewUUID(),
+		TradeID:        shared.NewUUID(),
+		EventType:      TradeEventExecuted,
+		Timestamp:      shared.Timestamp{},
+		MarketID:       shared.NewUUID(),
+		Side:           shared.TradeSideBuy,
+		Price:          shared.MustNewDecimalFromString("50000"),
+		Quantity:       shared.MustNewDecimalFromString("0.1"),
+		MakerOrderID:   shared.NewUUID(),
+		TakerOrderID:   shared.NewUUID(),
+		MakerUserID:    shared.NewUUID(),
+		TakerUserID:    shared.NewUUID(),
+		MakerFee:       shared.MustNewDecimalFromString("2.5"),
+		TakerFee:       shared.MustNewDecimalFromString("5.0"),
 		SettlementMode: shared.SettlementModeOffChain,
 	}
 
@@ -130,22 +130,22 @@ func TestTradeEventType_String(t *testing.T) {
 
 func TestTradeAggregate(t *testing.T) {
 	agg := &TradeAggregate{
-		MarketID:     shared.NewUUID(),
-		Interval:     "1h",
-		StartTime:    shared.Timestamp{},
-		EndTime:      shared.Timestamp{},
-		OpenPrice:    shared.MustNewDecimalFromString("50000"),
-		HighPrice:    shared.MustNewDecimalFromString("51000"),
-		LowPrice:     shared.MustNewDecimalFromString("49000"),
-		ClosePrice:   shared.MustNewDecimalFromString("50500"),
-		BaseVolume:   shared.MustNewDecimalFromString("100"),
-		QuoteVolume:  shared.MustNewDecimalFromString("5050000"),
-		TradeCount:   1000,
-		VWAP:         shared.MustNewDecimalFromString("50500"),
-		BuyVolume:    shared.MustNewDecimalFromString("60"),
-		SellVolume:   shared.MustNewDecimalFromString("40"),
-		BuyCount:     600,
-		SellCount:    400,
+		MarketID:    shared.NewUUID(),
+		Interval:    "1h",
+		StartTime:   shared.Timestamp{},
+		EndTime:     shared.Timestamp{},
+		OpenPrice:   shared.MustNewDecimalFromString("50000"),
+		HighPrice:   shared.MustNewDecimalFromString("51000"),
+		LowPrice:    shared.MustNewDecimalFromString("49000"),
+		ClosePrice:  shared.MustNewDecimalFromString("50500"),
+		BaseVolume:  shared.MustNewDecimalFromString("100"),
+		QuoteVolume: shared.MustNewDecimalFromString("5050000"),
+		TradeCount:  1000,
+		VWAP:        shared.MustNewDecimalFromString("50500"),
+		BuyVolume:   shared.MustNewDecimalFromString("60"),
+		SellVolume:  shared.MustNewDecimalFromString("40"),
+		BuyCount:    600,
+		SellCount:   400,
 	}
 
 	// VWAP verification
@@ -168,9 +168,9 @@ func TestTrade_WithMarketAndOrders(t *testing.T) {
 	trade := &Trade{
 		MarketID: shared.NewUUID(),
 		Market: &market.Market{
-			ID:            shared.NewUUID(),
-			BaseAssetID:   shared.NewUUID(),
-			QuoteAssetID:  shared.NewUUID(),
+			ID:           shared.NewUUID(),
+			BaseAssetID:  shared.NewUUID(),
+			QuoteAssetID: shared.NewUUID(),
 		},
 		MakerOrderID: makerOrderID,
 		MakerOrder: &order.Order{

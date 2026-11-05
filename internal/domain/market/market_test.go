@@ -87,24 +87,24 @@ func TestMarket_RoundQuantity(t *testing.T) {
 
 func TestMarket_ValidateOrder(t *testing.T) {
 	market := &Market{
-		Status:        MarketStatusActive,
-		MinOrderSize:  shared.MustNewDecimalFromString("0.001"),
-		MaxOrderSize:  shared.MustNewDecimalFromString("1000"),
-		MinNotional:   shared.MustNewDecimalFromString("10"),
-		TickSize:      shared.MustNewDecimalFromString("0.01"),
-		LotSize:       shared.MustNewDecimalFromString("0.001"),
-		MakerFeeBPS:   10,
-		TakerFeeBPS:   20,
+		Status:       MarketStatusActive,
+		MinOrderSize: shared.MustNewDecimalFromString("0.001"),
+		MaxOrderSize: shared.MustNewDecimalFromString("1000"),
+		MinNotional:  shared.MustNewDecimalFromString("10"),
+		TickSize:     shared.MustNewDecimalFromString("0.01"),
+		LotSize:      shared.MustNewDecimalFromString("0.001"),
+		MakerFeeBPS:  10,
+		TakerFeeBPS:  20,
 	}
 
 	tests := []struct {
-		name        string
-		side        shared.OrderSide
-		orderType   shared.OrderType
-		price       shared.Decimal
-		qty         shared.Decimal
-		wantError   bool
-		errorType   error
+		name      string
+		side      shared.OrderSide
+		orderType shared.OrderType
+		price     shared.Decimal
+		qty       shared.Decimal
+		wantError bool
+		errorType error
 	}{
 		{
 			name:      "valid limit buy",
@@ -233,17 +233,17 @@ func TestMarketStatus_String(t *testing.T) {
 
 func TestMarketStats_Calculations(t *testing.T) {
 	stats := &MarketStats{
-		LastPrice:    shared.MustNewDecimalFromString("50000"),
-		OpenPrice:    shared.MustNewDecimalFromString("49000"),
-		HighPrice:    shared.MustNewDecimalFromString("51000"),
-		LowPrice:     shared.MustNewDecimalFromString("48000"),
-		BaseVolume:   shared.MustNewDecimalFromString("100"),
-		QuoteVolume:  shared.MustNewDecimalFromString("5000000"),
-		TradeCount:   1000,
-		BidPrice:     shared.MustNewDecimalFromString("49999"),
-		BidSize:      shared.MustNewDecimalFromString("10"),
-		AskPrice:     shared.MustNewDecimalFromString("50001"),
-		AskSize:      shared.MustNewDecimalFromString("15"),
+		LastPrice:   shared.MustNewDecimalFromString("50000"),
+		OpenPrice:   shared.MustNewDecimalFromString("49000"),
+		HighPrice:   shared.MustNewDecimalFromString("51000"),
+		LowPrice:    shared.MustNewDecimalFromString("48000"),
+		BaseVolume:  shared.MustNewDecimalFromString("100"),
+		QuoteVolume: shared.MustNewDecimalFromString("5000000"),
+		TradeCount:  1000,
+		BidPrice:    shared.MustNewDecimalFromString("49999"),
+		BidSize:     shared.MustNewDecimalFromString("10"),
+		AskPrice:    shared.MustNewDecimalFromString("50001"),
+		AskSize:     shared.MustNewDecimalFromString("15"),
 	}
 
 	// Spread = Ask - Bid
@@ -261,9 +261,9 @@ func TestMarketStats_Calculations(t *testing.T) {
 
 func TestMarketStats_PriceChange(t *testing.T) {
 	stats := &MarketStats{
-		LastPrice:    shared.MustNewDecimalFromString("55000"),
-		OpenPrice:    shared.MustNewDecimalFromString("50000"),
-		PriceChange:  shared.MustNewDecimalFromString("5000"),
+		LastPrice:      shared.MustNewDecimalFromString("55000"),
+		OpenPrice:      shared.MustNewDecimalFromString("50000"),
+		PriceChange:    shared.MustNewDecimalFromString("5000"),
 		PriceChangePct: shared.MustNewDecimalFromString("10"),
 	}
 
@@ -288,8 +288,8 @@ func TestMarket_ValidateOrder_StopLimit(t *testing.T) {
 
 	// Stop limit order needs both stop price and limit price
 	// For this test, we treat it like a limit order for validation
-	err := market.ValidateOrder(shared.OrderSideBuy, shared.OrderTypeStopLimit, 
-		shared.MustNewDecimalFromString("50000.00"), 
+	err := market.ValidateOrder(shared.OrderSideBuy, shared.OrderTypeStopLimit,
+		shared.MustNewDecimalFromString("50000.00"),
 		shared.MustNewDecimalFromString("0.1"))
 	assert.NoError(t, err)
 

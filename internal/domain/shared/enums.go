@@ -292,11 +292,11 @@ func (d Decimal) InexactFloat64() float64 {
 type AssetType string
 
 const (
-	AssetTypeFiat      AssetType = "FIAT"
-	AssetTypeCoin      AssetType = "COIN"      // Native blockchain coin (BTC, ETH, TRX)
-	AssetTypeToken     AssetType = "TOKEN"     // Smart contract token (ERC20, TRC20, SPL)
-	AssetTypeStable    AssetType = "STABLE"    // Stablecoin (USDT, USDC, etc.)
-	AssetTypeWrapped   AssetType = "WRAPPED"   // Wrapped asset (WBTC, WETH)
+	AssetTypeFiat    AssetType = "FIAT"
+	AssetTypeCoin    AssetType = "COIN"    // Native blockchain coin (BTC, ETH, TRX)
+	AssetTypeToken   AssetType = "TOKEN"   // Smart contract token (ERC20, TRC20, SPL)
+	AssetTypeStable  AssetType = "STABLE"  // Stablecoin (USDT, USDC, etc.)
+	AssetTypeWrapped AssetType = "WRAPPED" // Wrapped asset (WBTC, WETH)
 )
 
 func (a AssetType) String() string {
@@ -340,9 +340,9 @@ func (s OrderSide) Opposite() OrderSide {
 type OrderType string
 
 const (
-	OrderTypeMarket  OrderType = "MARKET"
-	OrderTypeLimit   OrderType = "LIMIT"
-	OrderTypeStop    OrderType = "STOP"
+	OrderTypeMarket    OrderType = "MARKET"
+	OrderTypeLimit     OrderType = "LIMIT"
+	OrderTypeStop      OrderType = "STOP"
 	OrderTypeStopLimit OrderType = "STOP_LIMIT"
 )
 
@@ -410,10 +410,10 @@ func (s SettlementMode) String() string {
 type KYCStatus string
 
 const (
-	KYCStatusPending   KYCStatus = "PENDING"
-	KYCStatusApproved  KYCStatus = "APPROVED"
-	KYCStatusRejected  KYCStatus = "REJECTED"
-	KYCStatusExpired   KYCStatus = "EXPIRED"
+	KYCStatusPending     KYCStatus = "PENDING"
+	KYCStatusApproved    KYCStatus = "APPROVED"
+	KYCStatusRejected    KYCStatus = "REJECTED"
+	KYCStatusExpired     KYCStatus = "EXPIRED"
 	KYCStatusUnderReview KYCStatus = "UNDER_REVIEW"
 )
 
@@ -421,10 +421,10 @@ const (
 type KYCTier string
 
 const (
-	KYCTierNone     KYCTier = "NONE"
-	KYCTierBasic    KYCTier = "BASIC"     // Email/phone only
-	KYCTierStandard KYCTier = "STANDARD"  // ID document + selfie
-	KYCTierEnhanced KYCTier = "ENHANCED"  // Full KYC + source of funds
+	KYCTierNone          KYCTier = "NONE"
+	KYCTierBasic         KYCTier = "BASIC"         // Email/phone only
+	KYCTierStandard      KYCTier = "STANDARD"      // ID document + selfie
+	KYCTierEnhanced      KYCTier = "ENHANCED"      // Full KYC + source of funds
 	KYCTierInstitutional KYCTier = "INSTITUTIONAL" // Corporate KYC
 )
 
