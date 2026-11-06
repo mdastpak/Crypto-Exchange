@@ -106,6 +106,11 @@ func (c *Configuration) rangeProblems(p *problems) {
 	atLeast("server.read_timeout_seconds", c.Server.ReadTimeout, 1)
 	atLeast("server.write_timeout_seconds", c.Server.WriteTimeout, 1)
 	atLeast("server.idle_timeout_seconds", c.Server.IdleTimeout, 1)
+	atLeast("server.shutdown_timeout_seconds", c.Server.ShutdownTimeout, 1)
+	atLeast("server.drain_seconds", c.Server.DrainSeconds, 0)
+	if c.Server.DrainSeconds >= c.Server.ShutdownTimeout && c.Server.ShutdownTimeout >= 1 {
+		p.add("server.drain_seconds", "is %d; it must be less than server.shutdown_timeout_seconds (%d), which includes it", c.Server.DrainSeconds, c.Server.ShutdownTimeout)
+	}
 	if c.Server.MaxBodyBytes < 1 {
 		p.add("server.max_body_bytes", "is %d; it must be at least 1", c.Server.MaxBodyBytes)
 	}

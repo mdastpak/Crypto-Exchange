@@ -71,7 +71,17 @@ Middleware is applied to every route, including `/` and `/swagger/*`, in this or
 5. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
 6. Bring the shared currency cache in line with PostgreSQL: cache the approved currencies and remove the entries of currencies that are not approved. The cache is never cleared as a whole, because other instances serve from it.
 7. Start the HTTP server (with TLS when enabled).
-8. On `SIGINT` or `SIGTERM`: close WebSocket clients, shut down the HTTP server, stop the delivery worker, then close RabbitMQ, Redis, and PostgreSQL. Shared state in Redis, such as the currency cache, is left for the other instances. The intended order is tracked in [#49](https://github.com/mdastpak/Crypto-Exchange/issues/49).
+8. On `SIGINT` or `SIGTERM`, or when the HTTP server fails, stop within `server.shutdown_timeout_seconds` (30 by default), in this order ([#49](https://github.com/mdastpak/Crypto-Exchange/issues/49)):
+   1. `/system/ready` answers `503` with `"status": "draining"`, so that load balancers stop routing new requests to the instance, and responses ask clients to close their connections.
+   2. The instance keeps serving for `server.drain_seconds` (0 by default), the time the load balancers take to notice. A server that failed skips this step.
+   3. The HTTP server stops accepting connections and waits for the requests in flight. If the deadline passes first, it closes their connections.
+   4. The delivery worker stops.
+   5. The WebSocket clients get a close frame with code `1001` and have one second to answer it, and the event consumer stops.
+   6. RabbitMQ, Redis, and PostgreSQL close, in that order.
+
+   Each step runs even when an earlier one fails, and every `Close` and `Shutdown` may be called more than once. A failure at any point of the startup also closes what was opened before it.
+
+   Production runs several instances, and stopping one does not stop the service. Shutdown concerns only the stopping instance. Its readiness state is in its memory, and it closes only its own connection pools to PostgreSQL, Redis, and RabbitMQ. Nothing shared is deleted: the currency cache, sessions, and rate-limit counters in Redis stay, and so do the exchanges and the durable queues. Sign-in code jobs that the instance has not delivered go back to the shared queue, where another instance delivers them; the broker also returns the jobs it had sent to this instance but that were not acknowledged. Only the instance's own WebSocket event queue, which no other instance reads, is removed by the broker once its channel closes. WebSocket clients reconnect through the load balancer to another instance. Set `server.drain_seconds` to a little more than the readiness interval of the load balancer, so that it stops routing to the instance before the instance refuses connections; release mode warns at startup when it is 0.
 
 ## Data stores
 

@@ -74,6 +74,10 @@ func (h *SystemHandler) LivenessHandler(c *gin.Context) {
 // The details per dependency are left out in release mode, where they would
 // only tell outsiders about the internals.
 func (h *SystemHandler) ReadinessHandler(c *gin.Context) {
+	if h.draining.Load() {
+		c.JSON(http.StatusServiceUnavailable, HealthStatus{Status: "draining"})
+		return
+	}
 	timeout := h.checkTimeout
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout

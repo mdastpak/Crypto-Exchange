@@ -1,6 +1,7 @@
 package system
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/db"
@@ -18,6 +19,15 @@ type SystemHandler struct {
 	checks []dependency
 	// checkTimeout bounds each check; zero means defaultCheckTimeout.
 	checkTimeout time.Duration
+	// draining is set when the instance starts to shut down.
+	draining atomic.Bool
+}
+
+// StartDraining makes readiness answer 503 from now on, without checking
+// the dependencies, so that load balancers stop sending requests to an
+// instance that is shutting down. Liveness keeps answering 200.
+func (h *SystemHandler) StartDraining() {
+	h.draining.Store(true)
 }
 
 // NewHandler creates a new system handler with injected dependencies

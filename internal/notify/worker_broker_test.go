@@ -194,6 +194,53 @@ func TestWorker_Broker_RecordsUndeliveredCodesWithoutSecrets(t *testing.T) {
 	assert.NotContains(t, logs.String(), testSMSMessage.Contact)
 }
 
+// TestWorker_Broker_AnotherInstanceTakesOverAtStop runs two workers on the
+// queue, each with a connection of its own, as two server instances do. The
+// first one stops while it waits to retry a delivery: the job goes back to
+// the queue, and the second instance delivers it.
+func TestWorker_Broker_AnotherInstanceTakesOverAtStop(t *testing.T) {
+	logs := &syncBuffer{}
+	topology := newBrokerTopology(t, logs)
+	firstAttempt := make(chan struct{}, 1)
+	failing := Channels{Email: deliverFunc(func(context.Context, OTPMessage) error {
+		firstAttempt <- struct{}{}
+		return errors.New("gateway timeout")
+	})}
+	first := NewWorker(topology.svc, failing, topology.opts)
+	// Shorter than the lifetime of the code, so that the worker waits to
+	// retry instead of giving up.
+	first.retryBackoff = 30 * time.Second
+	require.NoError(t, first.Start())
+	sender := NewQueueSender(topology.svc, topology.opts.Exchange, failing, time.Minute)
+	require.NoError(t, sender.SendOTP(context.Background(), testEmailMessage))
+	select {
+	case <-firstAttempt:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first instance did not try to deliver the code")
+	}
+
+	otherService, err := rabbitmq.NewRabbitMQService(topology.opts.Exchange)
+	require.NoError(t, err)
+	defer otherService.Close()
+	delivered := make(chan OTPMessage, 1)
+	second := NewWorker(otherService, Channels{Email: deliverFunc(func(ctx context.Context, msg OTPMessage) error {
+		delivered <- msg
+		return nil
+	})}, topology.opts)
+	require.NoError(t, second.Start())
+	defer stopWorker(t, second)
+
+	stopWorker(t, first)
+	select {
+	case msg := <-delivered:
+		assert.Equal(t, testEmailMessage, msg)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the other instance did not deliver the job of the stopped one; worker log:\n%s", logs.String())
+	}
+	_, ok := getMessage(t, topology.opts.DeadLetterQueue, 0)
+	assert.False(t, ok, "the job is handed over, not given up")
+}
+
 func TestWorker_Broker_DropsCodesThatExpireInTheQueue(t *testing.T) {
 	logs := &syncBuffer{}
 	topology := newBrokerTopology(t, logs)

@@ -67,6 +67,11 @@ type Configuration struct {
 		} `yaml:"swagger"`
 		// MaxBodyBytes is the largest request body the server accepts.
 		MaxBodyBytes int64 `yaml:"max_body_bytes"`
+		// ShutdownTimeout bounds the whole shutdown. DrainSeconds is how
+		// long the instance keeps serving after it reports not ready, so
+		// that load balancers stop sending it requests first.
+		ShutdownTimeout int `yaml:"shutdown_timeout_seconds"`
+		DrainSeconds    int `yaml:"drain_seconds"`
 	} `yaml:"server"`
 
 	Postgres struct {
@@ -636,6 +641,9 @@ func setDefaults() {
 	if Config.Server.MaxBodyBytes == 0 {
 		Config.Server.MaxBodyBytes = DefaultMaxBodyBytes
 	}
+	if Config.Server.ShutdownTimeout == 0 {
+		Config.Server.ShutdownTimeout = DefaultShutdownTimeoutSeconds
+	}
 
 	if Config.JWT.Issuer == "" {
 		Config.JWT.Issuer = DefaultJWTIssuer
@@ -912,6 +920,10 @@ const (
 	DefaultWSMaxConnections          = 10000
 	DefaultWSMaxConnectionsPerIP     = 20
 )
+
+// DefaultShutdownTimeoutSeconds is server.shutdown_timeout_seconds when it
+// is not set.
+const DefaultShutdownTimeoutSeconds = 30
 
 // DefaultMaxBodyBytes is server.max_body_bytes when it is not set: 1 MiB.
 const DefaultMaxBodyBytes = 1 << 20

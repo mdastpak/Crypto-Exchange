@@ -84,6 +84,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		"port too large":                   {func(c *Configuration) { c.Postgres.Port = "65536" }, `postgres.port (POSTGRES_PORT) is "65536"`},
 		"port not a number":                {func(c *Configuration) { c.Redis.Port = "redis" }, `redis.port (REDIS_PORT) is "redis"`},
 		"negative read timeout":            {func(c *Configuration) { c.Server.ReadTimeout = -1 }, "server.read_timeout_seconds (SERVER_READ_TIMEOUT_SECONDS) is -1; it must be at least 1"},
+		"no shutdown time":                 {func(c *Configuration) { c.Server.ShutdownTimeout = -1 }, "server.shutdown_timeout_seconds (SERVER_SHUTDOWN_TIMEOUT_SECONDS) is -1"},
+		"drain as long as the shutdown":    {func(c *Configuration) { c.Server.DrainSeconds = 30 }, "server.drain_seconds (SERVER_DRAIN_SECONDS) is 30; it must be less than server.shutdown_timeout_seconds (30)"},
 		"negative body limit":              {func(c *Configuration) { c.Server.MaxBodyBytes = -1 }, "server.max_body_bytes (SERVER_MAX_BODY_BYTES) is -1"},
 		"no database connections":          {func(c *Configuration) { c.Postgres.MaxOpenConns = -3 }, "postgres.max_open_conns (POSTGRES_MAX_OPEN_CONNS) is -3"},
 		"more idle than open":              {func(c *Configuration) { c.Postgres.MaxIdleConns = 30 }, "postgres.max_idle_conns (POSTGRES_MAX_IDLE_CONNS) is 30; it must not exceed postgres.max_open_conns (25)"},

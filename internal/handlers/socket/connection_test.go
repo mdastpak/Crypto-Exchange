@@ -248,3 +248,22 @@ func TestShutdown_IsIdempotentAndRefusesNewConnections(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
+
+func TestShutdown_SendsClientsACloseFrame(t *testing.T) {
+	h := newTestHandler()
+	conn, _, err := dial(t, gateway(t, h), nil)
+	require.NoError(t, err)
+	onlyClient(t, h)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.Shutdown(ctx))
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, _, err = conn.ReadMessage()
+	var closeErr *websocket.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	assert.Equal(t, websocket.CloseGoingAway, closeErr.Code)
+	assert.Equal(t, "server is shutting down", closeErr.Text)
+	require.Eventually(t, func() bool { return h.clientCount() == 0 }, 2*time.Second, 5*time.Millisecond)
+}

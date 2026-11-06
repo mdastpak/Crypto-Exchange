@@ -58,7 +58,7 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 		if !stopped {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			_ = shutdown(ctx, srv, handlers, nil)
+			_ = shutdown(ctx, srv, handlers, nil, 0)
 			cleanup()
 		}
 	})
@@ -79,7 +79,7 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stopped = true
-	require.NoError(t, shutdown(ctx, srv, handlers, nil))
+	require.NoError(t, shutdown(ctx, srv, handlers, nil, 0))
 	require.ErrorIs(t, <-served, http.ErrServerClosed)
 	cleanup()
 

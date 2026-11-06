@@ -136,3 +136,31 @@ func TestPingPongHandler(t *testing.T) {
 	_, err := time.Parse(time.RFC3339, body["timestamp"])
 	assert.NoError(t, err)
 }
+
+func TestReadiness_AnswersDrainingDuringShutdown(t *testing.T) {
+	h := handlerFailing()
+	router := gin.New()
+	router.GET("/ready", h.ReadinessHandler)
+	router.GET("/healthcheck", h.HealthCheckHandler)
+	router.GET("/live", h.LivenessHandler)
+	get := func(path string) (int, string) {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		var body HealthStatus
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		return w.Code, body.Status
+	}
+
+	code, status := get("/ready")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "ok", status)
+
+	h.StartDraining()
+	for _, path := range []string{"/ready", "/healthcheck"} {
+		code, status = get(path)
+		assert.Equal(t, http.StatusServiceUnavailable, code, path)
+		assert.Equal(t, "draining", status, path)
+	}
+	code, _ = get("/live")
+	assert.Equal(t, http.StatusOK, code, "the process is still alive")
+}

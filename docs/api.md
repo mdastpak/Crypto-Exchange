@@ -437,6 +437,8 @@ Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two secon
 
 `status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored. In release mode, the response has only `status`, without `details`, because the details describe the internals.
 
+Once the instance is shutting down, it answers `503` with `{"status": "draining"}` and checks no dependency, while it keeps serving the other routes for `server.drain_seconds`. See [Startup and shutdown](architecture.md#startup-and-shutdown).
+
 ### `GET /system/healthcheck`
 
 The earlier name of `/system/ready`, with the same response.
@@ -476,6 +478,7 @@ A token in the URL is not read, because URLs end up in access logs. A request th
 | Write timeout | `websocket.write_timeout_seconds`, 10 seconds by default |
 | Connections | At most `websocket.max_connections` per server instance (10000), and `websocket.max_connections_per_ip` per client address (20). Further upgrades get `503` and `429`. The client address honors `server.trusted_proxies`. |
 | Per-client outbound buffer | 256 messages. Messages are dropped when the buffer is full. |
+| Instance shutdown | When an instance stops, for example during a rolling deploy, its clients get a close frame with `1001` (going away) and the reason `server is shutting down`. The other instances keep serving. Reconnect after a short random delay, so that the clients of one instance do not all reconnect at the same moment, and send the time zone again, since it belongs to the connection. |
 
 ### Client messages
 

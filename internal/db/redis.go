@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
@@ -13,6 +14,9 @@ import (
 
 type RedisService struct {
 	Client *redis.Client
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewRedisService() (*RedisService, error) {
@@ -52,14 +56,18 @@ func NewRedisService() (*RedisService, error) {
 	}, nil
 }
 
+// Close closes the client once; later calls return the result of the first.
 func (r *RedisService) Close() error {
-	if r.Client != nil {
+	r.closeOnce.Do(func() {
+		if r.Client == nil {
+			return
+		}
 		if err := r.Client.Close(); err != nil {
 			log.Printf("Error closing Redis connection: %v", err)
-			return err
+			r.closeErr = err
 		}
-	}
-	return nil
+	})
+	return r.closeErr
 }
 
 func (r *RedisService) Ping(ctx context.Context) error {
