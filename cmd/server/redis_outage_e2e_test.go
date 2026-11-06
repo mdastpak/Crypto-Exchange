@@ -88,7 +88,7 @@ func TestRedisOutage_RequestsAnswerWithinTheirDeadlines(t *testing.T) {
 	assert.GreaterOrEqual(t, took, limiterDeadline, "the limiter waited for Redis")
 	assert.Less(t, took, limiterDeadline+500*time.Millisecond, "but not past its deadline")
 
-	w, took = send(http.MethodPost, "/public/auth")
+	w, took = send(http.MethodPost, "/api/v1/public/auth")
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "the sign-in limit rejects requests, as on_error says")
 	assert.Equal(t, "1", w.Header().Get("Retry-After"))
 	assert.GreaterOrEqual(t, took, limiterDeadline)

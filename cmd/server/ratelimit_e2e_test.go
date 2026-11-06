@@ -54,45 +54,45 @@ func TestRateLimits_PerRouteGroup(t *testing.T) {
 
 	t.Run("public reads use only the REST limit", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
-			w := send(http.MethodGet, "/public/currencies", "198.51.100.1")
+			w := send(http.MethodGet, "/api/v1/public/currencies", "198.51.100.1")
 			require.Equal(t, http.StatusOK, w.Code, "request %d", i+1)
 			assert.Equal(t, "40", w.Header().Get("X-RateLimit-Limit"), "the REST limit is the last one applied")
-			assert.Equal(t, http.StatusNotFound, send(http.MethodGet, "/public/currencies/"+uuid.NewString(), "198.51.100.1").Code)
+			assert.Equal(t, http.StatusNotFound, send(http.MethodGet, "/api/v1/public/currencies/"+uuid.NewString(), "198.51.100.1").Code)
 		}
 	})
 
 	t.Run("the REST limit applies to public reads", func(t *testing.T) {
-		allowed, rejected := allowedBeforeLimit(http.MethodGet, "/public/currencies", "198.51.100.2", 60)
+		allowed, rejected := allowedBeforeLimit(http.MethodGet, "/api/v1/public/currencies", "198.51.100.2", 60)
 		require.NotNil(t, rejected, "the REST burst must be enforced")
 		assert.GreaterOrEqual(t, allowed, 40)
 	})
 
 	const signIn = "198.51.100.3"
 	t.Run("code requests are limited per hour", func(t *testing.T) {
-		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/public/auth", signIn, 5)
+		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/api/v1/public/auth", signIn, 5)
 		require.NotNil(t, rejected)
 		assert.Equal(t, 2, allowed)
 		assert.Greater(t, retryAfter(rejected), 60)
 	})
 
 	t.Run("code verifications have a limit of their own", func(t *testing.T) {
-		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/public/auth/"+uuid.NewString(), signIn, 5)
+		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/api/v1/public/auth/"+uuid.NewString(), signIn, 5)
 		require.NotNil(t, rejected)
 		assert.Equal(t, 3, allowed, "used-up code requests must not block verification")
 		assert.LessOrEqual(t, retryAfter(rejected), 60)
 	})
 
 	t.Run("admin sign-in counts separately from user sign-in", func(t *testing.T) {
-		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/admin/auth", signIn, 5)
+		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/api/v1/admin/auth", signIn, 5)
 		require.NotNil(t, rejected)
 		assert.Equal(t, 2, allowed)
-		allowed, rejected = allowedBeforeLimit(http.MethodPost, "/admin/auth/"+uuid.NewString(), signIn, 5)
+		allowed, rejected = allowedBeforeLimit(http.MethodPost, "/api/v1/admin/auth/"+uuid.NewString(), signIn, 5)
 		require.NotNil(t, rejected)
 		assert.Equal(t, 3, allowed)
 	})
 
 	t.Run("refresh and logout have no sign-in limit", func(t *testing.T) {
-		for _, path := range []string{"/public/auth/refresh", "/public/auth/logout"} {
+		for _, path := range []string{"/api/v1/public/auth/refresh", "/api/v1/public/auth/logout"} {
 			allowed, _ := allowedBeforeLimit(http.MethodPost, path, signIn, 6)
 			assert.Equal(t, 6, allowed, path)
 		}

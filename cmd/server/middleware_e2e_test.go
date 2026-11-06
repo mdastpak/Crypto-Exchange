@@ -91,13 +91,13 @@ func TestRouter_RejectsOversizedBodies(t *testing.T) {
 	router := newTestRouter(t, env)
 
 	body := `{"username": "` + strings.Repeat("a", 2048) + `@example.com"}`
-	req := httptest.NewRequest(http.MethodPost, "/public/auth", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/public/auth", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/public/auth", strings.NewReader(`{"username": "small@example.com"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/public/auth", strings.NewReader(`{"username": "small@example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)

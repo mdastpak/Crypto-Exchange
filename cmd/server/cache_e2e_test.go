@@ -33,7 +33,7 @@ func listedSymbols(t *testing.T, w *httptest.ResponseRecorder) []string {
 func listCurrencies(t *testing.T, h http.Handler) []string {
 	t.Helper()
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/public/currencies", nil))
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/public/currencies", nil))
 	return listedSymbols(t, w)
 }
 
@@ -80,7 +80,7 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	// one drops the shared list, so the second shows it at once.
 	admin, err := env.accounts.Create(context.Background(), "cache@example.com")
 	require.NoError(t, err)
-	status, resp := env.post(t, "/admin/currencies", testCurrency("ETH"), env.signInAdmin(t, admin))
+	status, resp := env.post(t, "/api/v1/admin/currencies", testCurrency("ETH"), env.signInAdmin(t, admin))
 	require.Equal(t, http.StatusCreated, status, resp.Message)
 	assert.Equal(t, []string{"BTC", "ETH"}, listCurrencies(t, router), "the second instance shows a change made through the first")
 

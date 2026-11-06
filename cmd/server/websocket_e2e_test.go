@@ -19,7 +19,7 @@ import (
 // registered the client, by completing a ping.
 func dialWebSocket(t *testing.T, serverURL string) *websocket.Conn {
 	t.Helper()
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(serverURL, "http")+"/ws/", nil)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(serverURL, "http")+"/api/v1/ws/", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
@@ -42,7 +42,7 @@ func TestWebSocket_CurrencyEventsReachEveryClient(t *testing.T) {
 	admin, err := env.accounts.Create(context.Background(), "events@example.com")
 	require.NoError(t, err)
 	token := env.signInAdmin(t, admin)
-	status, resp := env.post(t, "/admin/currencies", testCurrency("WSE"), token)
+	status, resp := env.post(t, "/api/v1/admin/currencies", testCurrency("WSE"), token)
 	require.Equal(t, http.StatusCreated, status, resp.Message)
 
 	for i, conn := range clients {
@@ -85,7 +85,7 @@ func TestWebSocket_AnotherInstanceRelaysTheEvent(t *testing.T) {
 	require.NoError(t, err)
 	body, err := json.Marshal(testCurrency("RLY"))
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/admin/currencies", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/currencies", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+env.signInAdmin(t, admin))
 	w := httptest.NewRecorder()
@@ -108,7 +108,7 @@ func TestWebSocket_AuthenticatesWithAUserToken(t *testing.T) {
 	env := newE2EEnv(t)
 	server := httptest.NewServer(env.router)
 	defer server.Close()
-	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/"
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/ws/"
 	session := env.startSession(t, "ws-user@example.com")
 
 	connect := func(header http.Header) (*websocket.Conn, *http.Response, error) {
@@ -140,7 +140,7 @@ func TestWebSocket_AuthenticatesWithAUserToken(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
-	w := env.send(t, http.MethodPost, "/user/logout", nil, session.access, "")
+	w := env.send(t, http.MethodPost, "/api/v1/user/logout", nil, session.access, "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	_, resp, err = connect(http.Header{"Authorization": {"Bearer " + session.access}})
 	require.Error(t, err)

@@ -51,7 +51,9 @@ flowchart TB
 
 ### Request pipeline
 
-Middleware is applied to every route, including `/` and `/swagger/*`, in this order: Gin logger; recovery, which answers a panic with `500 Internal server error` in the standard envelope and logs the details; request ID; security headers; CORS; the REST rate limiter; and the request body limit. `RouteHandler` registers it before any route, because Gin applies middleware only to the routes registered after it. Route groups add their own layers:
+Middleware is applied to every route, including `/` and `/swagger/*`, in this order: Gin logger; recovery, which answers a panic with `500 Internal server error` in the standard envelope and logs the details; request ID; security headers; CORS; the REST rate limiter; and the request body limit. `RouteHandler` registers it before any route, because Gin applies middleware only to the routes registered after it.
+
+The API routes are registered twice by `registerAPI` ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53)): under `/api/v1`, and without a prefix as deprecated aliases, whose responses carry `Deprecation` and `Link` headers that point to the versioned path. The two paths of a route share its rate limits, since the sign-in limits key on the path without `/api/v1`. The health probes under `/system`, `/`, and `/swagger/*` are not part of the API and are registered once. Route groups, below relative to `/api/v1`, add their own layers:
 
 | Group | Additional middleware |
 | --- | --- |

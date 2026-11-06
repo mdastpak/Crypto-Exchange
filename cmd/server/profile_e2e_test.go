@@ -51,7 +51,7 @@ type profileResponse struct {
 
 func (e *e2eEnv) profile(t *testing.T, method string, body interface{}, token string) (int, profileResponse) {
 	t.Helper()
-	status, raw := e.call(t, method, "/user/profile", body, token)
+	status, raw := e.call(t, method, "/api/v1/user/profile", body, token)
 	var resp profileResponse
 	require.NoError(t, json.Unmarshal(raw, &resp), string(raw))
 	return status, resp
@@ -77,7 +77,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 	bobToken, bobID := env.signedInUser(t, "09121234567")
 
 	t.Run("a user reads their own profile with masked contacts", func(t *testing.T) {
-		status, raw := env.call(t, http.MethodGet, "/user/profile", nil, aliceToken)
+		status, raw := env.call(t, http.MethodGet, "/api/v1/user/profile", nil, aliceToken)
 		require.Equal(t, http.StatusOK, status, string(raw))
 		assert.NotContains(t, string(raw), "alice@example.com", "the contact is masked")
 
@@ -116,7 +116,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		assert.Equal(t, aliceID, resp.Info.UUID)
 
 		// A body cannot name another user.
-		status, raw := env.call(t, http.MethodPatch, "/user/profile", map[string]string{"uuid": bobID, "first_name": "Mallory"}, aliceToken)
+		status, raw := env.call(t, http.MethodPatch, "/api/v1/user/profile", map[string]string{"uuid": bobID, "first_name": "Mallory"}, aliceToken)
 		assert.Equal(t, http.StatusBadRequest, status, string(raw))
 		assert.Contains(t, string(raw), `"uuid":"is not accepted"`)
 
@@ -146,7 +146,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 			map[string]string{"kyc_tier": "INSTITUTIONAL"},
 			map[string]string{},
 		} {
-			status, raw := env.call(t, http.MethodPatch, "/user/profile", body, aliceToken)
+			status, raw := env.call(t, http.MethodPatch, "/api/v1/user/profile", body, aliceToken)
 			assert.Equal(t, http.StatusBadRequest, status, string(raw))
 		}
 		var status, tier string
@@ -205,13 +205,13 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 
 		_, err = env.db.Exec(`UPDATE users SET created_at = NULL WHERE hk = $1`, id)
 		require.NoError(t, err)
-		status, raw := env.call(t, http.MethodGet, "/user/profile", nil, token)
+		status, raw := env.call(t, http.MethodGet, "/api/v1/user/profile", nil, token)
 		require.Equal(t, http.StatusOK, status, string(raw))
 		assert.Contains(t, string(raw), `"created_at":null`)
 	})
 
 	t.Run("the old routes are gone", func(t *testing.T) {
-		status, _ := env.call(t, http.MethodPost, "/user/update", map[string]string{"first_name": "x"}, bobToken)
+		status, _ := env.call(t, http.MethodPost, "/api/v1/user/update", map[string]string{"first_name": "x"}, bobToken)
 		assert.Equal(t, http.StatusNotFound, status)
 	})
 }
