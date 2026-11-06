@@ -62,6 +62,16 @@ func init() {
 
 func main() {
 	flag.Parse()
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Server stopped gracefully")
+}
+
+// run starts the server and serves until a SIGINT or SIGTERM, then stops it.
+// It returns instead of exiting on an error, so that the deferred closes of
+// the services run on every path.
+func run() error {
 	config.SetConfigPath(configPath)
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
@@ -70,7 +80,7 @@ func main() {
 	// report every problem at once.
 	keyProvider, err := validateConfiguration()
 	if err != nil {
-		log.Fatalf("Invalid configuration:\n%s", problemList(err))
+		return fmt.Errorf("invalid configuration:\n%s", problemList(err))
 	}
 
 	// server.mode, which SERVER_MODE or GIN_MODE can set, selects the
@@ -78,60 +88,78 @@ func main() {
 	gin.SetMode(config.Config.Server.Mode)
 
 	if err := initAuthKeys(); err != nil {
-		log.Fatalf("Failed to initialize auth keys: %v", err)
+		return fmt.Errorf("failed to initialize auth keys: %w", err)
 	}
 
 	if config.Config.OTP.Auth.Secret == "" {
 		log.Println("WARNING: otp.auth.secret is not set: using a random secret, so sign-in codes can only be verified by this process until it restarts")
 	}
+	// Production runs several instances behind a load balancer, which keeps
+	// routing to a stopping instance until it sees the readiness probe fail.
+	if gin.Mode() == gin.ReleaseMode && config.Config.Server.DrainSeconds == 0 {
+		log.Println("WARNING: server.drain_seconds is 0: at shutdown, this instance refuses connections as soon as its readiness probe fails, so a load balancer may still send it requests that fail; set it to a little more than the balancer's readiness interval")
+	}
 	otpChannels, err := notify.NewChannels(config.Config.Notifications, otpTTL())
 	if err != nil {
-		log.Fatalf("Invalid OTP delivery configuration: %v", err)
+		return fmt.Errorf("invalid OTP delivery configuration: %w", err)
 	}
 	adminTOTPKey, err := adminSignInKey()
 	if err != nil {
-		log.Fatalf("Invalid admin sign-in configuration: %v", err)
+		return fmt.Errorf("invalid admin sign-in configuration: %w", err)
 	}
 
 	services, cleanup, err := initializeServices()
 	if err != nil {
-		log.Fatalf("Failed to initialize services: %v", err)
+		return fmt.Errorf("failed to initialize services: %w", err)
 	}
+	// Closes RabbitMQ, Redis, and PostgreSQL, in that order, after shutdown
+	// has stopped everything that uses them.
 	defer cleanup()
 
 	handlers := initializeHandlers(services)
 	if handlers.DataKeys, err = loadDataKeys(services, keyProvider); err != nil {
-		log.Fatalf("Failed to load the data-protection keys: %v", err)
+		return fmt.Errorf("failed to load the data-protection keys: %w", err)
 	}
 	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
+	// Stops the OTP delivery worker and the WebSocket event consumer, which
+	// start below, before the services close when startup fails after them.
+	// Otherwise shutdown has stopped them, and stopping them again does
+	// nothing.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout())
+		defer cancel()
+		if otpWorker != nil {
+			_ = otpWorker.Stop(ctx)
+		}
+		_ = handlers.Socket.Shutdown(ctx)
+	}()
 	handlers.Public.OTPSender = otpSender
 	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
-		log.Fatalf("Failed to configure admin sign-in: %v", err)
+		return fmt.Errorf("failed to configure admin sign-in: %w", err)
 	}
-	// Forward currency events to WebSocket clients. Socket.Shutdown stops
-	// the consumer before RabbitMQ is closed.
+	// Forward currency events to WebSocket clients.
 	if err := handlers.Socket.StartConsumer(context.Background()); err != nil {
-		log.Fatalf("Failed to start the WebSocket event consumer: %v", err)
+		return fmt.Errorf("failed to start the WebSocket event consumer: %w", err)
 	}
 	if otpWorker != nil {
 		if err := otpWorker.Start(); err != nil {
-			log.Fatalf("Failed to start the OTP delivery worker: %v", err)
+			return fmt.Errorf("failed to start the OTP delivery worker: %w", err)
 		}
 	}
 
 	if err := initializeCache(handlers); err != nil {
-		log.Fatalf("Failed to initialize cache: %v", err)
+		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
 
 	serverAddr := fmt.Sprintf("%s:%s", config.Config.Server.IP, config.Config.Server.Port)
 
 	r, err := newEngine()
 	if err != nil {
-		log.Fatalf("Failed to create the HTTP engine: %v", err)
+		return fmt.Errorf("failed to create the HTTP engine: %w", err)
 	}
 	r.Use(gin.Logger())
 	if err := RouteHandler(r, handlers); err != nil {
-		log.Fatalf("Failed to register routes: %v", err)
+		return fmt.Errorf("failed to register routes: %w", err)
 	}
 
 	protocol := "http"
@@ -150,55 +178,110 @@ func main() {
 		WriteTimeout: time.Duration(config.Config.Server.WriteTimeout) * time.Second,
 		IdleTimeout:  time.Duration(config.Config.Server.IdleTimeout) * time.Second,
 	}
-
-	go func() {
-		var err error
-		if config.Config.Server.TLS.Enabled {
-			err = srv.ListenAndServeTLS(config.Config.Server.TLS.CertFile, config.Config.Server.TLS.KeyFile)
-		} else {
-			err = srv.ListenAndServe()
+	listen := srv.ListenAndServe
+	if config.Config.Server.TLS.Enabled {
+		listen = func() error {
+			return srv.ListenAndServeTLS(config.Config.Server.TLS.CertFile, config.Config.Server.TLS.KeyFile)
 		}
-		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Could not start server: %v", err)
-		}
-	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	<-ctx.Done()
-
-	log.Println("Shutting down server...")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := shutdown(shutdownCtx, srv, handlers, otpWorker); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
 	}
-	log.Println("Server stopped gracefully")
+
+	ctx, stop := stopSignals()
+	defer stop()
+	return serve(ctx, srv, listen, handlers, otpWorker, shutdownTimeout(), drainTime())
 }
 
-// shutdown stops this instance: its WebSocket clients, its HTTP server, and
-// its OTP delivery worker. It leaves the shared state in Redis, such as the
-// currency cache, untouched, because the other instances keep serving from
-// it. The caller closes the services afterwards.
-func shutdown(ctx context.Context, srv *http.Server, handlers *InfraHandlers, otpWorker *notify.Worker) error {
-	if err := handlers.Socket.Shutdown(ctx); err != nil {
-		log.Printf("Error during WebSocket shutdown: %v", err)
+// stopSignals returns a context that a SIGINT or SIGTERM cancels.
+func stopSignals() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
+// shutdownTimeout is server.shutdown_timeout_seconds, the time the whole
+// shutdown may take.
+func shutdownTimeout() time.Duration {
+	return time.Duration(config.Config.Server.ShutdownTimeout) * time.Second
+}
+
+// drainTime is server.drain_seconds, the time the instance keeps serving
+// after its readiness probe fails.
+func drainTime() time.Duration {
+	return time.Duration(config.Config.Server.DrainSeconds) * time.Second
+}
+
+// serve runs the HTTP server with listen until ctx is done or the server
+// fails, and then stops the instance with shutdown, which may take up to
+// timeout. It returns the server's failure, if any, joined with the errors of
+// the shutdown. A server that failed skips the drain, since nothing reaches
+// it any more.
+func serve(ctx context.Context, srv *http.Server, listen func() error, handlers *InfraHandlers, otpWorker *notify.Worker, timeout, drain time.Duration) error {
+	served := make(chan error, 1)
+	go func() { served <- listen() }()
+
+	var failure error
+	select {
+	case <-ctx.Done():
+		log.Println("Shutting down the server...")
+	case err := <-served:
+		// Only Shutdown and Close make listen return ErrServerClosed, so any
+		// return before them is a failure.
+		failure = fmt.Errorf("the HTTP server stopped: %w", err)
+		log.Printf("%v; shutting down", failure)
+		drain = 0
 	}
 
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := shutdown(shutdownCtx, srv, handlers, otpWorker, drain)
+	if failure == nil {
+		if err := <-served; !errors.Is(err, http.ErrServerClosed) {
+			failure = fmt.Errorf("the HTTP server stopped: %w", err)
+		}
+	}
+	return errors.Join(failure, err)
+}
+
+// shutdown stops this instance without losing the work in progress:
+//
+//  1. The readiness probe answers 503, so that load balancers stop routing
+//     new requests here, and responses ask clients to close their
+//     connections.
+//  2. The instance keeps serving for drain, the time the load balancers take
+//     to notice.
+//  3. The HTTP server stops accepting connections and waits for the requests
+//     in flight. When ctx expires first, it closes their connections.
+//  4. The OTP delivery worker stops, after the requests that queue codes.
+//  5. The WebSocket clients get a close frame, and the event consumer stops.
+//
+// Each step runs even when an earlier one fails, and all share the deadline
+// of ctx. The caller closes RabbitMQ, Redis, and PostgreSQL afterwards. The
+// shared state in Redis, such as the currency cache, stays, because the
+// other instances keep serving from it.
+func shutdown(ctx context.Context, srv *http.Server, handlers *InfraHandlers, otpWorker *notify.Worker, drain time.Duration) error {
+	handlers.System.StartDraining()
+	srv.SetKeepAlivesEnabled(false)
+	if drain > 0 {
+		log.Printf("Draining for %s before the HTTP server stops", drain)
+		select {
+		case <-time.After(drain):
+		case <-ctx.Done():
+		}
+	}
+
+	var errs []error
 	if err := srv.Shutdown(ctx); err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("HTTP server: %w", err))
+		_ = srv.Close()
 	}
 	// The worker publishes dead-letter records, so it stops before the
 	// services, and RabbitMQ with them, are closed.
 	if otpWorker != nil {
 		if err := otpWorker.Stop(ctx); err != nil {
-			log.Printf("Error while stopping the OTP delivery worker: %v", err)
+			errs = append(errs, fmt.Errorf("OTP delivery worker: %w", err))
 		}
 	}
-	return nil
+	if err := handlers.Socket.Shutdown(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("WebSocket clients: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 // adminSignInKey decodes admin.totp_key. Without it, admin sign-in is

@@ -83,6 +83,9 @@ services:
     # permissions.
     user: "${APP_UID:-10001}:${APP_GID:-10001}"
     command: ["-config", "config/config.compose.yaml"]
+    # Docker kills the container 10 seconds after SIGTERM by default, while
+    # the server may take server.shutdown_timeout_seconds (30) to stop.
+    stop_grace_period: 40s
     # Every variable in .env reaches the server. The ones below take
     # precedence: they give the defaults, and keep the container's addresses,
     # port, and key paths whatever .env says for running outside Compose.

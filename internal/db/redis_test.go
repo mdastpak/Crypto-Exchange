@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -132,4 +133,27 @@ func TestRedisPingWithRetry_NormalizesInvalidArguments(t *testing.T) {
 
 	err := redisPingWithRetry(client, 0, 0)
 	assert.NoError(t, err)
+}
+
+// TestServices_CloseIsIdempotent closes the Redis and PostgreSQL services
+// twice, as a shutdown that runs into a second signal may.
+func TestServices_CloseIsIdempotent(t *testing.T) {
+	originalConfig := config.Config
+	defer func() { config.Config = originalConfig }()
+	config.Config.Redis.Host, config.Config.Redis.Port, config.Config.Redis.DB = "localhost", "6379", redistest.DB
+	config.Config.Redis.ConnectRetries, config.Config.Redis.ConnectRetryDelayMs = 1, 10
+
+	redisService, err := NewRedisService()
+	require.NoError(t, err)
+	assert.NoError(t, redisService.Close())
+	assert.NoError(t, redisService.Close(), "a second Close must not fail")
+	assert.NoError(t, (&RedisService{}).Close())
+
+	ensureMigrationsTestDB(t)
+	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
+	require.NoError(t, err)
+	require.NoError(t, conn.Ping())
+	postgres := &PostgresService{DB: conn}
+	assert.NoError(t, postgres.Close())
+	assert.NoError(t, postgres.Close(), "a second Close must not fail")
 }

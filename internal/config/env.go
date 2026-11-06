@@ -119,6 +119,8 @@ var envVars = []EnvVar{
 	boolVar("SERVER_TLS_BEHIND_PROXY", "server.tls.behind_proxy", func(c *Configuration) *bool { return &c.Server.TLS.BehindProxy }),
 	optionalBoolVar("SERVER_SWAGGER_ENABLED", "server.swagger.enabled", func(c *Configuration) **bool { return &c.Server.Swagger.Enabled }),
 	int64Var("SERVER_MAX_BODY_BYTES", "server.max_body_bytes", func(c *Configuration) *int64 { return &c.Server.MaxBodyBytes }),
+	intVar("SERVER_SHUTDOWN_TIMEOUT_SECONDS", "server.shutdown_timeout_seconds", func(c *Configuration) *int { return &c.Server.ShutdownTimeout }),
+	intVar("SERVER_DRAIN_SECONDS", "server.drain_seconds", func(c *Configuration) *int { return &c.Server.DrainSeconds }),
 
 	stringVar("POSTGRES_HOST", "postgres.host", func(c *Configuration) *string { return &c.Postgres.Host }),
 	stringVar("POSTGRES_PORT", "postgres.port", func(c *Configuration) *string { return &c.Postgres.Port }),

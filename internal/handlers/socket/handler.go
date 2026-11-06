@@ -92,11 +92,24 @@ func NewWebSocketHandler(is *models.InfraServices) *WebSocketHandler {
 	return h
 }
 
-func (h *WebSocketHandler) registerClient(client *Client) {
+// registerClient adds a client and counts its write pump in Wg. It refuses
+// the client once Shutdown has started, which can happen while the upgrade
+// is in progress, since the HTTP server no longer tracks a connection once it
+// is upgraded. The check here and the close of ShutdownCh both hold Mu, so
+// either Shutdown sees the client, or the client sees the shutdown.
+func (h *WebSocketHandler) registerClient(client *Client) bool {
 	h.Mu.Lock()
+	select {
+	case <-h.ShutdownCh:
+		h.Mu.Unlock()
+		return false
+	default:
+	}
 	h.Clients[client] = true
+	h.Wg.Add(1)
 	h.Mu.Unlock()
 	log.Printf("WebSocket client connected (authenticated: %t). Total: %d", client.UserID != "", h.clientCount())
+	return true
 }
 
 func (h *WebSocketHandler) unregisterClient(client *Client) {
@@ -117,7 +130,7 @@ func (h *WebSocketHandler) clientCount() int {
 
 func (h *WebSocketHandler) readPump(client *Client) {
 	// Note: only writePump is tracked via h.Wg (matching the single
-	// h.Wg.Add(1) call in serve before it is started); readPump runs
+	// h.Wg.Add(1) call in registerClient before it is started); readPump runs
 	// synchronously on the caller's goroutine and must not call h.Wg.Done()
 	// itself, or the WaitGroup counter goes negative and panics on every
 	// normal client disconnect.
@@ -134,35 +147,33 @@ func (h *WebSocketHandler) readPump(client *Client) {
 		return client.Conn.SetReadDeadline(time.Now().Add(h.limits.pongWait))
 	})
 
+	// The loop does not watch for shutdown: closing the connection itself
+	// could cut off the close frame that writePump sends then. It ends when
+	// the client answers that frame, or when Shutdown closes the connection.
 	for {
-		select {
-		case <-h.ShutdownCh:
+		messageType, message, err := client.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("WebSocket read error: %v", err)
+			}
 			return
-		default:
-			messageType, message, err := client.Conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("WebSocket read error: %v", err)
-				}
-				return
-			}
-
-			if !client.limiter.allow(time.Now()) {
-				// A client that sends faster than its limit is disconnected
-				// with a policy violation. WriteControl may run concurrently
-				// with writePump.
-				_ = client.Conn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many messages"),
-					time.Now().Add(time.Second))
-				return
-			}
-
-			if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
-				continue
-			}
-
-			h.handleClientMessage(client, message)
 		}
+
+		if !client.limiter.allow(time.Now()) {
+			// A client that sends faster than its limit is disconnected
+			// with a policy violation. WriteControl may run concurrently
+			// with writePump.
+			_ = client.Conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many messages"),
+				time.Now().Add(time.Second))
+			return
+		}
+
+		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
+			continue
+		}
+
+		h.handleClientMessage(client, message)
 	}
 }
 
@@ -201,6 +212,12 @@ func (h *WebSocketHandler) writePump(client *Client) {
 			}
 
 		case <-h.ShutdownCh:
+			// Tell the client why the connection ends, so that it can
+			// reconnect to another instance at once. Shutdown closes the
+			// connection afterwards.
+			_ = client.Conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseGoingAway, "server is shutting down"),
+				time.Now().Add(h.limits.writeTimeout))
 			return
 		}
 	}
@@ -387,26 +404,55 @@ func (h *WebSocketHandler) drain(ctx context.Context, sub *subscription) error {
 	}
 }
 
-// Shutdown closes every connection and waits for their goroutines, until ctx
-// ends. It may be called more than once.
-func (h *WebSocketHandler) Shutdown(ctx context.Context) error {
-	h.shutdownOnce.Do(func() { close(h.ShutdownCh) })
-	h.Mu.Lock()
-	for client := range h.Clients {
-		client.Conn.Close()
-	}
-	h.Mu.Unlock()
+// closeGrace is how long Shutdown waits for clients to answer the close
+// frame before it closes their connections.
+const closeGrace = time.Second
 
+// Shutdown stops the event consumer, sends every client a close frame
+// (1001, going away), and closes the connections, waiting for the
+// goroutines until ctx ends. It may be called more than once.
+func (h *WebSocketHandler) Shutdown(ctx context.Context) error {
+	h.shutdownOnce.Do(func() {
+		// Under Mu, so that no client registers after this; see
+		// registerClient.
+		h.Mu.Lock()
+		close(h.ShutdownCh)
+		h.Mu.Unlock()
+	})
+
+	// The write pumps send the close frames and return, and the consumer
+	// stops.
 	done := make(chan struct{})
 	go func() {
 		h.Wg.Wait()
 		close(done)
 	}()
-
+	var err error
 	select {
 	case <-done:
-		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		err = ctx.Err()
 	}
+
+	// A client answers the close frame with its own, which ends its read
+	// loop. Closing a connection before that answer arrives can reset it
+	// and lose the frame, so the clients get a moment to answer; the rest
+	// are closed.
+	grace := time.NewTimer(closeGrace)
+	defer grace.Stop()
+	for h.clientCount() > 0 {
+		select {
+		case <-grace.C:
+		case <-ctx.Done():
+		case <-time.After(10 * time.Millisecond):
+			continue
+		}
+		break
+	}
+	h.Mu.Lock()
+	for client := range h.Clients {
+		client.Conn.Close()
+	}
+	h.Mu.Unlock()
+	return err
 }

@@ -58,6 +58,8 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
 | `swagger.enabled` | unset | Serves the Swagger UI at `/swagger/index.html`. When it is not set, the UI is served outside release mode only. |
 | `max_body_bytes` | `1048576` | The largest request body accepted, in bytes. A larger body gets `413`. |
+| `shutdown_timeout_seconds` | `30` | How long a shutdown may take in total, from `SIGINT` or `SIGTERM` until the connections to PostgreSQL, Redis, and RabbitMQ are closed. It includes `drain_seconds`. The orchestrator must wait longer before it kills the process, or the shutdown is cut short: Docker's `stop_grace_period` is 10 seconds by default, and `docker-compose.yml` sets it to 40; Kubernetes' `terminationGracePeriodSeconds` is 30 by default. See [Shutdown](architecture.md#startup-and-shutdown). |
+| `drain_seconds` | `0` | How long the instance keeps serving after `/system/ready` turns `503` at shutdown, so that load balancers stop sending it requests before it stops accepting them. Set it to a little more than the readiness interval of the load balancer. It must be less than `shutdown_timeout_seconds`. |
 | `tls.enabled` | `false` | Serve HTTPS with `ListenAndServeTLS` |
 | `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled. The server checks at startup that they load as a pair. |
 | `tls.behind_proxy` | `false` | A reverse proxy terminates TLS in front of the server, which then serves plain HTTP to it. Release mode needs TLS one way or the other. |
@@ -282,6 +284,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SERVER_TLS_BEHIND_PROXY` | `server.tls.behind_proxy` |
 | `SERVER_SWAGGER_ENABLED` | `server.swagger.enabled` |
 | `SERVER_MAX_BODY_BYTES` | `server.max_body_bytes` |
+| `SERVER_SHUTDOWN_TIMEOUT_SECONDS` | `server.shutdown_timeout_seconds` |
+| `SERVER_DRAIN_SECONDS` | `server.drain_seconds` |
 | `POSTGRES_HOST` | `postgres.host` |
 | `POSTGRES_PORT` | `postgres.port` |
 | `POSTGRES_USER` | `postgres.user` |
