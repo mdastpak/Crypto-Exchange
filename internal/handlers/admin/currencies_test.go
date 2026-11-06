@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
@@ -172,12 +173,10 @@ func (s *AdminCurrenciesTestSuite) TestCreateCurrency_Success() {
 	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'BTC'").Scan(&count))
 	assert.Equal(s.T(), 1, count)
 
-	// An approved currency is cached in Redis under its generated hk.
+	// An approved currency is public at once.
 	var hk string
 	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = 'BTC'").Scan(&hk))
-	val, err := s.redisClient.Get(context.Background(), fmt.Sprintf("base_definitions:currency:%s", hk)).Result()
-	require.NoError(s.T(), err)
-	assert.Contains(s.T(), val, "BTC")
+	assert.True(s.T(), s.isPublic(hk))
 }
 
 func (s *AdminCurrenciesTestSuite) TestCreateCurrency_InvalidJSON() {
@@ -284,6 +283,8 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_DuplicateSymbolConflict() 
 
 func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_Success() {
 	hk := s.createCurrency("ADA", "native-ada")
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	require.True(s.T(), s.isPublic(hk))
 
 	w := s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil)
 	assert.Equal(s.T(), http.StatusOK, w.Code)
@@ -294,8 +295,7 @@ func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_Success() {
 	assert.Equal(s.T(), "deleted", status)
 	assert.True(s.T(), deletedAt.Valid)
 
-	_, err := s.redisClient.Get(context.Background(), fmt.Sprintf("base_definitions:currency:%s", hk)).Result()
-	assert.ErrorIs(s.T(), err, redis.Nil, "cache entry should be removed after deletion")
+	assert.False(s.T(), s.isPublic(hk), "the delete drops the cached list")
 }
 
 func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_InvalidUUID() {
@@ -322,127 +322,37 @@ func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_AlreadyDeleted() {
 	assert.Equal(s.T(), "Currency not found or already deleted", resp.Message)
 }
 
-func (s *AdminCurrenciesTestSuite) TestAddAndDeleteCurrencyCache() {
-	currency := models.Currency{
-		HK:     uuid.New().String(),
-		Status: "approved",
-		Info:   models.CurrencyInfo{EnName: "Litecoin", Symbol: "LTC"},
-	}
-
-	require.NoError(s.T(), s.handler.AddOrUpdateCurrencyInCache(context.Background(), currency))
-
-	val, err := s.redisClient.Get(context.Background(), fmt.Sprintf("base_definitions:currency:%s", currency.HK)).Result()
+// insertApproved writes an approved currency to the database directly, as a
+// change that bypasses the admin routes would, so that it shows in the
+// public list only once the cached list is dropped.
+func (s *AdminCurrenciesTestSuite) insertApproved(symbol string) string {
+	info, err := json.Marshal(models.CurrencyInfo{EnName: symbol, FaName: symbol, Symbol: symbol})
 	require.NoError(s.T(), err)
-	assert.Contains(s.T(), val, "LTC")
-
-	require.NoError(s.T(), s.handler.DeleteCurrencyFromCache(context.Background(), currency.HK))
-
-	_, err = s.redisClient.Get(context.Background(), fmt.Sprintf("base_definitions:currency:%s", currency.HK)).Result()
-	assert.ErrorIs(s.T(), err, redis.Nil)
+	var hk string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow(
+		"INSERT INTO currencies (status, info) VALUES ('approved', $1::jsonb) RETURNING hk", info,
+	).Scan(&hk))
+	return hk
 }
 
-// cacheEntry writes a cache entry directly, as an older version or a failed
-// cache delete could have left it.
-func (s *AdminCurrenciesTestSuite) cacheEntry(c models.Currency) {
-	data, err := json.Marshal(c)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.redisClient.Set(context.Background(), currencyCachePrefix+c.HK, data, 0).Err())
-}
-
-// TestLoadAndCacheCurrencies_RemovesStaleEntriesOnly starts from a cache that
-// is out of date. Loading it brings it in line with the database without
-// clearing it: the public currency stays cached throughout, and unrelated
-// keys are not touched.
-func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_RemovesStaleEntriesOnly() {
-	ctx := context.Background()
-	public := s.createCurrency("AAA", "")
+// TestChanges_DropTheCachedListWhenThePublicViewChanges checks which changes
+// drop the cached list of public currencies: those to a currency that was
+// or becomes public, and no others.
+func (s *AdminCurrenciesTestSuite) TestChanges_DropTheCachedListWhenThePublicViewChanges() {
+	public := s.createCurrency("LTC", "")
 	s.update(public, map[string]interface{}{"status": "approved"})
-	s.cacheEntry(models.Currency{HK: public, Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "OLD"}})
+	hidden := s.createCurrency("XLM", "")
+	require.True(s.T(), s.isPublic(public))
 
-	// The database says pending, the cache approved.
-	pending := s.createCurrency("BBB", "")
-	s.cacheEntry(models.Currency{HK: pending, Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BBB"}})
-	// No such currency.
-	s.cacheEntry(models.Currency{HK: uuid.NewString(), Status: models.CurrencyStatusApproved})
-	// Keys that are not the canonical form of a UUID, some of which
-	// PostgreSQL would reject or accept as another spelling of the public
-	// currency.
-	for _, suffix := range []string{
-		"not-a-uuid",
-		"urn:uuid:" + public,
-		"{" + public + "}",
-		strings.ToUpper(public),
-		strings.ReplaceAll(public, "-", ""),
-	} {
-		require.NoError(s.T(), s.redisClient.Set(ctx, currencyCachePrefix+suffix, "{}", 0).Err())
-	}
-	require.NoError(s.T(), s.redisClient.Set(ctx, "unrelated:key", "keep-me", 0).Err())
+	direct := s.insertApproved("ZZZ")
+	s.update(hidden, map[string]interface{}{"info": map[string]interface{}{"en_name": "Stellar"}})
+	assert.False(s.T(), s.isPublic(direct), "a change to a hidden currency keeps the cached list")
 
-	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(ctx))
-
-	keys, err := s.redisClient.Keys(ctx, currencyCachePrefix+"*").Result()
+	s.update(public, map[string]interface{}{"info": map[string]interface{}{"en_name": "Litecoin"}})
+	assert.True(s.T(), s.isPublic(direct), "a change to a public currency drops the cached list")
+	list, err := s.handler.Currencies.List(context.Background())
 	require.NoError(s.T(), err)
-	assert.Equal(s.T(), []string{currencyCachePrefix + public}, keys)
-	val, err := s.redisClient.Get(ctx, currencyCachePrefix+public).Result()
-	require.NoError(s.T(), err)
-	assert.Contains(s.T(), val, `"symbol":"AAA"`, "the public entry is refreshed from the database")
-	stillThere, err := s.redisClient.Get(ctx, "unrelated:key").Result()
-	require.NoError(s.T(), err)
-	assert.Equal(s.T(), "keep-me", stillThere)
-}
-
-// Another instance may approve and cache a currency after this one read the
-// approved rows. Its entry is missing from the load but public in the
-// database, so it stays.
-func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_KeepsCurrenciesApprovedMeanwhile() {
-	hk := s.createCurrency("CCC", "")
-	s.update(hk, map[string]interface{}{"status": "approved"})
-
-	require.NoError(s.T(), s.handler.removeStaleCurrencies(context.Background(), map[string]bool{}))
-
-	assert.True(s.T(), s.isCached(hk))
-}
-
-// An entry that changed after it was found stale was written by another
-// instance in the meantime, so it is kept.
-func (s *AdminCurrenciesTestSuite) TestDeleteIfUnchanged_KeepsAChangedEntry() {
-	ctx := context.Background()
-	key := currencyCachePrefix + uuid.NewString()
-	require.NoError(s.T(), s.redisClient.Set(ctx, key, "new", 0).Err())
-
-	deleted, err := deleteIfUnchanged.Run(ctx, s.redisClient, []string{key}, "old").Int()
-	require.NoError(s.T(), err)
-	assert.Equal(s.T(), 0, deleted)
-
-	deleted, err = deleteIfUnchanged.Run(ctx, s.redisClient, []string{key}, "new").Int()
-	require.NoError(s.T(), err)
-	assert.Equal(s.T(), 1, deleted)
-}
-
-func (s *AdminCurrenciesTestSuite) TestLoadAndCacheCurrencies_OnlyCachesApprovedNonDeleted() {
-	ctx := context.Background()
-
-	insert := func(status, symbol string) {
-		info, _ := json.Marshal(models.CurrencyInfo{
-			EnName: symbol, FaName: symbol, Symbol: symbol, Contract: "contract-" + symbol,
-		})
-		_, err := s.postgresSvc.DB.Exec("INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb)", status, info)
-		require.NoError(s.T(), err)
-	}
-
-	insert("approved", "AAA")
-	insert("pending", "BBB")
-	insert("suspend", "CCC")
-
-	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(ctx))
-
-	keys, err := s.redisClient.Keys(ctx, "base_definitions:currency:*").Result()
-	require.NoError(s.T(), err)
-	require.Len(s.T(), keys, 1)
-
-	val, err := s.redisClient.Get(ctx, keys[0]).Result()
-	require.NoError(s.T(), err)
-	assert.Contains(s.T(), val, "AAA")
+	assert.Equal(s.T(), "Litecoin", list[0].Info.EnName, "the public list shows the change")
 }
 
 func (s *AdminCurrenciesTestSuite) TestCreateCurrency_DuplicateContractRejected() {
@@ -702,12 +612,18 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ConcurrentUpdatesKeepEachO
 	assert.Equal(s.T(), "Litecoin (new Persian name)", info.FaName)
 }
 
-// isCached reports whether the currency is in the cache that public and user
-// responses read.
-func (s *AdminCurrenciesTestSuite) isCached(hk string) bool {
-	n, err := s.redisClient.Exists(context.Background(), "base_definitions:currency:"+hk).Result()
+// isPublic reports whether the currency is in the list that public responses
+// read. The list is cached once it is read, so a change that does not drop
+// it does not show.
+func (s *AdminCurrenciesTestSuite) isPublic(hk string) bool {
+	list, err := s.handler.Currencies.List(context.Background())
 	require.NoError(s.T(), err)
-	return n == 1
+	for _, currency := range list {
+		if currency.HK == hk {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *AdminCurrenciesTestSuite) update(hk string, body map[string]interface{}) {
@@ -718,16 +634,16 @@ func (s *AdminCurrenciesTestSuite) update(hk string, body map[string]interface{}
 
 // TestCurrencyVisibility_FollowsStatusTransitions walks one currency through
 // every status and checks what public clients can see after each step: the
-// cache and the events.
+// public list and the events.
 func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_FollowsStatusTransitions() {
 	hk := s.createCurrency("NEAR", "")
-	assert.False(s.T(), s.isCached(hk), "a pending currency must not be public")
+	assert.False(s.T(), s.isPublic(hk), "a pending currency must not be public")
 	assert.Empty(s.T(), s.events.take(), "a hidden currency must not be announced")
 
 	steps := []struct {
 		name   string
 		body   map[string]interface{}
-		cached bool
+		public bool
 		events []string
 	}{
 		{"approve", map[string]interface{}{"status": "approved"}, true, []string{"create " + hk}},
@@ -740,7 +656,7 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_FollowsStatusTransitio
 	}
 	for _, step := range steps {
 		s.update(hk, step.body)
-		assert.Equal(s.T(), step.cached, s.isCached(hk), step.name)
+		assert.Equal(s.T(), step.public, s.isPublic(hk), step.name)
 		assert.Equal(s.T(), step.events, s.events.take(), step.name)
 	}
 
@@ -748,7 +664,7 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_FollowsStatusTransitio
 	s.events.take()
 	w := s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil)
 	require.Equal(s.T(), http.StatusOK, w.Code)
-	assert.False(s.T(), s.isCached(hk))
+	assert.False(s.T(), s.isPublic(hk))
 	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "deleting a public currency removes it from public view")
 }
 
@@ -762,10 +678,10 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_HiddenCurrenciesStayUn
 	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
 
 	assert.Empty(s.T(), s.events.take(), "creating and deleting a hidden currency must not reach WebSocket clients")
-	assert.False(s.T(), s.isCached(hk))
+	assert.False(s.T(), s.isPublic(hk))
 }
 
-func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_SameAfterARestart() {
+func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_SameWithAnEmptyCache() {
 	approved := s.createCurrency("ATOM", "")
 	s.update(approved, map[string]interface{}{"status": "approved"})
 	pending := s.createCurrency("AVAX", "")
@@ -778,22 +694,19 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_SameAfterARestart() {
 
 	visible := func() map[string]bool {
 		return map[string]bool{
-			"approved": s.isCached(approved), "pending": s.isCached(pending),
-			"suspended": s.isCached(suspended), "deleted": s.isCached(deleted),
+			"approved": s.isPublic(approved), "pending": s.isPublic(pending),
+			"suspended": s.isPublic(suspended), "deleted": s.isPublic(deleted),
 		}
 	}
 	before := visible()
 	assert.Equal(s.T(), map[string]bool{"approved": true, "pending": false, "suspended": false, "deleted": false}, before)
 
-	// A restart loads the cache again, also after Redis lost its data.
-	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(context.Background()))
-	assert.Equal(s.T(), before, visible(), "visibility must not change with a restart")
-
-	keys, err := s.redisClient.Keys(context.Background(), currencyCachePrefix+"*").Result()
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.redisClient.Del(context.Background(), keys...).Err())
-	require.NoError(s.T(), s.handler.LoadAndCacheCurrencies(context.Background()))
-	assert.Equal(s.T(), before, visible(), "visibility must not change with a restart on an empty cache")
+	// Another instance starts with a catalog of its own, and Redis may
+	// lose its data: the list is loaded from the database again.
+	s.handler.Currencies = currencies.New(s.postgresSvc.DB, s.redisClient, time.Minute)
+	assert.Equal(s.T(), before, visible(), "visibility must not change for another instance")
+	require.NoError(s.T(), s.redisClient.FlushDB(context.Background()).Err())
+	assert.Equal(s.T(), before, visible(), "visibility must not change when Redis lost its data")
 }
 
 // TestDeleteCurrency_WaitsForAConcurrentChange holds the row lock while it

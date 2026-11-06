@@ -69,9 +69,8 @@ Middleware is applied to every route, including `/` and `/swagger/*`, in this or
 3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges.
 4. Load the data-protection keys when `keys.provider` is set: unwrap them through the key management service, creating the first version of each on the first start. The server refuses to start when a key cannot be unwrapped.
 5. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
-6. Bring the shared currency cache in line with PostgreSQL: cache the approved currencies and remove the entries of currencies that are not approved. The cache is never cleared as a whole, because other instances serve from it.
-7. Start the HTTP server (with TLS when enabled).
-8. On `SIGINT` or `SIGTERM`, or when the HTTP server fails, stop within `server.shutdown_timeout_seconds` (30 by default), in this order ([#49](https://github.com/mdastpak/Crypto-Exchange/issues/49)):
+6. Start the HTTP server (with TLS when enabled). Startup does not touch the shared currency cache: the list of public currencies is loaded from PostgreSQL on the first read that misses it ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)).
+7. On `SIGINT` or `SIGTERM`, or when the HTTP server fails, stop within `server.shutdown_timeout_seconds` (30 by default), in this order ([#49](https://github.com/mdastpak/Crypto-Exchange/issues/49)):
    1. `/system/ready` answers `503` with `"status": "draining"`, so that load balancers stop routing new requests to the instance, and responses ask clients to close their connections.
    2. The instance keeps serving for `server.drain_seconds` (0 by default), the time the load balancers take to notice. A server that failed skips this step.
    3. The HTTP server stops accepting connections and waits for the requests in flight. If the deadline passes first, it closes their connections.
@@ -137,7 +136,9 @@ Currencies still use the legacy JSONB table next to the typed `assets` table. Un
 
 | Key pattern | Purpose | Lifetime |
 | --- | --- | --- |
-| `base_definitions:currency:<hk>` | Cached public (approved) currency, shared by all instances | 24 hours, refreshed when an instance starts or the currency changes |
+| `{currencies}:public:v1` | The list of public (approved, not deleted) currencies, as JSON, shared by all instances. A read that misses it loads it from PostgreSQL; concurrent misses on one instance share one load. | `redis.currency_cache_ttl_seconds` (300), and dropped by every admin change to a currency that was or becomes public |
+| `{currencies}:public:v1:generation` | Counts the drops of the list. A load caches the list only if no drop happened since it began, so that a slow load cannot cache what a change replaced. The hash tag keeps both keys in one slot of a Redis cluster. | No expiry |
+| `base_definitions:currency:<hk>` | The cache before [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), one key per currency. Nothing reads it any more; instances of the previous version still do during a rolling deploy, so it is left to expire. | 24 hours |
 | `otp:session:<session-uuid>` | Sign-in session: HMAC of the code, encrypted contact, contact ID, and attempt count. The code and the contact are erased when its attempts are used up. | `otp.auth.ttl_seconds` |
 | `otp:contact:<contact-id>:requests` | Codes issued to a contact in the current hour. The contact ID is an HMAC of the normalized contact. | 1 hour from the first code |
 | `otp:contact:<contact-id>:attempts` | Verification attempts for a contact in the current hour, across all of its codes | 1 hour from the first attempt, removed by a successful sign-in |

@@ -144,6 +144,7 @@ var envVars = []EnvVar{
 	intVar("REDIS_WRITE_TIMEOUT_MS", "redis.write_timeout_ms", func(c *Configuration) *int { return &c.Redis.WriteTimeoutMs }),
 	intVar("REDIS_POOL_TIMEOUT_MS", "redis.pool_timeout_ms", func(c *Configuration) *int { return &c.Redis.PoolTimeoutMs }),
 	intVar("REDIS_MAX_RETRIES", "redis.max_retries", func(c *Configuration) *int { return &c.Redis.MaxRetries }),
+	intVar("REDIS_CURRENCY_CACHE_TTL_SECONDS", "redis.currency_cache_ttl_seconds", func(c *Configuration) *int { return &c.Redis.CurrencyCacheTTL }),
 
 	stringVar("RABBITMQ_HOST", "rabbitmq.host", func(c *Configuration) *string { return &c.RabbitMQ.Host }),
 	stringVar("RABBITMQ_PORT", "rabbitmq.port", func(c *Configuration) *string { return &c.RabbitMQ.Port }),

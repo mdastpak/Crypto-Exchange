@@ -26,4 +26,6 @@ const (
 	Server
 	// Admin is the database of internal/handlers/admin.
 	Admin
+	// Currencies is the database of internal/currencies.
+	Currencies
 )

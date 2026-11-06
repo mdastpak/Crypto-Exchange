@@ -127,6 +127,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if c.Redis.MinIdleConns > c.Redis.PoolSize && c.Redis.PoolSize >= 1 {
 		p.add("redis.min_idle_conns", "is %d; it must not exceed redis.pool_size (%d)", c.Redis.MinIdleConns, c.Redis.PoolSize)
 	}
+	atLeast("redis.currency_cache_ttl_seconds", c.Redis.CurrencyCacheTTL, 1)
 
 	access, refresh := c.JWT.AccessToken.Expiration, c.JWT.RefreshToken.Expiration
 	if access > maxAccessTokenMinutes {

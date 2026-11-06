@@ -79,8 +79,8 @@ Approved currency fixture:
 Redis keys:
 
 ```text
-base_definitions:currency:33333333-3333-3333-3333-333333333333
-base_definitions:currency:44444444-4444-4444-4444-444444444444
+{currencies}:public:v1
+{currencies}:public:v1:generation
 blacklist:token:<sha256-of-token>
 ```
 
@@ -111,9 +111,9 @@ Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `
 | U-08 | P0 / contract | Valid JWT with role `system` | `401`; message `Unauthorized - Invalid token` | Covered by `ParseToken`: the role must match the route ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
 | U-09 | P0 / contract | Valid JWT already present in the blacklist | `401`; message `Unauthorized - Token is blacklisted` | Requires a real Redis-backed test |
 | U-10 | P0 / contract | Blacklist Redis returns an error | `500`; message `Error checking blacklist`; handler not entered | Current behavior; verify no currency data is returned |
-| U-11 | P0 / contract | Empty Redis currency cache | `200`; `info` is an empty JSON array `[]` | **Gap:** a nil Go slice currently marshals as `null` |
+| U-11 | P0 / contract | Empty Redis currency cache | `200`; `info` is an empty JSON array `[]` | Passes: the list is loaded from PostgreSQL, and an empty one is `[]` ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
 | U-12 | P0 / contract | One valid cached currency | `200`; all currency fields map exactly from the fixture | Passes |
-| U-13 | P1 / contract | Two valid cached currencies | `200`; both HKs are present exactly once; order is not asserted | Passes functionally; SCAN order is nondeterministic |
+| U-13 | P1 / contract | Two valid cached currencies | `200`; both HKs are present exactly once; order is not asserted | Passes: the list is one key, ordered oldest first ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
 | U-14 | P1 / contract | Duplicate HKs returned by the cache scan | Response contains one currency per HK | **Gap:** current code does not deduplicate |
 | U-15 | P0 / contract | Cached currency has `status: suspended` | It is excluded from the active list | Passes: only approved currencies are cached, and reads skip any other entry ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | U-16 | P0 / contract | Cached currency has `deleted_at` or `status: deleted` | It is excluded from the active list | Passes ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
@@ -246,12 +246,12 @@ Implementation: `internal/handlers/admin/currencies.go:71`.
 | D-07 | P0 / contract | Update changes a boolean from `true` to `false` | The requested false value is persisted | Passes: only the fields sent are changed, in both directions of each flag ([#35](https://github.com/mdastpak/Crypto-Exchange/issues/35)) |
 | D-08 | P0 / contract | Update uses a non-UUID HK | `400`; message identifies invalid UUID | Passes |
 | D-09 | P0 / integration | Update uses an unknown or already deleted HK | `404`; no cache/event side effect | Passes for the DB lookup |
-| D-10 | P0 / integration | Delete an existing currency | DB row is soft-deleted; cache key is removed; delete event is published | Cache/event failures are currently non-fatal |
+| D-10 | P0 / integration | Delete an existing currency | DB row is soft-deleted; cache key is removed; delete event is published | Passes: the cached list is dropped, and the next read loads it without the currency ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)). Cache and event failures are still non-fatal ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89)) |
 | D-11 | P0 / contract | Delete an unknown or already deleted currency | `404`; no repeated side effects | Passes, also for concurrent deletes: the row is locked, so one delete succeeds and publishes one event ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
-| D-12 | P1 / integration | Cache write fails after DB commit | System returns a defined consistency/degradation result and schedules reconciliation | **Gap:** current handler logs and returns success |
+| D-12 | P1 / integration | Cache write fails after DB commit | System returns a defined consistency/degradation result and schedules reconciliation | Partly: the handler logs and returns success, and the cached list stays out of date for at most `redis.currency_cache_ttl_seconds` ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)). Retries are [#89](https://github.com/mdastpak/Crypto-Exchange/issues/89) |
 | D-13 | P1 / integration | RabbitMQ publish fails after DB/cache commit | Event is retried or reconciled; client receives a documented result | **Gap:** publish errors are only logged |
-| D-14 | P0 / integration | `LoadAndCacheCurrencies` runs with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes: entries of currencies that are not approved are removed, without clearing the cache ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)) |
-| D-15 | P1 / integration | `LoadAndCacheCurrencies` runs with unrelated Redis keys | Only stale `base_definitions:currency:*` keys are deleted | Passes. `CleanupBaseDefinitions`, which deleted every currency key at shutdown, was removed ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)) |
+| D-14 | P0 / integration | The public list is loaded with approved, pending, suspended, and deleted rows | Only approved, non-deleted rows enter the cache | Passes: `TestList_ShowsThePublicCurrenciesOfTheDatabase` ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
+| D-15 | P1 / integration | An instance starts or stops with unrelated Redis keys | No key is deleted | Passes. Neither startup nor shutdown touches the cache: `LoadAndCacheCurrencies` was replaced by loading the list on a miss ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)), and `CleanupBaseDefinitions` by nothing ([#25](https://github.com/mdastpak/Crypto-Exchange/issues/25)) |
 | D-16 | P1 / concurrency | Two updates target the same HK concurrently | Final DB/cache state is deterministic and no change is lost | Passes for the database: the row is locked from read to write ([#22](https://github.com/mdastpak/Crypto-Exchange/issues/22)). Event ordering is not guaranteed yet. |
 
 ---
