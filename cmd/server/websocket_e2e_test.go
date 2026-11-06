@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,11 +52,53 @@ func TestWebSocket_CurrencyEventsReachEveryClient(t *testing.T) {
 		assert.Equal(t, "currencies", event["entity"], "client %d", i)
 		assert.Equal(t, "create", event["action"], "client %d", i)
 		assert.NotEmpty(t, event["hk"], "client %d", i)
+		assert.NotEmpty(t, event["id"], "client %d: the event has an id", i)
 		assert.NotEmpty(t, event["server_time"], "client %d", i)
 		info, ok := event["info"].(map[string]interface{})
 		require.True(t, ok, "client %d: the event carries the currency info", i)
 		assert.Equal(t, "WSE", info["symbol"], "client %d", i)
 	}
+}
+
+// TestWebSocket_AnotherInstanceRelaysTheEvent creates a currency through a
+// second instance whose outbox relay is not running, as when it stops right
+// after the change. The relay of the first instance publishes the event, and
+// the WebSocket clients receive it.
+func TestWebSocket_AnotherInstanceRelaysTheEvent(t *testing.T) {
+	env := newE2EEnv(t)
+	server := httptest.NewServer(env.router)
+	defer server.Close()
+	client := dialWebSocket(t, server.URL)
+
+	services, cleanup, err := initializeServices()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	handlers := initializeHandlers(services)
+	key, err := adminSignInKey()
+	require.NoError(t, err)
+	require.NoError(t, configureAdminSignIn(handlers, services, key, env.sender))
+	second, err := newEngine()
+	require.NoError(t, err)
+	require.NoError(t, RouteHandler(second, handlers))
+
+	admin, err := env.accounts.Create(context.Background(), "relay@example.com")
+	require.NoError(t, err)
+	body, err := json.Marshal(testCurrency("RLY"))
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/admin/currencies", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.signInAdmin(t, admin))
+	w := httptest.NewRecorder()
+	second.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(10*time.Second)))
+	var event map[string]interface{}
+	require.NoError(t, client.ReadJSON(&event), "the relay of the first instance publishes the event")
+	assert.Equal(t, "create", event["action"])
+	info, ok := event["info"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "RLY", info["symbol"])
 }
 
 // TestWebSocket_AuthenticatesWithAUserToken connects through the real

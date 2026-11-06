@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
-	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -26,8 +26,10 @@ type AdminHandler struct {
 	PostgresDB      *db.PostgresService
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
-	// Events publishes currency events. It is nil without RabbitMQ.
-	Events eventPublisher
+	// Outbox is the relay that publishes the currency events, which changes
+	// write to the outbox. Without it, they wait there for the relay of
+	// another instance.
+	Outbox nudger
 	// Currencies holds the list of public currencies, which changes drop.
 	Currencies *currencies.Catalog
 
@@ -48,9 +50,6 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 		OTPSender:       notify.DiscardSender{},
 		Currencies:      currencies.ForServices(is),
 	}
-	if is.RabbitMQ != nil {
-		h.Events = is.RabbitMQ
-	}
 	if is.Redis != nil {
 		settings := otp.SettingsFromConfig()
 		settings.Namespace = otpNamespace
@@ -59,76 +58,85 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 	return h
 }
 
-// eventPublisher publishes currency events. *rabbitmq.RabbitMQService
+// nudger makes the outbox relay look for messages. *outbox.Relay
 // implements it.
-type eventPublisher interface {
-	Publish(ctx context.Context, exchange, message string) error
+type nudger interface {
+	Nudge()
 }
 
-func (h *AdminHandler) publishCurrencyEvent(ctx context.Context, action, hk string, info interface{}) {
-	infoJSON, err := json.Marshal(info)
-	if err != nil {
-		log.Printf("Error marshaling currency event info: %v", err)
-		return
-	}
-
-	event := models.CurrencyEvent{
-		Entity:     models.CurrencyEventEntity,
-		Action:     action,
-		HK:         hk,
-		Info:       infoJSON,
-		ServerTime: time.Now().UTC().Format(time.RFC3339),
-	}
-
-	eventJSON, err := json.Marshal(event)
-	if err != nil {
-		log.Printf("Error marshaling currency event: %v", err)
-		return
-	}
-
-	if h.Events == nil {
-		return
-	}
-	if err := h.Events.Publish(ctx, config.Config.RabbitMQ.Exchanges.PriceUpdates, string(eventJSON)); err != nil {
-		log.Printf("Failed to publish currency %s: %v", action, err)
-	}
-}
-
-// syncTimeout bounds the steps that follow a committed currency change.
-const syncTimeout = 10 * time.Second
-
-// syncPublicView brings the list of public currencies, which public
-// responses read, and the events, which WebSocket clients receive, in line
-// with the visibility of currency after a committed change. Only approved
-// currencies are public:
+// publicEvent returns the event of a change to currency in the public view,
+// which only approved currencies are in, or nil when the view does not
+// change:
 //
 //   - a currency that becomes public is announced as created,
 //   - a public currency that changes is announced as updated,
 //   - a currency that stops being public, by a status change or deletion,
 //     is announced as deleted,
 //   - changes to a currency that stays hidden are not announced at all.
-//
-// The cached list is dropped when the currency was or is public, and the
-// next read loads it from PostgreSQL. The change is committed, so these
-// steps run even when the client stops waiting, within syncTimeout.
-func (h *AdminHandler) syncPublicView(ctx context.Context, wasPublic bool, currency models.Currency) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
-	defer cancel()
+func publicEvent(wasPublic bool, currency models.Currency) ([]byte, error) {
 	isPublic := currency.IsPublic()
-	if (isPublic || wasPublic) && h.Currencies != nil {
-		if err := h.Currencies.Invalidate(ctx); err != nil {
-			log.Printf("Error dropping the cached currency list after a change to %s, which stays out of date for at most redis.currency_cache_ttl_seconds: %v",
-				currency.HK, err)
-		}
-	}
-
+	var action string
+	var info interface{} = currency.Info
 	switch {
 	case isPublic && !wasPublic:
-		h.publishCurrencyEvent(ctx, models.CurrencyEventCreate, currency.HK, currency.Info)
+		action = models.CurrencyEventCreate
 	case isPublic && wasPublic:
-		h.publishCurrencyEvent(ctx, models.CurrencyEventUpdate, currency.HK, currency.Info)
+		action = models.CurrencyEventUpdate
 	case !isPublic && wasPublic:
-		h.publishCurrencyEvent(ctx, models.CurrencyEventDelete, currency.HK, models.CurrencyRemoval{Status: currency.Status})
+		action = models.CurrencyEventDelete
+		info = models.CurrencyRemoval{Status: currency.Status}
+	default:
+		return nil, nil
+	}
+	infoJSON, err := json.Marshal(info)
+	if err != nil {
+		return nil, err
+	}
+	// Version 7 UUIDs grow with time, so the IDs also sort the events.
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(models.CurrencyEvent{
+		ID:         id.String(),
+		Entity:     models.CurrencyEventEntity,
+		Action:     action,
+		HK:         currency.HK,
+		Info:       infoJSON,
+		ServerTime: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// enqueuePublicEvent writes the event of a change, if it has one, to the
+// outbox in tx, so that it is published if and only if the change commits.
+// It reports whether the change touches the public view.
+func enqueuePublicEvent(ctx context.Context, tx *sql.Tx, wasPublic bool, currency models.Currency) (bool, error) {
+	event, err := publicEvent(wasPublic, currency)
+	if err != nil || event == nil {
+		return false, err
+	}
+	return true, outbox.Enqueue(ctx, tx, models.CurrencyEventTopic, event)
+}
+
+// syncTimeout bounds the steps that follow a committed currency change.
+const syncTimeout = 10 * time.Second
+
+// afterPublicChange runs once a change to the public view has committed. It
+// drops the cached list, so that the next read loads it from PostgreSQL, and
+// nudges the outbox relay, which publishes the event and drops the list
+// again: a drop that fails here is retried there. The change is committed,
+// so these steps run even when the client stops waiting, within
+// syncTimeout.
+func (h *AdminHandler) afterPublicChange(ctx context.Context, hk string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
+	defer cancel()
+	if h.Currencies != nil {
+		if err := h.Currencies.Invalidate(ctx); err != nil {
+			log.Printf("Error dropping the cached currency list after a change to %s; the outbox relay retries: %v", hk, err)
+		}
+	}
+	if h.Outbox != nil {
+		h.Outbox.Nudge()
 	}
 }
 
@@ -158,17 +166,34 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 		return
 	}
 
+	// The currency and its event are written together.
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("Error starting a currency create: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create currency due to an unexpected error.", nil)
+		return
+	}
+	defer tx.Rollback()
+
 	var generatedHK string
-	err = h.PostgresDB.DB.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		"INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb) RETURNING hk",
 		status, infoJSON,
 	).Scan(&generatedHK)
+	var public bool
+	if err == nil {
+		public, err = enqueuePublicEvent(ctx, tx, false, models.Currency{HK: generatedHK, Status: status, Info: info})
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
 		sendCurrencyWriteError(c, err, "create")
 		return
 	}
-
-	h.syncPublicView(ctx, false, models.Currency{HK: generatedHK, Status: status, Info: info})
+	if public {
+		h.afterPublicChange(ctx, generatedHK)
+	}
 
 	helpers.SendResponse(c, http.StatusCreated, "Currency created successfully.", gin.H{"hk": generatedHK, "status": status})
 }
@@ -247,6 +272,10 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		"UPDATE currencies SET status=$1, info=$2::jsonb, updated_at=NOW() WHERE hk=$3 AND deleted_at IS NULL",
 		currentStatus, infoJSON, hk,
 	)
+	var public bool
+	if err == nil {
+		public, err = enqueuePublicEvent(ctx, tx, wasPublic, models.Currency{HK: hk, Status: currentStatus, Info: currentInfo})
+	}
 	if err == nil {
 		err = tx.Commit()
 	}
@@ -254,8 +283,9 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		sendCurrencyWriteError(c, err, "update")
 		return
 	}
-
-	h.syncPublicView(ctx, wasPublic, models.Currency{HK: hk, Status: currentStatus, Info: currentInfo})
+	if public {
+		h.afterPublicChange(ctx, hk)
+	}
 
 	helpers.SendResponse(c, http.StatusOK, "Currency updated successfully.", nil)
 }
@@ -304,6 +334,11 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 	_, err = tx.ExecContext(ctx,
 		"UPDATE currencies SET deleted_at=NOW(), status='deleted' WHERE hk=$1", hk,
 	)
+	var public bool
+	if err == nil {
+		public, err = enqueuePublicEvent(ctx, tx, previousStatus == models.CurrencyStatusApproved,
+			models.Currency{HK: hk, Status: models.CurrencyStatusDeleted})
+	}
 	if err == nil {
 		err = tx.Commit()
 	}
@@ -312,9 +347,9 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to delete currency due to an unexpected error.", nil)
 		return
 	}
-
-	h.syncPublicView(ctx, previousStatus == models.CurrencyStatusApproved,
-		models.Currency{HK: hk, Status: models.CurrencyStatusDeleted})
+	if public {
+		h.afterPublicChange(ctx, hk)
+	}
 
 	helpers.SendResponse(c, http.StatusOK, "Currency deleted successfully.", nil)
 }

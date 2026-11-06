@@ -85,6 +85,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `GET /public/currencies/{hk}` answers `400` for an hk that is not a UUID, instead of `404`. Both routes answer `503` instead of `500` when neither the cache nor PostgreSQL can be read.
   - The old `base_definitions:currency:*` keys are not deleted, so that instances of the previous version keep serving during a rolling deploy. They expire within a day.
   - The Redis client dials once per attempt (`DialerRetries: 1`), as go-redis v8 did. go-redis v9 dials up to five times by default, so a command could wait five times `redis.dial_timeout_ms` while Redis was unreachable.
+- A currency change whose event could not be published, because RabbitMQ was unavailable, was committed without its event, and nothing published it later; a failed drop of the cached list was not retried either ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), first part).
+  - The admin currency routes now write the event to the new transactional outbox, `outbox_events` (migration 18), in the transaction of the change. So the event exists if and only if the change commits.
+  - The new `internal/outbox` relay publishes the messages in id order, holding back the later messages of a topic while one fails. It retries with a backoff from 1 s up to 5 minutes, and drops the cached currency list before it publishes, which retries a failed drop too. Published messages are deleted after seven days.
+  - Every instance runs a relay, and one at a time relays, under a transaction-scoped advisory lock. A message is never published by two instances, and an instance that stops leaves its messages to the others. The relay stops after the HTTP server at shutdown.
+  - Delivery is at least once. Currency events carry a new `id`, a version 7 UUID, that the WebSocket gateway forwards, so that clients can drop a repeated event.
+  - Creating a currency now runs in a transaction, like updates and deletes.
 
 ### Security
 

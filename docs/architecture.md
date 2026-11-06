@@ -74,7 +74,7 @@ Middleware is applied to every route, including `/` and `/swagger/*`, in this or
    1. `/system/ready` answers `503` with `"status": "draining"`, so that load balancers stop routing new requests to the instance, and responses ask clients to close their connections.
    2. The instance keeps serving for `server.drain_seconds` (0 by default), the time the load balancers take to notice. A server that failed skips this step.
    3. The HTTP server stops accepting connections and waits for the requests in flight. If the deadline passes first, it closes their connections.
-   4. The delivery worker stops.
+   4. The outbox relay and the delivery worker stop. Messages the relay has not sent stay in the outbox, for the relay of another instance.
    5. The WebSocket clients get a close frame with code `1001` and have one second to answer it, and the event consumer stops.
    6. RabbitMQ, Redis, and PostgreSQL close, in that order.
 
@@ -107,6 +107,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 15 | `data_keys`: the data-protection keys, wrapped by the key-encryption key | Yes, when `keys.provider` is set |
 | 16 | Replaces the plaintext `api_keys.secret_hash` with `secret_sealed` (HMAC secrets, sealed with a `field-enc` key) and `ed25519_public_key`, with a constraint that each key type keeps only what verifying it needs | Not yet (API keys are #63) |
 | 17 | Balance invariants: no negative amounts, `total` computed as `available + locked`, `on_chain` dropped, one balance per user, asset, and sub-account also without a sub-account | Not yet (the ledger is #60) |
+| 18 | `outbox_events`: the transactional outbox, with a partial index on the pending messages and one on the publish time for the cleanup | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
@@ -159,12 +160,23 @@ The public currency routes of every instance read one list in Redis ([#52](https
 
 | Exchange or queue | Type | Purpose |
 | --- | --- | --- |
-| `price_updates` | Durable fan-out exchange | Currency change events today, price ticks in the future |
+| `price_updates` | Durable fan-out exchange | Currency change events, published by the outbox relay, and price ticks in the future |
 | `trade_events` | Durable fan-out exchange | Declared at startup for upcoming features |
 | `notifications` | Durable fan-out exchange | Sign-in code jobs |
 | `notifications.otp` | Durable queue bound to `notifications` | Consumed by the delivery worker. Jobs expire with the code. |
 | `notifications.dead-letter`, `notifications.otp.dead-letter` | Durable fan-out exchange and queue | Records of codes that could not be delivered, without the code or the raw contact, kept for seven days |
 | Server-named queue per instance | Exclusive, auto-delete queue bound to `price_updates` | WebSocket broadcast consumer. Each instance has its own queue, so every instance receives every event. The queue disappears when the instance disconnects. |
+
+#### The outbox
+
+A change and the messages it causes are written in one transaction ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89)). The admin currency routes write the event of a change to the public view to `outbox_events`, so the event exists if and only if the change commits, also while RabbitMQ or Redis is unavailable. The relay of `internal/outbox` delivers the messages:
+
+- **One instance at a time.** Every instance runs a relay, but each batch takes a transaction-scoped advisory lock, and an instance that does not get it skips the round. So two instances never publish the same message, and an instance that stops leaves its messages to the others.
+- **In order.** Messages are relayed in id order. A message that fails holds back the later messages of its topic, so a currency's events never overtake each other; other topics go on.
+- **Retries.** A failed message is tried again after 1 s, doubling up to 5 minutes, until it succeeds. Its attempts and last error are kept in its row.
+- **Before publishing**, the relay drops the cached currency list, so that a drop that failed in the request is retried too. The admin routes also drop it and nudge the relay right after the commit, so changes show and events go out within milliseconds.
+- **At least once.** A message whose publish succeeded is published again if the relay cannot record that. Events carry an `id`, so that clients can drop a repeated one.
+- **Retention.** Published messages are deleted after seven days, a thousand at a time. The pending messages have a partial index, so the relay's query does not grow with the table. Partitioning, once trade events go through the outbox, is part of [#169](https://github.com/mdastpak/Crypto-Exchange/issues/169).
 
 ## Target architecture
 
