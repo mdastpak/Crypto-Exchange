@@ -117,11 +117,18 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		client.UserID, client.SessionID = claims.UUID, claims.SessionID
 	}
 
-	h.registerClient(client)
+	if !h.registerClient(client) {
+		// Shutdown started during the upgrade.
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseGoingAway, "server is shutting down"),
+			time.Now().Add(h.limits.writeTimeout))
+		conn.Close()
+		h.release(ip)
+		return
+	}
 	// Note: readPump's own defer unregisters the client on exit; unregistering
 	// again here would double-close client.Send and panic.
 
-	h.Wg.Add(1)
 	go h.writePump(client)
 
 	h.readPump(client)

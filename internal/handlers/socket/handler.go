@@ -92,11 +92,24 @@ func NewWebSocketHandler(is *models.InfraServices) *WebSocketHandler {
 	return h
 }
 
-func (h *WebSocketHandler) registerClient(client *Client) {
+// registerClient adds a client and counts its write pump in Wg. It refuses
+// the client once Shutdown has started, which can happen while the upgrade
+// is in progress, since the HTTP server no longer tracks a connection once it
+// is upgraded. The check here and the close of ShutdownCh both hold Mu, so
+// either Shutdown sees the client, or the client sees the shutdown.
+func (h *WebSocketHandler) registerClient(client *Client) bool {
 	h.Mu.Lock()
+	select {
+	case <-h.ShutdownCh:
+		h.Mu.Unlock()
+		return false
+	default:
+	}
 	h.Clients[client] = true
+	h.Wg.Add(1)
 	h.Mu.Unlock()
 	log.Printf("WebSocket client connected (authenticated: %t). Total: %d", client.UserID != "", h.clientCount())
+	return true
 }
 
 func (h *WebSocketHandler) unregisterClient(client *Client) {
@@ -117,7 +130,7 @@ func (h *WebSocketHandler) clientCount() int {
 
 func (h *WebSocketHandler) readPump(client *Client) {
 	// Note: only writePump is tracked via h.Wg (matching the single
-	// h.Wg.Add(1) call in serve before it is started); readPump runs
+	// h.Wg.Add(1) call in registerClient before it is started); readPump runs
 	// synchronously on the caller's goroutine and must not call h.Wg.Done()
 	// itself, or the WaitGroup counter goes negative and panics on every
 	// normal client disconnect.
@@ -399,7 +412,13 @@ const closeGrace = time.Second
 // (1001, going away), and closes the connections, waiting for the
 // goroutines until ctx ends. It may be called more than once.
 func (h *WebSocketHandler) Shutdown(ctx context.Context) error {
-	h.shutdownOnce.Do(func() { close(h.ShutdownCh) })
+	h.shutdownOnce.Do(func() {
+		// Under Mu, so that no client registers after this; see
+		// registerClient.
+		h.Mu.Lock()
+		close(h.ShutdownCh)
+		h.Mu.Unlock()
+	})
 
 	// The write pumps send the close frames and return, and the consumer
 	// stops.

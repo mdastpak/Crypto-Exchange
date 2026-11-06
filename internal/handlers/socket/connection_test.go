@@ -267,3 +267,49 @@ func TestShutdown_SendsClientsACloseFrame(t *testing.T) {
 	assert.Equal(t, "server is shutting down", closeErr.Text)
 	require.Eventually(t, func() bool { return h.clientCount() == 0 }, 2*time.Second, 5*time.Millisecond)
 }
+
+// TestShutdown_DuringAnUpgradeClosesTheNewConnection starts Shutdown while
+// an upgrade is being authenticated, after the gateway checked for the
+// shutdown. The connection must get a close frame instead of being
+// registered once Shutdown is done, when nothing would close it.
+func TestShutdown_DuringAnUpgradeClosesTheNewConnection(t *testing.T) {
+	h := newTestHandler()
+	authenticating := make(chan struct{})
+	proceed := make(chan struct{})
+	h.Authenticate = func(ctx context.Context, token string) (*auth.Claims, error) {
+		close(authenticating)
+		<-proceed
+		return fakeAuth(ctx, token)
+	}
+	url := gateway(t, h)
+	type dialed struct {
+		conn *websocket.Conn
+		err  error
+	}
+	result := make(chan dialed, 1)
+	go func() {
+		conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Authorization": {"Bearer good"}})
+		result <- dialed{conn, err}
+	}()
+	select {
+	case <-authenticating:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the upgrade did not reach the authenticator")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.Shutdown(ctx))
+	close(proceed)
+
+	res := <-result
+	require.NoError(t, res.err, "the upgrade completes")
+	defer res.conn.Close()
+	require.NoError(t, res.conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, _, err := res.conn.ReadMessage()
+	var closeErr *websocket.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	assert.Equal(t, websocket.CloseGoingAway, closeErr.Code)
+	assert.False(t, h.registerClient(&Client{ip: "192.0.2.1"}), "no client registers after the shutdown")
+	assert.Zero(t, h.clientCount())
+}
