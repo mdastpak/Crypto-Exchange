@@ -40,7 +40,8 @@ func listCurrencies(t *testing.T, h http.Handler) []string {
 // TestShutdown_KeepsTheSharedCurrencyCache starts a second server instance
 // next to the end-to-end environment, against the same PostgreSQL, Redis,
 // and RabbitMQ, as during a rolling deploy, and stops it with the shutdown
-// sequence of main. The first instance must keep listing the currencies.
+// sequence of main. A change through one instance must show on the other at
+// once, and the first instance must keep listing the currencies.
 func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	env := newE2EEnv(t)
 	_, err := env.db.Exec(`INSERT INTO currencies (status, info) VALUES ('approved', $1::jsonb)`,
@@ -63,7 +64,6 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 		}
 	})
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
-	require.NoError(t, initializeCache(handlers))
 	router, err := newEngine()
 	require.NoError(t, err)
 	require.NoError(t, RouteHandler(router, handlers))
@@ -76,6 +76,14 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	assert.Equal(t, []string{"BTC"}, listCurrencies(t, router), "the second instance serves the currency")
 	assert.Equal(t, []string{"BTC"}, listCurrencies(t, env.router), "the first instance serves the currency")
 
+	// Both instances have the list cached now. A change through the first
+	// one drops the shared list, so the second shows it at once.
+	admin, err := env.accounts.Create(context.Background(), "cache@example.com")
+	require.NoError(t, err)
+	status, resp := env.post(t, "/admin/currencies", testCurrency("ETH"), env.signInAdmin(t, admin))
+	require.Equal(t, http.StatusCreated, status, resp.Message)
+	assert.Equal(t, []string{"BTC", "ETH"}, listCurrencies(t, router), "the second instance shows a change made through the first")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stopped = true
@@ -83,6 +91,6 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	require.ErrorIs(t, <-served, http.ErrServerClosed)
 	cleanup()
 
-	assert.Equal(t, []string{"BTC"}, listCurrencies(t, env.router),
+	assert.Equal(t, []string{"BTC", "ETH"}, listCurrencies(t, env.router),
 		"stopping one instance must not change the responses of the others")
 }

@@ -106,6 +106,7 @@ Replace `10` with the version before the failed migration.
 | `read_timeout_ms`, `write_timeout_ms` | `1000`, `1000` | How long a command may wait for Redis to answer, or to accept the command |
 | `pool_timeout_ms` | `2000` | How long a command may wait for a free connection when all of them are in use |
 | `max_retries` | `1` | How often a command is retried after a network error. `-1` turns retries off. |
+| `currency_cache_ttl_seconds` | `300` | How long the cached list of public currencies is fresh. A change through the admin routes drops it at once, and the next read loads it from PostgreSQL. After this time, one instance refreshes the list while every instance keeps serving it, so this time bounds how long the list can stay out of date when a drop fails or a currency is changed directly in the database. The key expires after twice the time if nothing reads it. See [The shared currency list](architecture.md#the-shared-currency-list). |
 
 Redis is on the path of most requests, so these timeouts are short: while Redis cannot be reached, a request that needs it fails within a few seconds instead of waiting for the much longer defaults of the client library. The rate limiters give up even sooner, after `rate_limits.timeout_ms`.
 
@@ -307,6 +308,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `REDIS_WRITE_TIMEOUT_MS` | `redis.write_timeout_ms` |
 | `REDIS_POOL_TIMEOUT_MS` | `redis.pool_timeout_ms` |
 | `REDIS_MAX_RETRIES` | `redis.max_retries` |
+| `REDIS_CURRENCY_CACHE_TTL_SECONDS` | `redis.currency_cache_ttl_seconds` |
 | `RABBITMQ_HOST` | `rabbitmq.host` |
 | `RABBITMQ_PORT` | `rabbitmq.port` |
 | `RABBITMQ_USER` | `rabbitmq.username` |

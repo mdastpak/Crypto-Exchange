@@ -3,7 +3,6 @@ package public
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -24,7 +24,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/redis/go-redis/v9"
 )
 
 type PublicHandler struct {
@@ -37,6 +36,8 @@ type PublicHandler struct {
 	// OTPSender delivers sign-in codes. It discards them unless the server
 	// replaces it with the configured delivery.
 	OTPSender notify.OTPSender
+	// Currencies lists the public currencies.
+	Currencies *currencies.Catalog
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
@@ -45,6 +46,7 @@ func NewHandler(is *models.InfraServices) *PublicHandler {
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
 		OTPSender:       notify.DiscardSender{},
+		Currencies:      currencies.ForServices(is),
 	}
 	if is.Postgres != nil {
 		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
@@ -337,71 +339,44 @@ func IdentifyInputType(input string) (string, string) {
 	return "", ""
 }
 
+// currencyReadTimeout bounds a currency read, which may load the list from
+// PostgreSQL.
+const currencyReadTimeout = 10 * time.Second
+
+// GetActiveCurrencies lists the public currencies, oldest first.
 func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), currencyReadTimeout)
 	defer cancel()
 
-	pattern := "base_definitions:currency:*"
-
-	currencies := make([]models.Currency, 0)
-	iter := h.RedisClient.Client.Scan(ctx, 0, pattern, 100).Iterator()
-	for iter.Next(ctx) {
-		data, err := h.RedisClient.Client.Get(ctx, iter.Val()).Result()
-		if err != nil {
-			log.Printf("Error retrieving currency from cache for key %s: %v", iter.Val(), err)
-			continue
-		}
-
-		var currency models.Currency
-		if err := json.Unmarshal([]byte(data), &currency); err != nil {
-			log.Printf("Error unmarshalling currency data for key %s: %v", iter.Val(), err)
-			continue
-		}
-		// The cache should only hold public currencies; filtering here too
-		// keeps an outdated entry from leaking.
-		if !currency.IsPublic() {
-			continue
-		}
-
-		currencies = append(currencies, currency)
-	}
-
-	if err := iter.Err(); err != nil {
-		log.Printf("Error during Redis key iteration: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to retrieve currencies from cache.", nil)
+	list, err := h.Currencies.List(ctx)
+	if err != nil {
+		log.Printf("Error listing the public currencies: %v", err)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, "Currencies are temporarily unavailable.", nil)
 		return
 	}
-
-	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", currencies)
+	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", list)
 }
 
+// GetCurrencyByHK returns one public currency. A currency that is not public
+// gets the same 404 as one that does not exist.
 func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	id, err := uuid.Parse(c.Param("hk"))
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for HK", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), currencyReadTimeout)
 	defer cancel()
 
-	hk := c.Param("hk")
-	cacheKey := fmt.Sprintf("base_definitions:currency:%s", hk)
-
-	data, err := h.RedisClient.Client.Get(ctx, cacheKey).Result()
-	if err == redis.Nil {
-		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
-		return
-	} else if err != nil {
-		log.Printf("Error retrieving currency from cache for HK %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to retrieve currency from cache.", nil)
+	currency, found, err := h.Currencies.Get(ctx, id.String())
+	if err != nil {
+		log.Printf("Error reading the public currency %s: %v", id, err)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, "Currencies are temporarily unavailable.", nil)
 		return
 	}
-
-	var currency models.Currency
-	if err := json.Unmarshal([]byte(data), &currency); err != nil {
-		log.Printf("Error unmarshalling currency data for HK %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to process currency information.", nil)
-		return
-	}
-	if !currency.IsPublic() {
+	if !found {
 		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
 		return
 	}
-
 	helpers.SendResponse(c, http.StatusOK, "Currency retrieved successfully.", currency)
 }

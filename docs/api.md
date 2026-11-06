@@ -276,8 +276,8 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
     "is_token": true,
     "contract": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
   },
-  "created_at": "",
-  "updated_at": ""
+  "created_at": "2026-11-06T09:00:00Z",
+  "updated_at": "2026-11-06T09:30:00Z"
 }
 ```
 
@@ -285,11 +285,13 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
 
 ### `GET /public/currencies`
 
-Lists the public currencies, read from the Redis cache. Response `200` with an array in `info`, which is empty when there are none.
+Lists the public currencies, oldest first. Response `200` with an array in `info`, which is empty when there are none. `created_at` and `updated_at` are in RFC 3339, in UTC.
+
+PostgreSQL holds the currencies, and Redis a copy of the whole list that every instance shares. A change through the admin routes drops the copy, so that the next read on any instance loads the list from PostgreSQL. A change made directly in the database shows after a little more than `redis.currency_cache_ttl_seconds`. While Redis is unavailable, the list is read from PostgreSQL. See [The shared currency list](architecture.md#the-shared-currency-list). `503` (`Currencies are temporarily unavailable.`) when the list is not cached and PostgreSQL cannot be read.
 
 ### `GET /public/currencies/{hk}`
 
-Returns one public currency. Errors: `404` when it is not cached or not public, with the same message, so a hidden currency looks like a missing one.
+Returns one public currency, from the same list. `hk` is a UUID in any spelling. Errors: `400` (`Invalid UUID format for HK`) when it is not a UUID; `404` when no public currency has it, with the same message for a hidden currency as for a missing one; `503` as for the list.
 
 ### `POST /admin/currencies` (admin)
 

@@ -55,6 +55,7 @@ func TestNewRedisService_UsesTheConfiguredTimeouts(t *testing.T) {
 	assert.Equal(t, 2*time.Second, opts.PoolTimeout)
 	assert.Equal(t, 1, opts.MaxRetries)
 	assert.True(t, opts.ContextTimeoutEnabled, "request deadlines, such as rate_limits.timeout_ms, bound Redis calls")
+	assert.Equal(t, 1, opts.DialerRetries, "an attempt dials once, so dial_timeout_ms bounds it")
 
 	config.Config = config.Configuration{}
 	r := &config.Config.Redis

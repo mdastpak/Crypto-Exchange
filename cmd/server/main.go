@@ -147,10 +147,6 @@ func run() error {
 		}
 	}
 
-	if err := initializeCache(handlers); err != nil {
-		return fmt.Errorf("failed to initialize cache: %w", err)
-	}
-
 	serverAddr := fmt.Sprintf("%s:%s", config.Config.Server.IP, config.Config.Server.Port)
 
 	r, err := newEngine()
@@ -544,12 +540,6 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		TokenBlacklist: tb,
 		Sessions:       sessions,
 	}
-}
-
-func initializeCache(ih *InfraHandlers) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return ih.Admin.LoadAndCacheCurrencies(ctx)
 }
 
 // probeRoutes are the health probes. They must answer while Redis is down,

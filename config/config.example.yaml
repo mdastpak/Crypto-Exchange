@@ -65,6 +65,7 @@ redis:
   write_timeout_ms: 1000
   pool_timeout_ms: 2000
   max_retries: 1  # -1 turns retries off
+  currency_cache_ttl_seconds: 300  # Changes invalidate the list at once; this bounds a missed invalidation
 
 rabbitmq:
   username: ""  # Set with RABBITMQ_USER

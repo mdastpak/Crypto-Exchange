@@ -107,6 +107,10 @@ type Configuration struct {
 		// MaxRetries is how often a command is retried after a network
 		// error; -1 turns retries off.
 		MaxRetries int `yaml:"max_retries"`
+		// CurrencyCacheTTL is how long the list of public currencies stays
+		// cached. Changes invalidate it at once; the time bounds how long a
+		// missed invalidation can leave it out of date.
+		CurrencyCacheTTL int `yaml:"currency_cache_ttl_seconds"`
 	} `yaml:"redis"`
 
 	RabbitMQ struct {
@@ -692,6 +696,7 @@ func setDefaults() {
 		{&Config.Redis.WriteTimeoutMs, DefaultRedisWriteTimeoutMs},
 		{&Config.Redis.PoolTimeoutMs, DefaultRedisPoolTimeoutMs},
 		{&Config.Redis.MaxRetries, DefaultRedisMaxRetries},
+		{&Config.Redis.CurrencyCacheTTL, DefaultCurrencyCacheTTLSeconds},
 		{&Config.RateLimits.TimeoutMs, DefaultRateLimitTimeoutMs},
 	} {
 		if *ms.value == 0 {
@@ -920,6 +925,10 @@ const (
 	DefaultWSMaxConnections          = 10000
 	DefaultWSMaxConnectionsPerIP     = 20
 )
+
+// DefaultCurrencyCacheTTLSeconds is redis.currency_cache_ttl_seconds when
+// it is not set.
+const DefaultCurrencyCacheTTLSeconds = 300
 
 // DefaultShutdownTimeoutSeconds is server.shutdown_timeout_seconds when it
 // is not set.

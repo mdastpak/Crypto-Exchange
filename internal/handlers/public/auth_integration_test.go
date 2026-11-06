@@ -6,16 +6,19 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
@@ -491,26 +494,25 @@ func (s *PublicHandlerTestSuite) TestGetCurrencyByHK_NotFound() {
 	assert.Equal(s.T(), "Currency not found", resp.Message)
 }
 
-// cacheCurrency writes a currency to the cache the way the admin handler does.
-func (s *PublicHandlerTestSuite) cacheCurrency(c models.Currency) {
-	data, err := json.Marshal(c)
+// insertCurrency writes a currency to the database and returns its hk.
+func (s *PublicHandlerTestSuite) insertCurrency(symbol, status string, deleted bool) string {
+	info, err := json.Marshal(models.CurrencyInfo{EnName: symbol, FaName: symbol, Symbol: symbol})
 	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.redisClient.Set(context.Background(), "base_definitions:currency:"+c.HK, data, 0).Err())
+	var hk string
+	require.NoError(s.T(), s.postgresService.DB.QueryRow(
+		`INSERT INTO currencies (status, info, deleted_at) VALUES ($1, $2::jsonb, CASE WHEN $3 THEN NOW() END) RETURNING hk`,
+		status, info, deleted,
+	).Scan(&hk))
+	return hk
 }
 
-// The cache should only hold public currencies, but an entry that is out of
-// date must not leak a hidden currency either.
 func (s *PublicHandlerTestSuite) TestCurrencies_HideCurrenciesThatAreNotPublic() {
-	deletedAt := "2026-01-01T00:00:00Z"
-	approved := models.Currency{HK: uuid.New().String(), Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "BTC"}}
-	hidden := []models.Currency{
-		{HK: uuid.New().String(), Status: models.CurrencyStatusPending, Info: models.CurrencyInfo{Symbol: "ETH"}},
-		{HK: uuid.New().String(), Status: models.CurrencyStatusSuspend, Info: models.CurrencyInfo{Symbol: "XRP"}},
-		{HK: uuid.New().String(), Status: models.CurrencyStatusApproved, Info: models.CurrencyInfo{Symbol: "LTC"}, DeletedAt: &deletedAt},
-	}
-	s.cacheCurrency(approved)
-	for _, c := range hidden {
-		s.cacheCurrency(c)
+	approved := s.insertCurrency("BTC", models.CurrencyStatusApproved, false)
+	hidden := map[string]string{
+		"pending": s.insertCurrency("ETH", models.CurrencyStatusPending, false),
+		"suspend": s.insertCurrency("XRP", models.CurrencyStatusSuspend, false),
+		"deleted": s.insertCurrency("LTC", models.CurrencyStatusApproved, true),
+		"no such": uuid.NewString(),
 	}
 
 	w := s.makeRequest(http.MethodGet, "/public/currencies", nil, "")
@@ -520,16 +522,49 @@ func (s *PublicHandlerTestSuite) TestCurrencies_HideCurrenciesThatAreNotPublic()
 	}
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &list))
 	require.Len(s.T(), list.Info, 1)
-	assert.Equal(s.T(), approved.HK, list.Info[0].HK)
+	assert.Equal(s.T(), approved, list.Info[0].HK)
+	assert.NotEmpty(s.T(), list.Info[0].CreatedAt)
 
-	w = s.makeRequest(http.MethodGet, "/public/currencies/"+approved.HK, nil, "")
-	assert.Equal(s.T(), http.StatusOK, w.Code)
+	// The hk is read in any spelling of the UUID.
+	for _, hk := range []string{approved, strings.ToUpper(approved)} {
+		w = s.makeRequest(http.MethodGet, "/public/currencies/"+hk, nil, "")
+		assert.Equal(s.T(), http.StatusOK, w.Code, hk)
+	}
 
-	for _, c := range hidden {
-		w := s.makeRequest(http.MethodGet, "/public/currencies/"+c.HK, nil, "")
-		assert.Equal(s.T(), http.StatusNotFound, w.Code, c.Info.Symbol)
+	for name, hk := range hidden {
+		w := s.makeRequest(http.MethodGet, "/public/currencies/"+hk, nil, "")
+		assert.Equal(s.T(), http.StatusNotFound, w.Code, name)
 		var resp models.APIResponse
 		require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(s.T(), "Currency not found", resp.Message, "a hidden currency must look like a missing one")
+	}
+}
+
+func (s *PublicHandlerTestSuite) TestGetCurrencyByHK_RejectsAnInvalidUUID() {
+	w := s.makeRequest(http.MethodGet, "/public/currencies/not-a-uuid", nil, "")
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+// TestCurrencies_WhileTheDatabaseIsDown serves the currencies from a catalog
+// whose database connection is closed: the cached list is still served, and
+// without it the routes answer 503.
+func (s *PublicHandlerTestSuite) TestCurrencies_WhileTheDatabaseIsDown() {
+	hk := s.insertCurrency("BTC", models.CurrencyStatusApproved, false)
+	closed, err := sql.Open("pgx", "host=localhost port=5432 user=postgres password=test dbname=testdb sslmode=disable")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), closed.Close())
+	healthy := s.handler.Currencies
+	s.handler.Currencies = currencies.New(closed, s.redisClient, time.Minute)
+
+	for _, path := range []string{"/public/currencies", "/public/currencies/" + hk} {
+		w := s.makeRequest(http.MethodGet, path, nil, "")
+		assert.Equal(s.T(), http.StatusServiceUnavailable, w.Code, "%s without a cached list", path)
+	}
+
+	_, err = healthy.List(context.Background())
+	require.NoError(s.T(), err, "fills the shared cache")
+	for _, path := range []string{"/public/currencies", "/public/currencies/" + hk} {
+		w := s.makeRequest(http.MethodGet, path, nil, "")
+		assert.Equal(s.T(), http.StatusOK, w.Code, "%s from the cached list", path)
 	}
 }
