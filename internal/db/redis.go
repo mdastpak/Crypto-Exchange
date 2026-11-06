@@ -36,6 +36,10 @@ func NewRedisService() (*RedisService, error) {
 		WriteTimeout: config.Milliseconds(cfg.WriteTimeoutMs, config.DefaultRedisWriteTimeoutMs),
 		PoolTimeout:  config.Milliseconds(cfg.PoolTimeoutMs, config.DefaultRedisPoolTimeoutMs),
 		MaxRetries:   maxRetries,
+		// One dial per attempt, as go-redis v8 did, so that a command waits
+		// for dial_timeout_ms per attempt, not five times as long: v9 dials
+		// up to five times by default. max_retries still retries a command.
+		DialerRetries: 1,
 		// The deadline of a request's context also bounds its Redis calls,
 		// such as rate_limits.timeout_ms for the limiters. go-redis v8 did
 		// this by default; v9 needs it turned on.

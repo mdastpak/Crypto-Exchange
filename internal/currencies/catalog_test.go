@@ -197,10 +197,22 @@ func TestList_ReadsTheDatabaseWhileRedisIsDown(t *testing.T) {
 	assert.Equal(t, "BTC", currency.Info.Symbol)
 }
 
+// gatedLoad replaces the load of catalogs with one that counts the loads
+// and blocks until release is closed.
+func (f *fixture) gatedLoad(release <-chan struct{}, loads *atomic.Int32, catalogs ...*Catalog) {
+	for _, c := range catalogs {
+		c.load = func(ctx context.Context) ([]models.Currency, error) {
+			loads.Add(1)
+			<-release
+			return f.catalog.loadFromDatabase(ctx)
+		}
+	}
+}
+
 // TestList_NeverCachesAListLoadedBeforeAChange holds a load from the
-// database while a change commits and invalidates the list. Callers after
-// the change get the new list at once, and the old load does not overwrite
-// the cache with what it read.
+// database while a change commits and invalidates the list. The load must
+// not write what it read, and a caller after the change must get the new
+// list, from a load of its own once the lock is free.
 func TestList_NeverCachesAListLoadedBeforeAChange(t *testing.T) {
 	f := newFixture(t)
 	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
@@ -225,12 +237,155 @@ func TestList_NeverCachesAListLoadedBeforeAChange(t *testing.T) {
 
 	f.insert(t, "ETH", models.CurrencyStatusApproved, false)
 	require.NoError(t, f.catalog.Invalidate(context.Background()))
-	assert.Equal(t, []string{"BTC", "ETH"}, f.list(t), "a caller after the change does not wait for the earlier load")
+	late := make(chan []models.Currency, 1)
+	go func() {
+		list, err := f.catalog.List(context.Background())
+		assert.NoError(t, err)
+		late <- list
+	}()
 
 	close(release)
 	assert.Equal(t, []string{"BTC"}, symbols(<-early), "the caller from before the change gets the list of its time")
-	assert.Equal(t, []string{"BTC", "ETH"}, f.list(t), "the earlier load did not replace the cached list")
+	assert.Equal(t, []string{"BTC", "ETH"}, symbols(<-late), "the caller after the change gets the new list")
+	assert.Equal(t, []string{"BTC", "ETH"}, f.list(t), "the earlier load did not write the old list")
 	assert.Equal(t, int32(2), loads.Load())
+}
+
+// TestList_InstancesShareOneLoad runs two catalogs, as two server instances,
+// on one Redis and one database. Concurrent misses on both cause one load
+// from the database and one write of the list.
+func TestList_InstancesShareOneLoad(t *testing.T) {
+	f := newFixture(t)
+	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
+	other := New(f.db, f.redis, time.Minute)
+	release := make(chan struct{})
+	var loads atomic.Int32
+	f.gatedLoad(release, &loads, f.catalog, other)
+
+	var wg sync.WaitGroup
+	for i := range 20 {
+		catalog := f.catalog
+		if i%2 == 1 {
+			catalog = other
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			list, err := catalog.List(context.Background())
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"BTC"}, symbols(list))
+		}()
+	}
+	// Gives the callers time to wait for the load; one that comes after it
+	// finds the list cached, so the count does not depend on this.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	assert.Equal(t, int32(1), loads.Load(), "one instance loads the list, the other waits for it")
+	n, err := f.redis.Exists(context.Background(), lockKey).Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "the lock is released")
+}
+
+// TestList_ReadsTheDatabaseWhenTheLoadingInstanceStops holds the lock as an
+// instance would that was killed during a load. The others wait for the
+// list, then read the database without writing the list or taking the lock.
+func TestList_ReadsTheDatabaseWhenTheLoadingInstanceStops(t *testing.T) {
+	f := newFixture(t)
+	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
+	ctx := context.Background()
+	require.NoError(t, f.redis.Set(ctx, lockKey, "a stopped instance", lockTTL).Err())
+	f.catalog.wait = 100 * time.Millisecond
+
+	start := time.Now()
+	assert.Equal(t, []string{"BTC"}, f.list(t))
+	assert.GreaterOrEqual(t, time.Since(start), f.catalog.wait, "the instance waited for the list first")
+	assert.False(t, f.cached(t), "an instance without the lock does not write the list")
+	holder, err := f.redis.Get(ctx, lockKey).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "a stopped instance", holder, "the lock is left to expire")
+}
+
+// TestList_RefreshesAnOldListOnceAcrossInstances lets the list age past its
+// time on two instances. One request refreshes it, while every other
+// request, on both instances, is served the old list at once.
+func TestList_RefreshesAnOldListOnceAcrossInstances(t *testing.T) {
+	f := newFixture(t)
+	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
+	const ttl = 300 * time.Millisecond
+	f.catalog = New(f.db, f.redis, ttl)
+	other := New(f.db, f.redis, ttl)
+	require.Equal(t, []string{"BTC"}, f.list(t))
+	f.insert(t, "ETH", models.CurrencyStatusApproved, false)
+	time.Sleep(ttl + 50*time.Millisecond)
+
+	release := make(chan struct{})
+	var loads atomic.Int32
+	f.gatedLoad(release, &loads, f.catalog, other)
+	var served atomic.Int32
+	results := make(chan []string, 20)
+	for i := range 20 {
+		catalog := f.catalog
+		if i%2 == 1 {
+			catalog = other
+		}
+		go func() {
+			list, err := catalog.List(context.Background())
+			assert.NoError(t, err)
+			served.Add(1)
+			results <- symbols(list)
+		}()
+	}
+	require.Eventually(t, func() bool { return served.Load() == 19 }, 2*time.Second, 5*time.Millisecond,
+		"every request but the refreshing one is served at once")
+	close(release)
+	require.Eventually(t, func() bool { return served.Load() == 20 }, 2*time.Second, 5*time.Millisecond)
+
+	refreshed := 0
+	for range 20 {
+		if list := <-results; len(list) == 2 {
+			refreshed++
+		} else {
+			assert.Equal(t, []string{"BTC"}, list, "the old list")
+		}
+	}
+	assert.Equal(t, 1, refreshed, "the refreshing request gets the new list")
+	assert.Equal(t, int32(1), loads.Load(), "one refresh for both instances")
+	f.catalog.load = f.catalog.loadFromDatabase
+	assert.Equal(t, []string{"BTC", "ETH"}, f.list(t), "the refreshed list is cached")
+}
+
+// TestList_BoundsTheWaitForAnUnresponsiveRedis reads through a Redis that
+// accepts connections and never answers, as a stopped or partitioned one
+// can look. The read falls back to the database within a fraction of the
+// request's time instead of waiting for the client's timeouts.
+func TestList_BoundsTheWaitForAnUnresponsiveRedis(t *testing.T) {
+	f := newFixture(t)
+	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+	hanging := redis.NewClient(&redis.Options{
+		Addr: listener.Addr().String(), DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
+		ContextTimeoutEnabled: true, MaxRetries: -1,
+	})
+	defer hanging.Close()
+	catalog := New(f.db, hanging, time.Minute)
+
+	start := time.Now()
+	list, err := catalog.List(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"BTC"}, symbols(list))
+	assert.Less(t, time.Since(start), 2*time.Second)
 }
 
 func TestList_ConcurrentMissesShareOneLoad(t *testing.T) {

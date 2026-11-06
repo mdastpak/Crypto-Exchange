@@ -287,7 +287,7 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
 
 Lists the public currencies, oldest first. Response `200` with an array in `info`, which is empty when there are none. `created_at` and `updated_at` are in RFC 3339, in UTC.
 
-PostgreSQL holds the currencies, and Redis a copy of the whole list that every instance shares. A change through the admin routes drops the copy, so that the next read on any instance loads the list from PostgreSQL. A change made directly in the database shows after `redis.currency_cache_ttl_seconds` at the latest. While Redis is unavailable, the list is read from PostgreSQL. `503` (`Currencies are temporarily unavailable.`) when the list is not cached and PostgreSQL cannot be read.
+PostgreSQL holds the currencies, and Redis a copy of the whole list that every instance shares. A change through the admin routes drops the copy, so that the next read on any instance loads the list from PostgreSQL. A change made directly in the database shows after a little more than `redis.currency_cache_ttl_seconds`. While Redis is unavailable, the list is read from PostgreSQL. See [The shared currency list](architecture.md#the-shared-currency-list). `503` (`Currencies are temporarily unavailable.`) when the list is not cached and PostgreSQL cannot be read.
 
 ### `GET /public/currencies/{hk}`
 
