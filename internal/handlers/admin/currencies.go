@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -153,6 +154,10 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 		sendValidationErrors(c, fieldErrs)
 		return
 	}
+	if req.Version != nil {
+		sendValidationErrors(c, fieldErrors{"version": "is set by the server"})
+		return
+	}
 	status, info := req.apply(defaultCurrencyStatus, models.CurrencyInfo{})
 	if errs := validateCurrency(status, info); errs != nil {
 		sendValidationErrors(c, errs)
@@ -176,10 +181,11 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 	defer tx.Rollback()
 
 	var generatedHK string
+	var version int64
 	err = tx.QueryRowContext(ctx,
-		"INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb) RETURNING hk",
+		"INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb) RETURNING hk, version",
 		status, infoJSON,
-	).Scan(&generatedHK)
+	).Scan(&generatedHK, &version)
 	var public bool
 	if err == nil {
 		public, err = enqueuePublicEvent(ctx, tx, false, models.Currency{HK: generatedHK, Status: status, Info: info})
@@ -195,7 +201,7 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 		h.afterPublicChange(ctx, generatedHK)
 	}
 
-	helpers.SendResponse(c, http.StatusCreated, "Currency created successfully.", gin.H{"hk": generatedHK, "status": status})
+	helpers.SendResponse(c, http.StatusCreated, "Currency created successfully.", gin.H{"hk": generatedHK, "status": status, "version": version})
 }
 
 func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
@@ -217,10 +223,15 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		sendValidationErrors(c, fieldErrs)
 		return
 	}
+	if req.Version != nil && *req.Version < 1 {
+		sendValidationErrors(c, fieldErrors{"version": "must be at least 1"})
+		return
+	}
 
 	// The row is locked from the read to the write, so that concurrent
 	// partial updates of one currency are applied one after the other
-	// instead of overwriting each other's fields.
+	// instead of overwriting each other's fields. An update that sends the
+	// version it is based on is refused if another one came first.
 	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("Error starting a currency update: %v", err)
@@ -231,9 +242,10 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 
 	var currentStatus string
 	var infoData []byte
+	var currentVersion int64
 	err = tx.QueryRowContext(ctx,
-		"SELECT status, info FROM currencies WHERE hk = $1 AND deleted_at IS NULL FOR UPDATE", hk,
-	).Scan(&currentStatus, &infoData)
+		"SELECT status, info, version FROM currencies WHERE hk = $1 AND deleted_at IS NULL FOR UPDATE", hk,
+	).Scan(&currentStatus, &infoData, &currentVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
@@ -241,6 +253,11 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		}
 		log.Printf("Error retrieving currency data: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to retrieve currency data.", nil)
+		return
+	}
+
+	if req.Version != nil && *req.Version != currentVersion {
+		sendVersionConflict(c, currentVersion)
 		return
 	}
 
@@ -268,10 +285,11 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
-	_, err = tx.ExecContext(ctx,
-		"UPDATE currencies SET status=$1, info=$2::jsonb, updated_at=NOW() WHERE hk=$3 AND deleted_at IS NULL",
+	var newVersion int64
+	err = tx.QueryRowContext(ctx,
+		"UPDATE currencies SET status=$1, info=$2::jsonb, version=version+1, updated_at=NOW() WHERE hk=$3 AND deleted_at IS NULL RETURNING version",
 		currentStatus, infoJSON, hk,
-	)
+	).Scan(&newVersion)
 	var public bool
 	if err == nil {
 		public, err = enqueuePublicEvent(ctx, tx, wasPublic, models.Currency{HK: hk, Status: currentStatus, Info: currentInfo})
@@ -287,7 +305,7 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		h.afterPublicChange(ctx, hk)
 	}
 
-	helpers.SendResponse(c, http.StatusOK, "Currency updated successfully.", nil)
+	helpers.SendResponse(c, http.StatusOK, "Currency updated successfully.", gin.H{"version": newVersion})
 }
 
 func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
@@ -297,6 +315,11 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 	hk := c.Param("hk")
 	if _, err := uuid.Parse(hk); err != nil {
 		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for HK", nil)
+		return
+	}
+	expected, ok := versionQuery(c)
+	if !ok {
+		sendValidationErrors(c, fieldErrors{"version": "must be a number of at least 1"})
 		return
 	}
 
@@ -313,9 +336,10 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 
 	var isDeleted bool
 	var previousStatus string
+	var currentVersion int64
 	err = tx.QueryRowContext(ctx,
-		"SELECT (deleted_at IS NOT NULL), status FROM currencies WHERE hk = $1 FOR UPDATE", hk,
-	).Scan(&isDeleted, &previousStatus)
+		"SELECT (deleted_at IS NOT NULL), status, version FROM currencies WHERE hk = $1 FOR UPDATE", hk,
+	).Scan(&isDeleted, &previousStatus, &currentVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
@@ -330,10 +354,15 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusNotFound, "Currency not found or already deleted", nil)
 		return
 	}
+	if expected != nil && *expected != currentVersion {
+		sendVersionConflict(c, currentVersion)
+		return
+	}
 
-	_, err = tx.ExecContext(ctx,
-		"UPDATE currencies SET deleted_at=NOW(), status='deleted' WHERE hk=$1", hk,
-	)
+	var newVersion int64
+	err = tx.QueryRowContext(ctx,
+		"UPDATE currencies SET deleted_at=NOW(), status='deleted', version=version+1 WHERE hk=$1 RETURNING version", hk,
+	).Scan(&newVersion)
 	var public bool
 	if err == nil {
 		public, err = enqueuePublicEvent(ctx, tx, previousStatus == models.CurrencyStatusApproved,
@@ -351,5 +380,52 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		h.afterPublicChange(ctx, hk)
 	}
 
-	helpers.SendResponse(c, http.StatusOK, "Currency deleted successfully.", nil)
+	helpers.SendResponse(c, http.StatusOK, "Currency deleted successfully.", gin.H{"version": newVersion})
+}
+
+// GetCurrency returns one currency, whatever its status, with its version:
+// what an update or a delete sends to be refused if the currency changed in
+// the meantime.
+func (h *AdminHandler) GetCurrency(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("hk"))
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for HK", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	var currency models.Currency
+	var info []byte
+	var created, updated, deleted sql.NullTime
+	err = h.PostgresDB.DB.QueryRowContext(ctx,
+		"SELECT id, hk, status, info, version, created_at, updated_at, deleted_at FROM currencies WHERE hk = $1", id.String(),
+	).Scan(&currency.ID, &currency.HK, &currency.Status, &info, &currency.Version, &created, &updated, &deleted)
+	if errors.Is(err, sql.ErrNoRows) {
+		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+		return
+	}
+	if err == nil {
+		err = json.Unmarshal(info, &currency.Info)
+	}
+	if err != nil {
+		log.Printf("Error reading currency %s: %v", id, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to retrieve currency data.", nil)
+		return
+	}
+	currency.CreatedAt, currency.UpdatedAt = timestamp(created), timestamp(updated)
+	if deleted.Valid {
+		at := timestamp(deleted)
+		currency.DeletedAt = &at
+	}
+	helpers.SendResponse(c, http.StatusOK, "Currency retrieved successfully.", currency)
+}
+
+// timestamp formats a database time in RFC 3339, in UTC, or as "" when it is
+// NULL.
+func timestamp(t sql.NullTime) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.UTC().Format(time.RFC3339)
 }

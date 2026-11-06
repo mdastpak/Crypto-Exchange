@@ -143,6 +143,7 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 
 	s.router = gin.New()
 	s.router.POST("/currencies", s.handler.CreateCurrency)
+	s.router.GET("/currencies/:hk", s.handler.GetCurrency)
 	s.router.PUT("/currencies/:hk", s.handler.UpdateCurrency)
 	s.router.DELETE("/currencies/:hk", s.handler.DeleteCurrency)
 }
@@ -912,4 +913,157 @@ func (s *AdminCurrenciesTestSuite) TestChanges_OfHiddenCurrenciesWriteNoEvent() 
 	var n int
 	require.NoError(s.T(), s.postgresSvc.DB.QueryRow(`SELECT COUNT(*) FROM outbox_events`).Scan(&n))
 	assert.Zero(s.T(), n)
+}
+
+// storedVersion reads the version of a currency from the database.
+func (s *AdminCurrenciesTestSuite) storedVersion(hk string) int64 {
+	var version int64
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT version FROM currencies WHERE hk = $1", hk).Scan(&version))
+	return version
+}
+
+// responseVersion returns the version in the info of a response.
+func (s *AdminCurrenciesTestSuite) responseVersion(w *httptest.ResponseRecorder) int64 {
+	s.T().Helper()
+	info, ok := s.decodeResponse(w).Info.(map[string]interface{})
+	require.True(s.T(), ok, w.Body.String())
+	version, ok := info["version"].(float64)
+	require.True(s.T(), ok, w.Body.String())
+	return int64(version)
+}
+
+func (s *AdminCurrenciesTestSuite) TestVersions_CountTheChanges() {
+	w := s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("VER", ""))
+	require.Equal(s.T(), http.StatusCreated, w.Code)
+	assert.Equal(s.T(), int64(1), s.responseVersion(w))
+	var hk string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = 'VER'").Scan(&hk))
+
+	w = s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Version"}})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	assert.Equal(s.T(), int64(2), s.responseVersion(w), "an update without a version still counts")
+
+	w = s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{"status": "approved", "version": 2})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	assert.Equal(s.T(), int64(3), s.responseVersion(w))
+
+	w = s.makeRequest(http.MethodDelete, "/currencies/"+hk+"?version=3", nil)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	assert.Equal(s.T(), int64(4), s.responseVersion(w))
+	assert.Equal(s.T(), int64(4), s.storedVersion(hk))
+}
+
+// TestVersions_AStaleUpdateIsRefused sends an update based on a version that
+// another update replaced. It gets 409 with the current version, and
+// changes nothing.
+func (s *AdminCurrenciesTestSuite) TestVersions_AStaleUpdateIsRefused() {
+	hk := s.createCurrency("OLD", "")
+	s.update(hk, map[string]interface{}{"status": "approved", "info": map[string]interface{}{"en_name": "First"}})
+	s.takeEvents()
+
+	w := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Second"}, "version": 1})
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+	info, ok := s.decodeResponse(w).Info.(map[string]interface{})
+	require.True(s.T(), ok)
+	assert.Equal(s.T(), "version_conflict", info["code"])
+	assert.Equal(s.T(), float64(2), info["version"], "the response tells the current version")
+
+	var enName string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT info->>'en_name' FROM currencies WHERE hk = $1", hk).Scan(&enName))
+	assert.Equal(s.T(), "First", enName)
+	assert.Equal(s.T(), int64(2), s.storedVersion(hk))
+	assert.Empty(s.T(), s.takeEvents(), "a refused update announces nothing")
+}
+
+// TestVersions_OneOfConcurrentUpdatesWins sends several updates based on the
+// same version at once. Exactly one is applied, the others get 409, and the
+// final state is the one of the update that was applied.
+func (s *AdminCurrenciesTestSuite) TestVersions_OneOfConcurrentUpdatesWins() {
+	hk := s.createCurrency("RACE", "")
+	const writers = 8
+	codes := make([]int, writers)
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{
+				"info": map[string]interface{}{"en_name": fmt.Sprintf("Writer %d", i)}, "version": 1,
+			})
+			codes[i] = w.Code
+		}()
+	}
+	wg.Wait()
+
+	winner := -1
+	for i, code := range codes {
+		switch code {
+		case http.StatusOK:
+			assert.Equal(s.T(), -1, winner, "only one update is applied")
+			winner = i
+		case http.StatusConflict:
+		default:
+			s.T().Errorf("writer %d got %d", i, code)
+		}
+	}
+	require.NotEqual(s.T(), -1, winner, "one update is applied")
+	var enName string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT info->>'en_name' FROM currencies WHERE hk = $1", hk).Scan(&enName))
+	assert.Equal(s.T(), fmt.Sprintf("Writer %d", winner), enName)
+	assert.Equal(s.T(), int64(2), s.storedVersion(hk))
+}
+
+func (s *AdminCurrenciesTestSuite) TestVersions_AStaleDeleteIsRefused() {
+	hk := s.createCurrency("DEL", "")
+	s.update(hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Changed"}})
+
+	assert.Equal(s.T(), http.StatusConflict, s.makeRequest(http.MethodDelete, "/currencies/"+hk+"?version=1", nil).Code)
+	var deleted bool
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT deleted_at IS NOT NULL FROM currencies WHERE hk = $1", hk).Scan(&deleted))
+	assert.False(s.T(), deleted)
+
+	for _, bad := range []string{"abc", "0", "-1", ""} {
+		w := s.makeRequest(http.MethodDelete, "/currencies/"+hk+"?version="+bad, nil)
+		assert.Equal(s.T(), http.StatusBadRequest, w.Code, "version=%q", bad)
+	}
+	assert.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk+"?version=2", nil).Code)
+}
+
+func (s *AdminCurrenciesTestSuite) TestVersions_AreSetByTheServer() {
+	payload := sampleCurrencyPayload("SET", "")
+	payload["version"] = 5
+	w := s.makeRequest(http.MethodPost, "/currencies", payload)
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code)
+	s.assertFieldErrors(w, "version")
+
+	hk := s.createCurrency("LOW", "")
+	w = s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{"version": 0})
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code)
+	s.assertFieldErrors(w, "version")
+}
+
+func (s *AdminCurrenciesTestSuite) TestGetCurrency_ReturnsAnyStatusWithItsVersion() {
+	hk := s.createCurrency("GET", "")
+	w := s.makeRequest(http.MethodGet, "/currencies/"+hk, nil)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp struct {
+		Info models.Currency `json:"info"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(s.T(), hk, resp.Info.HK)
+	assert.Equal(s.T(), models.CurrencyStatusPending, resp.Info.Status, "a hidden currency is returned to administrators")
+	assert.Equal(s.T(), int64(1), resp.Info.Version)
+	assert.NotEmpty(s.T(), resp.Info.CreatedAt)
+	assert.Nil(s.T(), resp.Info.DeletedAt)
+
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+	w = s.makeRequest(http.MethodGet, "/currencies/"+strings.ToUpper(hk), nil)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(s.T(), models.CurrencyStatusDeleted, resp.Info.Status)
+	assert.Equal(s.T(), int64(2), resp.Info.Version)
+	assert.NotNil(s.T(), resp.Info.DeletedAt)
+
+	assert.Equal(s.T(), http.StatusNotFound, s.makeRequest(http.MethodGet, "/currencies/"+uuid.NewString(), nil).Code)
+	assert.Equal(s.T(), http.StatusBadRequest, s.makeRequest(http.MethodGet, "/currencies/not-a-uuid", nil).Code)
 }

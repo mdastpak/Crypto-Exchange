@@ -91,6 +91,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Every instance runs a relay, and one at a time relays, under a transaction-scoped advisory lock. A message is never published by two instances, and an instance that stops leaves its messages to the others. The relay stops after the HTTP server at shutdown.
   - Delivery is at least once. Currency events carry a new `id`, a version 7 UUID, that the WebSocket gateway forwards, so that clients can drop a repeated event.
   - Creating a currency now runs in a transaction, like updates and deletes.
+- Concurrent admin updates of a currency could not tell whether they overwrote a change they had not seen ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), second part).
+  - Currencies have a `version` (migration 19), which every update and the delete increase. `POST`, `PUT`, and `DELETE /admin/currencies` return it.
+  - An update may send the `version` it is based on, and a delete `?version=`. If the currency has changed since, it is refused with `409` and the code `version_conflict`, with the current version, and changes nothing.
+  - The new `GET /admin/currencies/{hk}` returns a currency with its version, whatever its status.
+  - Updates without a version are still applied one after the other, as before.
 
 ### Security
 

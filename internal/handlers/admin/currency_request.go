@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -52,6 +53,10 @@ type currencyInfoFields struct {
 type currencyRequest struct {
 	Status *string            `json:"status"`
 	Info   currencyInfoFields `json:"info"`
+	// Version is the version of the currency that an update is based on.
+	// When it is sent and the currency has changed since, the update is
+	// refused with 409. A create may not send it.
+	Version *int64 `json:"version"`
 }
 
 // fieldErrors maps a field, such as "info.symbol", to what is wrong with it.
@@ -144,6 +149,27 @@ func validateCurrency(status string, info models.CurrencyInfo) fieldErrors {
 		return nil
 	}
 	return errs
+}
+
+// sendVersionConflict answers a change that is based on a version of the
+// currency that is no longer the current one.
+func sendVersionConflict(c *gin.Context, current int64) {
+	helpers.SendResponse(c, http.StatusConflict, "The currency has changed since that version; read it again and retry.",
+		gin.H{"code": "version_conflict", "version": current})
+}
+
+// versionQuery reads the optional version query parameter of a delete. ok
+// is false when it is set but not a number of at least 1.
+func versionQuery(c *gin.Context) (version *int64, ok bool) {
+	raw, present := c.GetQuery("version")
+	if !present {
+		return nil, true
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v < 1 {
+		return nil, false
+	}
+	return &v, true
 }
 
 // sendCurrencyWriteError answers a failed insert or update. PostgreSQL errors

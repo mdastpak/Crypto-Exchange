@@ -12,13 +12,16 @@ type CurrencyInfo struct {
 
 // Currency defines the structure of the currency model
 type Currency struct {
-	ID        int          `json:"id"`
-	HK        string       `json:"hk"`
-	Status    string       `json:"status"`
-	Info      CurrencyInfo `json:"info"`
-	CreatedAt string       `json:"created_at"`
-	UpdatedAt string       `json:"updated_at"`
-	DeletedAt *string      `json:"deleted_at,omitempty"`
+	ID     int          `json:"id"`
+	HK     string       `json:"hk"`
+	Status string       `json:"status"`
+	Info   CurrencyInfo `json:"info"`
+	// Version counts the changes of the currency. Only administrators see
+	// it; it is 0, and left out, in public responses.
+	Version   int64   `json:"version,omitempty"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+	DeletedAt *string `json:"deleted_at,omitempty"`
 }
 
 // Currency statuses. Only approved currencies are public.

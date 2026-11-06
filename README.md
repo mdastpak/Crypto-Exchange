@@ -206,6 +206,7 @@ All JSON responses, except the system endpoints, use this envelope:
 | `POST` | `/admin/auth/{uuid}` | None | Verify the emailed code and the authenticator code, and receive an admin token |
 | `POST` | `/admin/logout` | Admin token | Revoke the admin token |
 | `POST` | `/admin/currencies` | Admin token | Create a currency |
+| `GET` | `/admin/currencies/{hk}` | Admin token | Get a currency, whatever its status, with its version |
 | `PUT` | `/admin/currencies/{hk}` | Admin token | Update a currency |
 | `DELETE` | `/admin/currencies/{hk}` | Admin token | Soft-delete a currency |
 | `GET` | `/user/profile` | User token | Get the signed-in user's profile |
