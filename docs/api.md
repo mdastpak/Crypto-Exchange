@@ -319,15 +319,15 @@ Creates a currency.
 | `info.is_token`, `info.if_fiat` | Optional, `false` by default. A fiat currency cannot be a token. |
 | `info.contract` | Required for a token. At most 128 letters, digits, or `:`, `_`, `.`, `-`. |
 
-Fields that the server controls, such as `id`, `hk`, and the timestamps, and any other unknown field, are rejected.
+Fields that the server controls, such as `id`, `hk`, `version`, and the timestamps, and any other unknown field, are rejected.
 
-Response `201`:
+Response `201`, with the first version of the currency:
 
 ```json
 {
   "status": 201,
   "message": "Currency created successfully.",
-  "info": { "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10", "status": "pending" }
+  "info": { "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10", "status": "pending", "version": 1 }
 }
 ```
 
@@ -337,17 +337,33 @@ Errors:
 - `400` with the message `Validation failed`: `info.errors` names each invalid field, for example `{"errors": {"info.symbol": "must be 2 to 15 upper-case letters or digits"}}`.
 - `409`: the symbol or the contract belongs to another currency. `info` holds a stable code and the field: `{"code": "duplicate_symbol", "field": "info.symbol"}`, or `duplicate_contract` and `info.contract`.
 
+### `GET /admin/currencies/{hk}` (admin)
+
+Returns one currency, whatever its status, deleted ones included, with its `version` and `deleted_at`. `hk` is a UUID in any spelling. Errors: `400` for an invalid UUID, `404` when no currency has it.
+
 ### `PUT /admin/currencies/{hk}` (admin)
 
 Partially updates a currency with a body of the same shape as `POST`. Only the fields that are sent change, and a flag can be set back to `false`. The updated currency must satisfy the same rules as a new one.
 
-Response `200`. Errors: `400` for an invalid UUID, an invalid body, or invalid fields, as for `POST`; `404` when the currency is not found; `409` for a duplicate symbol or contract.
+Every change adds one to the currency's `version` ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89)). To be sure not to overwrite a change it has not seen, a client sends the `version` it read, from `GET` or from the response of its last change. When the currency has changed since, the update is refused with `409` and changes nothing:
+
+```json
+{
+  "status": 409,
+  "message": "The currency has changed since that version; read it again and retry.",
+  "info": { "code": "version_conflict", "version": 3 }
+}
+```
+
+Without `version`, concurrent updates are applied one after the other, each to the result of the previous one.
+
+Response `200` with the new version: `{"version": 3}`. Errors: `400` for an invalid UUID, an invalid body, invalid fields as for `POST`, or a `version` below 1; `404` when the currency is not found; `409` for a duplicate symbol or contract, or with `version_conflict`.
 
 ### `DELETE /admin/currencies/{hk}` (admin)
 
-Soft-deletes a currency (sets `deleted_at` and `status = deleted`) and removes it from the cache.
+Soft-deletes a currency (sets `deleted_at` and `status = deleted`) and removes it from the cache. The optional query parameter `version` works as in `PUT`: `DELETE /admin/currencies/{hk}?version=3` is refused with `409` and `version_conflict` when the currency has changed since version 3.
 
-Response `200`. Errors: `400` for an invalid UUID, `404` when the currency is not found or already deleted.
+Response `200` with the new version. Errors: `400` for an invalid UUID or a `version` that is not a number of at least 1, `404` when the currency is not found or already deleted, `409` with `version_conflict`.
 
 Changes that affect the public view publish an event to the `price_updates` exchange:
 

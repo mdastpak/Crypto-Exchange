@@ -108,6 +108,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 16 | Replaces the plaintext `api_keys.secret_hash` with `secret_sealed` (HMAC secrets, sealed with a `field-enc` key) and `ed25519_public_key`, with a constraint that each key type keeps only what verifying it needs | Not yet (API keys are #63) |
 | 17 | Balance invariants: no negative amounts, `total` computed as `available + locked`, `on_chain` dropped, one balance per user, asset, and sub-account also without a sub-account | Not yet (the ledger is #60) |
 | 18 | `outbox_events`: the transactional outbox, with a partial index on the pending messages and one on the publish time for the cleanup | Yes |
+| 19 | `currencies.version`: counts the changes of a currency, for the optimistic concurrency of the admin routes | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 

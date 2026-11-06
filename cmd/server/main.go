@@ -651,6 +651,7 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	adminGroup.Use(rl.TradingRateLimit())
 	{
 		adminGroup.POST("/currencies", ih.Admin.CreateCurrency)
+		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/logout", func(c *gin.Context) {
