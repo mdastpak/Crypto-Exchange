@@ -203,10 +203,13 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, key, sender))
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
+	relay := newOutboxRelay(services, handlers)
+	relay.Start()
 	// Registered after the services cleanup, so it runs first, as in main.
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		_ = relay.Stop(ctx)
 		_ = handlers.Socket.Shutdown(ctx)
 	})
 

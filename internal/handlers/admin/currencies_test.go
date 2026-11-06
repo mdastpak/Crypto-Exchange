@@ -5,17 +5,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
@@ -45,15 +51,26 @@ type AdminCurrenciesTestSuite struct {
 	postgresSvc *db.PostgresService
 	redisClient *redis.Client
 	events      *recordingPublisher
+	// relay publishes the events of the outbox to events; the tests flush
+	// it instead of starting it.
+	relay *outbox.Relay
+	// cacheDown makes the relay's drop of the cached list fail, as while
+	// Redis is unavailable.
+	cacheDown atomic.Bool
 }
 
-// recordingPublisher records the currency events instead of publishing them.
+// recordingPublisher records the currency events instead of publishing them,
+// and fails while down is set, as while RabbitMQ is unavailable.
 type recordingPublisher struct {
 	mu     sync.Mutex
 	events []models.CurrencyEvent
+	down   atomic.Bool
 }
 
 func (p *recordingPublisher) Publish(ctx context.Context, exchange, message string) error {
+	if p.down.Load() {
+		return errors.New("RabbitMQ is unavailable")
+	}
 	var event models.CurrencyEvent
 	if err := json.Unmarshal([]byte(message), &event); err != nil {
 		return err
@@ -62,6 +79,14 @@ func (p *recordingPublisher) Publish(ctx context.Context, exchange, message stri
 	defer p.mu.Unlock()
 	p.events = append(p.events, event)
 	return nil
+}
+
+// takeEvents relays the outbox and returns the "action hk" pairs of the
+// events published since the last call.
+func (s *AdminCurrenciesTestSuite) takeEvents() []string {
+	_, err := s.relay.Flush(context.Background())
+	require.NoError(s.T(), err)
+	return s.events.take()
 }
 
 // take returns the recorded "action hk" pairs and forgets them.
@@ -94,7 +119,7 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	defer cancel()
 	require.NoError(s.T(), s.redisClient.Ping(ctx).Err())
 
-	_, err := s.postgresSvc.DB.Exec("TRUNCATE TABLE currencies RESTART IDENTITY")
+	_, err := s.postgresSvc.DB.Exec("TRUNCATE TABLE currencies, outbox_events RESTART IDENTITY")
 	require.NoError(s.T(), err)
 
 	services := &models.InfraServices{
@@ -104,7 +129,17 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	}
 	s.handler = NewHandler(services)
 	s.events = &recordingPublisher{}
-	s.handler.Events = s.events
+	catalog := s.handler.Currencies
+	s.cacheDown.Store(false)
+	s.relay = outbox.NewRelay(s.postgresSvc.DB, s.events, map[string]outbox.Route{
+		models.CurrencyEventTopic: {Exchange: "price_updates", Before: func(ctx context.Context) error {
+			if s.cacheDown.Load() {
+				return errors.New("Redis is unavailable")
+			}
+			return catalog.Invalidate(ctx)
+		}},
+	}, outbox.Options{Interval: time.Hour, Logger: log.New(io.Discard, "", 0)})
+	s.handler.Outbox = s.relay
 
 	s.router = gin.New()
 	s.router.POST("/currencies", s.handler.CreateCurrency)
@@ -638,7 +673,7 @@ func (s *AdminCurrenciesTestSuite) update(hk string, body map[string]interface{}
 func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_FollowsStatusTransitions() {
 	hk := s.createCurrency("NEAR", "")
 	assert.False(s.T(), s.isPublic(hk), "a pending currency must not be public")
-	assert.Empty(s.T(), s.events.take(), "a hidden currency must not be announced")
+	assert.Empty(s.T(), s.takeEvents(), "a hidden currency must not be announced")
 
 	steps := []struct {
 		name   string
@@ -657,15 +692,15 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_FollowsStatusTransitio
 	for _, step := range steps {
 		s.update(hk, step.body)
 		assert.Equal(s.T(), step.public, s.isPublic(hk), step.name)
-		assert.Equal(s.T(), step.events, s.events.take(), step.name)
+		assert.Equal(s.T(), step.events, s.takeEvents(), step.name)
 	}
 
 	s.update(hk, map[string]interface{}{"status": "approved"})
-	s.events.take()
+	s.takeEvents()
 	w := s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil)
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	assert.False(s.T(), s.isPublic(hk))
-	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "deleting a public currency removes it from public view")
+	assert.Equal(s.T(), []string{"delete " + hk}, s.takeEvents(), "deleting a public currency removes it from public view")
 }
 
 func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_HiddenCurrenciesStayUnannounced() {
@@ -677,7 +712,7 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyVisibility_HiddenCurrenciesStayUn
 
 	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
 
-	assert.Empty(s.T(), s.events.take(), "creating and deleting a hidden currency must not reach WebSocket clients")
+	assert.Empty(s.T(), s.takeEvents(), "creating and deleting a hidden currency must not reach WebSocket clients")
 	assert.False(s.T(), s.isPublic(hk))
 }
 
@@ -743,13 +778,13 @@ func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_WaitsForAConcurrentChange(
 	case <-time.After(10 * time.Second):
 		s.T().Fatal("the delete did not finish after the lock was released")
 	}
-	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "the delete must see the approved status")
+	assert.Equal(s.T(), []string{"delete " + hk}, s.takeEvents(), "the delete must see the approved status")
 }
 
 func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_ConcurrentDeletesSucceedOnce() {
 	hk := s.createCurrency("UNI", "")
 	s.update(hk, map[string]interface{}{"status": "approved"})
-	s.events.take()
+	s.takeEvents()
 
 	const deletes = 5
 	codes := make(chan int, deletes)
@@ -769,5 +804,112 @@ func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_ConcurrentDeletesSucceedOn
 		counts[code]++
 	}
 	assert.Equal(s.T(), map[int]int{http.StatusOK: 1, http.StatusNotFound: deletes - 1}, counts)
-	assert.Equal(s.T(), []string{"delete " + hk}, s.events.take(), "one deletion, one event")
+	assert.Equal(s.T(), []string{"delete " + hk}, s.takeEvents(), "one deletion, one event")
+}
+
+// makeOutboxReady ends the backoff of every pending message, as time would.
+func (s *AdminCurrenciesTestSuite) makeOutboxReady() {
+	_, err := s.postgresSvc.DB.Exec(`UPDATE outbox_events SET next_attempt_at = NOW() WHERE published_at IS NULL`)
+	require.NoError(s.T(), err)
+}
+
+// TestEvents_ReachTheBrokerOnceItRecovers creates, updates, and deletes a
+// public currency while RabbitMQ is unavailable. Every change succeeds, and
+// its event is published, in order, once the broker is back.
+func (s *AdminCurrenciesTestSuite) TestEvents_ReachTheBrokerOnceItRecovers() {
+	s.events.down.Store(true)
+	payload := sampleCurrencyPayload("SOL", "")
+	payload["status"] = "approved"
+	require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", payload).Code)
+	var hk string
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT hk FROM currencies WHERE info->>'symbol' = 'SOL'").Scan(&hk))
+	s.update(hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Solana"}})
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+
+	assert.Empty(s.T(), s.takeEvents(), "nothing is published while the broker is down")
+	var pending, attempts int
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow(
+		`SELECT COUNT(*), COALESCE(MAX(attempts), 0) FROM outbox_events WHERE published_at IS NULL`,
+	).Scan(&pending, &attempts))
+	assert.Equal(s.T(), 3, pending, "the events wait in the outbox")
+	assert.Equal(s.T(), 1, attempts, "the first one failed once, and the later ones wait for it")
+
+	s.events.down.Store(false)
+	s.makeOutboxReady()
+	assert.Equal(s.T(), []string{"create " + hk, "update " + hk, "delete " + hk}, s.takeEvents(),
+		"the events are published in order once the broker is back")
+}
+
+// deadRedis returns a client of a Redis that is not there.
+func deadRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	client := redis.NewClient(&redis.Options{Addr: addr, DialTimeout: 100 * time.Millisecond, MaxRetries: -1})
+	t.Cleanup(func() { client.Close() })
+	return client
+}
+
+// TestCachedList_CatchesUpOnceRedisRecovers changes a public currency while
+// Redis is unavailable, so that neither the handler nor the relay can drop
+// the cached list. The change succeeds, its event waits for the drop, and
+// once Redis is back the list shows the change.
+func (s *AdminCurrenciesTestSuite) TestCachedList_CatchesUpOnceRedisRecovers() {
+	ctx := context.Background()
+	hk := s.createCurrency("NEO", "")
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	// The relay drops the list for the approval first; then it is cached.
+	s.takeEvents()
+	require.True(s.T(), s.isPublic(hk), "the list is cached")
+
+	catalog := s.handler.Currencies
+	defer func() { s.handler.Currencies = catalog }()
+	s.handler.Currencies = currencies.New(s.postgresSvc.DB, deadRedis(s.T()), time.Minute)
+	s.cacheDown.Store(true)
+	s.update(hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Neo"}})
+
+	assert.Empty(s.T(), s.takeEvents(), "the event waits for the drop of the cached list")
+	list, err := catalog.List(ctx)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), "Bitcoin", list[0].Info.EnName, "the cached list is out of date meanwhile")
+
+	s.cacheDown.Store(false)
+	s.makeOutboxReady()
+	assert.Equal(s.T(), []string{"update " + hk}, s.takeEvents())
+	list, err = catalog.List(ctx)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), "Neo", list[0].Info.EnName, "the relay dropped the list once Redis was back")
+}
+
+// TestEvents_HaveIDs checks that every event carries a version 7 UUID of
+// its own, with which clients can drop a repeated delivery.
+func (s *AdminCurrenciesTestSuite) TestEvents_HaveIDs() {
+	hk := s.createCurrency("APT", "")
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	s.update(hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Aptos"}})
+	_, err := s.relay.Flush(context.Background())
+	require.NoError(s.T(), err)
+
+	s.events.mu.Lock()
+	events := s.events.events
+	s.events.mu.Unlock()
+	require.Len(s.T(), events, 2)
+	for _, event := range events {
+		id, err := uuid.Parse(event.ID)
+		require.NoError(s.T(), err)
+		assert.Equal(s.T(), uuid.Version(7), id.Version())
+	}
+	assert.NotEqual(s.T(), events[0].ID, events[1].ID)
+}
+
+// TestChanges_OfHiddenCurrenciesWriteNoEvent checks that the outbox only
+// holds changes to the public view.
+func (s *AdminCurrenciesTestSuite) TestChanges_OfHiddenCurrenciesWriteNoEvent() {
+	hk := s.createCurrency("HID", "")
+	s.update(hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Hidden"}})
+	var n int
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow(`SELECT COUNT(*) FROM outbox_events`).Scan(&n))
+	assert.Zero(s.T(), n)
 }

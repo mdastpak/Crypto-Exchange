@@ -56,6 +56,9 @@ func sanitizeCurrencyEvent(body []byte, now time.Time) ([]byte, error) {
 	if id, err := uuid.Parse(event.HK); err != nil || id.String() != event.HK {
 		return nil, fmt.Errorf("hk %s is not a UUID in canonical form", quoted(event.HK))
 	}
+	if id, err := uuid.Parse(event.ID); event.ID != "" && (err != nil || id.String() != event.ID) {
+		return nil, fmt.Errorf("id %s is not a UUID in canonical form", quoted(event.ID))
+	}
 
 	var info interface{}
 	switch event.Action {
@@ -83,6 +86,7 @@ func sanitizeCurrencyEvent(body []byte, now time.Time) ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(models.CurrencyEvent{
+		ID:         event.ID,
 		Entity:     event.Entity,
 		Action:     event.Action,
 		HK:         event.HK,

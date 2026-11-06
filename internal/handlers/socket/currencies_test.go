@@ -93,6 +93,22 @@ func TestSanitizeCurrencyEvent_DropsUnknownFields(t *testing.T) {
 	assert.JSONEq(t, `{"status":"deleted"}`, string(msg["info"]))
 }
 
+// testEventID is the version 7 UUID of an event.
+const testEventID = "019a5a5e-7c1b-7d2e-9f30-1a2b3c4d5e6f"
+
+func TestSanitizeCurrencyEvent_KeepsTheEventID(t *testing.T) {
+	body := strings.Replace(testEvent("update"), `"entity"`, `"id":"`+testEventID+`","entity"`, 1)
+	out, err := sanitizeCurrencyEvent([]byte(body), time.Now())
+	require.NoError(t, err)
+	var msg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &msg))
+	assert.JSONEq(t, `"`+testEventID+`"`, string(msg["id"]), "clients drop repeated events by their id")
+
+	out, err = sanitizeCurrencyEvent([]byte(testEvent("update")), time.Now())
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), `"id"`, "an event of an earlier version has none")
+}
+
 func keysOf(m map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -115,6 +131,8 @@ func TestSanitizeCurrencyEvent_RejectsInvalidEvents(t *testing.T) {
 		"hk not a UUID":           strings.Replace(valid, testHK, `abc`, 1),
 		"hk in braces":            strings.Replace(valid, testHK, `{`+testHK+`}`, 1),
 		"hk in upper case":        strings.Replace(valid, testHK, strings.ToUpper(testHK), 1),
+		"id not a UUID":           strings.Replace(valid, `"entity"`, `"id":"1","entity"`, 1),
+		"id in upper case":        strings.Replace(valid, `"entity"`, `"id":"`+strings.ToUpper(testEventID)+`","entity"`, 1),
 		"no info":                 `{"entity":"currencies","action":"create","hk":"` + testHK + `"}`,
 		"info is a string":        `{"entity":"currencies","action":"create","hk":"` + testHK + `","info":"USDT"}`,
 		"info of the wrong types": `{"entity":"currencies","action":"create","hk":"` + testHK + `","info":{"symbol":42}}`,

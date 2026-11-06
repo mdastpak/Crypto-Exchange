@@ -504,6 +504,7 @@ Currency events (see [Currencies](#currencies)) are broadcast to every connected
 
 ```json
 {
+  "id": "019a5a5e-7c1b-7d2e-9f30-1a2b3c4d5e6f",
   "entity": "currencies",
   "action": "create",
   "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10",
@@ -519,10 +520,12 @@ Currency events (see [Currencies](#currencies)) are broadcast to every connected
 }
 ```
 
+An event is sent for every committed change to the public view, also when RabbitMQ was unavailable at the time of the change: it waits in the outbox until it can be published, and the events of one currency arrive in the order of their changes. Delivery is at least once, so an event can arrive twice; `id`, a version 7 UUID, identifies it, and a client drops an event whose `id` it has seen. Events from servers of an earlier version have no `id`.
+
 Clients receive exactly these fields. For `create` and `update`, `info` holds the six fields above; for `delete`, it is `{"status": "pending" | "suspend" | "deleted"}`. The server rebuilds every event from this schema before it sends it, so a field that is not part of it never reaches a client. Anything that can publish to the broker's `price_updates` exchange therefore cannot push other content to clients. An event that does not fit the schema is dropped and logged:
 
 - an unknown `entity` or `action`;
-- an `hk` that is not a UUID in canonical form;
+- an `hk` that is not a UUID in canonical form, or an `id` that is set and is not one;
 - a missing `info`, or one with fields of the wrong type;
 - a `delete` with another status;
 - an event larger than 16 KiB.

@@ -29,6 +29,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -121,15 +122,19 @@ func run() error {
 		return fmt.Errorf("failed to load the data-protection keys: %w", err)
 	}
 	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
-	// Stops the OTP delivery worker and the WebSocket event consumer, which
-	// start below, before the services close when startup fails after them.
-	// Otherwise shutdown has stopped them, and stopping them again does
-	// nothing.
+	relay := newOutboxRelay(services, handlers)
+	workers := []worker{{"outbox relay", relay.Stop}}
+	if otpWorker != nil {
+		workers = append(workers, worker{"OTP delivery worker", otpWorker.Stop})
+	}
+	// Stops the workers and the WebSocket event consumer, which start below,
+	// before the services close when startup fails after them. Otherwise
+	// shutdown has stopped them, and stopping them again does nothing.
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout())
 		defer cancel()
-		if otpWorker != nil {
-			_ = otpWorker.Stop(ctx)
+		for _, w := range workers {
+			_ = w.stop(ctx)
 		}
 		_ = handlers.Socket.Shutdown(ctx)
 	}()
@@ -146,6 +151,7 @@ func run() error {
 			return fmt.Errorf("failed to start the OTP delivery worker: %w", err)
 		}
 	}
+	relay.Start()
 
 	serverAddr := fmt.Sprintf("%s:%s", config.Config.Server.IP, config.Config.Server.Port)
 
@@ -183,7 +189,7 @@ func run() error {
 
 	ctx, stop := stopSignals()
 	defer stop()
-	return serve(ctx, srv, listen, handlers, otpWorker, shutdownTimeout(), drainTime())
+	return serve(ctx, srv, listen, handlers, workers, shutdownTimeout(), drainTime())
 }
 
 // stopSignals returns a context that a SIGINT or SIGTERM cancels.
@@ -208,7 +214,7 @@ func drainTime() time.Duration {
 // timeout. It returns the server's failure, if any, joined with the errors of
 // the shutdown. A server that failed skips the drain, since nothing reaches
 // it any more.
-func serve(ctx context.Context, srv *http.Server, listen func() error, handlers *InfraHandlers, otpWorker *notify.Worker, timeout, drain time.Duration) error {
+func serve(ctx context.Context, srv *http.Server, listen func() error, handlers *InfraHandlers, workers []worker, timeout, drain time.Duration) error {
 	served := make(chan error, 1)
 	go func() { served <- listen() }()
 
@@ -226,7 +232,7 @@ func serve(ctx context.Context, srv *http.Server, listen func() error, handlers 
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	err := shutdown(shutdownCtx, srv, handlers, otpWorker, drain)
+	err := shutdown(shutdownCtx, srv, handlers, workers, drain)
 	if failure == nil {
 		if err := <-served; !errors.Is(err, http.ErrServerClosed) {
 			failure = fmt.Errorf("the HTTP server stopped: %w", err)
@@ -244,14 +250,16 @@ func serve(ctx context.Context, srv *http.Server, listen func() error, handlers 
 //     to notice.
 //  3. The HTTP server stops accepting connections and waits for the requests
 //     in flight. When ctx expires first, it closes their connections.
-//  4. The OTP delivery worker stops, after the requests that queue codes.
+//  4. The workers stop, after the requests that give them work: the outbox
+//     relay, whose undelivered messages another instance relays, and the
+//     OTP delivery worker.
 //  5. The WebSocket clients get a close frame, and the event consumer stops.
 //
 // Each step runs even when an earlier one fails, and all share the deadline
 // of ctx. The caller closes RabbitMQ, Redis, and PostgreSQL afterwards. The
 // shared state in Redis, such as the currency cache, stays, because the
 // other instances keep serving from it.
-func shutdown(ctx context.Context, srv *http.Server, handlers *InfraHandlers, otpWorker *notify.Worker, drain time.Duration) error {
+func shutdown(ctx context.Context, srv *http.Server, handlers *InfraHandlers, workers []worker, drain time.Duration) error {
 	handlers.System.StartDraining()
 	srv.SetKeepAlivesEnabled(false)
 	if drain > 0 {
@@ -267,17 +275,39 @@ func shutdown(ctx context.Context, srv *http.Server, handlers *InfraHandlers, ot
 		errs = append(errs, fmt.Errorf("HTTP server: %w", err))
 		_ = srv.Close()
 	}
-	// The worker publishes dead-letter records, so it stops before the
-	// services, and RabbitMQ with them, are closed.
-	if otpWorker != nil {
-		if err := otpWorker.Stop(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("OTP delivery worker: %w", err))
+	// The workers publish, so they stop before the services, and RabbitMQ
+	// with them, are closed.
+	for _, w := range workers {
+		if err := w.stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", w.name, err))
 		}
 	}
 	if err := handlers.Socket.Shutdown(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("WebSocket clients: %w", err))
 	}
 	return errors.Join(errs...)
+}
+
+// worker is a background worker that shutdown stops once the HTTP server
+// has stopped.
+type worker struct {
+	name string
+	stop func(ctx context.Context) error
+}
+
+// newOutboxRelay returns the relay of the outbox, which drops the cached
+// currency list and publishes the currency events to the price updates
+// exchange, and lets the admin handler nudge it after a change. Every
+// instance runs one; one at a time relays.
+func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers) *outbox.Relay {
+	route := outbox.Route{Exchange: config.Config.RabbitMQ.Exchanges.PriceUpdates}
+	if catalog := handlers.Public.Currencies; catalog != nil {
+		route.Before = catalog.Invalidate
+	}
+	relay := outbox.NewRelay(services.Postgres.DB, services.RabbitMQ,
+		map[string]outbox.Route{models.CurrencyEventTopic: route}, outbox.Options{})
+	handlers.Admin.Outbox = relay
+	return relay
 }
 
 // adminSignInKey decodes admin.totp_key. Without it, admin sign-in is
