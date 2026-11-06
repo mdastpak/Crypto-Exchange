@@ -253,6 +253,39 @@ func TestFlush_OneInstanceAtATime(t *testing.T) {
 	assert.Equal(t, want, p.messages(), "each message once, in order")
 }
 
+// slowPublisher takes delay for every message, as a broker that is slow
+// but not failing.
+type slowPublisher struct {
+	publisher
+	delay time.Duration
+}
+
+func (p *slowPublisher) Publish(ctx context.Context, exchange, message string) error {
+	time.Sleep(p.delay)
+	return p.publisher.Publish(ctx, exchange, message)
+}
+
+// TestFlush_ASlowBrokerEndsTheBatchEarly checks that a batch stops sending
+// after its time, so that its transaction does not stay open for the whole
+// batch, and that Flush goes on with the next batch.
+func TestFlush_ASlowBrokerEndsTheBatchEarly(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	enqueue(t, db, "a", "a1", "a2", "a3", "a4")
+	p := &slowPublisher{delay: 30 * time.Millisecond}
+	r := newRelay(db, p, twoTopics)
+	r.batchTime = 50 * time.Millisecond
+
+	published, more, err := r.relayBatch(context.Background())
+	require.NoError(t, err)
+	assert.Less(t, published, 4, "the batch ends after its time")
+	assert.True(t, more)
+
+	total, err := r.Flush(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 4, published+total)
+	assert.Equal(t, []string{"ex-a:a1", "ex-a:a2", "ex-a:a3", "ex-a:a4"}, p.messages(), "in order across batches")
+}
+
 func TestBackoff_DoublesUpToFiveMinutes(t *testing.T) {
 	assert.Equal(t, time.Second, backoff(1))
 	assert.Equal(t, 2*time.Second, backoff(2))

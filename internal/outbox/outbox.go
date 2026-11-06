@@ -55,6 +55,10 @@ const (
 	defaultRetention = 7 * 24 * time.Hour
 	// sendTimeout bounds Before and Publish for one message.
 	sendTimeout = 10 * time.Second
+	// maxBatchTime bounds the sending of one batch, whose transaction holds
+	// a connection and the lock: a broker that is slow but not failing ends
+	// the batch early, and the rest goes in the next one.
+	maxBatchTime = 10 * time.Second
 	// maxBackoff bounds the wait between the attempts of a message.
 	maxBackoff = 5 * time.Minute
 	// cleanupEvery is how often published messages past the retention are
@@ -86,6 +90,8 @@ type Relay struct {
 	interval  time.Duration
 	retention time.Duration
 	logger    *log.Logger
+	// batchTime is maxBatchTime; tests shorten it.
+	batchTime time.Duration
 
 	nudge    chan struct{}
 	stop     chan struct{}
@@ -101,7 +107,8 @@ func NewRelay(db *sql.DB, publisher Publisher, routes map[string]Route, opts Opt
 	r := &Relay{
 		db: db, publisher: publisher, routes: routes,
 		batch: opts.Batch, interval: opts.Interval, retention: opts.Retention, logger: opts.Logger,
-		nudge: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
+		batchTime: maxBatchTime,
+		nudge:     make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	if r.batch <= 0 {
 		r.batch = defaultBatch
@@ -210,8 +217,8 @@ type message struct {
 }
 
 // relayBatch relays up to batch pending messages in one transaction, under
-// the advisory lock. more reports whether a full batch was published, so
-// that more messages may be ready.
+// the advisory lock, for at most maxBatchTime. more reports whether more
+// messages may be ready: the batch was full, or it ran out of time.
 func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -235,8 +242,14 @@ func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err e
 	// The first message of a topic that cannot be sent now holds back the
 	// later ones, so that a topic's messages are published in order.
 	blocked := make(map[string]bool)
+	deadline := time.Now().Add(r.batchTime)
+	outOfTime := false
 	for _, msg := range pending {
 		if r.stopping() {
+			break
+		}
+		if time.Now().After(deadline) {
+			outOfTime = true
 			break
 		}
 		if blocked[msg.topic] {
@@ -262,7 +275,7 @@ func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err e
 	if err := tx.Commit(); err != nil {
 		return 0, false, fmt.Errorf("record the published messages, which are published again: %w", err)
 	}
-	return published, len(pending) == r.batch && published > 0, nil
+	return published, published > 0 && (len(pending) == r.batch || outOfTime), nil
 }
 
 func (r *Relay) pending(ctx context.Context, tx *sql.Tx) ([]message, error) {
