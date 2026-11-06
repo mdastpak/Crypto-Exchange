@@ -63,9 +63,9 @@ func accessTokenOf(t *testing.T, w *httptest.ResponseRecorder) string {
 // startSession signs a user in and returns the tokens of the new session.
 func (e *e2eEnv) startSession(t *testing.T, contact string) userSession {
 	t.Helper()
-	status, resp := e.post(t, "/public/auth", map[string]string{"username": contact}, "")
+	status, resp := e.post(t, "/api/v1/public/auth", map[string]string{"username": contact}, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)
-	w := e.send(t, http.MethodPost, "/public/auth/"+resp.Info["uuid"].(string), map[string]string{"otp": e.sender.last(contact)}, "", "")
+	w := e.send(t, http.MethodPost, "/api/v1/public/auth/"+resp.Info["uuid"].(string), map[string]string{"otp": e.sender.last(contact)}, "", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	cookie := refreshTokenCookie(w)
 	require.NotNil(t, cookie)
@@ -80,7 +80,7 @@ func (e *e2eEnv) startSession(t *testing.T, contact string) userSession {
 // session with the new tokens.
 func (e *e2eEnv) refreshSession(t *testing.T, s userSession) userSession {
 	t.Helper()
-	w := e.send(t, http.MethodPost, "/public/auth/refresh", nil, "", s.refresh)
+	w := e.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", s.refresh)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	cookie := refreshTokenCookie(w)
 	require.NotNil(t, cookie)
@@ -91,7 +91,7 @@ func (e *e2eEnv) refreshSession(t *testing.T, s userSession) userSession {
 // profileStatus returns the status of GET /user/profile with token.
 func (e *e2eEnv) profileStatus(t *testing.T, token string) int {
 	t.Helper()
-	return e.send(t, http.MethodGet, "/user/profile", nil, token, "").Code
+	return e.send(t, http.MethodGet, "/api/v1/user/profile", nil, token, "").Code
 }
 
 func (e *e2eEnv) sessionStatus(t *testing.T, sessionID string) string {
@@ -114,14 +114,14 @@ func TestUserSessions_EndToEnd(t *testing.T) {
 		require.Equal(t, http.StatusOK, env.profileStatus(t, first.access), "the access token issued before the refresh is still valid")
 		require.Equal(t, http.StatusOK, env.profileStatus(t, second.access))
 
-		w := env.send(t, http.MethodPost, "/user/logout", nil, second.access, "")
+		w := env.send(t, http.MethodPost, "/api/v1/user/logout", nil, second.access, "")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		w = env.send(t, http.MethodGet, "/user/profile", nil, first.access, "")
+		w = env.send(t, http.MethodGet, "/api/v1/user/profile", nil, first.access, "")
 		assert.Equal(t, http.StatusUnauthorized, w.Code, "an earlier access token of the session is rejected")
 		assert.Contains(t, w.Body.String(), "Session is not active")
 		assert.Equal(t, http.StatusUnauthorized, env.profileStatus(t, second.access))
-		assert.Equal(t, http.StatusUnauthorized, env.send(t, http.MethodPost, "/public/auth/refresh", nil, "", second.refresh).Code)
+		assert.Equal(t, http.StatusUnauthorized, env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", second.refresh).Code)
 		assert.Equal(t, http.StatusOK, env.profileStatus(t, other.access), "another session of the same user is not affected")
 	})
 
@@ -130,13 +130,13 @@ func TestUserSessions_EndToEnd(t *testing.T) {
 		second := env.refreshSession(t, first)
 
 		// Replaying the rotated refresh token is treated as theft.
-		w := env.send(t, http.MethodPost, "/public/auth/refresh", nil, "", first.refresh)
+		w := env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", first.refresh)
 		require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
 		require.Equal(t, "REVOKED", env.sessionStatus(t, first.sessionID))
 
 		assert.Equal(t, http.StatusUnauthorized, env.profileStatus(t, first.access), "the attacker's access token is rejected")
 		assert.Equal(t, http.StatusUnauthorized, env.profileStatus(t, second.access))
-		assert.Equal(t, http.StatusUnauthorized, env.send(t, http.MethodPost, "/public/auth/refresh", nil, "", second.refresh).Code)
+		assert.Equal(t, http.StatusUnauthorized, env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", second.refresh).Code)
 	})
 
 	for name, change := range map[string]string{
@@ -153,11 +153,11 @@ func TestUserSessions_EndToEnd(t *testing.T) {
 			require.NoError(t, err)
 
 			for _, method := range []string{http.MethodGet, http.MethodPatch} {
-				w := env.send(t, method, "/user/profile", map[string]string{"first_name": "Changed"}, session.access, "")
+				w := env.send(t, method, "/api/v1/user/profile", map[string]string{"first_name": "Changed"}, session.access, "")
 				assert.Equal(t, http.StatusForbidden, w.Code, method)
 				assert.Contains(t, w.Body.String(), "This account is not available. Please contact support.")
 			}
-			w := env.send(t, http.MethodPost, "/public/auth/refresh", nil, "", session.refresh)
+			w := env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", session.refresh)
 			assert.Equal(t, http.StatusForbidden, w.Code, "no new tokens for a user who can no longer sign in")
 			assert.NotContains(t, w.Body.String(), "access_token")
 			if cookie := refreshTokenCookie(w); assert.NotNil(t, cookie) {
@@ -166,7 +166,7 @@ func TestUserSessions_EndToEnd(t *testing.T) {
 
 			// The user can still end the session, and it stays ended when
 			// the account is restored.
-			w = env.send(t, http.MethodPost, "/user/logout", nil, session.access, "")
+			w = env.send(t, http.MethodPost, "/api/v1/user/logout", nil, session.access, "")
 			assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			assert.Equal(t, "REVOKED", env.sessionStatus(t, session.sessionID))
 			_, err = env.db.Exec(`UPDATE users SET status = 'ACTIVE', deleted_at = NULL WHERE hk = $1`, session.userID)

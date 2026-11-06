@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -99,11 +100,13 @@ func authLimit(action string) (int, time.Duration) {
 
 // AuthRateLimit limits an authentication route per client IP, in the window
 // of the action. Each route counts separately, so that, for example, user
-// sign-in traffic cannot use up the budget of admin sign-in.
+// sign-in traffic cannot use up the budget of admin sign-in. The versioned
+// path of a route and its deprecated alias count together: the key is the
+// path without helpers.APIPrefix, so the alias does not double the limit.
 func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
 	limit, window := authLimit(action)
 	return rl.fixedWindowMiddleware("auth:"+action, limit, window, denies(config.Config.RateLimits.Auth.OnError), func(c *gin.Context) string {
-		return c.FullPath() + ":" + rl.getClientIP(c)
+		return strings.TrimPrefix(c.FullPath(), helpers.APIPrefix) + ":" + rl.getClientIP(c)
 	})
 }
 

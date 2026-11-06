@@ -572,6 +572,74 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	}
 }
 
+// apiV1Since is when the unversioned paths were deprecated.
+var apiV1Since = time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+
+// registerAPI registers the routes of the API under g.
+func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimiter) {
+	socketGroup := g.Group("/ws")
+	{
+		socketGroup.Use(rl.WSRateLimit())
+		socketGroup.GET("/", ih.Socket.ServeWSGin)
+	}
+
+	// Public routes fall under the REST limit. Sign-in adds limits of its own:
+	// code requests per hour and code verifications per minute.
+	publicGroup := g.Group("/public")
+	{
+		publicGroup.GET("/currencies", ih.Public.GetActiveCurrencies)
+		publicGroup.GET("/currencies/:hk", ih.Public.GetCurrencyByHK)
+		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), ih.Public.RequestOTP)
+		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.VerifyOTP)
+		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
+		// The refresh token cookie is scoped to /public/auth, so logout lives
+		// here too, behind the same authentication as /user/logout.
+		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), func(c *gin.Context) {
+			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
+		})
+	}
+
+	// Admin sign-in is public, rate-limited like user sign-in, and separate
+	// from the admin group, which requires an admin token.
+	adminAuthGroup := g.Group("/admin/auth")
+	{
+		adminAuthGroup.POST("", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.RequestSignIn)
+		adminAuthGroup.POST("/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Admin.VerifySignIn)
+	}
+
+	adminGroup := g.Group("/admin")
+	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
+	adminGroup.Use(ih.Admin.RequireActiveAdmin())
+	adminGroup.Use(rl.TradingRateLimit())
+	{
+		adminGroup.POST("/currencies", ih.Admin.CreateCurrency)
+		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)
+		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
+		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
+		adminGroup.POST("/logout", func(c *gin.Context) {
+			// Admin tokens have no session or refresh token to revoke.
+			auth.LogoutHandler(c, ih.TokenBlacklist, nil)
+		})
+	}
+
+	userGroup := g.Group("/user")
+	userGroup.Use(auth.JWTUserVerification(ih.TokenBlacklist))
+	userGroup.Use(rl.TradingRateLimit())
+	{
+		// Logout needs no active session, so that a user whose account was
+		// disabled can still end the session.
+		userGroup.POST("/logout", func(c *gin.Context) {
+			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
+		})
+
+		// Every other user route requires an active session and a user who
+		// can still sign in.
+		activeGroup := userGroup.Group("", auth.RequireActiveSession(ih.Sessions))
+		activeGroup.GET("/profile", ih.User.GetProfile)
+		activeGroup.PATCH("/profile", ih.User.UpdateProfile)
+	}
+}
+
 // probeRoutes are the health probes. They must answer while Redis is down,
 // so the REST limit counts them in memory instead of in Redis.
 var probeRoutes = []string{"/system/live", "/system/ready", "/system/healthcheck", "/system/ping"}
@@ -603,14 +671,8 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
 	})
 	if config.Config.SwaggerEnabled() {
-		docs.SwaggerInfo.BasePath = "/"
+		docs.SwaggerInfo.BasePath = helpers.APIPrefix
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	}
-
-	socketGroup := r.Group("/ws")
-	{
-		socketGroup.Use(rl.WSRateLimit())
-		socketGroup.GET("/", ih.Socket.ServeWSGin)
 	}
 
 	systemGroup := r.Group("/system")
@@ -621,60 +683,12 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		systemGroup.GET("/ping", ih.System.PingPongHandler)
 	}
 
-	// Public routes fall under the REST limit. Sign-in adds limits of its own:
-	// code requests per hour and code verifications per minute.
-	publicGroup := r.Group("/public")
-	{
-		publicGroup.GET("/currencies", ih.Public.GetActiveCurrencies)
-		publicGroup.GET("/currencies/:hk", ih.Public.GetCurrencyByHK)
-		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), ih.Public.RequestOTP)
-		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.VerifyOTP)
-		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
-		// The refresh token cookie is scoped to /public/auth, so logout lives
-		// here too, behind the same authentication as /user/logout.
-		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), func(c *gin.Context) {
-			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
-		})
-	}
-
-	// Admin sign-in is public, rate-limited like user sign-in, and separate
-	// from the admin group, which requires an admin token.
-	adminAuthGroup := r.Group("/admin/auth")
-	{
-		adminAuthGroup.POST("", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.RequestSignIn)
-		adminAuthGroup.POST("/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Admin.VerifySignIn)
-	}
-
-	adminGroup := r.Group("/admin")
-	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
-	adminGroup.Use(ih.Admin.RequireActiveAdmin())
-	adminGroup.Use(rl.TradingRateLimit())
-	{
-		adminGroup.POST("/currencies", ih.Admin.CreateCurrency)
-		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)
-		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
-		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
-		adminGroup.POST("/logout", func(c *gin.Context) {
-			// Admin tokens have no session or refresh token to revoke.
-			auth.LogoutHandler(c, ih.TokenBlacklist, nil)
-		})
-	}
-
-	userGroup := r.Group("/user")
-	userGroup.Use(auth.JWTUserVerification(ih.TokenBlacklist))
-	userGroup.Use(rl.TradingRateLimit())
-	{
-		// Logout needs no active session, so that a user whose account was
-		// disabled can still end the session.
-		userGroup.POST("/logout", func(c *gin.Context) {
-			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
-		})
-
-		// Every other user route requires an active session and a user who
-		// can still sign in.
-		activeGroup := userGroup.Group("", auth.RequireActiveSession(ih.Sessions))
-		activeGroup.GET("/profile", ih.User.GetProfile)
-		activeGroup.PATCH("/profile", ih.User.UpdateProfile)
-	}
+	// The API is versioned under /api/v1 (#53). The unversioned paths of
+	// earlier releases answer the same, as deprecated aliases that point to
+	// their successor, until they are removed. The rate limits count both
+	// paths of a route together. The health probes above are not part of
+	// the API: orchestrators and load balancers call them.
+	registerAPI(r.Group(helpers.APIPrefix), ih, rl)
+	registerAPI(r.Group("", middleware.Deprecated(helpers.APIPrefix, apiV1Since)), ih, rl)
 	return nil
 }

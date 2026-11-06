@@ -184,6 +184,8 @@ The data-protection keys, which future row seals and field encryption build on, 
 
 ## API overview
 
+The API is versioned under `/api/v1`: the paths of the API in the table below are relative to it, so `/public/currencies` is `/api/v1/public/currencies`. The health probes under `/system/` are not part of the API and have no version. The unversioned paths of earlier releases still answer as deprecated aliases, with `Deprecation` and `Link` headers that point to the versioned path ([docs/api.md](docs/api.md#versions)).
+
 All JSON responses, except the system endpoints, use this envelope:
 
 ```json

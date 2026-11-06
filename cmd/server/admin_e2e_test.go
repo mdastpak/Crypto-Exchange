@@ -249,7 +249,7 @@ func (e *e2eEnv) post(t *testing.T, path string, body interface{}, token string)
 // the emailed code.
 func (e *e2eEnv) requestAdminCode(t *testing.T, email string) (string, string) {
 	t.Helper()
-	status, resp := e.post(t, "/admin/auth", map[string]string{"email": email}, "")
+	status, resp := e.post(t, "/api/v1/admin/auth", map[string]string{"email": email}, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	return resp.Info["uuid"].(string), e.sender.last(email)
 }
@@ -257,9 +257,9 @@ func (e *e2eEnv) requestAdminCode(t *testing.T, email string) (string, string) {
 // signInUser completes the user OTP sign-in and returns the access token.
 func (e *e2eEnv) signInUser(t *testing.T, contact string) (int, e2eResponse) {
 	t.Helper()
-	status, resp := e.post(t, "/public/auth", map[string]string{"username": contact}, "")
+	status, resp := e.post(t, "/api/v1/public/auth", map[string]string{"username": contact}, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)
-	return e.post(t, "/public/auth/"+resp.Info["uuid"].(string), map[string]string{"otp": e.sender.last(contact)}, "")
+	return e.post(t, "/api/v1/public/auth/"+resp.Info["uuid"].(string), map[string]string{"otp": e.sender.last(contact)}, "")
 }
 
 func currentTOTP(t *testing.T, enrollment adminauth.Enrollment) string {
@@ -292,7 +292,7 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 	sessionID, code := env.requestAdminCode(t, email)
 	require.NotEmpty(t, code, "the sign-in code must be emailed to the administrator")
 	adminTOTP := currentTOTP(t, enrollment)
-	status, resp := env.post(t, "/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": adminTOTP}, "")
+	status, resp := env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": adminTOTP}, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	adminToken := resp.Info["access_token"].(string)
 	require.NotEmpty(t, adminToken)
@@ -305,26 +305,26 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 	).Scan(&verified))
 	assert.True(t, verified, "the emailed code verifies the address that the operator entered")
 
-	status, resp = env.post(t, "/admin/currencies", testCurrency("E2E"), adminToken)
+	status, resp = env.post(t, "/api/v1/admin/currencies", testCurrency("E2E"), adminToken)
 	assert.Equal(t, http.StatusCreated, status, resp.Message)
 
 	t.Run("an authenticator code works once", func(t *testing.T) {
 		sessionID, code := env.requestAdminCode(t, email)
-		status, resp := env.post(t, "/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": adminTOTP}, "")
+		status, resp := env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": adminTOTP}, "")
 		assert.Equal(t, http.StatusUnauthorized, status)
 		assert.Equal(t, "Invalid or expired code", resp.Message)
 	})
 
 	t.Run("a wrong authenticator code ends the sign-in", func(t *testing.T) {
 		sessionID, code := env.requestAdminCode(t, email)
-		status, _ := env.post(t, "/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": "000000"}, "")
+		status, _ := env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": "000000"}, "")
 		assert.Equal(t, http.StatusUnauthorized, status)
-		status, _ = env.post(t, "/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, enrollment)}, "")
+		status, _ = env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, enrollment)}, "")
 		assert.Equal(t, http.StatusUnauthorized, status, "the emailed code was used up by the failed attempt")
 	})
 
 	t.Run("unknown addresses get the same answer and no email", func(t *testing.T) {
-		status, resp := env.post(t, "/admin/auth", map[string]string{"email": "nobody@example.com"}, "")
+		status, resp := env.post(t, "/api/v1/admin/auth", map[string]string{"email": "nobody@example.com"}, "")
 		assert.Equal(t, http.StatusOK, status)
 		assert.NotEmpty(t, resp.Info["uuid"])
 		assert.Zero(t, env.sender.count("nobody@example.com"))
@@ -332,16 +332,16 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 
 	t.Run("user sign-in sessions are unknown to admin sign-in", func(t *testing.T) {
 		const contact = "someone@example.com"
-		status, resp := env.post(t, "/public/auth", map[string]string{"username": contact}, "")
+		status, resp := env.post(t, "/api/v1/public/auth", map[string]string{"username": contact}, "")
 		require.Equal(t, http.StatusOK, status, resp.Message)
 		userSession := resp.Info["uuid"].(string)
 		code := env.sender.last(contact)
 
-		status, _ = env.post(t, "/admin/auth/"+userSession, map[string]string{"otp": code, "totp": "000000"}, "")
+		status, _ = env.post(t, "/api/v1/admin/auth/"+userSession, map[string]string{"otp": code, "totp": "000000"}, "")
 		assert.Equal(t, http.StatusUnauthorized, status)
 
 		// Admin sign-in did not find, and so did not use up, the user session.
-		status, resp = env.post(t, "/public/auth/"+userSession, map[string]string{"otp": code}, "")
+		status, resp = env.post(t, "/api/v1/public/auth/"+userSession, map[string]string{"otp": code}, "")
 		assert.Equal(t, http.StatusOK, status, resp.Message)
 	})
 
@@ -356,15 +356,15 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, resp.Message)
 		userToken := resp.Info["access_token"].(string)
 
-		status, _ = env.post(t, "/admin/currencies", testCurrency("USR"), userToken)
+		status, _ = env.post(t, "/api/v1/admin/currencies", testCurrency("USR"), userToken)
 		assert.Equal(t, http.StatusUnauthorized, status)
 	})
 
 	t.Run("logout ends the admin token", func(t *testing.T) {
-		status, resp := env.post(t, "/admin/logout", nil, adminToken)
+		status, resp := env.post(t, "/api/v1/admin/logout", nil, adminToken)
 		require.Equal(t, http.StatusOK, status, resp.Message)
 
-		status, _ = env.post(t, "/admin/currencies", testCurrency("OUT"), adminToken)
+		status, _ = env.post(t, "/api/v1/admin/currencies", testCurrency("OUT"), adminToken)
 		assert.Equal(t, http.StatusUnauthorized, status)
 	})
 
@@ -372,7 +372,7 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 		require.NoError(t, env.accounts.Disable(ctx, email))
 		before := env.sender.count(email)
 
-		status, _ := env.post(t, "/admin/auth", map[string]string{"email": email}, "")
+		status, _ := env.post(t, "/api/v1/admin/auth", map[string]string{"email": email}, "")
 		assert.Equal(t, http.StatusOK, status)
 		assert.Equal(t, before, env.sender.count(email), "no code is sent to a disabled administrator")
 	})
@@ -382,7 +382,7 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 func (e *e2eEnv) signInAdmin(t *testing.T, enrollment adminauth.Enrollment) string {
 	t.Helper()
 	sessionID, code := e.requestAdminCode(t, enrollment.Email)
-	status, resp := e.post(t, "/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, enrollment)}, "")
+	status, resp := e.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, enrollment)}, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	return resp.Info["access_token"].(string)
 }
@@ -398,22 +398,22 @@ func TestAdminRole_DatabaseChanges(t *testing.T) {
 
 	t.Run("demotion revokes issued admin tokens at once", func(t *testing.T) {
 		token := env.signInAdmin(t, admin)
-		status, resp := env.post(t, "/admin/currencies", testCurrency("DB1"), token)
+		status, resp := env.post(t, "/api/v1/admin/currencies", testCurrency("DB1"), token)
 		require.Equal(t, http.StatusCreated, status, resp.Message)
 
 		_, err := env.db.Exec(`UPDATE users SET role = 'user' WHERE hk = $1`, admin.AdminID)
 		require.NoError(t, err)
-		status, resp = env.post(t, "/admin/currencies", testCurrency("DB2"), token)
+		status, resp = env.post(t, "/api/v1/admin/currencies", testCurrency("DB2"), token)
 		assert.Equal(t, http.StatusUnauthorized, status, "a valid signature is not enough once the stored role changed")
 		assert.Equal(t, "Unauthorized - Administrator is not active", resp.Message)
 
 		_, err = env.db.Exec(`UPDATE users SET role = 'admin' WHERE hk = $1`, admin.AdminID)
 		require.NoError(t, err)
-		status, _ = env.post(t, "/admin/currencies", testCurrency("DB3"), token)
+		status, _ = env.post(t, "/api/v1/admin/currencies", testCurrency("DB3"), token)
 		assert.Equal(t, http.StatusCreated, status)
 
 		require.NoError(t, env.accounts.Disable(ctx, admin.Email))
-		status, _ = env.post(t, "/admin/currencies", testCurrency("DB4"), token)
+		status, _ = env.post(t, "/api/v1/admin/currencies", testCurrency("DB4"), token)
 		assert.Equal(t, http.StatusUnauthorized, status, "disabling also revokes issued tokens")
 	})
 
@@ -428,7 +428,7 @@ func TestAdminRole_DatabaseChanges(t *testing.T) {
 		_, err := env.db.Exec(`UPDATE users SET role = 'admin' WHERE hk = $1`, intruderID)
 		require.NoError(t, err)
 		before := env.sender.count("intruder@example.com")
-		status, _ = env.post(t, "/admin/auth", map[string]string{"email": "intruder@example.com"}, "")
+		status, _ = env.post(t, "/api/v1/admin/auth", map[string]string{"email": "intruder@example.com"}, "")
 		assert.Equal(t, http.StatusOK, status)
 		assert.Equal(t, before, env.sender.count("intruder@example.com"))
 
@@ -440,7 +440,7 @@ func TestAdminRole_DatabaseChanges(t *testing.T) {
 			totp_secret = (SELECT totp_secret FROM users WHERE hk = $1) WHERE hk = $2`, other.AdminID, intruderID)
 		require.NoError(t, err)
 		sessionID, code := env.requestAdminCode(t, "intruder@example.com")
-		status, resp = env.post(t, "/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, other)}, "")
+		status, resp = env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, other)}, "")
 		assert.NotEqual(t, http.StatusOK, status, "no admin token without a secret sealed with admin.totp_key")
 		assert.Empty(t, resp.Info["access_token"])
 	})
@@ -451,10 +451,10 @@ func TestAdminSignIn_UnavailableWithoutAdminKeys(t *testing.T) {
 	// Without admin keys, sign-in cannot issue tokens, so it does not start.
 	require.NoError(t, auth.SetKeys(map[string]auth.KeyPair{auth.RoleUser: pemKeyPair(t)}))
 
-	status, resp := env.post(t, "/admin/auth", map[string]string{"email": "admin@example.com"}, "")
+	status, resp := env.post(t, "/api/v1/admin/auth", map[string]string{"email": "admin@example.com"}, "")
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 	assert.Equal(t, "Admin sign-in is not available", resp.Message)
 
-	status, _ = env.post(t, "/admin/auth/"+uuid.NewString(), map[string]string{"otp": "123456", "totp": "123456"}, "")
+	status, _ = env.post(t, "/api/v1/admin/auth/"+uuid.NewString(), map[string]string{"otp": "123456", "totp": "123456"}, "")
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
