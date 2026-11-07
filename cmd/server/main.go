@@ -576,12 +576,14 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// An open connection keeps those checks: it is closed once its session
 	// ends or its user can no longer sign in (#189).
 	ws.VerifySession = sessions.Verify
+	userHandler := user.NewHandler(services)
+	userHandler.Sessions = sessions
 	return &InfraHandlers{
 		Socket:         ws,
 		System:         system.NewHandler(services),
 		Admin:          admin.NewHandler(services),
 		Public:         public.NewHandler(services),
-		User:           user.NewHandler(services),
+		User:           userHandler,
 		Redis:          services.Redis,
 		TokenBlacklist: tb,
 		Sessions:       sessions,
@@ -693,6 +695,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup := userGroup.Group("", auth.RequireActiveSession(ih.Sessions))
 		activeGroup.GET("/profile", ih.User.GetProfile)
 		activeGroup.PATCH("/profile", ih.User.UpdateProfile)
+		activeGroup.GET("/sessions", ih.User.ListSessions)
+		activeGroup.DELETE("/sessions", ih.User.RevokeOtherSessions)
+		activeGroup.DELETE("/sessions/:id", ih.User.RevokeSession)
 	}
 }
 

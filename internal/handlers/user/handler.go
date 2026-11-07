@@ -1,6 +1,7 @@
 package user
 
 import (
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
@@ -12,6 +13,8 @@ type UserHandler struct {
 	RedisClient     *db.RedisService
 	RedisIndex      string // Redis index for base definitions
 	RabbitMQService *rabbitmq.RabbitMQService
+	// Sessions lists and ends the sessions of the signed-in user (#193).
+	Sessions auth.SessionManager
 }
 
 // NewHandler function to initialize CurrenciesUserHandler with dependencies
