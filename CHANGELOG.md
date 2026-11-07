@@ -67,6 +67,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Contract tests: every response that the end-to-end tests receive is checked against the OpenAPI document ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53), third part).
   - The status must be documented for the operation, or covered by its `default` response, and the JSON body must match the schema, with no property that the schema lacks. A deprecated alias is checked against the operation of its versioned path.
   - The new `internal/testutil/openapitest` reads the subset of Swagger 2.0 that swag generates, without a new dependency.
+- A pagination convention for the list endpoints that can grow ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53), last part). Requests take `limit` (1 to 200, 50 by default) and an opaque `cursor`, and the info of a page is `{"items": [...], "next_cursor": "..."}`.
+  - The new `internal/pagination` implements it as keyset pagination. The cursor holds the sort key of the last item, so pages stay stable as rows are added, each page costs one index range scan, and no state is kept on the server.
+  - The public currency list stays whole.
 
 ### Fixed
 

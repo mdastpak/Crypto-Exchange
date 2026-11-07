@@ -79,6 +79,17 @@ An error response contains only a fixed message for each error. Internal details
 | `unavailable` | `503` | A dependency is unavailable; try again later |
 | `error` | other | A status without a code of its own |
 
+### Pagination
+
+List endpoints that can grow, such as the order and trade histories to come, return one page at a time ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53)):
+
+- **Query parameters.** `limit` is the number of items, from 1 to 200, and 50 by default. `cursor` is the `next_cursor` of the previous page.
+- **The page.** `info` is `{"items": [...], "next_cursor": "..."}`, and `next_cursor` is left out on the last page. To get the next page, send the same request with `cursor` set to it.
+- **Errors.** An invalid `limit` or `cursor` gets `400` `validation_failed`, with the parameter in `info.errors`.
+- **Cursors are opaque.** Do not build or change one. A cursor holds the position after the last item of its page, in the fixed order that each list documents. So items added in the meantime neither repeat nor move between pages, and any server instance can answer the next page.
+
+`GET /public/currencies` is not paginated: it returns the whole list of public currencies, a small reference list that clients keep.
+
 ### Authentication
 
 Protected routes, including both logout routes, expect the access token with the `Bearer` scheme:
