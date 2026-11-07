@@ -245,3 +245,64 @@ func TestRun_KeysNeedAProvider(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr, "refused in release mode")
 }
+
+func TestParseArgs_Outbox(t *testing.T) {
+	for args, want := range map[string]command{
+		"outbox list":              {name: "outbox list"},
+		"outbox retry -id 7":       {name: "outbox retry", id: 7},
+		"outbox discard -id 12345": {name: "outbox discard", id: 12345},
+	} {
+		cmd, err := parseArgs(strings.Fields(args), &bytes.Buffer{})
+		require.NoError(t, err, args)
+		want.configPath, want.migrationsPath = "config/config.yaml", "file://internal/db/migrations"
+		assert.Equal(t, want, cmd, args)
+	}
+	for _, args := range []string{"outbox", "outbox purge", "outbox retry", "outbox retry -id 0", "outbox discard -id x", "outbox list extra"} {
+		_, err := parseArgs(strings.Fields(args), &bytes.Buffer{})
+		assert.Error(t, err, args)
+	}
+}
+
+func TestRun_ManagesDeadLetters(t *testing.T) {
+	resetCLITestDB(t)
+	base := writeConfig(t, "")
+
+	code, stdout, stderr := runCLI(t, append(base, "outbox", "list")...)
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, "0 messages pending; 0 dead letters.\n", stdout)
+
+	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
+	require.NoError(t, err)
+	defer conn.Close()
+	var retryID, discardID int64
+	require.NoError(t, conn.QueryRow(`INSERT INTO outbox_events (topic, payload, attempts, last_error, failed_at)
+		VALUES ('currencies', '{}', 20, 'refused
+by the broker', NOW()) RETURNING id`).Scan(&retryID))
+	require.NoError(t, conn.QueryRow(`INSERT INTO outbox_events (topic, payload, attempts, failed_at)
+		VALUES ('currencies', '{}', 20, NOW()) RETURNING id`).Scan(&discardID))
+	_, err = conn.Exec(`INSERT INTO outbox_events (topic, payload) VALUES ('currencies', '{}')`)
+	require.NoError(t, err)
+
+	code, stdout, stderr = runCLI(t, append(base, "outbox", "list")...)
+	require.Equal(t, 0, code, stderr)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	require.Len(t, lines, 4, stdout)
+	assert.Regexp(t, `^1 messages pending, the oldest for \S+; 2 dead letters\.$`, lines[0])
+	assert.Regexp(t, `^ID\s+TOPIC\s+ATTEMPTS\s+CREATED\s+FAILED\s+LAST ERROR$`, lines[1])
+	assert.Regexp(t, fmt.Sprintf(`^%d\s+currencies\s+20\s+\S+\s+\S+\s+refused by the broker$`, retryID), lines[2])
+
+	code, stdout, stderr = runCLI(t, append(base, "outbox", "retry", "-id", fmt.Sprint(retryID))...)
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "is pending again")
+	code, stdout, stderr = runCLI(t, append(base, "outbox", "discard", "-id", fmt.Sprint(discardID))...)
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "never published")
+
+	code, _, stderr = runCLI(t, append(base, "outbox", "discard", "-id", fmt.Sprint(retryID))...)
+	assert.Equal(t, 1, code, "a pending message is not a dead letter")
+	assert.Contains(t, stderr, "no dead letter has this id")
+
+	code, stdout, stderr = runCLI(t, append(base, "outbox", "list")...)
+	require.Equal(t, 0, code, stderr)
+	assert.Regexp(t, `^2 messages pending, the oldest for \S+; 0 dead letters\.\n$`, stdout)
+}
