@@ -24,6 +24,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
+	"github.com/mdastpak/crypto-exchange/internal/pagination"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
@@ -152,6 +153,7 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 		auth.SetClaims(c, &auth.Claims{UUID: s.adminID, Role: auth.RoleAdmin})
 	})
 	s.router.POST("/currencies", s.handler.CreateCurrency)
+	s.router.GET("/currencies", s.handler.ListCurrencies)
 	s.router.GET("/currencies/:hk", s.handler.GetCurrency)
 	s.router.PUT("/currencies/:hk", s.handler.UpdateCurrency)
 	s.router.DELETE("/currencies/:hk", s.handler.DeleteCurrency)
@@ -478,6 +480,129 @@ func (s *AdminCurrenciesTestSuite) TestCurrencyTimestamps_HaveATimeZone() {
 	}
 	require.NoError(s.T(), rows.Err())
 	assert.Equal(s.T(), []string{"timestamp with time zone", "timestamp with time zone", "timestamp with time zone"}, types)
+}
+
+// listPage is the info of a page of the admin list, as the tests read it.
+type listPage struct {
+	Items      []models.Currency `json:"items"`
+	NextCursor string            `json:"next_cursor"`
+}
+
+func (s *AdminCurrenciesTestSuite) list(query string) listPage {
+	s.T().Helper()
+	w := s.makeRequest(http.MethodGet, "/currencies"+query, nil)
+	require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Info listPage `json:"info"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp.Info
+}
+
+func symbols(items []models.Currency) []string {
+	out := make([]string, len(items))
+	for i, c := range items {
+		out[i] = c.Info.Symbol
+	}
+	return out
+}
+
+// TestListCurrencies_EveryStatusNewestFirst lists currencies of every status,
+// deleted ones included, newest first, with their versions (#198).
+func (s *AdminCurrenciesTestSuite) TestListCurrencies_EveryStatusNewestFirst() {
+	pending := s.createCurrency("PEN", "")
+	approved := s.createCurrency("APR", "")
+	s.update(approved, map[string]interface{}{"status": "approved"})
+	suspended := s.createCurrency("SUS", "")
+	s.update(suspended, map[string]interface{}{"status": "suspend"})
+	deleted := s.createCurrency("DEL", "")
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+deleted, nil).Code)
+	// Distinct creation times, so that the order is the order of creation.
+	_, err := s.postgresSvc.DB.Exec(`UPDATE currencies SET created_at = NOW() - make_interval(secs => id) `)
+	require.NoError(s.T(), err)
+
+	page := s.list("")
+	assert.Equal(s.T(), []string{"PEN", "APR", "SUS", "DEL"}, symbols(page.Items))
+	assert.Empty(s.T(), page.NextCursor)
+	byHK := map[string]models.Currency{}
+	for _, c := range page.Items {
+		byHK[c.HK] = c
+	}
+	assert.Equal(s.T(), models.CurrencyStatusPending, byHK[pending].Status)
+	assert.Equal(s.T(), int64(2), byHK[approved].Version)
+	assert.Equal(s.T(), models.CurrencyStatusDeleted, byHK[deleted].Status)
+	assert.NotNil(s.T(), byHK[deleted].DeletedAt)
+	assert.NotEmpty(s.T(), byHK[pending].CreatedAt)
+
+	assert.Equal(s.T(), []string{"DEL"}, symbols(s.list("?status=deleted").Items))
+	assert.Equal(s.T(), []string{"SUS"}, symbols(s.list("?status=suspend").Items))
+	assert.Equal(s.T(), []string{"APR"}, symbols(s.list("?symbol=apr").Items), "the symbol in any case")
+	assert.Empty(s.T(), s.list("?symbol=NONE").Items)
+	assert.NotNil(s.T(), s.list("?symbol=NONE").Items, "an empty page has an empty list, not null")
+}
+
+func (s *AdminCurrenciesTestSuite) TestListCurrencies_FlagFilters() {
+	token := sampleCurrencyPayload("TOK", "0xabc")
+	token["info"].(map[string]interface{})["is_token"] = true
+	require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", token).Code)
+	fiat := sampleCurrencyPayload("EUR", "")
+	fiat["info"].(map[string]interface{})["if_fiat"] = true
+	require.Equal(s.T(), http.StatusCreated, s.makeRequest(http.MethodPost, "/currencies", fiat).Code)
+	s.createCurrency("BTC", "")
+
+	assert.Equal(s.T(), []string{"TOK"}, symbols(s.list("?is_token=true").Items))
+	assert.Equal(s.T(), []string{"EUR"}, symbols(s.list("?if_fiat=true").Items))
+	assert.ElementsMatch(s.T(), []string{"EUR", "BTC"}, symbols(s.list("?is_token=false").Items))
+	assert.Equal(s.T(), []string{"BTC"}, symbols(s.list("?is_token=false&if_fiat=false").Items), "the filters combine")
+}
+
+// TestListCurrencies_PagesCoverEveryCurrencyOnce walks the list a page at a
+// time, with currencies created at the same instant, so that the hk breaks
+// the ties, and with a currency created between two pages.
+func (s *AdminCurrenciesTestSuite) TestListCurrencies_PagesCoverEveryCurrencyOnce() {
+	want := map[string]bool{}
+	for _, symbol := range []string{"AA", "BB", "CC", "DD", "EE"} {
+		want[s.createCurrency(symbol, "")] = true
+	}
+	_, err := s.postgresSvc.DB.Exec(`UPDATE currencies SET created_at = '2026-11-07T10:00:00.123456Z'`)
+	require.NoError(s.T(), err)
+
+	seen := map[string]bool{}
+	query := "?limit=2"
+	pages := 0
+	for {
+		page := s.list(query)
+		pages++
+		assert.LessOrEqual(s.T(), len(page.Items), 2)
+		for _, c := range page.Items {
+			assert.False(s.T(), seen[c.HK], "a currency on two pages")
+			seen[c.HK] = true
+		}
+		if pages == 1 {
+			// A currency created now is newer than the cursor, so it does not
+			// show on the next pages.
+			s.createCurrency("NEW", "")
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		require.Less(s.T(), pages, 10)
+		query = "?limit=2&cursor=" + page.NextCursor
+	}
+	assert.Equal(s.T(), 3, pages)
+	assert.Equal(s.T(), want, seen)
+}
+
+func (s *AdminCurrenciesTestSuite) TestListCurrencies_ValidationErrors() {
+	w := s.makeRequest(http.MethodGet, "/currencies?status=gone&is_token=maybe&limit=0&symbol=ABCDEFGHIJKLMNOP", nil)
+	s.assertFieldErrors(w, "status", "is_token", "limit", "symbol")
+	w = s.makeRequest(http.MethodGet, "/currencies?cursor=bm90LWEtY3Vyc29y", nil)
+	s.assertFieldErrors(w, "cursor")
+	// A cursor of another list, well formed but with another position.
+	other, err := pagination.Cursor(map[string]string{"hk": uuid.NewString()})
+	require.NoError(s.T(), err)
+	w = s.makeRequest(http.MethodGet, "/currencies?cursor="+other, nil)
+	s.assertFieldErrors(w, "cursor")
 }
 
 // insertApproved writes an approved currency to the database directly, as a

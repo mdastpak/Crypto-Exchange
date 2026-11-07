@@ -435,6 +435,34 @@ Errors:
 - `400` with the message `Validation failed`: `info.errors` names each invalid field, for example `{"errors": {"info.symbol": "must be 2 to 15 upper-case letters or digits"}}`.
 - `409`: the symbol or the contract belongs to another currency. `info` holds a stable code and the field: `{"code": "duplicate_symbol", "field": "info.symbol"}`, or `duplicate_contract` and `info.contract`.
 
+### `GET /admin/currencies` (admin)
+
+Lists the currencies of every status, deleted ones included, newest first, each with its `version`. It reads PostgreSQL, not the public cache, so a change shows at once. Pages follow [Pagination](#pagination); the optional filters combine:
+
+| Parameter | Selects |
+| --- | --- |
+| `status` | `approved`, `pending`, `suspend`, or `deleted` |
+| `symbol` | One symbol, in any case |
+| `is_token`, `if_fiat` | `true` or `false` |
+| `limit`, `cursor` | The page, as in [Pagination](#pagination) |
+
+```json
+{
+  "status": 200,
+  "message": "Currencies retrieved successfully.",
+  "info": {
+    "items": [
+      { "id": 7, "hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10", "status": "pending", "version": 1,
+        "info": { "en_name": "Tether", "fa_name": "تتر", "symbol": "USDT", "if_fiat": false, "is_token": true, "contract": "0xdac1..." },
+        "created_at": "2026-11-07T10:00:00Z", "updated_at": "2026-11-07T10:00:00Z" }
+    ],
+    "next_cursor": "eyJ2IjoxLCJhIjp7..."
+  }
+}
+```
+
+Errors: `400` with `validation_failed`, naming each invalid parameter. Users and anonymous clients get `401`.
+
 ### `GET /admin/currencies/{hk}` (admin)
 
 Returns one currency, whatever its status, deleted ones included, with its `version` and `deleted_at`. `hk` is a UUID in any spelling. Errors: `400` for an invalid UUID, `404` when no currency has it.
