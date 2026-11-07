@@ -72,6 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Currency changes write their event in their own transaction, so a change cannot commit without it, and one that cannot be recorded is refused with `500`.
   - Admin sign-in code requests, sign-ins, and logouts are recorded, successful or not. A successful admin sign-in that cannot be recorded issues no token. The log tells which factor of a failed sign-in was wrong, while the answer still does not.
   - `docs/architecture.md` lists the actions.
+  - Administrators query the log with the new `GET /api/v1/admin/audit`, newest first, filtered by actor, action, target, outcome, and time, with the cursors of `internal/pagination`, which it is the first to use.
 - A pagination convention for the list endpoints that can grow ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53), last part). Requests take `limit` (1 to 200, 50 by default) and an opaque `cursor`, and the info of a page is `{"items": [...], "next_cursor": "..."}`.
   - The new `internal/pagination` implements it as keyset pagination. The cursor holds the sort key of the last item, so pages stay stable as rows are added, each page costs one index range scan, and no state is kept on the server.
   - The public currency list stays whole.

@@ -27,6 +27,133 @@
                 }
             }
         },
+        "/api/v1/admin/audit": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The events that the filters select, newest first. Every filter is optional, and the filters combine. Pages follow the pagination convention of docs/api.md.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin audit"
+                ],
+                "summary": "Query the audit log",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The hk of the user or administrator",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "An action, such as currency.update",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "A target type, such as currency",
+                        "name": "target_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "A target id, such as the hk of a currency",
+                        "name": "target_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "success",
+                            "failure",
+                            "denied"
+                        ],
+                        "type": "string",
+                        "description": "The outcome",
+                        "name": "outcome",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Events at or after this time, in RFC 3339",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Events before this time, in RFC 3339",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of events, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/audit.EntryPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/auth": {
             "post": {
                 "description": "Sends a one-time code to the administrator's email address. The answer is the same whether or not the address belongs to an administrator.",
@@ -1266,6 +1393,98 @@
                 "version": {
                     "description": "Version is the version of the currency that an update is based on.\nWhen it is sent and the currency has changed since, the update is\nrefused with 409. A create may not send it.",
                     "type": "integer"
+                }
+            }
+        },
+        "audit.Changes": {
+            "type": "object",
+            "properties": {
+                "after": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "before": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "audit.Entry": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "currency.update"
+                },
+                "actor_id": {
+                    "description": "ActorID is the hk of the user or administrator.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "actor_type": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "admin",
+                        "anonymous",
+                        "system"
+                    ]
+                },
+                "changes": {
+                    "$ref": "#/definitions/audit.Changes"
+                },
+                "hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ip": {
+                    "type": "string",
+                    "example": "203.0.113.7"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "example": "2026-11-07T10:00:00Z"
+                },
+                "outcome": {
+                    "type": "string",
+                    "enum": [
+                        "success",
+                        "failure",
+                        "denied"
+                    ]
+                },
+                "reason": {
+                    "description": "Reason is the code of a failure or a denial.",
+                    "type": "string",
+                    "example": "authenticator_code_invalid"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "string"
+                },
+                "target_type": {
+                    "type": "string",
+                    "example": "currency"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
+        "audit.EntryPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/audit.Entry"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor asks for the next page. It is left out on the last page.",
+                    "type": "string"
                 }
             }
         },

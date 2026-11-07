@@ -41,7 +41,9 @@ const testDocument = `{
     }},
     "Health": {"type": "object", "properties": {
       "status": {"type": "string"},
-      "details": {"type": "object", "additionalProperties": {"type": "object", "properties": {"status": {"type": "string"}}}}
+      "details": {"type": "object", "additionalProperties": {"type": "object", "properties": {"status": {"type": "string"}}}},
+      "extra": {"type": "object", "additionalProperties": true},
+      "closed": {"type": "object", "additionalProperties": false}
     }}
   }
 }`
@@ -70,6 +72,7 @@ func TestCheck_AcceptsWhatTheDocumentDescribes(t *testing.T) {
 		"null for any type":          {"/items/7", 200, `{"status": 200, "message": "ok", "info": {"id": 7, "name": null, "tags": null}}`},
 		"plain envelope, any info":   {"/items/7", 404, `{"status": 404, "message": "no", "code": "not_found", "info": {"anything": [1, 2]}}`},
 		"a map of objects":           {"/health", 200, `{"status": "ok", "details": {"redis": {"status": "ok"}, "postgres": {"status": "ok"}}}`},
+		"a map of anything":          {"/health", 200, `{"extra": {"a": 1, "b": [true], "c": {"d": null}}}`},
 		"the default response":       {"/health", 503, `{"status": 503, "message": "down", "code": "unavailable"}`},
 		"a literal path first":       {"/items/special", 200, `{"special": true}`},
 	} {
@@ -93,16 +96,17 @@ func TestCheck_ReportsWhatDiffers(t *testing.T) {
 		body   string
 		want   string
 	}{
-		"an undocumented status":    {"/items/7", 500, `{}`, "status 500 is not documented"},
-		"an undocumented property":  {"/items/7", 200, `{"status": 200, "message": "ok", "extra": 1}`, "body.extra: is not in the documented schema"},
-		"a property of the info":    {"/items/7", 200, `{"info": {"id": 1, "secret": "x"}}`, "body.info.secret: is not in the documented schema"},
-		"a string for an integer":   {"/items/7", 200, `{"info": {"id": "7"}}`, "body.info.id: is 7, not an integer"},
-		"a fraction for an integer": {"/items/7", 200, `{"info": {"id": 7.5}}`, "not an integer"},
-		"an object for an array":    {"/items/7", 200, `{"info": {"tags": {}}}`, "body.info.tags: is map[string]interface {}, not an array"},
-		"an item of the wrong type": {"/items/7", 200, `{"info": {"tags": [1]}}`, "body.info.tags[0]: is json.Number, not a string"},
-		"a value outside the enum":  {"/items/7", 200, `{"info": {"kind": "stock"}}`, "stock is not one of [coin token]"},
-		"a map value of the wrong":  {"/health", 200, `{"details": {"redis": {"status": 1}}}`, "body.details.redis.status: is json.Number, not a string"},
-		"a body that is not JSON":   {"/items/7", 200, `not json`, "the body is not JSON"},
+		"an undocumented status":     {"/items/7", 500, `{}`, "status 500 is not documented"},
+		"an undocumented property":   {"/items/7", 200, `{"status": 200, "message": "ok", "extra": 1}`, "body.extra: is not in the documented schema"},
+		"a property of the info":     {"/items/7", 200, `{"info": {"id": 1, "secret": "x"}}`, "body.info.secret: is not in the documented schema"},
+		"a string for an integer":    {"/items/7", 200, `{"info": {"id": "7"}}`, "body.info.id: is 7, not an integer"},
+		"a fraction for an integer":  {"/items/7", 200, `{"info": {"id": 7.5}}`, "not an integer"},
+		"an object for an array":     {"/items/7", 200, `{"info": {"tags": {}}}`, "body.info.tags: is map[string]interface {}, not an array"},
+		"an item of the wrong type":  {"/items/7", 200, `{"info": {"tags": [1]}}`, "body.info.tags[0]: is json.Number, not a string"},
+		"a value outside the enum":   {"/items/7", 200, `{"info": {"kind": "stock"}}`, "stock is not one of [coin token]"},
+		"a map value of the wrong":   {"/health", 200, `{"details": {"redis": {"status": 1}}}`, "body.details.redis.status: is json.Number, not a string"},
+		"a body that is not JSON":    {"/items/7", 200, `not json`, "the body is not JSON"},
+		"a property of a closed map": {"/health", 200, `{"closed": {"a": 1}}`, "body.closed.a: is not in the documented schema"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			documented, problems := check(d, "GET", tc.path, tc.status, tc.body)

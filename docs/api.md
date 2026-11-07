@@ -458,6 +458,25 @@ Events and the cache describe what public clients can see, so they follow the vi
 | An approved currency is suspended, set back to pending, or deleted | Removed | `delete` with `info` set to `{"status": "<new status>"}` |
 | A currency that is not approved is created, updated, or deleted | Not cached | None |
 
+## Audit log
+
+### `GET /admin/audit` (admin)
+
+Returns the audit log, newest first, in pages ([#51](https://github.com/mdastpak/Crypto-Exchange/issues/51)). [The audit log](architecture.md#the-audit-log) lists the actions it records.
+
+| Parameter | Selects |
+| --- | --- |
+| `actor_id` | The events of a user or an administrator, by hk |
+| `action` | One action, such as `currency.update` or `admin.sign_in` |
+| `target_type`, `target_id` | The events of one target, such as `currency` and its hk |
+| `outcome` | `success`, `failure`, or `denied` |
+| `since`, `until` | Events at or after `since`, and before `until`, in RFC 3339 |
+| `limit`, `cursor` | The page, as in [Pagination](#pagination) |
+
+All parameters are optional and combine. Each item has the event's `hk`, `occurred_at`, `actor_type` and `actor_id`, `action`, `target_type` and `target_id`, `outcome` and `reason`, `request_id`, `ip`, `user_agent`, and, for a change, `changes` with the fields before and after.
+
+Errors: `400` `validation_failed` naming each invalid parameter; `401` and `403` as for the other admin routes.
+
 ## User
 
 The user routes require a user access token. The profile routes take no user ID: they always act on the user that the token names, so a user cannot read or change another user's profile.

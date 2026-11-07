@@ -25,10 +25,34 @@ type Schema struct {
 	Ref                  string             `json:"$ref"`
 	Type                 string             `json:"type"`
 	Properties           map[string]*Schema `json:"properties"`
-	AdditionalProperties *Schema            `json:"additionalProperties"`
+	AdditionalProperties *Additional        `json:"additionalProperties"`
 	Items                *Schema            `json:"items"`
 	AllOf                []*Schema          `json:"allOf"`
 	Enum                 []interface{}      `json:"enum"`
+}
+
+// Additional is the additionalProperties of an object: a schema, or true
+// for any value, as swag writes it for a map of interface{}. False, or none,
+// allows no property beyond the listed ones.
+type Additional struct {
+	Schema *Schema
+	Any    bool
+}
+
+// UnmarshalJSON reads a schema or a boolean.
+func (a *Additional) UnmarshalJSON(data []byte) error {
+	var allowed bool
+	if err := json.Unmarshal(data, &allowed); err == nil {
+		a.Any = allowed
+		return nil
+	}
+	a.Schema = &Schema{}
+	return json.Unmarshal(data, a.Schema)
+}
+
+// allows reports whether properties beyond the listed ones are allowed.
+func (a *Additional) allows() bool {
+	return a != nil && (a.Any || a.Schema != nil)
 }
 
 type response struct {
@@ -232,8 +256,10 @@ func (c *checker) checkObject(at string, value interface{}, s *Schema) {
 	for _, name := range names {
 		if prop, ok := s.Properties[name]; ok {
 			c.check(at+"."+name, object[name], prop)
-		} else if s.AdditionalProperties != nil {
-			c.check(at+"."+name, object[name], s.AdditionalProperties)
+		} else if s.AdditionalProperties.allows() {
+			if s.AdditionalProperties.Schema != nil {
+				c.check(at+"."+name, object[name], s.AdditionalProperties.Schema)
+			}
 		} else {
 			c.fail(at+"."+name, "is not in the documented schema")
 		}

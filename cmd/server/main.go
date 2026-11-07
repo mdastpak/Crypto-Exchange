@@ -670,6 +670,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	{
 		adminGroup.POST("/currencies", ih.Admin.CreateCurrency)
 		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)
+		adminGroup.GET("/audit", ih.Admin.ListAuditEvents)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/logout", adminLogout(ih))

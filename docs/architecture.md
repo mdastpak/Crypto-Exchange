@@ -166,7 +166,9 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `admin.sign_in` | An administrator signs in | `success`, without which no token is issued; `failure` with `email_code_invalid`, `authenticator_code_invalid`, or `account_unavailable`; `denied` with `rate_limited`. The answer does not say which factor was wrong; the event does. |
 | `admin.logout` | An administrator signs out | `success` |
 
-Failed and refused attempts, and logouts, are recorded on a best-effort basis: if the event cannot be written, it is logged, so that an unavailable audit log cannot be used to lock administrators out. User sign-in events and an admin endpoint to query the log follow in #51.
+Failed and refused attempts, and logouts, are recorded on a best-effort basis: if the event cannot be written, it is logged, so that an unavailable audit log cannot be used to lock administrators out.
+
+Administrators read the log with `GET /api/v1/admin/audit`: newest first, filtered by actor, action, target, outcome, and time, a page at a time, by the event's hk. The query names only the filters that are set, so that it uses the index of each. User sign-in events follow in #51.
 
 ### Redis
 
