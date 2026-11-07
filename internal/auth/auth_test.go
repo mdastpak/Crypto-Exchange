@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 
 	"github.com/gin-gonic/gin"
@@ -121,21 +122,47 @@ type fakeSessionStore struct {
 	rotations []SessionRotation
 	revoked   []string
 	verified  []string
-	rotateErr error
-	revokeErr error
-	verifyErr error
+	// events are the audit events passed with changes, and notes those
+	// recorded on their own, with the error of each note's context.
+	events, notes []audit.Event
+	noteCtxErrs   []error
+	rotateErr     error
+	revokeErr     error
+	verifyErr     error
 }
 
-func (f *fakeSessionStore) Create(ctx context.Context, session Session) error { return nil }
+func (f *fakeSessionStore) Create(ctx context.Context, session Session, event audit.Event) error {
+	return nil
+}
 
-func (f *fakeSessionStore) Rotate(ctx context.Context, rotation SessionRotation) error {
+func (f *fakeSessionStore) Rotate(ctx context.Context, rotation SessionRotation, event audit.Event) error {
 	f.rotations = append(f.rotations, rotation)
+	f.events = append(f.events, event)
 	return f.rotateErr
 }
 
-func (f *fakeSessionStore) Revoke(ctx context.Context, sessionID, userID string) error {
+func (f *fakeSessionStore) Revoke(ctx context.Context, sessionID, userID string, event audit.Event) error {
 	f.revoked = append(f.revoked, sessionID+"/"+userID)
+	f.events = append(f.events, event)
 	return f.revokeErr
+}
+
+func (f *fakeSessionStore) Note(ctx context.Context, event audit.Event) error {
+	f.notes = append(f.notes, event)
+	f.noteCtxErrs = append(f.noteCtxErrs, ctx.Err())
+	return nil
+}
+
+// assertSessionEvent checks an audit event of the test session of user-123.
+func assertSessionEvent(t *testing.T, e audit.Event, action, outcome, reason string) {
+	t.Helper()
+	assert.Equal(t, action, e.Action)
+	assert.Equal(t, outcome, e.Outcome)
+	assert.Equal(t, reason, e.Reason)
+	assert.Equal(t, audit.ActorUser, e.ActorType)
+	assert.Equal(t, "user-123", e.ActorID)
+	assert.Equal(t, audit.TargetSession, e.TargetType)
+	assert.Equal(t, "test-session", e.TargetID)
 }
 
 func (f *fakeSessionStore) Verify(ctx context.Context, sessionID, userID string) error {
@@ -622,6 +649,8 @@ func TestLogoutHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, []string{"test-session/user-123"}, sessions.revoked, "logout must revoke the token's session")
+		require.Len(t, sessions.events, 1, "the revocation records the logout")
+		assertSessionEvent(t, sessions.events[0], audit.ActionUserLogout, audit.Success, "")
 		cookie := refreshCookie(w)
 		require.NotNil(t, cookie, "logout must clear the refresh token cookie")
 		assert.Negative(t, cookie.MaxAge)
@@ -682,7 +711,10 @@ func TestRefreshTokenHandler(t *testing.T) {
 	})
 
 	t.Run("invalid cookie", func(t *testing.T) {
-		assert.Equal(t, http.StatusUnauthorized, refresh("invalid", &fakeSessionStore{}).Code)
+		sessions := &fakeSessionStore{}
+
+		assert.Equal(t, http.StatusUnauthorized, refresh("invalid", sessions).Code)
+		assert.Empty(t, sessions.notes, "a token that does not parse has no user to record")
 	})
 
 	t.Run("access token in the cookie", func(t *testing.T) {
@@ -726,25 +758,34 @@ func TestRefreshTokenHandler(t *testing.T) {
 		claims, err := ParseToken(cookie.Value, RoleUser, TokenTypeRefresh)
 		require.NoError(t, err)
 		assert.Equal(t, "test-session", claims.SessionID)
+
+		require.Len(t, sessions.events, 1, "the rotation records the refresh")
+		assertSessionEvent(t, sessions.events[0], audit.ActionUserRefresh, audit.Success, "")
+		assert.Empty(t, sessions.notes)
 	})
 
 	t.Run("reused refresh token", func(t *testing.T) {
 		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
 		require.NoError(t, err)
 
-		w := refresh(refreshToken, &fakeSessionStore{rotateErr: ErrRefreshTokenReused})
+		sessions := &fakeSessionStore{rotateErr: ErrRefreshTokenReused}
+		w := refresh(refreshToken, sessions)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 		cookie := refreshCookie(w)
 		require.NotNil(t, cookie)
 		assert.Negative(t, cookie.MaxAge, "the cookie of a revoked session must be cleared")
+		assert.Empty(t, sessions.notes, "Rotate records the revocation, so the handler records nothing more")
 	})
 
 	t.Run("inactive session", func(t *testing.T) {
 		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
 		require.NoError(t, err)
+		sessions := &fakeSessionStore{rotateErr: ErrSessionInvalid}
 
-		assert.Equal(t, http.StatusUnauthorized, refresh(refreshToken, &fakeSessionStore{rotateErr: ErrSessionInvalid}).Code)
+		assert.Equal(t, http.StatusUnauthorized, refresh(refreshToken, sessions).Code)
+		require.Len(t, sessions.notes, 1)
+		assertSessionEvent(t, sessions.notes[0], audit.ActionUserRefresh, audit.Failure, "session_inactive")
 	})
 
 	t.Run("session store failure", func(t *testing.T) {
@@ -772,6 +813,8 @@ func TestRefreshTokenHandler(t *testing.T) {
 		cookie := refreshCookie(w)
 		require.NotNil(t, cookie)
 		assert.Negative(t, cookie.MaxAge, "the cookie is cleared")
+		require.Len(t, sessions.notes, 1)
+		assertSessionEvent(t, sessions.notes[0], audit.ActionUserRefresh, audit.Failure, "account_unavailable")
 	})
 
 	t.Run("session no longer active", func(t *testing.T) {
@@ -786,6 +829,24 @@ func TestRefreshTokenHandler(t *testing.T) {
 		cookie := refreshCookie(w)
 		require.NotNil(t, cookie)
 		assert.Negative(t, cookie.MaxAge)
+		require.Len(t, sessions.notes, 1)
+		assertSessionEvent(t, sessions.notes[0], audit.ActionUserRefresh, audit.Failure, "session_inactive")
+	})
+
+	t.Run("a disconnected client does not cancel the record", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{verifyErr: ErrSessionInvalid}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/auth/refresh", nil).WithContext(ctx)
+		c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: refreshToken})
+
+		RefreshTokenHandler(c, sessions)
+
+		require.Len(t, sessions.noteCtxErrs, 1)
+		assert.NoError(t, sessions.noteCtxErrs[0])
 	})
 
 	t.Run("session check failure", func(t *testing.T) {

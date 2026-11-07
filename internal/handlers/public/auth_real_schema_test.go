@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
@@ -202,11 +203,11 @@ func TestCheckOrCreateUser_RealSchema_ReusesExistingUser(t *testing.T) {
 	handler, conn, _ := setupRealSchemaHandler(t)
 	ctx := context.Background()
 
-	first, err := handler.checkOrCreateUser(ctx, "mobile", "09121234567")
+	first, err := handler.checkOrCreateUser(ctx, audit.Event{}, "mobile", "09121234567")
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil, first)
 
-	second, err := handler.checkOrCreateUser(ctx, "mobile", "09121234567")
+	second, err := handler.checkOrCreateUser(ctx, audit.Event{}, "mobile", "09121234567")
 	require.NoError(t, err)
 	assert.Equal(t, first, second)
 	assert.Equal(t, 1, countUsersWithContact(t, conn, "mobile", "09121234567"))
@@ -216,9 +217,9 @@ func TestCheckOrCreateUser_RealSchema_EmailIgnoresCase(t *testing.T) {
 	handler, _, _ := setupRealSchemaHandler(t)
 	ctx := context.Background()
 
-	first, err := handler.checkOrCreateUser(ctx, "email", "Mixed.Case@Example.COM")
+	first, err := handler.checkOrCreateUser(ctx, audit.Event{}, "email", "Mixed.Case@Example.COM")
 	require.NoError(t, err)
-	second, err := handler.checkOrCreateUser(ctx, "email", "mixed.case@example.com")
+	second, err := handler.checkOrCreateUser(ctx, audit.Event{}, "email", "mixed.case@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, first, second, "email addresses that differ only in case must resolve to the same user")
 }
@@ -226,7 +227,7 @@ func TestCheckOrCreateUser_RealSchema_EmailIgnoresCase(t *testing.T) {
 func TestCheckOrCreateUser_RealSchema_UsernameIsNotAContact(t *testing.T) {
 	handler, conn, _ := setupRealSchemaHandler(t)
 
-	_, err := handler.checkOrCreateUser(context.Background(), "username", "alice_2026")
+	_, err := handler.checkOrCreateUser(context.Background(), audit.Event{}, "username", "alice_2026")
 
 	assert.Error(t, err, "usernames cannot receive codes, so they must not sign in or create users")
 	assert.Equal(t, 0, countUsersWithContact(t, conn, "username", "alice_2026"))
@@ -248,7 +249,7 @@ func TestCheckOrCreateUser_RealSchema_ConcurrentFirstSignInCreatesOneUser(t *tes
 			<-start
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			results[i], errs[i] = handler.checkOrCreateUser(ctx, "email", contact)
+			results[i], errs[i] = handler.checkOrCreateUser(ctx, audit.Event{}, "email", contact)
 		}(i)
 	}
 	close(start)
@@ -298,7 +299,7 @@ func TestCheckOrCreateUser_RealSchema_RecoversFromCompetingInsert(t *testing.T) 
 			}
 			done := make(chan result, 1)
 			go func() {
-				hk, err := handler.checkOrCreateUser(ctx, "email", tc.contact)
+				hk, err := handler.checkOrCreateUser(ctx, audit.Event{}, "email", tc.contact)
 				done <- result{hk, err}
 			}()
 

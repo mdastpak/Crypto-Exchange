@@ -7,9 +7,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
+
+	"github.com/gin-gonic/gin"
 )
 
 var (
@@ -27,10 +31,22 @@ var (
 
 // SessionStore persists sign-in sessions so that refresh tokens can be rotated
 // and revoked. Only hashes of tokens are stored.
+//
+// Create, Rotate, and Revoke write the audit event of their change in the
+// transaction of the change (#51). A change that grants access, a new
+// session or new tokens, never commits without its event. A revocation
+// commits even when its event cannot be written, so that an unavailable audit
+// log never keeps a session alive.
 type SessionStore interface {
-	Create(ctx context.Context, session Session) error
-	Rotate(ctx context.Context, rotation SessionRotation) error
-	Revoke(ctx context.Context, sessionID, userID string) error
+	Create(ctx context.Context, session Session, event audit.Event) error
+	// Rotate records event when it rotates the tokens. When it revokes the
+	// session instead, because the refresh token was already used, it
+	// records event as a failure with ReasonRefreshTokenReused.
+	Rotate(ctx context.Context, rotation SessionRotation, event audit.Event) error
+	Revoke(ctx context.Context, sessionID, userID string, event audit.Event) error
+	// Note records an event that changes no session, such as a refused
+	// refresh.
+	Note(ctx context.Context, event audit.Event) error
 	// Verify reports whether the tokens of a session may still be used. It
 	// returns ErrSessionInvalid when the session does not exist, belongs to
 	// another user, has expired, or was revoked, and ErrAccountUnavailable
@@ -61,6 +77,24 @@ type SessionRotation struct {
 	ExpiresAt            time.Time
 }
 
+// ReasonRefreshTokenReused is the audit reason of a refresh token that was
+// presented again after its rotation.
+const ReasonRefreshTokenReused = "refresh_token_reused"
+
+// reasonSessionInactive is the audit reason, and the error code, of a token
+// whose session has ended.
+const reasonSessionInactive = "session_inactive"
+
+// SessionEvent returns the successful event of action on a user's session,
+// with the request's ID, client address, and user agent.
+func SessionEvent(c *gin.Context, action, userID, sessionID string) audit.Event {
+	e := audit.FromRequest(c)
+	e.ActorType, e.ActorID = audit.ActorUser, userID
+	e.Action, e.Outcome = action, audit.Success
+	e.TargetType, e.TargetID = audit.TargetSession, sessionID
+	return e
+}
+
 // HashToken returns the hex-encoded SHA-256 hash under which a token is stored.
 func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
@@ -76,23 +110,85 @@ func NewPostgresSessionStore(db *sql.DB) *PostgresSessionStore {
 	return &PostgresSessionStore{DB: db}
 }
 
-func (s *PostgresSessionStore) Create(ctx context.Context, session Session) error {
-	_, err := s.DB.ExecContext(ctx, `
-		INSERT INTO sessions (id, user_id, auth_method, access_token_hash, refresh_token_hash, user_agent, ip, expires_at)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, '')::inet, $8)`,
-		session.ID, session.UserID, session.AuthMethod, session.AccessTokenHash, session.RefreshTokenHash,
-		session.UserAgent, session.IP, session.ExpiresAt,
-	)
+// sessionChange is a change of sessions in a transaction. It returns the
+// event to record with it, if any; whether it revokes, rather than grants,
+// access; and the error to report, which may come with an event, as a
+// detected reuse does.
+type sessionChange func(tx *sql.Tx) (event *audit.Event, revokes bool, err error)
+
+// auditSavepoint lets a revocation commit without the event that could not
+// be written.
+const auditSavepoint = "session_audit_event"
+
+// inTx runs change and records its event in one transaction. A change that
+// grants access commits only with its event; a revocation commits without it
+// when it cannot be written, and the failure is logged.
+func (s *PostgresSessionStore) inTx(ctx context.Context, change sessionChange) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		return fmt.Errorf("failed to start the session transaction: %w", err)
 	}
+	defer tx.Rollback()
+	event, revokes, changeErr := change(tx)
+	if event == nil {
+		return changeErr
+	}
+	if err := recordInTx(ctx, tx, *event, revokes); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit the session change: %w", err)
+	}
+	return changeErr
+}
+
+// recordInTx records event in tx. For a revocation, it records the event
+// under a savepoint, and on failure rolls back only the event.
+func recordInTx(ctx context.Context, tx *sql.Tx, event audit.Event, revokes bool) error {
+	if !revokes {
+		return audit.Record(ctx, tx, event)
+	}
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+auditSavepoint); err != nil {
+		return fmt.Errorf("failed to protect the revocation from its audit event: %w", err)
+	}
+	recordErr := audit.Record(ctx, tx, event)
+	if recordErr == nil {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+auditSavepoint); err != nil {
+		return fmt.Errorf("failed to keep the revocation without its audit event: %w (recording: %w)", err, recordErr)
+	}
+	log.Printf("Revoked session %s without its audit event %s: %v", event.TargetID, event.Action, recordErr)
 	return nil
+}
+
+func (s *PostgresSessionStore) Create(ctx context.Context, session Session, event audit.Event) error {
+	return s.inTx(ctx, func(tx *sql.Tx) (*audit.Event, bool, error) {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO sessions (id, user_id, auth_method, access_token_hash, refresh_token_hash, user_agent, ip, expires_at)
+			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, '')::inet, $8)`,
+			session.ID, session.UserID, session.AuthMethod, session.AccessTokenHash, session.RefreshTokenHash,
+			session.UserAgent, session.IP, session.ExpiresAt,
+		)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to create session: %w", err)
+		}
+		return &event, false, nil
+	})
 }
 
 // Rotate swaps the session's tokens in a single conditional update, so that two
 // requests presenting the same refresh token cannot both succeed.
-func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation) error {
-	res, err := s.DB.ExecContext(ctx, `
+func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation, event audit.Event) error {
+	return s.inTx(ctx, func(tx *sql.Tx) (*audit.Event, bool, error) {
+		return rotate(ctx, tx, r, event)
+	})
+}
+
+// rotate rotates the tokens, or revokes a session whose refresh token was
+// already used. It is a sessionChange.
+func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Event) (*audit.Event, bool, error) {
+	res, err := tx.ExecContext(ctx, `
 		UPDATE sessions
 		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = $3
 		WHERE id = $4 AND user_id = $5 AND refresh_token_hash = $6
@@ -100,31 +196,32 @@ func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation) er
 		r.NewRefreshHash, r.NewAccessHash, r.ExpiresAt, r.SessionID, r.UserID, r.PresentedRefreshHash,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to rotate session: %w", err)
+		return nil, false, fmt.Errorf("failed to rotate session: %w", err)
 	}
 	if rows, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("failed to rotate session: %w", err)
+		return nil, false, fmt.Errorf("failed to rotate session: %w", err)
 	} else if rows == 1 {
-		return nil
+		return &event, false, nil
 	}
 
 	// Nothing was rotated. If the session is still active, the presented token
 	// is a valid but already rotated refresh token: revoke the session.
-	res, err = s.DB.ExecContext(ctx, `
+	res, err = tx.ExecContext(ctx, `
 		UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
 		WHERE id = $1 AND user_id = $2 AND refresh_token_hash <> $3
 		  AND status = 'ACTIVE' AND expires_at > NOW()`,
 		r.SessionID, r.UserID, r.PresentedRefreshHash,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to revoke reused session: %w", err)
+		return nil, false, fmt.Errorf("failed to revoke reused session: %w", err)
 	}
 	if rows, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("failed to revoke reused session: %w", err)
+		return nil, false, fmt.Errorf("failed to revoke reused session: %w", err)
 	} else if rows == 1 {
-		return ErrRefreshTokenReused
+		event.Outcome, event.Reason = audit.Failure, ReasonRefreshTokenReused
+		return &event, true, ErrRefreshTokenReused
 	}
-	return ErrSessionInvalid
+	return nil, false, ErrSessionInvalid
 }
 
 // Verify reads the session and its user in one lookup by primary key. It
@@ -157,14 +254,20 @@ func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID str
 	return nil
 }
 
-func (s *PostgresSessionStore) Revoke(ctx context.Context, sessionID, userID string) error {
-	_, err := s.DB.ExecContext(ctx, `
-		UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
-		WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'`,
-		sessionID, userID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to revoke session: %w", err)
-	}
-	return nil
+func (s *PostgresSessionStore) Revoke(ctx context.Context, sessionID, userID string, event audit.Event) error {
+	return s.inTx(ctx, func(tx *sql.Tx) (*audit.Event, bool, error) {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
+			WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'`,
+			sessionID, userID,
+		)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to revoke session: %w", err)
+		}
+		return &event, true, nil
+	})
+}
+
+func (s *PostgresSessionStore) Note(ctx context.Context, event audit.Event) error {
+	return audit.Record(ctx, s.DB, event)
 }

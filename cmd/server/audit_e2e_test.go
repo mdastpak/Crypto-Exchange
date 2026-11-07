@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,19 +19,20 @@ import (
 type auditRow struct {
 	Action, ActorType, Outcome string
 	ActorID, Reason, RequestID sql.NullString
+	TargetType, TargetID       sql.NullString
 }
 
 // auditEvents returns the audit events of action, oldest first.
 func auditEvents(t *testing.T, db *sql.DB, action string) []auditRow {
 	t.Helper()
-	rows, err := db.Query(`SELECT action, actor_type, outcome, actor_id::text, reason, request_id
+	rows, err := db.Query(`SELECT action, actor_type, outcome, actor_id::text, reason, request_id, target_type, target_id
 		FROM audit_events WHERE action = $1 ORDER BY hk`, action)
 	require.NoError(t, err)
 	defer rows.Close()
 	var events []auditRow
 	for rows.Next() {
 		var e auditRow
-		require.NoError(t, rows.Scan(&e.Action, &e.ActorType, &e.Outcome, &e.ActorID, &e.Reason, &e.RequestID))
+		require.NoError(t, rows.Scan(&e.Action, &e.ActorType, &e.Outcome, &e.ActorID, &e.Reason, &e.RequestID, &e.TargetType, &e.TargetID))
 		events = append(events, e)
 	}
 	require.NoError(t, rows.Err())
@@ -147,6 +150,85 @@ func TestAudit_AdminQuery(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &invalid))
 	assert.Equal(t, "validation_failed", invalid.Code)
 	assert.ElementsMatch(t, []string{"actor_id", "outcome", "limit", "since"}, mapKeys(invalid.Info.Errors))
+}
+
+// TestAudit_UserSignIn takes a new user through the router: a wrong code,
+// the sign-in, a refresh, a replayed refresh token, a refresh of the revoked
+// session, a second sign-in, and a logout. It expects the events of each step,
+// linked by their targets, and none that holds the contact (#51).
+func TestAudit_UserSignIn(t *testing.T) {
+	env := newE2EEnv(t)
+	const contact = "audited-user@example.com"
+
+	status, resp := env.post(t, "/api/v1/public/auth", map[string]string{"username": contact}, "")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	signIn := resp.Info["uuid"].(string)
+	code := env.sender.last(contact)
+	wrong := strings.Map(func(r rune) rune { return '0' + (r-'0'+1)%10 }, code)
+	status, _ = env.post(t, "/api/v1/public/auth/"+signIn, map[string]string{"otp": wrong}, "")
+	require.Equal(t, http.StatusUnauthorized, status)
+	w := env.send(t, http.MethodPost, "/api/v1/public/auth/"+signIn, map[string]string{"otp": code}, "", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	first := userSession{access: accessTokenOf(t, w), refresh: refreshTokenCookie(w).Value}
+	claims, err := auth.ParseToken(first.access, auth.RoleUser, auth.TokenTypeAccess)
+	require.NoError(t, err)
+	first.userID, first.sessionID = claims.UUID, claims.SessionID
+
+	second := env.refreshSession(t, first)
+	w = env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", first.refresh)
+	require.Equal(t, http.StatusUnauthorized, w.Code, "a replayed refresh token revokes the session")
+	w = env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", second.refresh)
+	require.Equal(t, http.StatusUnauthorized, w.Code, "the session has ended")
+	third := env.startSession(t, contact)
+	w = env.send(t, http.MethodPost, "/api/v1/user/logout", nil, third.access, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	user := first.userID
+	target := func(e auditRow) string { return e.TargetType.String + "/" + e.TargetID.String }
+	actor := func(e auditRow) string { return e.ActorType + "/" + e.ActorID.String }
+	outcome := func(e auditRow) string { return e.Outcome + "/" + e.Reason.String }
+
+	codes := auditEvents(t, env.db, audit.ActionUserSignInCode)
+	require.Len(t, codes, 2)
+	assert.Equal(t, "anonymous/", actor(codes[0]), "the contact had no account yet")
+	assert.Equal(t, "sign_in/"+signIn, target(codes[0]))
+	assert.Equal(t, "user/"+user, actor(codes[1]), "the second request is for the user's contact")
+	assert.Equal(t, []string{"success/", "success/"}, []string{outcome(codes[0]), outcome(codes[1])})
+
+	created := auditEvents(t, env.db, audit.ActionUserCreate)
+	require.Len(t, created, 1)
+	assert.Equal(t, "user/"+user, actor(created[0]))
+	assert.Equal(t, "user/"+user, target(created[0]))
+
+	signIns := auditEvents(t, env.db, audit.ActionUserSignIn)
+	require.Len(t, signIns, 3)
+	assert.Equal(t, "failure/code_invalid", outcome(signIns[0]))
+	assert.Equal(t, "anonymous/", actor(signIns[0]))
+	assert.Equal(t, "sign_in/"+signIn, target(signIns[0]), "the failure links to its code request")
+	assert.Equal(t, "success/", outcome(signIns[1]))
+	assert.Equal(t, "user/"+user, actor(signIns[1]))
+	assert.Equal(t, "session/"+first.sessionID, target(signIns[1]))
+	assert.Equal(t, "session/"+third.sessionID, target(signIns[2]))
+
+	refreshes := auditEvents(t, env.db, audit.ActionUserRefresh)
+	require.Len(t, refreshes, 3)
+	assert.Equal(t, []string{"success/", "failure/refresh_token_reused", "failure/session_inactive"},
+		[]string{outcome(refreshes[0]), outcome(refreshes[1]), outcome(refreshes[2])})
+	for _, e := range refreshes {
+		assert.Equal(t, "user/"+user, actor(e))
+		assert.Equal(t, "session/"+first.sessionID, target(e))
+	}
+
+	logouts := auditEvents(t, env.db, audit.ActionUserLogout)
+	require.Len(t, logouts, 1)
+	assert.Equal(t, "user/"+user, actor(logouts[0]))
+	assert.Equal(t, "session/"+third.sessionID, target(logouts[0]))
+	assert.NotEmpty(t, logouts[0].RequestID.String, "events carry the request ID")
+
+	var leaked int
+	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE strpos(row_to_json(audit_events)::text, $1) > 0`,
+		"audited-user").Scan(&leaked))
+	assert.Zero(t, leaked, "no event holds the contact")
 }
 
 func mapKeys(m map[string]string) []string {
