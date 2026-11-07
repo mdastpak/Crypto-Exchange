@@ -125,11 +125,13 @@ func (h *WebSocketHandler) registerClient(client *Client) bool {
 }
 
 func (h *WebSocketHandler) unregisterClient(client *Client) {
+	// The client leaves the list and frees its place under one lock, so
+	// that no one sees the client gone while its place is still taken.
 	h.Mu.Lock()
 	delete(h.Clients, client)
+	h.releaseLocked(client.ip)
 	h.Mu.Unlock()
 	client.forget()
-	h.release(client.ip)
 	close(client.Send)
 	client.Conn.Close()
 	log.Printf("WebSocket client disconnected. Total: %d", h.clientCount())

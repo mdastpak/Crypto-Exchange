@@ -172,3 +172,43 @@ func TestCreateUser_RealSchema_RecordsTheNewUser(t *testing.T) {
 	assert.Equal(t, "req-1", requestID)
 	assert.Equal(t, "203.0.113.9", ip)
 }
+
+// TestSessionStore_RealSchema_ConcurrentRefreshWithinTheGrace checks that the
+// previous refresh token, within the grace period, gets a new access token
+// without a rotation, and records it (#194); and that it is a reuse after
+// the grace period, or without one.
+func TestSessionStore_RealSchema_ConcurrentRefreshWithinTheGrace(t *testing.T) {
+	f := newSessionFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.store.Create(ctx, f.session, f.event(audit.ActionUserSignIn)))
+	withGrace := func(r auth.SessionRotation) auth.SessionRotation {
+		r.Grace = 10 * time.Second
+		return r
+	}
+	require.NoError(t, f.store.Rotate(ctx, withGrace(f.rotation("refresh-1", "refresh-2")), f.event(audit.ActionUserRefresh)))
+
+	err := f.store.Rotate(ctx, withGrace(f.rotation("refresh-1", "refresh-3")), f.event(audit.ActionUserRefresh))
+	require.ErrorIs(t, err, auth.ErrConcurrentRefresh)
+	assert.Equal(t, "ACTIVE", f.status(t))
+	var reason string
+	require.NoError(t, f.conn.QueryRow(`SELECT reason FROM audit_events WHERE action = $1 AND target_id = $2 AND outcome = 'success'
+		ORDER BY hk DESC LIMIT 1`, audit.ActionUserRefresh, f.session.ID).Scan(&reason))
+	assert.Equal(t, auth.ReasonConcurrentRefresh, reason)
+	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM sessions WHERE id = $1 AND refresh_token_hash = $2`, f.session.ID, auth.HashToken("refresh-2")),
+		"the current refresh token stays")
+
+	_, err = f.conn.Exec(`UPDATE sessions SET rotated_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, f.session.ID)
+	require.NoError(t, err)
+	err = f.store.Rotate(ctx, withGrace(f.rotation("refresh-1", "refresh-4")), f.event(audit.ActionUserRefresh))
+	require.ErrorIs(t, err, auth.ErrRefreshTokenReused, "after the grace period")
+	assert.Equal(t, "REVOKED", f.status(t))
+}
+
+// Without a grace period, the previous refresh token is a reuse at once.
+func TestSessionStore_RealSchema_NoGraceWithoutAGracePeriod(t *testing.T) {
+	f := newSessionFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.store.Create(ctx, f.session, f.event(audit.ActionUserSignIn)))
+	require.NoError(t, f.store.Rotate(ctx, f.rotation("refresh-1", "refresh-2"), f.event(audit.ActionUserRefresh)))
+	assert.ErrorIs(t, f.store.Rotate(ctx, f.rotation("refresh-1", "refresh-3"), f.event(audit.ActionUserRefresh)), auth.ErrRefreshTokenReused)
+}

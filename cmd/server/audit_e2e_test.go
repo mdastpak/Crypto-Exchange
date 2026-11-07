@@ -175,6 +175,7 @@ func TestAudit_UserSignIn(t *testing.T) {
 	first.userID, first.sessionID = claims.UUID, claims.SessionID
 
 	second := env.refreshSession(t, first)
+	env.endRefreshGrace(t)
 	w = env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", first.refresh)
 	require.Equal(t, http.StatusUnauthorized, w.Code, "a replayed refresh token revokes the session")
 	w = env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", second.refresh)

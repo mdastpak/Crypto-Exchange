@@ -778,6 +778,20 @@ func TestRefreshTokenHandler(t *testing.T) {
 		assert.Empty(t, sessions.notes, "Rotate records the revocation, so the handler records nothing more")
 	})
 
+	t.Run("concurrent refresh within the grace period", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+		require.NoError(t, err)
+
+		sessions := &fakeSessionStore{rotateErr: ErrConcurrentRefresh}
+		w := refresh(refreshToken, sessions)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "access_token")
+		assert.Nil(t, refreshCookie(w), "the cookie keeps the token that the concurrent refresh set")
+		require.Len(t, sessions.rotations, 1)
+		assert.Equal(t, 10*time.Second, sessions.rotations[0].Grace, "the default grace period")
+	})
+
 	t.Run("inactive session", func(t *testing.T) {
 		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
 		require.NoError(t, err)

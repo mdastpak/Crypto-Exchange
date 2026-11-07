@@ -415,7 +415,7 @@ func (h *PublicHandler) createUser(ctx context.Context, origin audit.Event, cont
 }
 
 // @Summary Refresh the access token
-// @Description Exchanges the refresh_token cookie for a new access token, and rotates the cookie. A rotated refresh token that is presented again revokes the session.
+// @Description Exchanges the refresh_token cookie for a new access token, and rotates the cookie. A rotated refresh token that is presented again revokes the session, except within jwt.refresh_token.reuse_grace_seconds of its rotation, when it gets a new access token and no new cookie.
 // @Tags sign-in
 // @Produce json
 // @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo}
