@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
@@ -97,12 +98,20 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		return
 	}
 
+	// The code request is the account's, when the contact belongs to one,
+	// though anyone may make it. The event never holds the contact.
+	event := audit.FromRequest(c)
+	event.Action = audit.ActionUserSignInCode
+	event.ActorType, event.ActorID = h.contactOwner(ctx, contactType, req.Username)
+
 	issued, err := h.OTP.Issue(ctx, req.Username)
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
+		h.noteSignIn(ctx, event, audit.Denied, reasonRateLimited)
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrTooManyAttempts):
+		h.noteSignIn(ctx, event, audit.Denied, reasonRateLimited)
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case err != nil:
@@ -110,6 +119,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to store OTP", nil)
 		return
 	}
+	event.TargetType, event.TargetID = audit.TargetSignIn, issued.SessionID
 
 	// Never log the code or the raw contact: either one in a log helps an
 	// attacker take over the account.
@@ -121,9 +131,11 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	})
 	if err != nil {
 		log.Printf("Failed to send the sign-in code to %s %s: %v", contactType, maskedContact, err)
+		h.noteSignIn(ctx, event, audit.Failure, "delivery_failed")
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to send OTP", nil)
 		return
 	}
+	h.noteSignIn(ctx, event, audit.Success, "")
 
 	helpers.SendResponse(c, http.StatusOK, "OTP sent to your contact", gin.H{"type": contactType, "username": maskedContact, "uuid": issued.SessionID})
 }
@@ -158,14 +170,23 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
+	// attempt is the audit event of a sign-in that does not succeed. It
+	// targets the sign-in, which links it to its code request. Until the
+	// code is right, the caller is anonymous.
+	attempt := audit.FromRequest(c)
+	attempt.Action, attempt.ActorType = audit.ActionUserSignIn, audit.ActorAnonymous
+	attempt.TargetType, attempt.TargetID = audit.TargetSignIn, reqUUID
+
 	// Verify ends the session on success, so a code signs in only once, even
 	// when it is sent in concurrent requests.
 	contact, err := h.OTP.Verify(ctx, reqUUID, req.OTP)
 	switch {
 	case errors.Is(err, otp.ErrTooManyAttempts):
+		h.noteSignIn(ctx, attempt, audit.Denied, reasonRateLimited)
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrInvalidCode):
+		h.noteSignIn(ctx, attempt, audit.Failure, "code_invalid")
 		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired OTP code", nil)
 		return
 	case err != nil:
@@ -180,14 +201,20 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	userHK, err := h.checkOrCreateUser(ctx, contactType, contact)
+	userHK, err := h.checkOrCreateUser(ctx, audit.FromRequest(c), contactType, contact)
+	if errors.Is(err, errAccountUnavailable) || errors.Is(err, errAdminAccount) {
+		// The code was right, so the refusal is the account's.
+		attempt.ActorType, attempt.ActorID = h.contactOwner(ctx, contactType, contact)
+	}
 	if errors.Is(err, errAccountUnavailable) {
+		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
 		// The code was right, so the caller controls the contact and may
 		// learn why the account cannot sign in.
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account cannot sign in. Please contact support.", nil)
 		return
 	}
 	if errors.Is(err, errAdminAccount) {
+		h.noteSignIn(ctx, attempt, audit.Failure, "use_admin_sign_in")
 		helpers.SendError(c, http.StatusForbidden, "use_admin_sign_in", "Administrators must use the admin sign-in.", nil)
 		return
 	}
@@ -217,8 +244,9 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		UserAgent:        c.Request.UserAgent(),
 		IP:               c.ClientIP(),
 		ExpiresAt:        time.Now().Add(auth.RefreshTokenLifetime()),
-	})
+	}, auth.SessionEvent(c, audit.ActionUserSignIn, userHK.String(), sessionID))
 	if err != nil {
+		// No tokens without the session, nor without its audit event.
 		log.Printf("Failed to create session: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
 		return
@@ -229,6 +257,45 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	auth.SetRefreshTokenCookie(c, refreshToken)
 
 	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken})
+}
+
+// reasonRateLimited is the audit reason of a sign-in refused by its limits.
+const reasonRateLimited = "rate_limited"
+
+// noteSignIn records event, a sign-in event that changes nothing, with its
+// outcome. It is best effort: a failure is logged, so that an unavailable
+// audit log cannot keep users from signing in.
+func (h *PublicHandler) noteSignIn(ctx context.Context, event audit.Event, outcome, reason string) {
+	if h.PostgresDB == nil {
+		return
+	}
+	event.Outcome, event.Reason = outcome, reason
+	if err := audit.Record(ctx, h.PostgresDB.DB, event); err != nil {
+		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)
+	}
+}
+
+// contactOwner returns the actor type and hk of the account that owns a
+// contact. Without one, or when it cannot be looked up, the actor is
+// anonymous: the event is recorded either way, and never with the contact.
+func (h *PublicHandler) contactOwner(ctx context.Context, contactType, contact string) (string, string) {
+	if h.PostgresDB == nil || !signInContactTypes[contactType] {
+		return audit.ActorAnonymous, ""
+	}
+	var hk uuid.UUID
+	var status, role string
+	var deleted bool
+	err := h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&hk, &status, &role, &deleted)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("Failed to look up the account of a sign-in for the audit log: %v", err)
+		}
+		return audit.ActorAnonymous, ""
+	}
+	if role == auth.RoleAdmin {
+		return audit.ActorAdmin, hk.String()
+	}
+	return audit.ActorUser, hk.String()
 }
 
 // userByContactQuery finds the user that owns a contact, through the unique
@@ -252,7 +319,10 @@ var errAdminAccount = errors.New("administrators cannot use user sign-in")
 
 const uniqueViolationCode = "23505"
 
-func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, contact string) (uuid.UUID, error) {
+// checkOrCreateUser returns the user that owns a contact, and creates one
+// when none does. origin holds the request's fields for the audit event of a
+// new user.
+func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
 	log.Println("Checking if user exists or creating a new user")
 
 	if !signInContactTypes[contactType] {
@@ -268,7 +338,7 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 	err := find()
 	if err == sql.ErrNoRows {
 		log.Println("User does not exist, creating new user")
-		userHK, createErr := h.createUser(ctx, contactType, contact)
+		userHK, createErr := h.createUser(ctx, origin, contactType, contact)
 		if !errors.Is(createErr, errUserAlreadyExists) {
 			return userHK, createErr
 		}
@@ -295,10 +365,10 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, contactType, cont
 	return userHK, nil
 }
 
-// createUser creates an active user with its first contact, in one
-// transaction. The contact is verified: users are created after a correct
-// sign-in code, which proves control of it.
-func (h *PublicHandler) createUser(ctx context.Context, contactType, contact string) (uuid.UUID, error) {
+// createUser creates an active user with its first contact, and records its
+// creation, in one transaction. The contact is verified: users are created
+// after a correct sign-in code, which proves control of it.
+func (h *PublicHandler) createUser(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
 	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("start the transaction: %w", err)
@@ -316,6 +386,14 @@ func (h *PublicHandler) createUser(ctx context.Context, contactType, contact str
 			return uuid.Nil, errUserAlreadyExists
 		}
 		log.Printf("Failed to insert the contact of a new user: %v", err)
+		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
+	}
+	created := origin
+	created.Action, created.Outcome = audit.ActionUserCreate, audit.Success
+	created.ActorType, created.ActorID = audit.ActorUser, userHK.String()
+	created.TargetType, created.TargetID = audit.TargetUser, userHK.String()
+	if err := audit.Record(ctx, tx, created); err != nil {
+		log.Printf("Failed to record the creation of a user: %v", err)
 		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
 	}
 	if err := tx.Commit(); err != nil {

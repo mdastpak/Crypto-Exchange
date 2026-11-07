@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
@@ -185,14 +186,27 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 		return
 	}
 
+	// refused records a refused refresh of a genuine token, at best effort:
+	// it changes nothing, so the answer does not wait on the audit log. A
+	// token that does not parse has no user to record.
+	refused := func(reason string) {
+		e := SessionEvent(c, audit.ActionUserRefresh, claims.UUID, claims.SessionID)
+		e.Outcome, e.Reason = audit.Failure, reason
+		if err := sessions.Note(c.Request.Context(), e); err != nil {
+			log.Printf("Failed to record the audit event %s (%s): %v", e.Action, reason, err)
+		}
+	}
+
 	// No new tokens for a user who can no longer sign in. Rotate checks the
 	// session again, atomically, and detects reuse.
 	switch err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID); {
 	case errors.Is(err, ErrSessionInvalid):
+		refused(reasonSessionInactive)
 		ClearRefreshTokenCookie(c)
 		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
 		return
 	case errors.Is(err, ErrAccountUnavailable):
+		refused(helpers.CodeAccountUnavailable)
 		ClearRefreshTokenCookie(c)
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, accountUnavailableMessage, nil)
 		return
@@ -220,9 +234,12 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 		NewRefreshHash:       HashToken(newRefreshToken),
 		NewAccessHash:        HashToken(accessToken),
 		ExpiresAt:            time.Now().Add(RefreshTokenLifetime()),
-	})
+	}, SessionEvent(c, audit.ActionUserRefresh, claims.UUID, claims.SessionID))
 	if errors.Is(err, ErrRefreshTokenReused) {
+		// Rotate recorded the revocation.
 		log.Printf("Refresh token reuse detected; session %s revoked", claims.SessionID)
+	} else if errors.Is(err, ErrSessionInvalid) {
+		refused(reasonSessionInactive)
 	}
 	if errors.Is(err, ErrSessionInvalid) {
 		ClearRefreshTokenCookie(c)

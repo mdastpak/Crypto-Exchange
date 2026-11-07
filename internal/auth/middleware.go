@@ -103,7 +103,7 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 		case err == nil:
 			c.Next()
 		case errors.Is(err, ErrSessionInvalid):
-			unauthorized(c, "session_inactive", "Unauthorized - Session is not active")
+			unauthorized(c, reasonSessionInactive, "Unauthorized - Session is not active")
 		case errors.Is(err, ErrAccountUnavailable):
 			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, accountUnavailableMessage, nil)
 		default:

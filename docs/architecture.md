@@ -165,10 +165,17 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `admin.sign_in_code` | An administrator's sign-in code is requested | `success`; `failure` with `unknown_account`, without an actor; `denied` with `rate_limited` |
 | `admin.sign_in` | An administrator signs in | `success`, without which no token is issued; `failure` with `email_code_invalid`, `authenticator_code_invalid`, or `account_unavailable`; `denied` with `rate_limited`. The answer does not say which factor was wrong; the event does. |
 | `admin.logout` | An administrator signs out | `success` |
+| `user.sign_in_code` | A user's sign-in code is requested. The actor is the account that owns the contact, or `anonymous` for a contact without one; the target is the sign-in (`sign_in` and the `uuid` of the answer). | `success`; `failure` with `delivery_failed`; `denied` with `rate_limited` |
+| `user.create` | A first sign-in creates a user, in the transaction that creates it | `success` |
+| `user.sign_in` | A user signs in. A success targets the new session, and is in the transaction that creates it; a failure targets the sign-in, which links it to its code request. | `success`, without which no token is issued; `failure` with `code_invalid` (anonymous), `account_unavailable`, or `use_admin_sign_in`; `denied` with `rate_limited` (anonymous) |
+| `user.token_refresh` | A user's tokens are refreshed; the target is the session | `success`, in the transaction of the rotation, without which no token is issued; `failure` with `refresh_token_reused`, in the transaction that revokes the session, `session_inactive`, or `account_unavailable` |
+| `user.logout` | A user signs out, in the transaction that revokes the session | `success` |
 
-Failed and refused attempts, and logouts, are recorded on a best-effort basis: if the event cannot be written, it is logged, so that an unavailable audit log cannot be used to lock administrators out.
+Failed and refused attempts, and admin logouts, are recorded on a best-effort basis: if the event cannot be written, it is logged, so that an unavailable audit log cannot be used to lock anyone out. A refresh token that does not parse records nothing, since it names no user.
 
-Administrators read the log with `GET /api/v1/admin/audit`: newest first, filtered by actor, action, target, outcome, and time, a page at a time, by the event's hk. The query names only the filters that are set, so that it uses the index of each. User sign-in events follow in #51.
+A user's session changes with its event, in one transaction of the session store. A change that grants access, a new session or new tokens, never commits without its event. A revocation, a logout or a revocation for reuse, writes its event under a savepoint: if the event cannot be written, the session is revoked without it and the failure is logged, so that an unavailable audit log never keeps a session alive.
+
+Administrators read the log with `GET /api/v1/admin/audit`: newest first, filtered by actor, action, target, outcome, and time, a page at a time, by the event's hk. The query names only the filters that are set, so that it uses the index of each.
 
 ### Redis
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,8 @@ import (
 // LogoutHandler ends the session of the access token that RequireRole
 // accepted, so it must run behind that middleware: it revokes the session, so
 // its refresh token stops working, and blacklists the access token until it
-// expires.
+// expires. The revocation records the user's logout (#51); administrators,
+// who have no sessions, record theirs in the admin handler.
 func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 	claims, ok := GetClaims(c)
 	tokenString, hasToken := accessToken(c)
@@ -25,7 +27,8 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 
 	ctx := c.Request.Context()
 	if claims.SessionID != "" && sessions != nil {
-		if err := sessions.Revoke(ctx, claims.SessionID, claims.UUID); err != nil {
+		event := SessionEvent(c, audit.ActionUserLogout, claims.UUID, claims.SessionID)
+		if err := sessions.Revoke(ctx, claims.SessionID, claims.UUID, event); err != nil {
 			log.Printf("Error revoking session %s: %v", claims.SessionID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to logout", nil)
 			return

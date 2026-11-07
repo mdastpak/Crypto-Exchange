@@ -47,10 +47,23 @@ const (
 	ActionCurrencyCreate  = "currency.create"
 	ActionCurrencyUpdate  = "currency.update"
 	ActionCurrencyDelete  = "currency.delete"
+	ActionUserCreate      = "user.create"
+	ActionUserSignInCode  = "user.sign_in_code"
+	ActionUserSignIn      = "user.sign_in"
+	ActionUserRefresh     = "user.token_refresh"
+	ActionUserLogout      = "user.logout"
 )
 
-// TargetCurrency is the target type of currency actions.
-const TargetCurrency = "currency"
+// Target types.
+const (
+	TargetCurrency = "currency"
+	TargetUser     = "user"
+	// TargetSession is a user's session, by the session ID of its tokens.
+	TargetSession = "session"
+	// TargetSignIn is a sign-in in progress, by the ID that a code request
+	// returns, which links the code request to the attempts to verify it.
+	TargetSignIn = "sign_in"
+)
 
 // maxUserAgent is the longest user agent kept, in characters.
 const maxUserAgent = 512
