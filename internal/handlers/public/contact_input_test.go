@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 
 	"github.com/stretchr/testify/assert"
