@@ -112,6 +112,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 18 | `outbox_events`: the transactional outbox, with a partial index on the pending messages and one on the publish time for the cleanup | Yes |
 | 19 | `currencies.version`: counts the changes of a currency, for the optimistic concurrency of the admin routes | Yes |
 | 20 | `audit_events`: the append-only audit log, with triggers that refuse `UPDATE`, `DELETE`, and `TRUNCATE` | Yes |
+| 21 | `outbox_events.failed_at`: dead letters of the outbox, and the pending index by topic and id | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
@@ -207,8 +208,9 @@ Administrators read the log with `GET /api/v1/admin/audit`: newest first, filter
 A change and the messages it causes are written in one transaction ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89)). The admin currency routes write the event of a change to the public view to `outbox_events`, so the event exists if and only if the change commits, also while RabbitMQ or Redis is unavailable. The relay of `internal/outbox` delivers the messages:
 
 - **One instance at a time.** Every instance runs a relay, but each batch takes a transaction-scoped advisory lock, and an instance that does not get it skips the round. So two instances never publish the same message, and an instance that stops leaves its messages to the others.
-- **In order.** Messages are relayed in id order. A message that fails holds back the later messages of its topic, so a currency's events never overtake each other; other topics go on.
-- **Retries.** A failed message is tried again after 1 s, doubling up to 5 minutes, until it succeeds. Its attempts and last error are kept in its row.
+- **In order.** Messages are relayed in id order. A message that fails holds back the later messages of its topic, so a currency's events never overtake each other; other topics go on. Each topic is read on its own, up to a batch of its oldest pending messages, so a topic with many waiting messages cannot fill the batch and hide the others ([#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)).
+- **Retries.** A failed message is tried again after 1 s, doubling up to 5 minutes. Its attempts and last error are kept in its row.
+- **Dead letters.** After 20 attempts, about an hour, a message is set aside with `failed_at`, logged as an error, and the later messages of its topic go on without it: for the currency events, which carry the whole public view of a currency, a later event makes up for a lost one. A route can set its own number of attempts, or never give up, when its order matters more than its availability. Every five minutes, the instance that relays logs a warning while a dead letter exists or a message has waited more than five minutes. `admin outbox list` shows the pending messages and lists the dead letters, `admin outbox retry -id <n>` makes one pending again, which is then published after the later messages of its topic, and `admin outbox discard -id <n>` deletes one. Metrics of the outbox wait for [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50).
 - **Before publishing**, the relay drops the cached currency list, so that a drop that failed in the request is retried too. The admin routes also drop it and nudge the relay right after the commit, so changes show and events go out within milliseconds.
 - **At least once.** A message whose publish succeeded is published again if the relay cannot record that. Events carry an `id`, so that clients can drop a repeated one.
 - **Retention.** Published messages are deleted after seven days, a thousand at a time. The pending messages have a partial index, so the relay's query does not grow with the table. Partitioning, once trade events go through the outbox, is part of [#169](https://github.com/mdastpak/Crypto-Exchange/issues/169).

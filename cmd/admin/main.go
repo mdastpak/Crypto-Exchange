@@ -11,15 +11,20 @@
 //	admin [-config path] [-migrations url] keys rotate -purpose <purpose>
 //	admin [-config path] [-migrations url] keys retire -purpose <purpose> -version <n>
 //	admin [-config path] [-migrations url] keys rewrap
+//	admin [-config path] [-migrations url] outbox list
+//	admin [-config path] [-migrations url] outbox retry -id <n>
+//	admin [-config path] [-migrations url] outbox discard -id <n>
 //
 // create and reset-totp print the authenticator secret once. The server
 // needs admin.totp_key (or ADMIN_TOTP_KEY) set to the same value. The keys
 // commands need the keys section of the server's configuration and never
-// print a key; docs/data-protection.md describes when to run them.
+// print a key; docs/data-protection.md describes when to run them. The outbox
+// commands handle the messages that the server could not publish (#192).
 package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,6 +38,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/outbox"
 )
 
 const usage = `Usage: admin [-config path] [-migrations url] <command> [flags]
@@ -47,6 +53,11 @@ Data-protection keys (purposes row-mac, field-enc, blind-index):
   keys rotate -purpose <purpose>               Create the next version of a key.
   keys retire -purpose <purpose> -version <n>  Stop loading an old version.
   keys rewrap                                  Wrap every key again after the KEK was rotated.
+
+Outbox (messages the server could not publish):
+  outbox list            Show the pending messages and list the dead letters.
+  outbox retry -id <n>   Publish a dead letter again, after the later messages of its topic.
+  outbox discard -id <n> Delete a dead letter, which is then never published.
 `
 
 func main() {
@@ -62,6 +73,7 @@ type command struct {
 	email          string
 	purpose        keys.Purpose
 	version        int
+	id             int64
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -84,6 +96,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 	case "create", "reset-totp", "disable":
 	case "keys":
 		return parseKeysArgs(cmd, global.Args()[1:], stderr)
+	case "outbox":
+		return parseOutboxArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -143,6 +157,37 @@ func parseKeysArgs(cmd command, args []string, stderr io.Writer) (command, error
 	return cmd, nil
 }
 
+// parseOutboxArgs parses the arguments after "outbox".
+func parseOutboxArgs(cmd command, args []string, stderr io.Writer) (command, error) {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return command{}, errors.New("an outbox command is required: list, retry, or discard")
+	}
+	sub := flag.NewFlagSet("outbox "+args[0], flag.ContinueOnError)
+	sub.SetOutput(stderr)
+	needID := false
+	switch args[0] {
+	case "list":
+	case "retry", "discard":
+		needID = true
+		sub.Int64Var(&cmd.id, "id", 0, "ID of the dead letter, from outbox list")
+	default:
+		fmt.Fprint(stderr, usage)
+		return command{}, fmt.Errorf("unknown outbox command %q", args[0])
+	}
+	if err := sub.Parse(args[1:]); err != nil {
+		return command{}, err
+	}
+	if sub.NArg() > 0 {
+		return command{}, fmt.Errorf("unexpected argument %q", sub.Arg(0))
+	}
+	if needID && cmd.id <= 0 {
+		return command{}, errors.New("-id must be a positive number")
+	}
+	cmd.name = "outbox " + args[0]
+	return cmd, nil
+}
+
 func purposeList() string {
 	names := make([]string, len(keys.Purposes))
 	for i, p := range keys.Purposes {
@@ -163,6 +208,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	config.LoadConfig()
 	if strings.HasPrefix(cmd.name, "keys ") {
 		return runKeys(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "outbox ") {
+		return runOutbox(cmd, stdout, stderr)
 	}
 	if config.Config.Admin.TOTPKey == "" {
 		fmt.Fprintln(stderr, "Error: admin.totp_key (or ADMIN_TOTP_KEY) is required; generate one with: openssl rand -base64 32")
@@ -300,6 +348,77 @@ func executeKeys(ctx context.Context, store *keys.Store, cmd command, stdout io.
 		return fmt.Errorf("unknown command %q", cmd.name)
 	}
 	return nil
+}
+
+// runOutbox runs an outbox command.
+func runOutbox(cmd command, stdout, stderr io.Writer) int {
+	postgres, err := db.NewPostgresService()
+	if err != nil {
+		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
+		return 1
+	}
+	defer postgres.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := executeOutbox(ctx, postgres.DB, cmd, stdout); err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	return 0
+}
+
+// deadLetterListLimit bounds the dead letters that outbox list prints.
+const deadLetterListLimit = 100
+
+// executeOutbox runs a parsed outbox command against database.
+func executeOutbox(ctx context.Context, database *sql.DB, cmd command, stdout io.Writer) error {
+	switch cmd.name {
+	case "outbox list":
+		stats, err := outbox.ReadStats(ctx, database)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "%d messages pending", stats.Pending)
+		if stats.Pending > 0 {
+			fmt.Fprintf(stdout, ", the oldest for %v", stats.OldestPending.Round(time.Second))
+		}
+		fmt.Fprintf(stdout, "; %d dead letters.\n", stats.Failed)
+		letters, err := outbox.ListDeadLetters(ctx, database, deadLetterListLimit)
+		if err != nil || len(letters) == 0 {
+			return err
+		}
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "ID\tTOPIC\tATTEMPTS\tCREATED\tFAILED\tLAST ERROR")
+		for _, d := range letters {
+			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\n", d.ID, d.Topic, d.Attempts,
+				d.CreatedAt.UTC().Format(time.RFC3339), d.FailedAt.UTC().Format(time.RFC3339), oneLine(d.LastError))
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		if stats.Failed > len(letters) {
+			fmt.Fprintf(stdout, "Only the oldest %d are listed.\n", len(letters))
+		}
+	case "outbox retry":
+		if err := outbox.RetryDeadLetter(ctx, database, cmd.id); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Message %d is pending again. The relay publishes it within seconds, after the later messages of its topic that were published meanwhile.\n", cmd.id)
+	case "outbox discard":
+		if err := outbox.DiscardDeadLetter(ctx, database, cmd.id); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Deleted message %d. It is never published.\n", cmd.id)
+	default:
+		return fmt.Errorf("unknown command %q", cmd.name)
+	}
+	return nil
+}
+
+// oneLine keeps an error on one line of the table.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func printEnrollment(stdout io.Writer, enrollment adminauth.Enrollment) {

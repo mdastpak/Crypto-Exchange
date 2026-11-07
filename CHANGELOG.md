@@ -129,6 +129,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - An update may send the `version` it is based on, and a delete `?version=`. If the currency has changed since, it is refused with `409` and the code `version_conflict`, with the current version, and changes nothing.
   - The new `GET /admin/currencies/{hk}` returns a currency with its version, whatever its status.
   - Updates without a version are still applied one after the other, as before.
+- A message of the outbox that could never be published was retried forever and held back every later message of its topic, and a topic with more than a batch of waiting messages kept the relay from reading the other topics ([#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)).
+  - After 20 attempts, about an hour, a message becomes a dead letter (`failed_at`, migration 21), is logged as an error, and the later messages of its topic go on. A route may set its own number of attempts, or never give up.
+  - The relay reads each topic on its own, so one topic cannot starve the others.
+  - The instance that relays logs a warning every five minutes while a dead letter exists or a message has waited more than five minutes.
+  - The new `admin outbox list`, `admin outbox retry -id <n>`, and `admin outbox discard -id <n>` commands show the outbox and handle its dead letters.
 - The RabbitMQ URI escapes the user, the password, and the virtual host, so a password with characters such as `@`, `/`, `:`, `#`, `?`, or `%` no longer changes the host the server connects to. The new `rabbitmq.vhost` setting (`RABBITMQ_VHOST`, default `/`) selects the virtual host ([#185](https://github.com/mdastpak/Crypto-Exchange/issues/185)).
 
 ### Security

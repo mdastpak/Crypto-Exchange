@@ -4,8 +4,11 @@
 //
 // A change writes its messages with Enqueue in its own transaction. A Relay
 // publishes them afterwards, in id order within each topic, and retries a
-// failed message with backoff until it succeeds, holding back the later
-// messages of its topic meanwhile. Every server instance runs a relay, but
+// failed message with backoff, holding back the later messages of its topic
+// meanwhile. After the attempts its topic allows, the message becomes a dead
+// letter, which the admin outbox commands list, retry, or discard, and the
+// topic goes on (#192). Topics are read separately, so a topic with many
+// waiting messages does not hold back the others. Every server instance runs a relay, but
 // one at a time relays, under a PostgreSQL advisory lock, so that two
 // instances never publish the same message or two messages of a topic out
 // of order. Delivery is at least once: a message whose publish succeeded is
@@ -17,6 +20,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,6 +47,12 @@ type Route struct {
 	// cache that the change made out of date. A failure is retried like a
 	// failed publish. It may be nil.
 	Before func(ctx context.Context) error
+	// MaxAttempts is how often a message of the topic is tried before it
+	// becomes a dead letter and the later messages of the topic are
+	// published without it. Zero takes Options.MaxAttempts. A negative
+	// value never gives up, for a topic whose order matters more than its
+	// availability.
+	MaxAttempts int
 }
 
 // relayLockID is the advisory lock that one instance at a time holds while
@@ -67,6 +77,13 @@ const (
 	cleanupBatch = 1000
 	// maxErrorLength bounds the last error stored with a message.
 	maxErrorLength = 500
+	// defaultMaxAttempts gives a message about an hour: the backoff
+	// reaches five minutes after nine attempts.
+	defaultMaxAttempts = 20
+	// reportEvery is how often the relay logs a summary of the outbox when
+	// a message waits longer than reportAge or a dead letter exists.
+	reportEvery = 5 * time.Minute
+	reportAge   = 5 * time.Minute
 )
 
 // Options tunes a relay. Zero values take the defaults.
@@ -78,7 +95,10 @@ type Options struct {
 	Interval time.Duration
 	// Retention is how long published messages are kept (7 days).
 	Retention time.Duration
-	Logger    *log.Logger
+	// MaxAttempts is how often a message is tried before it becomes a
+	// dead letter (20), for the routes that do not set their own.
+	MaxAttempts int
+	Logger      *log.Logger
 }
 
 // Relay publishes the messages of the outbox.
@@ -89,6 +109,8 @@ type Relay struct {
 	batch     int
 	interval  time.Duration
 	retention time.Duration
+	attempts  int
+	topics    []string
 	logger    *log.Logger
 	// batchTime is maxBatchTime; tests shorten it.
 	batchTime time.Duration
@@ -106,7 +128,7 @@ type Relay struct {
 func NewRelay(db *sql.DB, publisher Publisher, routes map[string]Route, opts Options) *Relay {
 	r := &Relay{
 		db: db, publisher: publisher, routes: routes,
-		batch: opts.Batch, interval: opts.Interval, retention: opts.Retention, logger: opts.Logger,
+		batch: opts.Batch, interval: opts.Interval, retention: opts.Retention, attempts: opts.MaxAttempts, logger: opts.Logger,
 		batchTime: maxBatchTime,
 		nudge:     make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -119,6 +141,13 @@ func NewRelay(db *sql.DB, publisher Publisher, routes map[string]Route, opts Opt
 	if r.retention <= 0 {
 		r.retention = defaultRetention
 	}
+	if r.attempts <= 0 {
+		r.attempts = defaultMaxAttempts
+	}
+	for topic := range routes {
+		r.topics = append(r.topics, topic)
+	}
+	sort.Strings(r.topics)
 	if r.logger == nil {
 		r.logger = log.Default()
 	}
@@ -171,7 +200,7 @@ func (r *Relay) run() {
 	defer close(r.done)
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
-	var lastCleanup time.Time
+	var lastCleanup, lastReport time.Time
 	for {
 		if _, err := r.Flush(context.Background()); err != nil {
 			r.logger.Printf("Outbox relay: %v", err)
@@ -182,6 +211,12 @@ func (r *Relay) run() {
 			} else {
 				lastCleanup = time.Now()
 			}
+		}
+		if time.Since(lastReport) >= reportEvery {
+			if err := r.report(context.Background()); err != nil {
+				r.logger.Printf("Outbox relay: reading the state of the outbox: %v", err)
+			}
+			lastReport = time.Now()
 		}
 		select {
 		case <-r.stop:
@@ -235,7 +270,7 @@ func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err e
 		return 0, false, nil
 	}
 
-	pending, err := r.pending(ctx, tx)
+	pending, full, err := r.pending(ctx, tx)
 	if err != nil {
 		return 0, false, err
 	}
@@ -261,10 +296,12 @@ func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err e
 			continue
 		}
 		if err := r.send(ctx, route, msg); err != nil {
-			blocked[msg.topic] = true
-			if err := r.recordFailure(ctx, tx, msg, err); err != nil {
+			dead, err := r.recordFailure(ctx, tx, route, msg, err)
+			if err != nil {
 				return 0, false, err
 			}
+			// A dead letter no longer holds back its topic.
+			blocked[msg.topic] = !dead
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE outbox_events SET published_at = NOW() WHERE id = $1`, msg.id); err != nil {
@@ -275,26 +312,39 @@ func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err e
 	if err := tx.Commit(); err != nil {
 		return 0, false, fmt.Errorf("record the published messages, which are published again: %w", err)
 	}
-	return published, published > 0 && (len(pending) == r.batch || outOfTime), nil
+	return published, published > 0 && (full || outOfTime), nil
 }
 
-func (r *Relay) pending(ctx context.Context, tx *sql.Tx) ([]message, error) {
+// pending reads up to batch pending messages of each topic of the relay,
+// in id order. Each topic is read on its own, so that a topic whose first
+// message waits, with many after it, does not hide the messages of other
+// topics. Topics without a route are not read: they are left for a relay
+// that knows them. full reports whether a topic had more messages.
+func (r *Relay) pending(ctx context.Context, tx *sql.Tx) (pending []message, full bool, err error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, topic, payload, attempts, next_attempt_at <= NOW() FROM outbox_events
-		WHERE published_at IS NULL ORDER BY id LIMIT $1`, r.batch)
+		`SELECT e.id, e.topic, e.payload, e.attempts, e.next_attempt_at <= NOW()
+		FROM unnest($2::text[]) AS t(topic)
+		CROSS JOIN LATERAL (
+			SELECT id, topic, payload, attempts, next_attempt_at FROM outbox_events
+			WHERE topic = t.topic AND published_at IS NULL AND failed_at IS NULL
+			ORDER BY id LIMIT $1
+		) AS e
+		ORDER BY e.id`, r.batch, r.topics)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
-	var pending []message
+	perTopic := make(map[string]int)
 	for rows.Next() {
 		var msg message
 		if err := rows.Scan(&msg.id, &msg.topic, &msg.payload, &msg.attempts, &msg.ready); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		pending = append(pending, msg)
+		perTopic[msg.topic]++
+		full = full || perTopic[msg.topic] == r.batch
 	}
-	return pending, rows.Err()
+	return pending, full, rows.Err()
 }
 
 // send runs the route's Before and publishes the message.
@@ -309,18 +359,33 @@ func (r *Relay) send(ctx context.Context, route Route, msg message) error {
 	return r.publisher.Publish(ctx, route.Exchange, msg.payload)
 }
 
-func (r *Relay) recordFailure(ctx context.Context, tx *sql.Tx, msg message, failure error) error {
+// recordFailure stores a failed attempt of msg. dead reports whether the
+// message used up the attempts of its route and became a dead letter.
+func (r *Relay) recordFailure(ctx context.Context, tx *sql.Tx, route Route, msg message, failure error) (dead bool, err error) {
 	attempts := msg.attempts + 1
-	wait := backoff(attempts)
 	text := failure.Error()
 	if len(text) > maxErrorLength {
 		text = text[:maxErrorLength]
 	}
+	limit := route.MaxAttempts
+	if limit == 0 {
+		limit = r.attempts
+	}
+	if limit > 0 && attempts >= limit {
+		r.logger.Printf("ERROR: Outbox relay: message %d of %s failed %d times and is set aside as a dead letter; "+
+			"the later messages of the topic go on without it. Inspect it with: admin outbox list. Last error: %s",
+			msg.id, msg.topic, attempts, text)
+		_, err := tx.ExecContext(ctx,
+			`UPDATE outbox_events SET attempts = $2, failed_at = NOW(), last_error = $3 WHERE id = $1`,
+			msg.id, attempts, text)
+		return true, err
+	}
+	wait := backoff(attempts)
 	r.logger.Printf("Outbox relay: message %d of %s failed (attempt %d), retrying in %v: %s", msg.id, msg.topic, attempts, wait, text)
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE outbox_events SET attempts = $2, next_attempt_at = NOW() + make_interval(secs => $3), last_error = $4 WHERE id = $1`,
 		msg.id, attempts, wait.Seconds(), text)
-	return err
+	return false, err
 }
 
 // backoff is the wait after the given number of failed attempts: a second,
