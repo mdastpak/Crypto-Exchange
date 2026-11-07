@@ -195,6 +195,7 @@ var envVars = []EnvVar{
 	stringVar("KAVENEGAR_API_KEY", "notifications.sms.kavenegar.api_key", func(c *Configuration) *string { return &c.Notifications.SMS.Kavenegar.APIKey }),
 
 	listVar("WS_ALLOWED_ORIGINS", "websocket.allowed_origins", func(c *Configuration) *[]string { return &c.WebSocket.AllowedOrigins }),
+	intVar("WS_SESSION_CHECK_SECONDS", "websocket.session_check_seconds", func(c *Configuration) *int { return &c.WebSocket.SessionCheckSeconds }),
 	intVar("WS_PING_INTERVAL_SECONDS", "websocket.ping_interval_seconds", func(c *Configuration) *int { return &c.WebSocket.PingInterval }),
 	intVar("WS_MAX_MESSAGE_SIZE_BYTES", "websocket.max_message_size_bytes", func(c *Configuration) *int { return &c.WebSocket.MaxMessageSize }),
 	intVar("WS_WRITE_TIMEOUT_SECONDS", "websocket.write_timeout_seconds", func(c *Configuration) *int { return &c.WebSocket.WriteTimeout }),

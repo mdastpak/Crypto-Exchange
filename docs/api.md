@@ -586,6 +586,22 @@ A token in the URL is not read, because URLs end up in access logs. A request th
 | `401` | `session_inactive` | The token's session has ended |
 | `403` | `account_unavailable` | The user can no longer sign in |
 
+An authenticated connection lasts as long as its authorization, as a REST request would:
+
+- It is closed when its access token expires, unless the client sends a newer token first (see `reauth` below).
+- Every `websocket.session_check_seconds` (60 by default), each server instance checks the sessions of its own authenticated connections, and closes those whose session ended, by logout, revocation, or expiry, and those of users who can no longer sign in. A revoked session can therefore stay connected for up to that interval. A check that fails for another reason, such as an unreachable database, keeps the connection and is retried at the next check.
+
+The close frame says why, with the codes of the REST routes in its reason:
+
+| Close code | Reason | When |
+| --- | --- | --- |
+| `4401` | `token_expired` | The access token expired |
+| `4401` | `session_inactive` | The session ended |
+| `4401` | `token_invalid` | A `reauth` brought a token that is invalid, that names another user, or no token |
+| `4403` | `account_unavailable` | The user can no longer sign in |
+
+After `4401`, refresh the access token and reconnect with the new one; after `4403`, do not reconnect. An anonymous connection is never closed for these reasons.
+
 A request that is not a WebSocket handshake gets `400` (`invalid_request`) in the same envelope, with `Sec-Websocket-Version: 13`, and an origin that is not allowed `403` (`forbidden`).
 
 ### Connection behavior
@@ -614,6 +630,20 @@ The server replies:
 ```json
 { "event": "pong", "timestamp": "2026-11-02T11:00:00+01:00" }
 ```
+
+Reauth, with a newer access token of the same user, before the current one expires. It keeps the connection open past the expiry of the first token. It also turns an anonymous connection into an authenticated one:
+
+```json
+{ "event": "reauth", "token": "<access token>" }
+```
+
+The server replies with the expiry of the new token:
+
+```json
+{ "event": "reauth", "expires_at": "2026-11-07T12:15:00Z" }
+```
+
+The token is checked like the token of the upgrade. When it is refused, the connection is closed with the code of the table above. When it cannot be checked, for example because the database is unreachable, the connection stays open with its current token, and the server replies `{"event": "error", "code": "unavailable", "message": "..."}`.
 
 `{"event": "subscribe", "channels": [...]}` is accepted but has no effect yet. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66).
 

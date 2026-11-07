@@ -210,6 +210,10 @@ type Configuration struct {
 		// this instance.
 		MaxConnections      int `yaml:"max_connections"`
 		MaxConnectionsPerIP int `yaml:"max_connections_per_ip"`
+		// SessionCheckSeconds is how often each instance checks the
+		// sessions of its authenticated connections, and closes those whose
+		// session has ended or whose user can no longer sign in (#189).
+		SessionCheckSeconds int `yaml:"session_check_seconds"`
 	} `yaml:"websocket"`
 
 	Exchange struct {
@@ -749,6 +753,7 @@ func setDefaults() {
 		{&Config.WebSocket.ClientMessageBurst, DefaultWSClientMessageBurst},
 		{&Config.WebSocket.MaxConnections, DefaultWSMaxConnections},
 		{&Config.WebSocket.MaxConnectionsPerIP, DefaultWSMaxConnectionsPerIP},
+		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -966,8 +971,11 @@ const (
 	DefaultWSWriteTimeoutSeconds     = 10
 	DefaultWSClientMessagesPerSecond = 10
 	DefaultWSClientMessageBurst      = 20
-	DefaultWSMaxConnections          = 10000
-	DefaultWSMaxConnectionsPerIP     = 20
+	// DefaultWSSessionCheckSeconds bounds how long a connection outlives
+	// the end of its session.
+	DefaultWSSessionCheckSeconds = 60
+	DefaultWSMaxConnections      = 10000
+	DefaultWSMaxConnectionsPerIP = 20
 )
 
 // DefaultCurrencyCacheTTLSeconds is redis.currency_cache_ttl_seconds when

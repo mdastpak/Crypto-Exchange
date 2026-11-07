@@ -32,6 +32,9 @@ type limits struct {
 	maxPerIP          int
 	// ipv6Prefix groups IPv6 clients for maxPerIP, as the rate limits do.
 	ipv6Prefix int
+	// sessionCheck is how often the sessions of the authenticated
+	// connections are checked (#189).
+	sessionCheck time.Duration
 }
 
 // limitsFromConfig reads the websocket settings, with the defaults of the
@@ -57,6 +60,7 @@ func limitsFromConfig() limits {
 		maxConnections:    or(ws.MaxConnections, config.DefaultWSMaxConnections),
 		maxPerIP:          or(ws.MaxConnectionsPerIP, config.DefaultWSMaxConnectionsPerIP),
 		ipv6Prefix:        config.Config.RateLimits.IPv6PrefixLength,
+		sessionCheck:      time.Duration(or(ws.SessionCheckSeconds, config.DefaultWSSessionCheckSeconds)) * time.Second,
 	}
 }
 
@@ -134,7 +138,7 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		limiter:  newTokenBucket(h.limits.messagesPerSecond, h.limits.messageBurst),
 	}
 	if claims != nil {
-		client.UserID, client.SessionID = claims.UUID, claims.SessionID
+		h.authorize(client, claims)
 	}
 
 	if !h.registerClient(client) {
