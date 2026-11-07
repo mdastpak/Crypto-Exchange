@@ -48,6 +48,7 @@ func TestRecoveryMiddleware_RevealsNothingAboutThePanic(t *testing.T) {
 				assert.Equal(t, map[string]interface{}{
 					"status":  float64(http.StatusInternalServerError),
 					"message": "Internal server error",
+					"code":    "internal_error",
 				}, body, "the response holds only the standard envelope")
 				assert.NotContains(t, w.Body.String(), "hunter2")
 				assert.NotContains(t, w.Body.String(), "goroutine")

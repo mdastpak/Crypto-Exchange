@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,9 +62,57 @@ func TestRouter_EveryRouteGetsTheGlobalMiddleware(t *testing.T) {
 		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), "%s: security headers", name)
 		assert.NotEmpty(t, w.Header().Get("X-RateLimit-Limit"), "%s: REST rate limit", name)
 		assert.NotEmpty(t, w.Header().Get("X-Request-ID"), "%s: request ID", name)
+		assertErrorContract(t, w, name)
 	}
 	assert.True(t, seen["/"], "the root route is checked")
 	assert.True(t, seen["/swagger/*any"], "Swagger is served outside release mode")
+}
+
+// assertErrorContract checks the error contract of #53 on a response: an
+// error in the JSON envelope has a code, and the request ID of its header.
+// The health probes answer plain JSON without the envelope.
+func assertErrorContract(t *testing.T, w *httptest.ResponseRecorder, name string) {
+	t.Helper()
+	if w.Code < http.StatusBadRequest || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		return
+	}
+	var body struct {
+		Status    int    `json:"status"`
+		Code      string `json:"code"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Status == 0 {
+		return
+	}
+	assert.NotEmpty(t, body.Code, "%s: an error has a code", name)
+	assert.Equal(t, w.Header().Get("X-Request-ID"), body.RequestID, "%s: an error quotes its request ID", name)
+}
+
+// TestRouter_UnknownRoutesAnswerInTheEnvelope checks that a path or a method
+// that no route has gets the envelope, a code, and the request ID, instead of
+// Gin's plain-text answer.
+func TestRouter_UnknownRoutesAnswerInTheEnvelope(t *testing.T) {
+	env := newE2EEnv(t)
+	router := newTestRouter(t, env)
+	for _, tc := range []struct {
+		method, path, code string
+		status             int
+	}{
+		{http.MethodGet, "/api/v1/no-such-route", "not_found", http.StatusNotFound},
+		{http.MethodDelete, "/api/v1/public/currencies", "method_not_allowed", http.StatusMethodNotAllowed},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+		assert.Equal(t, tc.status, w.Code, tc.path)
+		var body struct {
+			Code      string `json:"code"`
+			RequestID string `json:"request_id"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+		assert.Equal(t, tc.code, body.Code)
+		assert.Equal(t, w.Header().Get("X-Request-ID"), body.RequestID)
+		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), "the global middleware applies")
+	}
 }
 
 func TestRouter_SwaggerOnlyWhereEnabled(t *testing.T) {

@@ -173,7 +173,7 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 
 	refreshToken, err := c.Cookie(RefreshTokenCookie)
 	if err != nil || refreshToken == "" {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Refresh token not provided", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_missing", "Refresh token not provided", nil)
 		return
 	}
 
@@ -181,7 +181,7 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	claims, err := ParseToken(refreshToken, RoleUser, TokenTypeRefresh)
 	if err != nil || claims.SessionID == "" {
 		ClearRefreshTokenCookie(c)
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired refresh token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
 		return
 	}
 
@@ -190,11 +190,11 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	switch err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID); {
 	case errors.Is(err, ErrSessionInvalid):
 		ClearRefreshTokenCookie(c)
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired refresh token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
 		return
 	case errors.Is(err, ErrAccountUnavailable):
 		ClearRefreshTokenCookie(c)
-		helpers.SendResponse(c, http.StatusForbidden, accountUnavailableMessage, nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, accountUnavailableMessage, nil)
 		return
 	case err != nil:
 		log.Printf("Error verifying session %s: %v", claims.SessionID, err)
@@ -226,7 +226,7 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	}
 	if errors.Is(err, ErrSessionInvalid) {
 		ClearRefreshTokenCookie(c)
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired refresh token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
 		return
 	}
 	if err != nil {

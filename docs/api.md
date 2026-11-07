@@ -29,7 +29,55 @@ Every endpoint except `/system/*` responds with:
 }
 ```
 
-`status` repeats the HTTP status code. `info` holds the payload and is omitted when there is none. Error responses use the same envelope and contain only a fixed message for each error. Internal details, such as database, Redis, or provider errors, are only written to the server log. A panic in a handler returns `500` with the message `Internal server error`.
+`status` repeats the HTTP status code. `info` holds the payload and is omitted when there is none.
+
+### Errors
+
+Error responses, of status `400` or more, use the same envelope with two more fields ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53)):
+
+```json
+{
+  "status": 409,
+  "message": "The currency has changed since that version; read it again and retry.",
+  "code": "version_conflict",
+  "request_id": "019a5a5e-7c1b-7d2e-9f30-1a2b3c4d5e6f",
+  "info": { "code": "version_conflict", "version": 3 }
+}
+```
+
+- **`code`** names the error, for clients to act on. It is stable: a published code keeps its meaning. `message` is for people and may change.
+- **`request_id`** is the request's `X-Request-ID`. Quote it when reporting an error, to find the request in the server log.
+- **`info`** holds the details of some errors: the invalid fields of a `validation_failed`, under `info.errors`, or the current version of a `version_conflict`. Codes that appeared in `info.code` before #53 are still there, as well as in `code`.
+
+An error response contains only a fixed message for each error. Internal details, such as database, Redis, or provider errors, are only written to the server log. A panic in a handler returns `500`, `internal_error`, with the message `Internal server error`. An unknown path answers `404` (`not_found`), and a known path with another method `405` (`method_not_allowed`), in the same envelope.
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `invalid_request` | `400` | The request is malformed, for example a body that is not the expected JSON or an invalid UUID |
+| `validation_failed` | `400` | Fields are invalid; `info.errors` maps each field to what is wrong |
+| `unauthorized` | `401` | Authentication failed, without a more specific code |
+| `token_missing` | `401` | No `Authorization` header |
+| `token_invalid` | `401` | The access token is not a valid `Bearer` token of the route's role |
+| `token_revoked` | `401` | The access token was revoked, for example by a logout |
+| `session_inactive` | `401` | The token's session has ended |
+| `refresh_token_missing` | `401` | `POST /public/auth/refresh` without the `refresh_token` cookie |
+| `refresh_token_invalid` | `401` | The refresh token is invalid, expired, rotated, or of an ended session |
+| `code_invalid` | `401` | A sign-in code is wrong, expired, or used up |
+| `admin_inactive` | `401` | The administrator of an admin token is no longer active |
+| `forbidden` | `403` | The request is not allowed, without a more specific code |
+| `account_unavailable` | `403` | The account can no longer sign in: disabled, suspended, or deleted |
+| `use_admin_sign_in` | `403` | An administrator used the user sign-in |
+| `not_found` | `404` | No such resource, or a hidden one, or no such route |
+| `method_not_allowed` | `405` | The path exists with other methods |
+| `conflict` | `409` | The request conflicts with the current state, without a more specific code |
+| `duplicate_symbol`, `duplicate_contract` | `409` | Another currency has this symbol or contract; `info.field` names the field |
+| `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
+| `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
+| `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
+| `internal_error` | `500` | An unexpected failure, described in the server log |
+| `not_implemented` | `501` | Not implemented yet |
+| `unavailable` | `503` | A dependency is unavailable; try again later |
+| `error` | other | A status without a code of its own |
 
 ### Authentication
 

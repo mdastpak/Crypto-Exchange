@@ -141,7 +141,7 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrInvalidCode):
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired OTP code", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired OTP code", nil)
 		return
 	case err != nil:
 		log.Printf("Failed to verify a sign-in code: %v", err)
@@ -159,11 +159,11 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	if errors.Is(err, errAccountUnavailable) {
 		// The code was right, so the caller controls the contact and may
 		// learn why the account cannot sign in.
-		helpers.SendResponse(c, http.StatusForbidden, "This account cannot sign in. Please contact support.", nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account cannot sign in. Please contact support.", nil)
 		return
 	}
 	if errors.Is(err, errAdminAccount) {
-		helpers.SendResponse(c, http.StatusForbidden, "Administrators must use the admin sign-in.", nil)
+		helpers.SendError(c, http.StatusForbidden, "use_admin_sign_in", "Administrators must use the admin sign-in.", nil)
 		return
 	}
 	if err != nil || userHK == uuid.Nil {

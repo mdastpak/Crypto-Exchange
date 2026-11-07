@@ -51,7 +51,7 @@ func (h *AdminHandler) RequireActiveAdmin() gin.HandlerFunc {
 		claims, ok := auth.GetClaims(c)
 		if !ok || h.Accounts == nil {
 			// Without admin sign-in, no admin token is legitimate.
-			helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
+			helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
 			c.Abort()
 			return
 		}
@@ -64,7 +64,7 @@ func (h *AdminHandler) RequireActiveAdmin() gin.HandlerFunc {
 		}
 		if !active {
 			log.Printf("Rejected a token of administrator %s, who is no longer active", claims.UUID)
-			helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Administrator is not active", nil)
+			helpers.SendError(c, http.StatusUnauthorized, "admin_inactive", "Unauthorized - Administrator is not active", nil)
 			c.Abort()
 			return
 		}
@@ -165,7 +165,7 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrInvalidCode):
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired code", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired code", nil)
 		return
 	case err != nil:
 		log.Printf("Failed to verify an admin sign-in code: %v", err)
@@ -180,7 +180,7 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	switch {
 	case errors.Is(err, adminauth.ErrNotFound), errors.Is(err, adminauth.ErrInvalidCode):
 		log.Printf("Rejected an admin sign-in for %s: %v", adminauth.MaskEmail(email), err)
-		helpers.SendResponse(c, http.StatusUnauthorized, "Invalid or expired code", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired code", nil)
 		return
 	case err != nil:
 		log.Printf("Failed to verify an admin sign-in: %v", err)

@@ -19,7 +19,7 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 	tokenString, hasToken := accessToken(c)
 	if !ok || !hasToken {
 		// The route is not protected by RequireRole.
-		unauthorized(c, "Unauthorized - Token not provided")
+		unauthorized(c, "token_missing", "Unauthorized - Token not provided")
 		return
 	}
 

@@ -34,10 +34,9 @@ func bearerToken(header string) (string, bool) {
 	return token, true
 }
 
-func unauthorized(c *gin.Context, message string) {
+func unauthorized(c *gin.Context, code, message string) {
 	c.Header("WWW-Authenticate", `Bearer`)
-	helpers.SendResponse(c, http.StatusUnauthorized, message, nil)
-	c.Abort()
+	helpers.SendError(c, http.StatusUnauthorized, code, message, nil)
 }
 
 // RequireRole authenticates a request with a Bearer access token of role and
@@ -48,18 +47,18 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" {
-			unauthorized(c, "Unauthorized - Token not provided")
+			unauthorized(c, "token_missing", "Unauthorized - Token not provided")
 			return
 		}
 		token, ok := bearerToken(header)
 		if !ok {
-			unauthorized(c, "Unauthorized - Bearer token required")
+			unauthorized(c, helpers.CodeTokenInvalid, "Unauthorized - Bearer token required")
 			return
 		}
 
 		claims, err := ParseToken(token, role, TokenTypeAccess)
 		if err != nil {
-			unauthorized(c, "Unauthorized - Invalid token")
+			unauthorized(c, helpers.CodeTokenInvalid, "Unauthorized - Invalid token")
 			return
 		}
 
@@ -71,7 +70,7 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 				return
 			}
 			if isBlacklisted {
-				unauthorized(c, "Unauthorized - Token is blacklisted")
+				unauthorized(c, "token_revoked", "Unauthorized - Token is blacklisted")
 				return
 			}
 		}
@@ -96,7 +95,7 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := GetClaims(c)
 		if !ok || claims.SessionID == "" || sessions == nil {
-			unauthorized(c, "Unauthorized - Invalid token")
+			unauthorized(c, helpers.CodeTokenInvalid, "Unauthorized - Invalid token")
 			return
 		}
 		err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID)
@@ -104,10 +103,9 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 		case err == nil:
 			c.Next()
 		case errors.Is(err, ErrSessionInvalid):
-			unauthorized(c, "Unauthorized - Session is not active")
+			unauthorized(c, "session_inactive", "Unauthorized - Session is not active")
 		case errors.Is(err, ErrAccountUnavailable):
-			helpers.SendResponse(c, http.StatusForbidden, accountUnavailableMessage, nil)
-			c.Abort()
+			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, accountUnavailableMessage, nil)
 		default:
 			log.Printf("Failed to verify session %s: %v", claims.SessionID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the session", nil)

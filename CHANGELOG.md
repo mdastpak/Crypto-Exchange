@@ -53,6 +53,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The health probes under `/system/`, `/swagger/`, and `/` keep their paths.
   - The refresh token cookie is scoped to the auth routes of the version that issued it: `/api/v1/public/auth` for a sign-in through `/api/v1`, `/public/auth` through an alias. A client that moves to `/api/v1` signs in again once. Logout clears the cookie under both paths.
   - The Swagger UI uses `/api/v1` as its base path.
+- Error responses follow one contract ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53), second part). Besides `status`, `message`, and `info`, every response of status `400` or more carries a stable `code` and the `request_id` of its `X-Request-ID` header. `docs/api.md` lists the codes.
+  - Most errors take the code of their status (`invalid_request`, `not_found`, `rate_limited`, `internal_error`, and so on). The cases a client must tell apart have codes of their own: `token_missing`, `token_invalid`, `token_revoked`, `session_inactive`, `refresh_token_missing`, `refresh_token_invalid`, `code_invalid`, `account_unavailable`, `use_admin_sign_in`, `admin_inactive`, `validation_failed`, `duplicate_symbol`, `duplicate_contract`, and `version_conflict`.
+  - The codes that were in `info.code` stay there too.
+  - An unknown path answers `404` and a wrong method `405`, in the envelope, instead of Gin's plain text.
+  - `SendResponse` no longer aborts the handlers after a successful response such as `201`; only errors do.
 
 ### Fixed
 

@@ -41,7 +41,7 @@ func BindAndValidate(c *gin.Context, obj interface{}) error {
 		for _, err := range err.(validator.ValidationErrors) {
 			errors = append(errors, formatValidationError(err))
 		}
-		helpers.SendResponse(c, http.StatusBadRequest, "Validation failed", gin.H{"errors": errors})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errors})
 		return err
 	}
 	return nil

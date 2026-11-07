@@ -667,6 +667,16 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	}
 	r.Use(middleware.BodyLimit(bodyLimit))
 
+	// Unknown routes and methods answer in the envelope too, with a code
+	// and the request ID, instead of Gin's plain-text answers (#53).
+	r.HandleMethodNotAllowed = true
+	r.NoRoute(func(c *gin.Context) {
+		helpers.SendResponse(c, http.StatusNotFound, "Not found", nil)
+	})
+	r.NoMethod(func(c *gin.Context) {
+		helpers.SendResponse(c, http.StatusMethodNotAllowed, "Method not allowed", nil)
+	})
+
 	r.GET("/", func(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
 	})
