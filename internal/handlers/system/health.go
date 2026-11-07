@@ -64,6 +64,13 @@ func (h *SystemHandler) dependencies() []dependency {
 // LivenessHandler reports that the process serves requests. It checks no
 // dependency, so that an orchestrator does not restart an instance for an
 // outage elsewhere.
+//
+// @Summary Liveness
+// @Description Whether the process serves requests. Checks no dependency.
+// @Tags system
+// @Produce json
+// @Success 200 {object} HealthStatus
+// @Router /system/live [get]
 func (h *SystemHandler) LivenessHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -73,6 +80,14 @@ func (h *SystemHandler) LivenessHandler(c *gin.Context) {
 // orchestrators stop sending traffic to an instance that cannot serve it.
 // The details per dependency are left out in release mode, where they would
 // only tell outsiders about the internals.
+//
+// @Summary Readiness
+// @Description 503 while PostgreSQL, Redis, or RabbitMQ is unavailable, or while the instance drains at shutdown.
+// @Tags system
+// @Produce json
+// @Success 200 {object} HealthStatus
+// @Failure 503 {object} HealthStatus
+// @Router /system/ready [get]
 func (h *SystemHandler) ReadinessHandler(c *gin.Context) {
 	if h.draining.Load() {
 		c.JSON(http.StatusServiceUnavailable, HealthStatus{Status: "draining"})
@@ -118,10 +133,22 @@ func (h *SystemHandler) ReadinessHandler(c *gin.Context) {
 
 // HealthCheckHandler serves /system/healthcheck, the earlier name of
 // /system/ready.
+//
+// @Summary Readiness, by its earlier name
+// @Tags system
+// @Produce json
+// @Success 200 {object} HealthStatus
+// @Failure 503 {object} HealthStatus
+// @Router /system/healthcheck [get]
 func (h *SystemHandler) HealthCheckHandler(c *gin.Context) {
 	h.ReadinessHandler(c)
 }
 
+// @Summary Ping
+// @Tags system
+// @Produce json
+// @Success 200 {object} models.PingInfo
+// @Router /system/ping [get]
 func (h *SystemHandler) PingPongHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "pong", "timestamp": time.Now().UTC().Format(time.RFC3339)})
 }

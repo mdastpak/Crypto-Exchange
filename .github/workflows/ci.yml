@@ -54,6 +54,18 @@ jobs:
       - name: Check that go.mod and go.sum are tidy
         run: go mod tidy -diff
 
+      # The OpenAPI document in docs/ is generated from the annotations of
+      # the handlers (#54), with the swag version of go.mod. A test checks
+      # that it documents every route.
+      - name: Check that the OpenAPI document is up to date
+        run: |
+          swag="github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+          go run "$swag" init -g cmd/server/main.go -o docs --parseInternal
+          if ! git diff --exit-code -- docs/docs.go docs/swagger.json docs/swagger.yaml; then
+            echo "::error::The OpenAPI document is out of date; regenerate it with: go run $swag init -g cmd/server/main.go -o docs --parseInternal"
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

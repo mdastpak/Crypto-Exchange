@@ -99,9 +99,19 @@ docs: document the OTP sign-in flow
 - [ ] `gofmt -l .` is empty, and `go vet ./...` and `go build ./...` pass.
 - [ ] Tests are added or updated, and `go test ./...` passes.
 - [ ] Migrations follow the rules above.
-- [ ] Documentation (README, `docs/`, Swagger annotations) is updated when behavior or configuration changes.
+- [ ] Documentation (README, `docs/`, Swagger annotations) is updated when behavior or configuration changes, and the OpenAPI document is regenerated when a route or its annotations change (see [API documentation](#api-documentation)).
 - [ ] No secrets, keys, or personal data are included.
 - [ ] All text is in English.
+
+## API documentation
+
+The OpenAPI document in `docs/` (`docs.go`, `swagger.json`, `swagger.yaml`) is generated from the swag annotations of the handlers and of `main` in `cmd/server`. Do not edit it by hand. After adding or changing a route or its annotations, regenerate it with the swag version of `go.mod`:
+
+```sh
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o docs --parseInternal
+```
+
+CI regenerates it and fails when it differs from the committed one, and `TestOpenAPI_DocumentsEveryRoute` fails when a route of the server is missing from it, or when it documents one that does not exist. Paths in the annotations are absolute, such as `/api/v1/public/currencies`.
 
 ## Dependencies
 

@@ -1,12 +1,69 @@
+basePath: /
 definitions:
+  admin.adminSignInRequest:
+    properties:
+      email:
+        type: string
+    type: object
+  admin.adminVerifyRequest:
+    properties:
+      otp:
+        type: string
+      totp:
+        type: string
+    type: object
+  admin.currencyInfoFields:
+    properties:
+      contract:
+        type: string
+      en_name:
+        type: string
+      fa_name:
+        type: string
+      if_fiat:
+        type: boolean
+      is_token:
+        type: boolean
+      symbol:
+        type: string
+    type: object
+  admin.currencyRequest:
+    properties:
+      info:
+        $ref: '#/definitions/admin.currencyInfoFields'
+      status:
+        type: string
+      version:
+        description: |-
+          Version is the version of the currency that an update is based on.
+          When it is sent and the currency has changed since, the update is
+          refused with 409. A create may not send it.
+        type: integer
+    type: object
   models.APIResponse:
     properties:
+      code:
+        description: |-
+          Code names the error of a response of status 400 or more, for
+          clients to act on; Message is for people and may change.
+        type: string
       info:
         description: Info can hold any type of data (e.g., list or object)
       message:
         type: string
+      request_id:
+        description: |-
+          RequestID is the X-Request-ID of an error response, to quote when
+          reporting it.
+        type: string
       status:
         type: integer
+    type: object
+  models.AccessTokenInfo:
+    properties:
+      access_token:
+        example: eyJhbGciOiJSUzI1NiIsImtpZCI6Ii4uLiJ9...
+        type: string
     type: object
   models.Currency:
     properties:
@@ -24,6 +81,23 @@ definitions:
         type: string
       updated_at:
         type: string
+      version:
+        description: |-
+          Version counts the changes of the currency. Only administrators see
+          it; it is 0, and left out, in public responses.
+        type: integer
+    type: object
+  models.CurrencyCreatedInfo:
+    properties:
+      hk:
+        format: uuid
+        type: string
+      status:
+        example: pending
+        type: string
+      version:
+        example: 1
+        type: integer
     type: object
   models.CurrencyInfo:
     properties:
@@ -40,132 +114,644 @@ definitions:
       symbol:
         type: string
     type: object
+  models.PingInfo:
+    properties:
+      message:
+        example: pong
+        type: string
+      timestamp:
+        example: "2026-11-07T10:00:00Z"
+        type: string
+    type: object
+  models.SignInCodeInfo:
+    properties:
+      type:
+        description: Type is the kind of contact the code was sent to.
+        enum:
+        - email
+        - mobile
+        example: email
+        type: string
+      username:
+        description: Username is the contact, masked.
+        example: ali*****@example.com
+        type: string
+      uuid:
+        description: UUID identifies the sign-in session, for the verification.
+        format: uuid
+        type: string
+    type: object
+  models.SignInSessionInfo:
+    properties:
+      uuid:
+        description: UUID identifies the sign-in session, for the verification.
+        format: uuid
+        type: string
+    type: object
+  models.VersionInfo:
+    properties:
+      version:
+        example: 2
+        type: integer
+    type: object
+  public.OTPRequest:
+    properties:
+      username:
+        type: string
+    type: object
+  public.VerifyOTPRequest:
+    properties:
+      otp:
+        type: string
+      uuid:
+        type: string
+    type: object
+  system.HealthStatus:
+    properties:
+      details:
+        additionalProperties:
+          $ref: '#/definitions/system.ServiceStatus'
+        type: object
+      status:
+        type: string
+    type: object
+  system.ServiceStatus:
+    properties:
+      last_check:
+        type: string
+      latency_ms:
+        type: integer
+      status:
+        type: string
+    type: object
+  user.Profile:
+    properties:
+      contact:
+        additionalProperties:
+          type: string
+        type: object
+      created_at:
+        type: string
+      display_name:
+        type: string
+      first_name:
+        type: string
+      kyc_status:
+        type: string
+      kyc_tier:
+        type: string
+      last_name:
+        type: string
+      status:
+        type: string
+      uuid:
+        type: string
+    type: object
+  user.profileUpdate:
+    properties:
+      display_name:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+    type: object
 info:
   contact: {}
+  description: 'The HTTP API of the Crypto Exchange server. docs/api.md describes
+    the conventions: the envelope, the error codes, sign-in, and the WebSocket messages.
+    The unversioned paths of earlier releases still answer, as deprecated aliases
+    of the paths under /api/v1.'
+  title: Crypto Exchange API
+  version: "1"
 paths:
-  /admin/currencies:
+  /:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Welcome
+      tags:
+      - system
+  /api/v1/admin/auth:
     post:
       consumes:
       - application/json
-      description: Create a new currency in the system
+      description: Sends a one-time code to the administrator's email address. The
+        answer is the same whether or not the address belongs to an administrator.
       parameters:
-      - description: Currency to create
+      - description: The administrator's email address
         in: body
-        name: currency
+        name: body
         required: true
         schema:
-          $ref: '#/definitions/models.Currency'
+          $ref: '#/definitions/admin.adminSignInRequest'
       produces:
       - application/json
       responses:
-        "0":
-          description: 'URL Scheme Error: Ensure URL scheme is ''http'' or ''https'''
+        "200":
+          description: OK
           schema:
-            $ref: '#/definitions/models.APIResponse'
-        "201":
-          description: Currency created successfully
-          schema:
-            $ref: '#/definitions/models.APIResponse'
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.SignInSessionInfo'
+              type: object
         "400":
-          description: Invalid input or duplicate symbol/contract
+          description: Bad Request
           schema:
             $ref: '#/definitions/models.APIResponse'
-        "500":
-          description: Failed to create currency due to an unexpected error
+        "429":
+          description: Too Many Requests
           schema:
             $ref: '#/definitions/models.APIResponse'
-      summary: Create a new currency
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Request an admin sign-in code
       tags:
-      - Admin
-  /admin/currencies/{hk}:
-    delete:
-      description: Logically delete a currency by setting deleted_at and changing
-        its status to 'deleted'.
+      - admin sign-in
+  /api/v1/admin/auth/{uuid}:
+    post:
+      consumes:
+      - application/json
+      description: Checks the emailed code and the authenticator (TOTP) code, and
+        returns an admin access token.
       parameters:
-      - description: Currency HK
+      - description: The sign-in session from the code request
+        format: uuid
+        in: path
+        name: uuid
+        required: true
+        type: string
+      - description: The emailed code and the authenticator code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.adminVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.AccessTokenInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Verify an admin sign-in
+      tags:
+      - admin sign-in
+  /api/v1/admin/currencies:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: The currency
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.currencyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.CurrencyCreatedInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}:
+    delete:
+      description: Soft-deletes the currency. With version, the delete is refused
+        with 409 version_conflict when the currency has changed since.
+      parameters:
+      - description: The currency's UUID
+        format: uuid
         in: path
         name: hk
         required: true
         type: string
+      - description: The version the delete is based on
+        in: query
+        minimum: 1
+        name: version
+        type: integer
+      produces:
+      - application/json
       responses:
         "200":
-          description: Currency deleted successfully
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.VersionInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/models.APIResponse'
         "404":
-          description: Currency not found or already deleted
+          description: Not Found
           schema:
             $ref: '#/definitions/models.APIResponse'
-        "500":
-          description: Failed to delete currency due to an unexpected error
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Delete a currency
       tags:
-      - Admin
+      - admin currencies
+    get:
+      description: Whatever its status, deleted ones included.
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.Currency'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a currency with its version
+      tags:
+      - admin currencies
     put:
       consumes:
       - application/json
-      description: Update the information or status of an existing currency using
-        its HK (UUID) as identifier
+      description: Changes only the fields sent. With version, the update is refused
+        with 409 version_conflict when the currency has changed since.
       parameters:
-      - description: Currency HK
+      - description: The currency's UUID
+        format: uuid
         in: path
         name: hk
         required: true
         type: string
-      - description: Currency data to update
+      - description: The fields to change, and optionally the version the change is
+          based on
         in: body
-        name: currency
+        name: body
         required: true
         schema:
-          $ref: '#/definitions/models.Currency'
+          $ref: '#/definitions/admin.currencyRequest'
       produces:
       - application/json
       responses:
         "200":
-          description: Currency updated successfully
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.VersionInfo'
+              type: object
+        "400":
+          description: Bad Request
           schema:
             $ref: '#/definitions/models.APIResponse'
-        "400":
-          description: Invalid input or duplicate symbol/contract
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/models.APIResponse'
         "404":
-          description: Currency not found
+          description: Not Found
           schema:
             $ref: '#/definitions/models.APIResponse'
-        "500":
-          description: Failed to update currency due to an unexpected error
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
       summary: Update a currency
       tags:
-      - Admin
-  /public/currencies:
-    get:
-      description: Retrieve all active currencies from Redis cache
+      - admin currencies
+  /api/v1/admin/logout:
+    post:
       produces:
       - application/json
       responses:
         "200":
-          description: List of active currencies
-          schema:
-            items:
-              $ref: '#/definitions/models.Currency'
-            type: array
-        "500":
-          description: Failed to retrieve currencies from cache
+          description: OK
           schema:
             $ref: '#/definitions/models.APIResponse'
-      summary: Get all active currencies
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Sign out an administrator
       tags:
-      - Public
-  /public/currencies/{hk}:
-    get:
-      description: Retrieve a single currency from Redis cache using its HK
+      - admin sign-in
+  /api/v1/public/auth:
+    post:
+      consumes:
+      - application/json
+      description: Sends a one-time code to an email address or a mobile number. Limited
+        per hour and client address.
       parameters:
-      - description: Currency HK
+      - description: The email address or mobile number to send the code to
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.OTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.SignInCodeInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Request a sign-in code
+      tags:
+      - sign-in
+  /api/v1/public/auth/{uuid}:
+    post:
+      consumes:
+      - application/json
+      description: Returns an access token, and sets the refresh token in the HttpOnly
+        refresh_token cookie.
+      parameters:
+      - description: The sign-in session from the code request
+        format: uuid
+        in: path
+        name: uuid
+        required: true
+        type: string
+      - description: The code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.VerifyOTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.AccessTokenInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Verify a sign-in code
+      tags:
+      - sign-in
+  /api/v1/public/auth/logout:
+    post:
+      description: Both routes end the session. POST /api/v1/public/auth/logout exists
+        because the refresh token cookie is only sent to /api/v1/public/auth, so only
+        that route can clear it in a browser.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Sign out
+      tags:
+      - sign-in
+  /api/v1/public/auth/refresh:
+    post:
+      description: Exchanges the refresh_token cookie for a new access token, and
+        rotates the cookie. A rotated refresh token that is presented again revokes
+        the session.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.AccessTokenInfo'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Refresh the access token
+      tags:
+      - sign-in
+  /api/v1/public/currencies:
+    get:
+      description: The approved currencies, oldest first.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/models.Currency'
+                  type: array
+              type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: List the public currencies
+      tags:
+      - currencies
+  /api/v1/public/currencies/{hk}:
+    get:
+      parameters:
+      - description: The currency's UUID
+        format: uuid
         in: path
         name: hk
         required: true
@@ -174,18 +760,233 @@ paths:
       - application/json
       responses:
         "200":
-          description: Currency data
+          description: OK
           schema:
-            $ref: '#/definitions/models.Currency'
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.Currency'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
         "404":
-          description: Currency not found
+          description: Not Found
           schema:
             $ref: '#/definitions/models.APIResponse'
-        "500":
-          description: Failed to retrieve currency from cache
+        "503":
+          description: Service Unavailable
           schema:
             $ref: '#/definitions/models.APIResponse'
-      summary: Get a single currency by HK
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Get a public currency
       tags:
-      - Public
+      - currencies
+  /api/v1/user/logout:
+    post:
+      description: Both routes end the session. POST /api/v1/public/auth/logout exists
+        because the refresh token cookie is only sent to /api/v1/public/auth, so only
+        that route can clear it in a browser.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Sign out
+      tags:
+      - sign-in
+  /api/v1/user/profile:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.Profile'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the signed-in user's profile
+      tags:
+      - user
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: The names to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.profileUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.Profile'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Change the names in the profile
+      tags:
+      - user
+  /api/v1/ws/:
+    get:
+      description: 'Upgrades to a WebSocket. An optional user access token comes as
+        Authorization: Bearer, or from a browser as the subprotocols access_token
+        and the token. docs/api.md describes the messages.'
+      parameters:
+      - description: Bearer <access token>
+        in: header
+        name: Authorization
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: Not a WebSocket handshake
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Connect to the WebSocket gateway
+      tags:
+      - websocket
+  /system/healthcheck:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/system.HealthStatus'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/system.HealthStatus'
+      summary: Readiness, by its earlier name
+      tags:
+      - system
+  /system/live:
+    get:
+      description: Whether the process serves requests. Checks no dependency.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/system.HealthStatus'
+      summary: Liveness
+      tags:
+      - system
+  /system/ping:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PingInfo'
+      summary: Ping
+      tags:
+      - system
+  /system/ready:
+    get:
+      description: 503 while PostgreSQL, Redis, or RabbitMQ is unavailable, or while
+        the instance drains at shutdown.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/system.HealthStatus'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/system.HealthStatus'
+      summary: Readiness
+      tags:
+      - system
+securityDefinitions:
+  BearerAuth:
+    description: A user or an admin access token, as "Bearer <token>".
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

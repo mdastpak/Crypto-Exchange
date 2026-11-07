@@ -61,6 +61,18 @@ func init() {
 	flag.StringVar(&migrationsPath, "migrations", "file://internal/db/migrations", "Path to migrations")
 }
 
+// The general information of the OpenAPI document, which swag generates
+// into docs/ from these and the handlers' annotations (#54). Its paths are
+// absolute, so that it holds the API under /api/v1 and the health probes.
+//
+// @title Crypto Exchange API
+// @version 1
+// @description The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. The unversioned paths of earlier releases still answer, as deprecated aliases of the paths under /api/v1.
+// @BasePath /
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description A user or an admin access token, as "Bearer <token>".
 func main() {
 	flag.Parse()
 	if err := run(); err != nil {
@@ -572,6 +584,54 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	}
 }
 
+// welcome answers the root path.
+//
+// @Summary Welcome
+// @Tags system
+// @Produce json
+// @Success 200 {object} models.APIResponse
+// @Router / [get]
+func welcome(c *gin.Context) {
+	helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
+}
+
+// userLogout ends the session of a user access token: it revokes the
+// session, its refresh token, and the access token, and clears the refresh
+// token cookie.
+//
+// @Summary Sign out
+// @Description Both routes end the session. POST /api/v1/public/auth/logout exists because the refresh token cookie is only sent to /api/v1/public/auth, so only that route can clear it in a browser.
+// @Tags sign-in
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/user/logout [post]
+// @Router /api/v1/public/auth/logout [post]
+func userLogout(ih *InfraHandlers) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
+	}
+}
+
+// adminLogout revokes an admin access token. Admin tokens have no session
+// or refresh token to revoke.
+//
+// @Summary Sign out an administrator
+// @Tags admin sign-in
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/logout [post]
+func adminLogout(ih *InfraHandlers) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth.LogoutHandler(c, ih.TokenBlacklist, nil)
+	}
+}
+
 // apiV1Since is when the unversioned paths were deprecated.
 var apiV1Since = time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
 
@@ -594,9 +654,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
 		// here too, behind the same authentication as /user/logout.
-		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), func(c *gin.Context) {
-			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
-		})
+		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), userLogout(ih))
 	}
 
 	// Admin sign-in is public, rate-limited like user sign-in, and separate
@@ -616,10 +674,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
-		adminGroup.POST("/logout", func(c *gin.Context) {
-			// Admin tokens have no session or refresh token to revoke.
-			auth.LogoutHandler(c, ih.TokenBlacklist, nil)
-		})
+		adminGroup.POST("/logout", adminLogout(ih))
 	}
 
 	userGroup := g.Group("/user")
@@ -628,9 +683,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	{
 		// Logout needs no active session, so that a user whose account was
 		// disabled can still end the session.
-		userGroup.POST("/logout", func(c *gin.Context) {
-			auth.LogoutHandler(c, ih.TokenBlacklist, ih.Sessions)
-		})
+		userGroup.POST("/logout", userLogout(ih))
 
 		// Every other user route requires an active session and a user who
 		// can still sign in.
@@ -677,11 +730,10 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		helpers.SendResponse(c, http.StatusMethodNotAllowed, "Method not allowed", nil)
 	})
 
-	r.GET("/", func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
-	})
+	r.GET("/", welcome)
 	if config.Config.SwaggerEnabled() {
-		docs.SwaggerInfo.BasePath = helpers.APIPrefix
+		// The paths of the document are absolute.
+		docs.SwaggerInfo.BasePath = "/"
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
 

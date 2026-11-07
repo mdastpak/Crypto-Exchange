@@ -3,7 +3,7 @@
 @echo off
 
 go mod tidy
-swag init -g ./main.go
-go run ./cmd/server/main.go
+go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o docs --parseInternal
+go run ./cmd/server
 
 :===

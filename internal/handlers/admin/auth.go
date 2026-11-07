@@ -75,6 +75,19 @@ func (h *AdminHandler) RequireActiveAdmin() gin.HandlerFunc {
 // RequestSignIn starts an admin sign-in: it emails a one-time code to the
 // address when it belongs to an active administrator. The response is the
 // same either way.
+//
+// @Summary Request an admin sign-in code
+// @Description Sends a one-time code to the administrator's email address. The answer is the same whether or not the address belongs to an administrator.
+// @Tags admin sign-in
+// @Accept json
+// @Produce json
+// @Param body body adminSignInRequest true "The administrator's email address"
+// @Success 200 {object} models.APIResponse{info=models.SignInSessionInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 429 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/auth [post]
 func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -138,6 +151,21 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 // from the administrator's authenticator app, and returns an admin access
 // token. Every failure gets the same answer, so it does not reveal which
 // factor was wrong.
+//
+// @Summary Verify an admin sign-in
+// @Description Checks the emailed code and the authenticator (TOTP) code, and returns an admin access token.
+// @Tags admin sign-in
+// @Accept json
+// @Produce json
+// @Param uuid path string true "The sign-in session from the code request" format(uuid)
+// @Param body body adminVerifyRequest true "The emailed code and the authenticator code"
+// @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 429 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/auth/{uuid} [post]
 func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()

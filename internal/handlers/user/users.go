@@ -139,6 +139,16 @@ func sendProfileError(c *gin.Context, err error) {
 }
 
 // GetProfile returns the profile of the signed-in user.
+//
+// @Summary Get the signed-in user's profile
+// @Tags user
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse{info=Profile}
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/user/profile [get]
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -158,6 +168,19 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 
 // UpdateProfile changes the names in the profile of the signed-in user and
 // returns the updated profile. Only the fields in the request change.
+//
+// @Summary Change the names in the profile
+// @Tags user
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body profileUpdate true "The names to change"
+// @Success 200 {object} models.APIResponse{info=Profile}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/user/profile [patch]
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
