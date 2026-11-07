@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -20,7 +21,10 @@ import (
 // that a broker restart or a channel-level error is recovered without the
 // callers noticing more than a short delay.
 type RabbitMQService struct {
-	url       string
+	url string
+	// tls configures the connection when rabbitmq.tls is enabled, and is
+	// nil otherwise.
+	tls       *tls.Config
 	exchanges []string
 
 	// mu guards conn, channel, confirms, and ready. Only the supervisor
@@ -133,8 +137,13 @@ func (t *confirmTracker) forget(tag uint64) {
 }
 
 func NewRabbitMQService(exchanges ...string) (*RabbitMQService, error) {
+	tlsConfig, err := config.Config.RabbitMQ.TLS.TLSConfig(config.Config.RabbitMQ.Host)
+	if err != nil {
+		return nil, fmt.Errorf("rabbitmq.tls: %w", err)
+	}
 	r := &RabbitMQService{
 		url:       config.GetRabbitMQURL(),
+		tls:       tlsConfig,
 		exchanges: exchanges,
 		ready:     make(chan struct{}),
 		stop:      make(chan struct{}),
@@ -160,6 +169,9 @@ func (r *RabbitMQService) open() (*amqp.Connection, *amqp.Channel, error) {
 		Heartbeat: 10 * time.Second,
 		Locale:    "en_US",
 		Dial:      amqp.DefaultDial(dialTimeout),
+		// With an amqps URL, the client dials with this configuration
+		// (#186). It is nil without TLS.
+		TLSClientConfig: r.tls,
 	})
 	if err != nil {
 		return nil, nil, err

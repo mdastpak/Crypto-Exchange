@@ -45,7 +45,10 @@ func (c *Configuration) validateServer() error {
 	c.requiredProblems(&p)
 	c.rangeProblems(&p)
 	c.tlsProblems(&p)
-	if c.Server.Mode == "release" {
+	release := c.Server.Mode == "release"
+	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
+	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
+	if release {
 		c.releaseProblems(&p)
 	}
 	return p.err()

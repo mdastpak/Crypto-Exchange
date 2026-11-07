@@ -15,7 +15,7 @@ func TestRabbitMQURL_EscapesCredentialsAndVHost(t *testing.T) {
 	tricky := []string{"p@ss", "pa/ss", "pa:ss", "pa#ss", "pa?ss", "pa%ss", "pa ss", "p@:/#?% x"}
 	for _, secret := range tricky {
 		t.Run(secret, func(t *testing.T) {
-			uri, err := amqp.ParseURI(RabbitMQURL("us@er:"+secret, secret, "broker.internal", "5672", "app/"+secret))
+			uri, err := amqp.ParseURI(RabbitMQURL("us@er:"+secret, secret, "broker.internal", "5672", "app/"+secret, false))
 			require.NoError(t, err)
 			assert.Equal(t, "broker.internal", uri.Host)
 			assert.Equal(t, 5672, uri.Port)
@@ -28,14 +28,14 @@ func TestRabbitMQURL_EscapesCredentialsAndVHost(t *testing.T) {
 
 func TestRabbitMQURL_DefaultVHost(t *testing.T) {
 	for _, vhost := range []string{"", "/"} {
-		uri, err := amqp.ParseURI(RabbitMQURL("guest", "guest", "localhost", "5672", vhost))
+		uri, err := amqp.ParseURI(RabbitMQURL("guest", "guest", "localhost", "5672", vhost, false))
 		require.NoError(t, err)
 		assert.Equal(t, "/", uri.Vhost)
 	}
 }
 
 func TestRabbitMQURL_IPv6Host(t *testing.T) {
-	uri, err := amqp.ParseURI(RabbitMQURL("u", "p", "::1", "5672", ""))
+	uri, err := amqp.ParseURI(RabbitMQURL("u", "p", "::1", "5672", "", false))
 	require.NoError(t, err)
 	assert.Equal(t, "::1", uri.Host)
 	assert.Equal(t, 5672, uri.Port)

@@ -42,6 +42,8 @@ func TestValidateConfiguration_ExampleInReleaseMode(t *testing.T) {
 		`  - postgres.sslmode (POSTGRES_SSLMODE) is "disable"; release mode needs one of require, verify-ca, verify-full`,
 		"  - postgres.password (POSTGRES_PASSWORD) is empty or the default",
 		"  - redis.password (REDIS_PASSWORD) is empty",
+		"  - redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK) when only a trusted private network carries the connection",
+		"  - rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq: enable it, or set rabbitmq.tls.private_network (RABBITMQ_TLS_PRIVATE_NETWORK) when only a trusted private network carries the connection",
 		"  - otp.auth.secret (or OTP_SECRET) is required in release mode",
 	}
 	for _, line := range want {
