@@ -23,12 +23,16 @@ type CurrencyEvent struct {
 	// ID identifies the event, so that clients can drop a repeated one:
 	// delivery is at least once. It is a UUID; events of earlier versions
 	// have none.
-	ID         string          `json:"id,omitempty"`
-	Entity     string          `json:"entity"`
-	Action     string          `json:"action"`
-	HK         string          `json:"hk"`
-	Info       json.RawMessage `json:"info,omitempty"`
-	ServerTime string          `json:"server_time"`
+	ID     string          `json:"id,omitempty"`
+	Entity string          `json:"entity"`
+	Action string          `json:"action"`
+	HK     string          `json:"hk"`
+	Info   json.RawMessage `json:"info,omitempty"`
+	// Lifecycle is the lifecycle of the currency after the change (#216),
+	// on create and update events of a change that sets it. Without it, the
+	// lifecycle stays as it was.
+	Lifecycle  *CurrencyLifecycle `json:"lifecycle,omitempty"`
+	ServerTime string             `json:"server_time"`
 }
 
 // CurrencyRemoval is the info of a delete event: the status that took the

@@ -95,8 +95,11 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 // allCurrencies reads every currency, deleted ones included, for the
 // filters of the list to run over. Currencies created in the same second
 // are ordered by hk, so the order is total and a cursor never skips one.
+const allCurrenciesQuery = `SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, ` +
+	currencies.LifecycleColumns + ` FROM currencies c`
+
 func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, hk, status, info, version, created_at, updated_at, deleted_at FROM currencies`)
+	rows, err := db.QueryContext(ctx, allCurrenciesQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -107,10 +110,15 @@ func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
 		var info []byte
 		var created, updated time.Time
 		var deleted sql.NullTime
-		if err := rows.Scan(&cur.ID, &cur.HK, &cur.Status, &info, &cur.Version, &created, &updated, &deleted); err != nil {
+		var lifecycle currencies.LifecycleScan
+		if err := rows.Scan(append([]any{&cur.ID, &cur.HK, &cur.Status, &info, &cur.Version, &created, &updated, &deleted}, lifecycle.Dest()...)...); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(info, &cur.Info); err != nil {
+			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
+		}
+		var err error
+		if cur.Lifecycle, err = lifecycle.Lifecycle(); err != nil {
 			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
 		}
 		cur.CreatedAt = timestamp(sql.NullTime{Time: created, Valid: true})

@@ -228,6 +228,12 @@ Writing to the database is not enough to create an administrator: changing `user
 | --- | --- | --- |
 | `max_per_user` | `100` | From 1 to 1000. The most favorite currencies and pairs that one user may have, together. An add past it is refused with `409 favorites_limit_reached`; see [Favorites](api.md#favorites). |
 
+### `delisting`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `interval_seconds` | `30` | From 1 to 3600. How often the scheduler of each instance applies the steps of [delistings](api.md#delistings) that are due, so a step applies at most this late. Every instance runs it; each step is applied once. |
+
 ### `keys`
 
 The data-protection keys seal rows and encrypt fields, so that someone with access to the database alone can neither change protected rows unnoticed nor read protected data. They are wrapped by a key-encryption key (KEK) that stays in a key management service. [`docs/data-protection.md`](data-protection.md) describes the key hierarchy and how to rotate keys. No feature uses the keys yet: row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) and field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will, and will then require a provider in release mode.
@@ -379,6 +385,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `ADMIN_TOTP_KEY` | `admin.totp_key` |
 | `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `FAVORITES_MAX_PER_USER` | `favorites.max_per_user` |
+| `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `KEYS_PROVIDER` | `keys.provider` |
 | `KEYS_LOCAL_KEK` | `keys.local.kek` |
 | `VAULT_ADDR` | `keys.transit.address` |

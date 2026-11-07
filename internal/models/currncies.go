@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // CurrencyInfo defines the structure of the `info` field in the Currency model
 type CurrencyInfo struct {
 	EnName   string `json:"en_name"`
@@ -22,6 +24,41 @@ type Currency struct {
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
 	DeletedAt *string `json:"deleted_at,omitempty"`
+	// Lifecycle is where the currency is in a delisting, and what users may
+	// do with it now (#216).
+	Lifecycle *CurrencyLifecycle `json:"lifecycle,omitempty"`
+}
+
+// CurrencyLifecycle is the lifecycle state of a currency and the
+// capabilities that follow from it.
+type CurrencyLifecycle struct {
+	// State is active, or the step of a delisting that the currency is at.
+	State string `json:"state" example:"active" enums:"active,delist_announced,deposits_disabled,sell_only,trading_halted,withdrawal_only,frozen,delisted"`
+	// Capabilities says what users may do with the currency now: the
+	// capabilities of the state, with the overrides of administrators.
+	Capabilities CurrencyCapabilities `json:"capabilities"`
+	// Next is the next scheduled step, when a delisting is under way.
+	Next *CurrencyLifecycleStep `json:"next,omitempty"`
+}
+
+// CurrencyCapabilities are the operations that users may do with a
+// currency. Every flow that moves the currency checks them.
+type CurrencyCapabilities struct {
+	Deposit     bool `json:"deposit"`
+	Withdraw    bool `json:"withdraw"`
+	Buy         bool `json:"buy"`
+	Sell        bool `json:"sell"`
+	ConvertInto bool `json:"convert_into"`
+	ConvertFrom bool `json:"convert_from"`
+	// Listed is false when the currency is left out of the public lists. It
+	// can still be read by its hk, for history.
+	Listed bool `json:"listed"`
+}
+
+// CurrencyLifecycleStep is a scheduled step of a delisting.
+type CurrencyLifecycleStep struct {
+	State string    `json:"state" example:"deposits_disabled"`
+	At    time.Time `json:"at"`
 }
 
 // Currency statuses. Only approved currencies are public.

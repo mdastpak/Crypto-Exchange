@@ -830,6 +830,468 @@
                 }
             }
         },
+        "/api/v1/admin/currencies/{hk}/capabilities/{capability}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets one capability of a currency (deposit, withdraw, buy, sell, convert_into, convert_from, or listed) to allowed or refused, whatever its lifecycle state says, until the override is removed: for example to pause the deposits of one currency for an incident, or to keep withdrawals open at frozen. Audited as currency.capability_override.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Override a capability of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "deposit",
+                            "withdraw",
+                            "buy",
+                            "sell",
+                            "convert_into",
+                            "convert_from",
+                            "listed"
+                        ],
+                        "type": "string",
+                        "description": "The capability",
+                        "name": "capability",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The override",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.CapabilityOverrideRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/models.CurrencyLifecycle"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The capability follows the lifecycle state of the currency again. Audited as currency.capability_override.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Remove the override of a capability",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "deposit",
+                            "withdraw",
+                            "buy",
+                            "sell",
+                            "convert_into",
+                            "convert_from",
+                            "listed"
+                        ],
+                        "type": "string",
+                        "description": "The capability",
+                        "name": "capability",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/models.CurrencyLifecycle"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/delistings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The delistings of a currency, newest first, at most 100, with their steps and when each was applied.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "List the delistings of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.DelistingList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Schedules the steps that take an approved currency to delisted. A delisting that stopped before delisted, such as an emergency halt, stays scheduled, so that it can be cancelled to relist the currency; a new delisting supersedes it and takes the currency on from its state, with steps after it. A standard delisting starts with delist_announced; an emergency one, for a security or regulatory reason, at trading_halted or later. The steps follow the order of the lifecycle (delist_announced, deposits_disabled, sell_only, trading_halted, withdrawal_only, frozen, delisted), each at a later time, and any of them may be left out. Each step is applied at its time by the scheduler of the instances, exactly once, and changes the capabilities of the currency; a step that is due is applied at once. The settlement says what happens at frozen to the balances that are left: convert into another approved currency at a price, or hold for a claim; it is recorded and announced now, and carried out by the ledger. Audited as currency.delisting_schedule, and each step as currency.lifecycle_change.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Schedule the delisting of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The delisting",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/delisting.Plan"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/delisting.Delisting"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "not_listed or delisting_in_progress",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/delistings/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cancels a scheduled delisting before it reaches frozen: its steps that are left are not applied, and the currency returns to active with every capability of that state. At frozen and after, balances are settled, and a cancel answers 409 delisting_irreversible. With version, a cancel based on another version of the delisting answers 409 version_conflict. Audited as currency.delisting_cancel.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Cancel the delisting of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The delisting's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The version",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/admin.CancelDelistingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/delisting.Delisting"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/currencies/{hk}/restore": {
             "post": {
                 "security": [
@@ -3071,6 +3533,28 @@
         }
     },
     "definitions": {
+        "admin.CancelDelistingRequest": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "description": "Version is the version of the delisting that the cancel is based on.",
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "admin.CapabilityOverrideRequest": {
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "type": "boolean"
+                },
+                "note": {
+                    "description": "Note says why, at most 1000 characters.",
+                    "type": "string"
+                }
+            }
+        },
         "admin.CreateRestrictionRequest": {
             "type": "object",
             "properties": {
@@ -3162,6 +3646,17 @@
                 "next_cursor": {
                     "description": "NextCursor asks for the next page. It is left out on the last page.",
                     "type": "string"
+                }
+            }
+        },
+        "admin.DelistingList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/delisting.Delisting"
+                    }
                 }
             }
         },
@@ -3382,6 +3877,274 @@
                 }
             }
         },
+        "currencies.Lifecycle": {
+            "type": "string",
+            "enum": [
+                "active",
+                "delist_announced",
+                "deposits_disabled",
+                "sell_only",
+                "trading_halted",
+                "withdrawal_only",
+                "frozen",
+                "delisted"
+            ],
+            "x-enum-varnames": [
+                "LifecycleActive",
+                "LifecycleDelistAnnounced",
+                "LifecycleDepositsDisabled",
+                "LifecycleSellOnly",
+                "LifecycleTradingHalted",
+                "LifecycleWithdrawalOnly",
+                "LifecycleFrozen",
+                "LifecycleDelisted"
+            ]
+        },
+        "delisting.Delisting": {
+            "type": "object",
+            "properties": {
+                "announcement_url": {
+                    "type": "string"
+                },
+                "cancelled_at": {
+                    "type": "string"
+                },
+                "cancelled_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "claim_days": {
+                    "type": "integer",
+                    "example": 180
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "fixed_price": {
+                    "description": "FixedPrice is the price of a fixed conversion, in the settlement\ncurrency, as a decimal string.",
+                    "type": "string",
+                    "example": "0.0125"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "enum": [
+                        "standard",
+                        "emergency"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.Kind"
+                        }
+                    ]
+                },
+                "note": {
+                    "type": "string"
+                },
+                "price_source": {
+                    "enum": [
+                        "last_trade",
+                        "twap",
+                        "fixed"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.PriceSource"
+                        }
+                    ]
+                },
+                "settlement": {
+                    "enum": [
+                        "convert",
+                        "claim"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.Settlement"
+                        }
+                    ]
+                },
+                "settlement_currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "enum": [
+                        "scheduled",
+                        "completed",
+                        "cancelled"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.Status"
+                        }
+                    ]
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/delisting.Step"
+                    }
+                },
+                "version": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "delisting.Kind": {
+            "type": "string",
+            "enum": [
+                "standard",
+                "emergency"
+            ],
+            "x-enum-varnames": [
+                "KindStandard",
+                "KindEmergency"
+            ]
+        },
+        "delisting.Plan": {
+            "type": "object",
+            "properties": {
+                "announcement_url": {
+                    "type": "string"
+                },
+                "claim_days": {
+                    "type": "integer",
+                    "example": 180
+                },
+                "fixed_price": {
+                    "type": "string",
+                    "example": "0.0125"
+                },
+                "kind": {
+                    "enum": [
+                        "standard",
+                        "emergency"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.Kind"
+                        }
+                    ]
+                },
+                "note": {
+                    "type": "string"
+                },
+                "price_source": {
+                    "enum": [
+                        "last_trade",
+                        "twap",
+                        "fixed"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.PriceSource"
+                        }
+                    ]
+                },
+                "settlement": {
+                    "description": "Settlement is convert, with settlement_currency_hk and price_source,\nor claim, with claim_days.",
+                    "enum": [
+                        "convert",
+                        "claim"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.Settlement"
+                        }
+                    ]
+                },
+                "settlement_currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/delisting.Step"
+                    }
+                }
+            }
+        },
+        "delisting.PriceSource": {
+            "type": "string",
+            "enum": [
+                "last_trade",
+                "twap",
+                "fixed"
+            ],
+            "x-enum-varnames": [
+                "PriceLastTrade",
+                "PriceTWAP",
+                "PriceFixed"
+            ]
+        },
+        "delisting.Settlement": {
+            "type": "string",
+            "enum": [
+                "convert",
+                "claim"
+            ],
+            "x-enum-varnames": [
+                "SettlementConvert",
+                "SettlementClaim"
+            ]
+        },
+        "delisting.Status": {
+            "type": "string",
+            "enum": [
+                "scheduled",
+                "completed",
+                "cancelled"
+            ],
+            "x-enum-varnames": [
+                "StatusScheduled",
+                "StatusCompleted",
+                "StatusCancelled"
+            ]
+        },
+        "delisting.Step": {
+            "type": "object",
+            "properties": {
+                "applied_at": {
+                    "description": "AppliedAt is when the scheduler applied it.",
+                    "type": "string"
+                },
+                "at": {
+                    "type": "string"
+                },
+                "state": {
+                    "enum": [
+                        "delist_announced",
+                        "deposits_disabled",
+                        "sell_only",
+                        "trading_halted",
+                        "withdrawal_only",
+                        "frozen",
+                        "delisted"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/currencies.Lifecycle"
+                        }
+                    ]
+                }
+            }
+        },
         "favorites.Currency": {
             "type": "object",
             "properties": {
@@ -3502,6 +4265,14 @@
                 "info": {
                     "$ref": "#/definitions/models.CurrencyInfo"
                 },
+                "lifecycle": {
+                    "description": "Lifecycle is where the currency is in a delisting, and what users may\ndo with it now (#216).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CurrencyLifecycle"
+                        }
+                    ]
+                },
                 "status": {
                     "type": "string"
                 },
@@ -3511,6 +4282,33 @@
                 "version": {
                     "description": "Version counts the changes of the currency. Only administrators see\nit; it is 0, and left out, in public responses.",
                     "type": "integer"
+                }
+            }
+        },
+        "models.CurrencyCapabilities": {
+            "type": "object",
+            "properties": {
+                "buy": {
+                    "type": "boolean"
+                },
+                "convert_from": {
+                    "type": "boolean"
+                },
+                "convert_into": {
+                    "type": "boolean"
+                },
+                "deposit": {
+                    "type": "boolean"
+                },
+                "listed": {
+                    "description": "Listed is false when the currency is left out of the public lists. It\ncan still be read by its hk, for history.",
+                    "type": "boolean"
+                },
+                "sell": {
+                    "type": "boolean"
+                },
+                "withdraw": {
+                    "type": "boolean"
                 }
             }
         },
@@ -3551,6 +4349,54 @@
                 },
                 "symbol": {
                     "type": "string"
+                }
+            }
+        },
+        "models.CurrencyLifecycle": {
+            "type": "object",
+            "properties": {
+                "capabilities": {
+                    "description": "Capabilities says what users may do with the currency now: the\ncapabilities of the state, with the overrides of administrators.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CurrencyCapabilities"
+                        }
+                    ]
+                },
+                "next": {
+                    "description": "Next is the next scheduled step, when a delisting is under way.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CurrencyLifecycleStep"
+                        }
+                    ]
+                },
+                "state": {
+                    "description": "State is active, or the step of a delisting that the currency is at.",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "delist_announced",
+                        "deposits_disabled",
+                        "sell_only",
+                        "trading_halted",
+                        "withdrawal_only",
+                        "frozen",
+                        "delisted"
+                    ],
+                    "example": "active"
+                }
+            }
+        },
+        "models.CurrencyLifecycleStep": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string",
+                    "example": "deposits_disabled"
                 }
             }
         },

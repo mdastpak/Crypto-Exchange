@@ -1,5 +1,21 @@
 basePath: /
 definitions:
+  admin.CancelDelistingRequest:
+    properties:
+      version:
+        description: Version is the version of the delisting that the cancel is based
+          on.
+        example: 1
+        type: integer
+    type: object
+  admin.CapabilityOverrideRequest:
+    properties:
+      allowed:
+        type: boolean
+      note:
+        description: Note says why, at most 1000 characters.
+        type: string
+    type: object
   admin.CreateRestrictionRequest:
     properties:
       case_ref:
@@ -68,6 +84,13 @@ definitions:
         description: NextCursor asks for the next page. It is left out on the last
           page.
         type: string
+    type: object
+  admin.DelistingList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/delisting.Delisting'
+        type: array
     type: object
   admin.LiftRestrictionRequest:
     properties:
@@ -223,6 +246,193 @@ definitions:
           page.
         type: string
     type: object
+  currencies.Lifecycle:
+    enum:
+    - active
+    - delist_announced
+    - deposits_disabled
+    - sell_only
+    - trading_halted
+    - withdrawal_only
+    - frozen
+    - delisted
+    type: string
+    x-enum-varnames:
+    - LifecycleActive
+    - LifecycleDelistAnnounced
+    - LifecycleDepositsDisabled
+    - LifecycleSellOnly
+    - LifecycleTradingHalted
+    - LifecycleWithdrawalOnly
+    - LifecycleFrozen
+    - LifecycleDelisted
+  delisting.Delisting:
+    properties:
+      announcement_url:
+        type: string
+      cancelled_at:
+        type: string
+      cancelled_by:
+        format: uuid
+        type: string
+      claim_days:
+        example: 180
+        type: integer
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        format: uuid
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+      fixed_price:
+        description: |-
+          FixedPrice is the price of a fixed conversion, in the settlement
+          currency, as a decimal string.
+        example: "0.0125"
+        type: string
+      id:
+        format: uuid
+        type: string
+      kind:
+        allOf:
+        - $ref: '#/definitions/delisting.Kind'
+        enum:
+        - standard
+        - emergency
+      note:
+        type: string
+      price_source:
+        allOf:
+        - $ref: '#/definitions/delisting.PriceSource'
+        enum:
+        - last_trade
+        - twap
+        - fixed
+      settlement:
+        allOf:
+        - $ref: '#/definitions/delisting.Settlement'
+        enum:
+        - convert
+        - claim
+      settlement_currency_hk:
+        format: uuid
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/delisting.Status'
+        enum:
+        - scheduled
+        - completed
+        - cancelled
+      steps:
+        items:
+          $ref: '#/definitions/delisting.Step'
+        type: array
+      version:
+        example: 1
+        type: integer
+    type: object
+  delisting.Kind:
+    enum:
+    - standard
+    - emergency
+    type: string
+    x-enum-varnames:
+    - KindStandard
+    - KindEmergency
+  delisting.Plan:
+    properties:
+      announcement_url:
+        type: string
+      claim_days:
+        example: 180
+        type: integer
+      fixed_price:
+        example: "0.0125"
+        type: string
+      kind:
+        allOf:
+        - $ref: '#/definitions/delisting.Kind'
+        enum:
+        - standard
+        - emergency
+      note:
+        type: string
+      price_source:
+        allOf:
+        - $ref: '#/definitions/delisting.PriceSource'
+        enum:
+        - last_trade
+        - twap
+        - fixed
+      settlement:
+        allOf:
+        - $ref: '#/definitions/delisting.Settlement'
+        description: |-
+          Settlement is convert, with settlement_currency_hk and price_source,
+          or claim, with claim_days.
+        enum:
+        - convert
+        - claim
+      settlement_currency_hk:
+        format: uuid
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/delisting.Step'
+        type: array
+    type: object
+  delisting.PriceSource:
+    enum:
+    - last_trade
+    - twap
+    - fixed
+    type: string
+    x-enum-varnames:
+    - PriceLastTrade
+    - PriceTWAP
+    - PriceFixed
+  delisting.Settlement:
+    enum:
+    - convert
+    - claim
+    type: string
+    x-enum-varnames:
+    - SettlementConvert
+    - SettlementClaim
+  delisting.Status:
+    enum:
+    - scheduled
+    - completed
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - StatusScheduled
+    - StatusCompleted
+    - StatusCancelled
+  delisting.Step:
+    properties:
+      applied_at:
+        description: AppliedAt is when the scheduler applied it.
+        type: string
+      at:
+        type: string
+      state:
+        allOf:
+        - $ref: '#/definitions/currencies.Lifecycle'
+        enum:
+        - delist_announced
+        - deposits_disabled
+        - sell_only
+        - trading_halted
+        - withdrawal_only
+        - frozen
+        - delisted
+    type: object
   favorites.Currency:
     properties:
       added_at:
@@ -312,6 +522,12 @@ definitions:
         type: integer
       info:
         $ref: '#/definitions/models.CurrencyInfo'
+      lifecycle:
+        allOf:
+        - $ref: '#/definitions/models.CurrencyLifecycle'
+        description: |-
+          Lifecycle is where the currency is in a delisting, and what users may
+          do with it now (#216).
       status:
         type: string
       updated_at:
@@ -321,6 +537,26 @@ definitions:
           Version counts the changes of the currency. Only administrators see
           it; it is 0, and left out, in public responses.
         type: integer
+    type: object
+  models.CurrencyCapabilities:
+    properties:
+      buy:
+        type: boolean
+      convert_from:
+        type: boolean
+      convert_into:
+        type: boolean
+      deposit:
+        type: boolean
+      listed:
+        description: |-
+          Listed is false when the currency is left out of the public lists. It
+          can still be read by its hk, for history.
+        type: boolean
+      sell:
+        type: boolean
+      withdraw:
+        type: boolean
     type: object
   models.CurrencyCreatedInfo:
     properties:
@@ -347,6 +583,41 @@ definitions:
       is_token:
         type: boolean
       symbol:
+        type: string
+    type: object
+  models.CurrencyLifecycle:
+    properties:
+      capabilities:
+        allOf:
+        - $ref: '#/definitions/models.CurrencyCapabilities'
+        description: |-
+          Capabilities says what users may do with the currency now: the
+          capabilities of the state, with the overrides of administrators.
+      next:
+        allOf:
+        - $ref: '#/definitions/models.CurrencyLifecycleStep'
+        description: Next is the next scheduled step, when a delisting is under way.
+      state:
+        description: State is active, or the step of a delisting that the currency
+          is at.
+        enum:
+        - active
+        - delist_announced
+        - deposits_disabled
+        - sell_only
+        - trading_halted
+        - withdrawal_only
+        - frozen
+        - delisted
+        example: active
+        type: string
+    type: object
+  models.CurrencyLifecycleStep:
+    properties:
+      at:
+        type: string
+      state:
+        example: deposits_disabled
         type: string
     type: object
   models.PingInfo:
@@ -1273,6 +1544,323 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/capabilities/{capability}:
+    delete:
+      description: The capability follows the lifecycle state of the currency again.
+        Audited as currency.capability_override.
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The capability
+        enum:
+        - deposit
+        - withdraw
+        - buy
+        - sell
+        - convert_into
+        - convert_from
+        - listed
+        in: path
+        name: capability
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.CurrencyLifecycle'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Remove the override of a capability
+      tags:
+      - admin currencies
+    put:
+      consumes:
+      - application/json
+      description: 'Sets one capability of a currency (deposit, withdraw, buy, sell,
+        convert_into, convert_from, or listed) to allowed or refused, whatever its
+        lifecycle state says, until the override is removed: for example to pause
+        the deposits of one currency for an incident, or to keep withdrawals open
+        at frozen. Audited as currency.capability_override.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The capability
+        enum:
+        - deposit
+        - withdraw
+        - buy
+        - sell
+        - convert_into
+        - convert_from
+        - listed
+        in: path
+        name: capability
+        required: true
+        type: string
+      - description: The override
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.CapabilityOverrideRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.CurrencyLifecycle'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Override a capability of a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/delistings:
+    get:
+      description: The delistings of a currency, newest first, at most 100, with their
+        steps and when each was applied.
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.DelistingList'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the delistings of a currency
+      tags:
+      - admin currencies
+    post:
+      consumes:
+      - application/json
+      description: 'Schedules the steps that take an approved currency to delisted.
+        A delisting that stopped before delisted, such as an emergency halt, stays
+        scheduled, so that it can be cancelled to relist the currency; a new delisting
+        supersedes it and takes the currency on from its state, with steps after it.
+        A standard delisting starts with delist_announced; an emergency one, for a
+        security or regulatory reason, at trading_halted or later. The steps follow
+        the order of the lifecycle (delist_announced, deposits_disabled, sell_only,
+        trading_halted, withdrawal_only, frozen, delisted), each at a later time,
+        and any of them may be left out. Each step is applied at its time by the scheduler
+        of the instances, exactly once, and changes the capabilities of the currency;
+        a step that is due is applied at once. The settlement says what happens at
+        frozen to the balances that are left: convert into another approved currency
+        at a price, or hold for a claim; it is recorded and announced now, and carried
+        out by the ledger. Audited as currency.delisting_schedule, and each step as
+        currency.lifecycle_change.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The delisting
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/delisting.Plan'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/delisting.Delisting'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: not_listed or delisting_in_progress
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Schedule the delisting of a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/delistings/{id}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: 'Cancels a scheduled delisting before it reaches frozen: its steps
+        that are left are not applied, and the currency returns to active with every
+        capability of that state. At frozen and after, balances are settled, and a
+        cancel answers 409 delisting_irreversible. With version, a cancel based on
+        another version of the delisting answers 409 version_conflict. Audited as
+        currency.delisting_cancel.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The delisting's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The version
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/admin.CancelDelistingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/delisting.Delisting'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel the delisting of a currency
       tags:
       - admin currencies
   /api/v1/admin/currencies/{hk}/restore:

@@ -292,6 +292,7 @@ internal/config/        Configuration loading, environment variables, defaults, 
 internal/contact/       Normalizing and identifying the contacts and codes users type
 internal/currencies/    The public currency catalog: Redis cache with a PostgreSQL fallback
 internal/db/            PostgreSQL and Redis clients, SQL migrations
+internal/delisting/     Delistings of currencies: lifecycle steps, applied once by every instance
 internal/domain/        Exchange domain model: asset, market, order, trade, balance,
                         account, kyc, custody, shared types
 internal/favorites/     Personal favorites of currencies and trading pairs
