@@ -123,8 +123,9 @@ type fakeSessionStore struct {
 	revoked   []string
 	verified  []string
 	// events are the audit events passed with changes, and notes those
-	// recorded on their own.
+	// recorded on their own, with the error of each note's context.
 	events, notes []audit.Event
+	noteCtxErrs   []error
 	rotateErr     error
 	revokeErr     error
 	verifyErr     error
@@ -148,6 +149,7 @@ func (f *fakeSessionStore) Revoke(ctx context.Context, sessionID, userID string,
 
 func (f *fakeSessionStore) Note(ctx context.Context, event audit.Event) error {
 	f.notes = append(f.notes, event)
+	f.noteCtxErrs = append(f.noteCtxErrs, ctx.Err())
 	return nil
 }
 
@@ -829,6 +831,22 @@ func TestRefreshTokenHandler(t *testing.T) {
 		assert.Negative(t, cookie.MaxAge)
 		require.Len(t, sessions.notes, 1)
 		assertSessionEvent(t, sessions.notes[0], audit.ActionUserRefresh, audit.Failure, "session_inactive")
+	})
+
+	t.Run("a disconnected client does not cancel the record", func(t *testing.T) {
+		refreshToken, err := GenerateRefreshToken("user-123", RoleUser, "test-session")
+		require.NoError(t, err)
+		sessions := &fakeSessionStore{verifyErr: ErrSessionInvalid}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/auth/refresh", nil).WithContext(ctx)
+		c.Request.AddCookie(&http.Cookie{Name: RefreshTokenCookie, Value: refreshToken})
+
+		RefreshTokenHandler(c, sessions)
+
+		require.Len(t, sessions.noteCtxErrs, 1)
+		assert.NoError(t, sessions.noteCtxErrs[0])
 	})
 
 	t.Run("session check failure", func(t *testing.T) {

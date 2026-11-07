@@ -264,11 +264,14 @@ const reasonRateLimited = "rate_limited"
 
 // noteSignIn records event, a sign-in event that changes nothing, with its
 // outcome. It is best effort: a failure is logged, so that an unavailable
-// audit log cannot keep users from signing in.
+// audit log cannot keep users from signing in. A client that disconnects
+// does not cancel the record of its attempt.
 func (h *PublicHandler) noteSignIn(ctx context.Context, event audit.Event, outcome, reason string) {
 	if h.PostgresDB == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	event.Outcome, event.Reason = outcome, reason
 	if err := audit.Record(ctx, h.PostgresDB.DB, event); err != nil {
 		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)

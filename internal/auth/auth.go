@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -188,11 +189,14 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 
 	// refused records a refused refresh of a genuine token, at best effort:
 	// it changes nothing, so the answer does not wait on the audit log. A
-	// token that does not parse has no user to record.
+	// token that does not parse has no user to record. A client that
+	// disconnects does not cancel the record.
 	refused := func(reason string) {
 		e := SessionEvent(c, audit.ActionUserRefresh, claims.UUID, claims.SessionID)
 		e.Outcome, e.Reason = audit.Failure, reason
-		if err := sessions.Note(c.Request.Context(), e); err != nil {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+		defer cancel()
+		if err := sessions.Note(ctx, e); err != nil {
 			log.Printf("Failed to record the audit event %s (%s): %v", e.Action, reason, err)
 		}
 	}
