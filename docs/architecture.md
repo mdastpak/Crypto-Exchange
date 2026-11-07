@@ -116,6 +116,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 22 | `sessions.last_used_at`, and an index of the active sessions of each user, for the session list | Yes |
 | 23 | `sessions.previous_refresh_hash` and `sessions.rotated_at`, for the grace period of concurrent refreshes | Yes |
 | 24 | `currencies.created_at`, `updated_at`, and `deleted_at` become `TIMESTAMPTZ`, read as UTC | Yes |
+| 25 | `currencies.created_at` and `updated_at` become `NOT NULL`, and an index on `(created_at DESC, hk DESC)` for the admin list | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 

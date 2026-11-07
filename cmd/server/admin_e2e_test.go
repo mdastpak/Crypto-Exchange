@@ -309,6 +309,33 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 	status, resp = env.post(t, "/api/v1/admin/currencies", testCurrency("E2E"), adminToken)
 	assert.Equal(t, http.StatusCreated, status, resp.Message)
 
+	t.Run("the admin list finds a currency, and a delete can be undone", func(t *testing.T) {
+		hk, _ := resp.Info["hk"].(string)
+		require.NotEmpty(t, hk)
+		status, body := env.call(t, http.MethodGet, "/api/v1/admin/currencies?status=approved&symbol=e2e", nil, adminToken)
+		require.Equal(t, http.StatusOK, status, string(body))
+		var list struct {
+			Info struct {
+				Items []struct {
+					HK      string `json:"hk"`
+					Version int64  `json:"version"`
+				} `json:"items"`
+			} `json:"info"`
+		}
+		require.NoError(t, json.Unmarshal(body, &list))
+		require.Len(t, list.Info.Items, 1)
+		assert.Equal(t, hk, list.Info.Items[0].HK)
+		assert.Equal(t, int64(1), list.Info.Items[0].Version)
+
+		status, body = env.call(t, http.MethodDelete, "/api/v1/admin/currencies/"+hk, nil, adminToken)
+		require.Equal(t, http.StatusOK, status, string(body))
+		status, body = env.call(t, http.MethodPost, "/api/v1/admin/currencies/"+hk+"/restore", nil, adminToken)
+		require.Equal(t, http.StatusOK, status, string(body))
+
+		status, _ = env.call(t, http.MethodGet, "/api/v1/admin/currencies", nil, "")
+		assert.Equal(t, http.StatusUnauthorized, status, "anonymous clients cannot list")
+	})
+
 	t.Run("an authenticator code works once", func(t *testing.T) {
 		sessionID, code := env.requestAdminCode(t, email)
 		status, resp := env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": adminTOTP}, "")
@@ -358,6 +385,8 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 		userToken := resp.Info["access_token"].(string)
 
 		status, _ = env.post(t, "/api/v1/admin/currencies", testCurrency("USR"), userToken)
+		assert.Equal(t, http.StatusUnauthorized, status)
+		status, _ = env.call(t, http.MethodGet, "/api/v1/admin/currencies", nil, userToken)
 		assert.Equal(t, http.StatusUnauthorized, status)
 	})
 

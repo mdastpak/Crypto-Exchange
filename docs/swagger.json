@@ -309,6 +309,111 @@
             }
         },
         "/api/v1/admin/currencies": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every currency, whatever its status, deleted ones included, newest first, with its version. Read from the database, not the public cache. The filters are optional and combine. Pages follow the pagination convention of docs/api.md.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "List currencies",
+                "parameters": [
+                    {
+                        "enum": [
+                            "approved",
+                            "pending",
+                            "suspend",
+                            "deleted"
+                        ],
+                        "type": "string",
+                        "description": "The status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The symbol, in any case",
+                        "name": "symbol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only tokens, or only currencies that are not",
+                        "name": "is_token",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only fiat currencies, or only those that are not",
+                        "name": "if_fiat",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of currencies, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.CurrencyPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -1622,6 +1727,21 @@
         }
     },
     "definitions": {
+        "admin.CurrencyPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Currency"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor asks for the next page. It is left out on the last page.",
+                    "type": "string"
+                }
+            }
+        },
         "admin.adminSignInRequest": {
             "type": "object",
             "properties": {

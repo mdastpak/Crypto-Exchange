@@ -1,5 +1,16 @@
 basePath: /
 definitions:
+  admin.CurrencyPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.Currency'
+        type: array
+      next_cursor:
+        description: NextCursor asks for the next page. It is left out on the last
+          page.
+        type: string
+    type: object
   admin.adminSignInRequest:
     properties:
       email:
@@ -527,6 +538,76 @@ paths:
       tags:
       - admin sign-in
   /api/v1/admin/currencies:
+    get:
+      description: Every currency, whatever its status, deleted ones included, newest
+        first, with its version. Read from the database, not the public cache. The
+        filters are optional and combine. Pages follow the pagination convention of
+        docs/api.md.
+      parameters:
+      - description: The status
+        enum:
+        - approved
+        - pending
+        - suspend
+        - deleted
+        in: query
+        name: status
+        type: string
+      - description: The symbol, in any case
+        in: query
+        name: symbol
+        type: string
+      - description: Only tokens, or only currencies that are not
+        in: query
+        name: is_token
+        type: boolean
+      - description: Only fiat currencies, or only those that are not
+        in: query
+        name: if_fiat
+        type: boolean
+      - description: The number of currencies, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.CurrencyPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List currencies
+      tags:
+      - admin currencies
     post:
       consumes:
       - application/json
