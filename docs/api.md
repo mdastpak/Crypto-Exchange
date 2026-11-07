@@ -67,6 +67,8 @@ An error response contains only a fixed message for each error. Internal details
 | `admin_inactive` | `401` | The administrator of an admin token is no longer active |
 | `forbidden` | `403` | The request is not allowed, without a more specific code |
 | `account_unavailable` | `403` | The account can no longer sign in: disabled, suspended, or deleted |
+| `account_frozen` | `403` | The account is frozen by a [restriction](#restrictions); its tokens no longer work and it cannot sign in |
+| `operation_restricted`, `asset_restricted` | `403` | A [restriction](#restrictions) blocks the operation; `info` names it |
 | `use_admin_sign_in` | `403` | An administrator used the user sign-in |
 | `not_found` | `404` | No such resource, or a hidden one, or no such route |
 | `method_not_allowed` | `405` | The path exists with other methods |
@@ -566,6 +568,67 @@ Events and the cache describe what public clients can see, so they follow the vi
 | An approved currency is suspended, set back to pending, or deleted | Removed | `delete` with `info` set to `{"status": "<new status>"}` |
 | A currency that is not approved is created, updated, or deleted | Not cached | None |
 
+## Restrictions
+
+Administrators restrict a user for a court order, an AML review, a sanctions match, fraud, or another case ([#220](https://github.com/mdastpak/Crypto-Exchange/issues/220)). A restriction has one of three scopes:
+
+| Scope | Effect |
+| --- | --- |
+| `account` | Freezes the account. Every session of the user ends in the transaction that creates the freeze, so the access and refresh tokens stop working at once on every instance. Sign-in, refresh, and every user route answer `403 account_frozen`, and WebSocket connections close with `4403 account_frozen` at the next session check. |
+| `operation` | Blocks the listed `operations` on every currency. The user still signs in and sees their account. |
+| `asset` | Blocks the listed `operations` on one currency, `currency_hk`, held for review. |
+
+The operations are `deposit`, `withdraw`, `convert`, `buy`, `sell`, and `trade`, which covers `buy` and `sell`. A restriction applies from its creation until it is lifted or reaches `ends_at`; no job is needed to end it. Several restrictions can apply at once. Restrictions are never deleted, so the history stays.
+
+A blocked operation answers `403`, with `operation_restricted` for a block of every currency and `asset_restricted` for a hold. When both apply, the block of every currency is reported:
+
+```json
+{
+  "status": 403,
+  "code": "asset_restricted",
+  "message": "This operation is not available for this currency on your account. Please contact support.",
+  "info": { "operation": "withdraw", "currency_hk": "<uuid>", "until": "2026-12-01T00:00:00Z" }
+}
+```
+
+The user never learns the reason, the case, or the note. `until` is shown only when the restriction has an end and its reason is `security`, `user_request`, or `other`: the end of a court order, AML review, sanctions match, or fraud case could tip off its subject.
+
+Every operation that moves money checks the restrictions in its own transaction, after a share lock of the user's row, and creating a restriction takes the exclusive lock of that row. A restriction therefore waits for the operations in flight, on any instance, and every operation that starts after it sees it. Deposits, withdrawals, conversions, and trades call this check as they are built ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)).
+
+### `POST /admin/users/{hk}/restrictions` (admin)
+
+```json
+{
+  "scope": "asset",
+  "currency_hk": "<uuid>",
+  "operations": ["withdraw", "convert"],
+  "reason": "aml_review",
+  "case_ref": "AML-2026-0042",
+  "note": "Large inflow from a flagged address",
+  "ends_at": "2026-12-01T00:00:00Z"
+}
+```
+
+`reason` is one of `court_order`, `aml_review`, `sanctions`, `fraud`, `security`, `user_request`, and `other`. A freeze takes no `operations`; the other scopes need at least one. `case_ref` is at most 64 characters, `note` at most 1000, and `ends_at`, optional, is in the future.
+
+Response `201` with the restriction and `ended_sessions`, the number of sessions that a freeze ended. Errors: `400` (`validation_failed`), `404` for an unknown user, and `409` (`not_a_user`) for an administrator or a deleted user. The restriction is audited as `user.restriction_add` with its reason, and each ended session as `user.session_revoke` with the reason `account_frozen`.
+
+### `GET /admin/users/{hk}/restrictions` (admin)
+
+The restrictions of the user, newest first, at most 200, with their reasons, cases, notes, versions, and `active`. With `active=true`, only those that apply now.
+
+### `POST /admin/users/{hk}/restrictions/{id}/lift` (admin)
+
+```json
+{ "note": "The court order was revoked" }
+```
+
+Ends the restriction now. The `note` is required. The optional query parameter `version` works as for currencies. A lifted freeze lets the user sign in again; the sessions it ended stay ended. Response `200` with the restriction. Errors: `404`, and `409` with `already_lifted` or `version_conflict`. Audited as `user.restriction_lift`.
+
+### `GET /user/restrictions`
+
+The restrictions that apply to the signed-in user, as they see them: `id`, `scope`, `operations`, `currency_hk`, `until` (when shown), and `created_at`, so that a client can disable what they block ahead of time.
+
 ## Audit log
 
 ### `GET /admin/audit` (admin)
@@ -759,6 +822,7 @@ A token in the URL is not read, because URLs end up in access logs. A request th
 | `401` | `token_invalid` | The token is invalid. Also when the `Authorization` header has another scheme, or the `access_token` subprotocol comes without a token. |
 | `401` | `session_inactive` | The token's session has ended |
 | `403` | `account_unavailable` | The user can no longer sign in |
+| `403` | `account_frozen` | The account is frozen |
 
 An authenticated connection lasts as long as its authorization, as a REST request would:
 
@@ -773,6 +837,7 @@ The close frame says why, with the codes of the REST routes in its reason:
 | `4401` | `session_inactive` | The session ended |
 | `4401` | `token_invalid` | A `reauth` brought a token that is invalid, that names another user, or no token |
 | `4403` | `account_unavailable` | The user can no longer sign in |
+| `4403` | `account_frozen` | The account is frozen; the connection closes at the next session check |
 
 After `4401`, refresh the access token and reconnect with the new one; after `4403`, do not reconnect. An anonymous connection is never closed for these reasons.
 

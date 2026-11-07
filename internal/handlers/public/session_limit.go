@@ -20,6 +20,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -111,6 +112,10 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 	case errors.Is(err, auth.ErrSessionLimit):
 		h.noteSignIn(ctx, attempt, audit.Denied, codeSessionLimit)
 		h.refuseAtLimit(c, ctx, userHK)
+		return false
+	case errors.Is(err, auth.ErrAccountFrozen):
+		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
+		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
 		return false
 	case errors.Is(err, auth.ErrReplacedSessionNotFound):
 		helpers.SendError(c, http.StatusConflict, "session_not_found", "The session to end is not one of your active sessions.", nil)
@@ -268,9 +273,14 @@ func (h *PublicHandler) ReplaceSession(c *gin.Context) {
 
 	// The account may have been disabled since the code was verified.
 	var status, role string
-	var deleted bool
-	err = h.PostgresDB.DB.QueryRowContext(ctx, `SELECT status, role, deleted_at IS NOT NULL FROM users WHERE hk = $1`, userHK).
-		Scan(&status, &role, &deleted)
+	var deleted, frozen bool
+	err = h.PostgresDB.DB.QueryRowContext(ctx, `SELECT status, role, deleted_at IS NOT NULL, `+restrictions.FrozenSQL("users.hk")+`
+		FROM users WHERE hk = $1`, userHK).Scan(&status, &role, &deleted, &frozen)
+	if err == nil && frozen {
+		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
+		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && (deleted || role != auth.RoleUser || !account.UserStatus(status).CanSignIn())) {
 		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account cannot sign in. Please contact support.", nil)

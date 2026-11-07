@@ -12,6 +12,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,6 +33,10 @@ var (
 	// the account was disabled, suspended, banned, deleted, or made an
 	// administrator after the session began.
 	ErrAccountUnavailable = errors.New("account is not available")
+	// ErrAccountFrozen means the account is frozen by a restriction (#220).
+	// It is an ErrAccountUnavailable, for callers that do not tell them
+	// apart.
+	ErrAccountFrozen = fmt.Errorf("%w: frozen", ErrAccountUnavailable)
 )
 
 // SessionStore persists sign-in sessions so that refresh tokens can be rotated
@@ -223,9 +228,20 @@ func (s *PostgresSessionStore) Create(ctx context.Context, session Session, even
 // creates the new one. It first locks the user's row: sign-ins of one user
 // on every instance then count one after the other, so that concurrent
 // sign-ins cannot all pass the count and exceed the cap together.
+//
+// The lock also orders the sign-in with a freeze of the account (#220),
+// which takes it too: a sign-in that waited for a freeze sees it and fails
+// with ErrAccountFrozen, instead of creating a session that the freeze did
+// not end.
 func limitSessions(ctx context.Context, tx *sql.Tx, session Session, event audit.Event) error {
-	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM users WHERE hk = $1 FOR UPDATE`, session.UserID); err != nil {
+	var frozen bool
+	err := tx.QueryRowContext(ctx, `SELECT `+restrictions.FrozenSQL("users.hk")+` FROM users WHERE hk = $1 FOR UPDATE`,
+		session.UserID).Scan(&frozen)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to lock the user: %w", err)
+	}
+	if frozen {
+		return ErrAccountFrozen
 	}
 	if session.Replace != "" {
 		res, err := tx.ExecContext(ctx, `
@@ -339,14 +355,15 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 // account that is no longer available, because its tokens are dead either
 // way.
 func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID string) error {
-	var active, deleted bool
+	var active, deleted, frozen bool
 	var status, role string
 	// The same statement records the use of an active session, at most
 	// once a minute, so that most requests write nothing (#193).
 	err := s.DB.QueryRowContext(ctx, `
 		WITH found AS (
 			SELECT s.id, s.status = 'ACTIVE' AND s.expires_at > NOW() AS active, s.last_used_at,
-				u.status AS user_status, u.role, u.deleted_at IS NOT NULL AS deleted
+				u.status AS user_status, u.role, u.deleted_at IS NOT NULL AS deleted,
+				`+restrictions.FrozenSQL("u.hk")+` AS frozen
 			FROM sessions s JOIN users u ON u.hk = s.user_id
 			WHERE s.id = $1 AND s.user_id = $2
 		), touched AS (
@@ -354,14 +371,19 @@ func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID str
 			WHERE sessions.id = found.id AND found.active
 			  AND (found.last_used_at IS NULL OR found.last_used_at < NOW() - make_interval(secs => $3))
 		)
-		SELECT active, user_status, role, deleted FROM found`,
+		SELECT active, user_status, role, deleted, frozen FROM found`,
 		sessionID, userID, sessionTouchInterval.Seconds(),
-	).Scan(&active, &status, &role, &deleted)
+	).Scan(&active, &status, &role, &deleted, &frozen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrSessionInvalid
 	}
 	if err != nil {
 		return fmt.Errorf("failed to verify session: %w", err)
+	}
+	// A freeze ends the sessions, and is reported before them, so that the
+	// user learns why their tokens stopped working.
+	if frozen {
+		return ErrAccountFrozen
 	}
 	if !active {
 		return ErrSessionInvalid

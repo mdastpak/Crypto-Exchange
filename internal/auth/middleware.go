@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
 )
@@ -85,6 +86,15 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 // The profile routes give the same answer.
 const accountUnavailableMessage = "This account is not available. Please contact support."
 
+// AccountError returns the code and message of an ErrAccountUnavailable,
+// which is account_frozen for a frozen account.
+func AccountError(err error) (code, message string) {
+	if errors.Is(err, ErrAccountFrozen) {
+		return restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen
+	}
+	return helpers.CodeAccountUnavailable, accountUnavailableMessage
+}
+
 // RequireActiveSession runs after JWTUserVerification and checks the token's
 // session and user in the database on every request. A token stays valid only
 // while its session is active and its user can still sign in, so logging out,
@@ -105,7 +115,8 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 		case errors.Is(err, ErrSessionInvalid):
 			unauthorized(c, reasonSessionInactive, "Unauthorized - Session is not active")
 		case errors.Is(err, ErrAccountUnavailable):
-			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, accountUnavailableMessage, nil)
+			code, message := AccountError(err)
+			helpers.SendError(c, http.StatusForbidden, code, message, nil)
 		default:
 			log.Printf("Failed to verify session %s: %v", claims.SessionID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the session", nil)

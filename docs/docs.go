@@ -884,6 +884,286 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/users/{hk}/restrictions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The restrictions of a user, newest first, at most 200: every one, lifted and ended ones included, or with active=true only those that apply now. With the reasons, cases, and notes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin users"
+                ],
+                "summary": "List the restrictions of a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The user's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only the restrictions that apply now",
+                        "name": "active",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.RestrictionList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Freezes the account (scope account), blocks operations on every currency (scope operation), or holds one currency (scope asset). A freeze ends every session of the user in the same transaction, so that their tokens stop working on every instance at once, and refuses sign-in with 403 account_frozen. The restriction applies until it is lifted or reaches ends_at. The reason, case, and note are never shown to the user. Audited as user.restriction_add, and each ended session as user.session_revoke with the reason account_frozen.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin users"
+                ],
+                "summary": "Restrict a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The user's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The restriction",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.CreateRestrictionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.CreatedRestriction"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "not_a_user: an administrator or a deleted user",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/users/{hk}/restrictions/{id}/lift": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ends a restriction now. A lifted freeze lets the user sign in again; the sessions it ended stay ended. With version, the lift is refused with 409 version_conflict when the restriction has changed since. A lifted restriction answers 409 already_lifted. Audited as user.restriction_lift.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin users"
+                ],
+                "summary": "Lift a restriction of a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The user's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The restriction's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The version the lift is based on",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Why",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.LiftRestrictionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/restrictions.Restriction"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth": {
             "post": {
                 "description": "Sends a one-time code to an email address or a mobile number. Limited per hour and client address.",
@@ -1755,6 +2035,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/restrictions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The restrictions that apply now to the signed-in user: the operations they block, on every currency or on one, and when they end when that is shown. Never the reason. A frozen account cannot sign in, so it is not listed here: its requests answer 403 account_frozen.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "List my restrictions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.RestrictionList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/sessions": {
             "get": {
                 "security": [
@@ -2095,6 +2430,85 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "admin.CreateRestrictionRequest": {
+            "type": "object",
+            "properties": {
+                "case_ref": {
+                    "description": "CaseRef is the reference of the case, at most 64 characters.",
+                    "type": "string",
+                    "example": "AML-2026-0042"
+                },
+                "currency_hk": {
+                    "description": "CurrencyHK is the held currency of an asset restriction.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ends_at": {
+                    "description": "EndsAt, when set, ends the restriction without a lift.",
+                    "type": "string"
+                },
+                "note": {
+                    "description": "Note is for administrators, at most 1000 characters.",
+                    "type": "string"
+                },
+                "operations": {
+                    "description": "Operations are the blocked operations of an operation or asset\nrestriction; an account freeze blocks everything and takes none.",
+                    "type": "array",
+                    "items": {
+                        "enum": [
+                            "deposit",
+                            "withdraw",
+                            "convert",
+                            "buy",
+                            "sell",
+                            "trade"
+                        ],
+                        "$ref": "#/definitions/restrictions.Operation"
+                    }
+                },
+                "reason": {
+                    "enum": [
+                        "court_order",
+                        "aml_review",
+                        "sanctions",
+                        "fraud",
+                        "security",
+                        "user_request",
+                        "other"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/restrictions.Reason"
+                        }
+                    ]
+                },
+                "scope": {
+                    "enum": [
+                        "account",
+                        "operation",
+                        "asset"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/restrictions.Scope"
+                        }
+                    ]
+                }
+            }
+        },
+        "admin.CreatedRestriction": {
+            "type": "object",
+            "properties": {
+                "ended_sessions": {
+                    "description": "EndedSessions is the number of sessions that a freeze ended.",
+                    "type": "integer",
+                    "example": 2
+                },
+                "restriction": {
+                    "$ref": "#/definitions/restrictions.Restriction"
+                }
+            }
+        },
         "admin.CurrencyPage": {
             "type": "object",
             "properties": {
@@ -2107,6 +2521,26 @@ const docTemplate = `{
                 "next_cursor": {
                     "description": "NextCursor asks for the next page. It is left out on the last page.",
                     "type": "string"
+                }
+            }
+        },
+        "admin.LiftRestrictionRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "description": "Note says why, for the audit log, at most 1000 characters.",
+                    "type": "string"
+                }
+            }
+        },
+        "admin.RestrictionList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/restrictions.Restriction"
+                    }
                 }
             }
         },
@@ -2522,6 +2956,175 @@ const docTemplate = `{
                 }
             }
         },
+        "restrictions.Operation": {
+            "type": "string",
+            "enum": [
+                "deposit",
+                "withdraw",
+                "convert",
+                "buy",
+                "sell",
+                "trade"
+            ],
+            "x-enum-varnames": [
+                "OpDeposit",
+                "OpWithdraw",
+                "OpConvert",
+                "OpBuy",
+                "OpSell",
+                "OpTrade"
+            ]
+        },
+        "restrictions.PublicRestriction": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/restrictions.Operation"
+                    }
+                },
+                "scope": {
+                    "enum": [
+                        "account",
+                        "operation",
+                        "asset"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/restrictions.Scope"
+                        }
+                    ]
+                },
+                "until": {
+                    "description": "Until is when the restriction ends. It is absent when the restriction\nhas no end, or its end is not shown.",
+                    "type": "string"
+                }
+            }
+        },
+        "restrictions.Reason": {
+            "type": "string",
+            "enum": [
+                "court_order",
+                "aml_review",
+                "sanctions",
+                "fraud",
+                "security",
+                "user_request",
+                "other"
+            ],
+            "x-enum-varnames": [
+                "ReasonCourtOrder",
+                "ReasonAMLReview",
+                "ReasonSanctions",
+                "ReasonFraud",
+                "ReasonSecurity",
+                "ReasonUserRequest",
+                "ReasonOther"
+            ]
+        },
+        "restrictions.Restriction": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "description": "Active is whether the restriction applies now: not lifted, and not\npast its end.",
+                    "type": "boolean"
+                },
+                "case_ref": {
+                    "type": "string",
+                    "example": "AML-2026-0042"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ends_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "lift_note": {
+                    "type": "string"
+                },
+                "lifted_at": {
+                    "type": "string"
+                },
+                "lifted_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/restrictions.Operation"
+                    }
+                },
+                "reason": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/restrictions.Reason"
+                        }
+                    ],
+                    "example": "aml_review"
+                },
+                "scope": {
+                    "enum": [
+                        "account",
+                        "operation",
+                        "asset"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/restrictions.Scope"
+                        }
+                    ]
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "restrictions.Scope": {
+            "type": "string",
+            "enum": [
+                "account",
+                "operation",
+                "asset"
+            ],
+            "x-enum-varnames": [
+                "ScopeAccount",
+                "ScopeOperation",
+                "ScopeAsset"
+            ]
+        },
         "system.HealthStatus": {
             "type": "object",
             "properties": {
@@ -2684,6 +3287,17 @@ const docTemplate = `{
                 },
                 "uuid": {
                     "type": "string"
+                }
+            }
+        },
+        "user.RestrictionList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/restrictions.PublicRestriction"
+                    }
                 }
             }
         },

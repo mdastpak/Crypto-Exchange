@@ -683,6 +683,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)
+		adminGroup.GET("/users/:hk/restrictions", ih.Admin.ListRestrictions)
+		adminGroup.POST("/users/:hk/restrictions", ih.Admin.CreateRestriction)
+		adminGroup.POST("/users/:hk/restrictions/:id/lift", ih.Admin.LiftRestriction)
 		adminGroup.POST("/logout", adminLogout(ih))
 	}
 
@@ -703,6 +706,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.DELETE("/sessions", ih.User.RevokeOtherSessions)
 		activeGroup.DELETE("/sessions/:id", ih.User.RevokeSession)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
+		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		// Starting a change sends codes, so it has the limit of a code
 		// request, on top of the limits of the codes themselves.
 		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), ih.User.StartContactChange)

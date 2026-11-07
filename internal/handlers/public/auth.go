@@ -22,6 +22,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -213,6 +214,11 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		// The code was right, so the refusal is the account's.
 		attempt.ActorType, attempt.ActorID = h.contactOwner(ctx, contactType, contact)
 	}
+	if errors.Is(err, errAccountFrozen) {
+		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
+		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
+		return
+	}
 	if errors.Is(err, errAccountUnavailable) {
 		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
 		// The code was right, so the caller controls the contact and may
@@ -262,8 +268,8 @@ func (h *PublicHandler) contactOwner(ctx context.Context, contactType, contact s
 	}
 	var hk uuid.UUID
 	var status, role string
-	var deleted bool
-	err := h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&hk, &status, &role, &deleted)
+	var deleted, frozen bool
+	err := h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&hk, &status, &role, &deleted, &frozen)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("Failed to look up the account of a sign-in for the audit log: %v", err)
@@ -278,7 +284,7 @@ func (h *PublicHandler) contactOwner(ctx context.Context, contactType, contact s
 
 // userByContactQuery finds the user that owns a contact, through the unique
 // index of user_contacts.
-const userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL
+var userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL, ` + restrictions.FrozenSQL("u.hk") + `
 	FROM user_contacts c JOIN users u ON u.hk = c.user_hk WHERE ` + db.ContactMatch
 
 // signInContactTypes are the contacts that a user can sign in with.
@@ -291,6 +297,9 @@ var errUserAlreadyExists = errors.New("user with this contact already exists")
 // errAccountUnavailable reports an account that is deleted, or whose status
 // does not allow signing in.
 var errAccountUnavailable = errors.New("account cannot sign in")
+
+// errAccountFrozen reports an account that a restriction froze (#220).
+var errAccountFrozen = fmt.Errorf("%w: frozen", errAccountUnavailable)
 
 // errAdminAccount reports an administrator account at user sign-in.
 var errAdminAccount = errors.New("administrators cannot use user sign-in")
@@ -308,9 +317,9 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Even
 	}
 	var userHK uuid.UUID
 	var status, role string
-	var deleted bool
+	var deleted, frozen bool
 	find := func() error {
-		return h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&userHK, &status, &role, &deleted)
+		return h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&userHK, &status, &role, &deleted, &frozen)
 	}
 
 	err := find()
@@ -332,6 +341,9 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Even
 
 	if deleted || !account.UserStatus(status).CanSignIn() {
 		return uuid.Nil, fmt.Errorf("%w: status %s, deleted %t", errAccountUnavailable, status, deleted)
+	}
+	if frozen {
+		return uuid.Nil, errAccountFrozen
 	}
 	if role == auth.RoleAdmin {
 		// Administrators sign in at /admin/auth with a second factor; a
