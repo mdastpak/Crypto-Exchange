@@ -23,6 +23,11 @@ var (
 	// ErrRefreshTokenReused means a refresh token that had already been rotated
 	// was presented again. It may have been stolen, so the session is revoked.
 	ErrRefreshTokenReused = fmt.Errorf("%w: refresh token was already used", ErrSessionInvalid)
+	// ErrConcurrentRefresh means the refresh token that the session had
+	// before its last rotation was presented within the grace period, as
+	// when two tabs refresh at once (#194). The session keeps its current
+	// refresh token, and the caller issues only a new access token.
+	ErrConcurrentRefresh = errors.New("refresh token was rotated by a concurrent refresh")
 	// ErrAccountUnavailable means the session's user can no longer sign in:
 	// the account was disabled, suspended, banned, deleted, or made an
 	// administrator after the session began.
@@ -75,11 +80,18 @@ type SessionRotation struct {
 	NewRefreshHash       string
 	NewAccessHash        string
 	ExpiresAt            time.Time
+	// Grace is how long after a rotation the previous refresh token is
+	// still accepted, for a concurrent refresh. Zero accepts it never.
+	Grace time.Duration
 }
 
 // ReasonRefreshTokenReused is the audit reason of a refresh token that was
 // presented again after its rotation.
 const ReasonRefreshTokenReused = "refresh_token_reused"
+
+// ReasonConcurrentRefresh is the audit reason of a refresh that presented
+// the previous refresh token within the grace period.
+const ReasonConcurrentRefresh = "concurrent_refresh"
 
 // reasonSessionInactive is the audit reason, and the error code, of a token
 // whose session has ended.
@@ -193,7 +205,8 @@ func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation, ev
 func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Event) (*audit.Event, bool, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE sessions
-		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = $3, last_used_at = NOW()
+		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = $3, last_used_at = NOW(),
+			previous_refresh_hash = refresh_token_hash, rotated_at = NOW()
 		WHERE id = $4 AND user_id = $5 AND refresh_token_hash = $6
 		  AND status = 'ACTIVE' AND expires_at > NOW()`,
 		r.NewRefreshHash, r.NewAccessHash, r.ExpiresAt, r.SessionID, r.UserID, r.PresentedRefreshHash,
@@ -207,8 +220,30 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 		return &event, false, nil
 	}
 
-	// Nothing was rotated. If the session is still active, the presented token
-	// is a valid but already rotated refresh token: revoke the session.
+	// Nothing was rotated. The token that the last rotation replaced, within
+	// the grace period, is a concurrent refresh: it gets a new access token,
+	// and the session keeps its current refresh token.
+	if r.Grace > 0 {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE sessions SET access_token_hash = $4, last_used_at = NOW()
+			WHERE id = $1 AND user_id = $2 AND previous_refresh_hash = $3
+			  AND rotated_at > NOW() - make_interval(secs => $5)
+			  AND status = 'ACTIVE' AND expires_at > NOW()`,
+			r.SessionID, r.UserID, r.PresentedRefreshHash, r.NewAccessHash, r.Grace.Seconds(),
+		)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to check a concurrent refresh: %w", err)
+		}
+		if rows, err := res.RowsAffected(); err != nil {
+			return nil, false, fmt.Errorf("failed to check a concurrent refresh: %w", err)
+		} else if rows == 1 {
+			event.Reason = ReasonConcurrentRefresh
+			return &event, false, ErrConcurrentRefresh
+		}
+	}
+
+	// Otherwise, if the session is still active, the presented token is a
+	// valid but already rotated refresh token: revoke the session.
 	res, err = tx.ExecContext(ctx, `
 		UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
 		WHERE id = $1 AND user_id = $2 AND refresh_token_hash <> $3

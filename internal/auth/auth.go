@@ -76,6 +76,16 @@ func GenerateRefreshToken(userID, role, sessionID string) (string, error) {
 	return generateToken(userID, role, sessionID, TokenTypeRefresh, RefreshTokenLifetime())
 }
 
+// refreshReuseGrace is how long the previous refresh token of a session is
+// accepted after a rotation (#194).
+func refreshReuseGrace() time.Duration {
+	seconds := config.Config.JWT.RefreshToken.ReuseGraceSeconds
+	if seconds <= 0 {
+		seconds = config.DefaultRefreshReuseGraceSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func accessTokenLifetime() time.Duration {
 	return time.Duration(config.Config.JWT.AccessToken.Expiration) * time.Minute
 }
@@ -238,7 +248,14 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 		NewRefreshHash:       HashToken(newRefreshToken),
 		NewAccessHash:        HashToken(accessToken),
 		ExpiresAt:            time.Now().Add(RefreshTokenLifetime()),
+		Grace:                refreshReuseGrace(),
 	}, SessionEvent(c, audit.ActionUserRefresh, claims.UUID, claims.SessionID))
+	if errors.Is(err, ErrConcurrentRefresh) {
+		// Another request rotated the token a moment ago and set the cookie
+		// to the new one, which this answer leaves as it is.
+		helpers.SendResponse(c, http.StatusOK, "Access token refreshed", gin.H{"access_token": accessToken})
+		return
+	}
 	if errors.Is(err, ErrRefreshTokenReused) {
 		// Rotate recorded the revocation.
 		log.Printf("Refresh token reuse detected; session %s revoked", claims.SessionID)

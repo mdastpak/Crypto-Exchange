@@ -153,6 +153,9 @@ func (c *Configuration) rangeProblems(p *problems) {
 	atLeast("websocket.max_connections", ws.MaxConnections, 1)
 	atLeast("websocket.max_connections_per_ip", ws.MaxConnectionsPerIP, 1)
 	atLeast("websocket.session_check_seconds", ws.SessionCheckSeconds, 1)
+	if v := c.JWT.RefreshToken.ReuseGraceSeconds; v < 1 || v > MaxRefreshReuseGraceSeconds {
+		p.add("jwt.refresh_token.reuse_grace_seconds", "is %d; it must be from 1 to %d", v, MaxRefreshReuseGraceSeconds)
+	}
 	if v := c.Admin.SignInMinResponseMS; v < 1 || v > MaxAdminSignInMinResponseMS {
 		p.add("admin.sign_in_min_response_ms", "is %d; it must be from 1 to %d", v, MaxAdminSignInMinResponseMS)
 	}
