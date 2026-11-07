@@ -211,6 +211,7 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | `POST` | `/admin/logout` | Admin token | Revoke the admin token |
 | `POST` | `/admin/currencies` | Admin token | Create a currency |
 | `GET` | `/admin/currencies/{hk}` | Admin token | Get a currency, whatever its status, with its version |
+| `GET` | `/admin/audit` | Admin token | Query the audit log |
 | `PUT` | `/admin/currencies/{hk}` | Admin token | Update a currency |
 | `DELETE` | `/admin/currencies/{hk}` | Admin token | Soft-delete a currency |
 | `GET` | `/user/profile` | User token | Get the signed-in user's profile |

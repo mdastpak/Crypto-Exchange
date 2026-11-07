@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -89,4 +90,69 @@ func TestAudit_CurrencyChangesThroughTheRouter(t *testing.T) {
 	require.Len(t, creates, 1)
 	assert.Equal(t, audit.ActorAdmin, creates[0].ActorType)
 	assert.Equal(t, enrollment.AdminID, creates[0].ActorID.String)
+}
+
+// auditPage is the info of a page of the audit query.
+type auditPage struct {
+	Info struct {
+		Items []struct {
+			Action  string `json:"action"`
+			ActorID string `json:"actor_id"`
+		} `json:"items"`
+		NextCursor string `json:"next_cursor"`
+	} `json:"info"`
+}
+
+// TestAudit_AdminQuery queries the audit log through the router as an
+// administrator, pages through it, and checks that a user cannot read it
+// and that invalid filters are reported together.
+func TestAudit_AdminQuery(t *testing.T) {
+	env := newE2EEnv(t)
+	enrollment, err := env.accounts.Create(context.Background(), "reader@example.com")
+	require.NoError(t, err)
+	token := env.signInAdmin(t, enrollment)
+	for _, symbol := range []string{"QRA", "QRB"} {
+		status, resp := env.post(t, "/api/v1/admin/currencies", testCurrency(symbol), token)
+		require.Equal(t, http.StatusCreated, status, resp.Message)
+	}
+
+	status, body := env.call(t, http.MethodGet, "/api/v1/admin/audit?action=currency.create&limit=1", nil, token)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var first auditPage
+	require.NoError(t, json.Unmarshal(body, &first))
+	require.Len(t, first.Info.Items, 1)
+	assert.Equal(t, audit.ActionCurrencyCreate, first.Info.Items[0].Action)
+	assert.Equal(t, enrollment.AdminID, first.Info.Items[0].ActorID)
+	require.NotEmpty(t, first.Info.NextCursor, "a second event remains")
+
+	status, body = env.call(t, http.MethodGet, "/api/v1/admin/audit?action=currency.create&limit=1&cursor="+first.Info.NextCursor, nil, token)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var second auditPage
+	require.NoError(t, json.Unmarshal(body, &second))
+	require.Len(t, second.Info.Items, 1)
+	assert.Empty(t, second.Info.NextCursor, "the last page")
+
+	user, _ := env.signedInUser(t, "audit-user@example.com")
+	status, _ = env.call(t, http.MethodGet, "/api/v1/admin/audit", nil, user)
+	assert.Equal(t, http.StatusUnauthorized, status, "a user token cannot read the audit log")
+
+	status, body = env.call(t, http.MethodGet, "/api/v1/admin/audit?actor_id=x&outcome=maybe&limit=0&since=yesterday", nil, token)
+	require.Equal(t, http.StatusBadRequest, status)
+	var invalid struct {
+		Code string `json:"code"`
+		Info struct {
+			Errors map[string]string `json:"errors"`
+		} `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(body, &invalid))
+	assert.Equal(t, "validation_failed", invalid.Code)
+	assert.ElementsMatch(t, []string{"actor_id", "outcome", "limit", "since"}, mapKeys(invalid.Info.Errors))
+}
+
+func mapKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

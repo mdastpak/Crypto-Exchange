@@ -40,6 +40,73 @@ definitions:
           refused with 409. A create may not send it.
         type: integer
     type: object
+  audit.Changes:
+    properties:
+      after:
+        additionalProperties: true
+        type: object
+      before:
+        additionalProperties: true
+        type: object
+    type: object
+  audit.Entry:
+    properties:
+      action:
+        example: currency.update
+        type: string
+      actor_id:
+        description: ActorID is the hk of the user or administrator.
+        format: uuid
+        type: string
+      actor_type:
+        enum:
+        - user
+        - admin
+        - anonymous
+        - system
+        type: string
+      changes:
+        $ref: '#/definitions/audit.Changes'
+      hk:
+        format: uuid
+        type: string
+      ip:
+        example: 203.0.113.7
+        type: string
+      occurred_at:
+        example: "2026-11-07T10:00:00Z"
+        type: string
+      outcome:
+        enum:
+        - success
+        - failure
+        - denied
+        type: string
+      reason:
+        description: Reason is the code of a failure or a denial.
+        example: authenticator_code_invalid
+        type: string
+      request_id:
+        type: string
+      target_id:
+        type: string
+      target_type:
+        example: currency
+        type: string
+      user_agent:
+        type: string
+    type: object
+  audit.EntryPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/audit.Entry'
+        type: array
+      next_cursor:
+        description: NextCursor asks for the next page. It is left out on the last
+          page.
+        type: string
+    type: object
   models.APIResponse:
     properties:
       code:
@@ -237,6 +304,90 @@ paths:
       summary: Welcome
       tags:
       - system
+  /api/v1/admin/audit:
+    get:
+      description: The events that the filters select, newest first. Every filter
+        is optional, and the filters combine. Pages follow the pagination convention
+        of docs/api.md.
+      parameters:
+      - description: The hk of the user or administrator
+        format: uuid
+        in: query
+        name: actor_id
+        type: string
+      - description: An action, such as currency.update
+        in: query
+        name: action
+        type: string
+      - description: A target type, such as currency
+        in: query
+        name: target_type
+        type: string
+      - description: A target id, such as the hk of a currency
+        in: query
+        name: target_id
+        type: string
+      - description: The outcome
+        enum:
+        - success
+        - failure
+        - denied
+        in: query
+        name: outcome
+        type: string
+      - description: Events at or after this time, in RFC 3339
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Events before this time, in RFC 3339
+        format: date-time
+        in: query
+        name: until
+        type: string
+      - description: The number of events, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/audit.EntryPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Query the audit log
+      tags:
+      - admin audit
   /api/v1/admin/auth:
     post:
       consumes:
