@@ -192,6 +192,8 @@ All JSON responses, except the system endpoints, use this envelope:
 { "status": 200, "message": "Human-readable message", "info": {} }
 ```
 
+Error responses also carry a stable `code`, such as `validation_failed` or `rate_limited`, and the `request_id`; [docs/api.md](docs/api.md#errors) lists the codes.
+
 | Method | Path | Authentication | Description |
 | --- | --- | --- | --- |
 | `GET` | `/system/live` | None | Liveness: the process serves requests |

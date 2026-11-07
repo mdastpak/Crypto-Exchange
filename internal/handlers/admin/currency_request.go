@@ -63,7 +63,7 @@ type currencyRequest struct {
 type fieldErrors map[string]string
 
 func sendValidationErrors(c *gin.Context, errs fieldErrors) {
-	helpers.SendResponse(c, http.StatusBadRequest, "Validation failed", gin.H{"errors": errs})
+	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
 }
 
 // errMalformedCurrencyRequest reports a body that is not a JSON object of the
@@ -154,7 +154,7 @@ func validateCurrency(status string, info models.CurrencyInfo) fieldErrors {
 // sendVersionConflict answers a change that is based on a version of the
 // currency that is no longer the current one.
 func sendVersionConflict(c *gin.Context, current int64) {
-	helpers.SendResponse(c, http.StatusConflict, "The currency has changed since that version; read it again and retry.",
+	helpers.SendError(c, http.StatusConflict, "version_conflict", "The currency has changed since that version; read it again and retry.",
 		gin.H{"code": "version_conflict", "version": current})
 }
 
@@ -184,7 +184,7 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 			if strings.Contains(pgErr.ConstraintName, "contract") {
 				field, code, what = "info.contract", "duplicate_contract", "contract"
 			}
-			helpers.SendResponse(c, http.StatusConflict, "A currency with this "+what+" already exists.",
+			helpers.SendError(c, http.StatusConflict, code, "A currency with this "+what+" already exists.",
 				gin.H{"code": code, "field": field})
 			return
 		case "23514", "22P02": // check_violation, invalid_text_representation

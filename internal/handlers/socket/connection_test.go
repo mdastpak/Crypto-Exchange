@@ -2,6 +2,7 @@ package socket
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -312,4 +314,43 @@ func TestShutdown_DuringAnUpgradeClosesTheNewConnection(t *testing.T) {
 	assert.Equal(t, websocket.CloseGoingAway, closeErr.Code)
 	assert.False(t, h.registerClient(&Client{ip: "192.0.2.1"}), "no client registers after the shutdown")
 	assert.Zero(t, h.clientCount())
+}
+
+// TestServe_RejectsInTheErrorEnvelope checks that a refused upgrade, and a
+// request that is not a WebSocket handshake, answer in the error envelope
+// of the REST API, with a code (#53).
+func TestServe_RejectsInTheErrorEnvelope(t *testing.T) {
+	h := newTestHandler()
+	h.Authenticate = fakeAuth
+	router := gin.New()
+	router.GET("/ws", func(c *gin.Context) {
+		c.Header("X-Request-ID", "req-7")
+		h.ServeWSGin(c)
+	})
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	decode := func(resp *http.Response) models.APIResponse {
+		t.Helper()
+		var body models.APIResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		return body
+	}
+
+	resp, err := http.Get(server.URL + "/ws")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "a plain GET is not a handshake")
+	assert.Equal(t, "13", resp.Header.Get("Sec-Websocket-Version"))
+	body := decode(resp)
+	assert.Equal(t, "invalid_request", body.Code)
+	assert.Equal(t, "req-7", body.RequestID)
+
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+	for token, code := range map[string]string{"forged": "token_invalid", "ended": "session_inactive", "disabled": "account_unavailable"} {
+		_, resp, err := dial(t, url, http.Header{"Authorization": {"Bearer " + token}})
+		require.Error(t, err)
+		assert.Equal(t, code, decode(resp).Code, token)
+		resp.Body.Close()
+	}
 }

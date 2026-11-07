@@ -77,6 +77,7 @@ var (
 		// Selected when a browser sends its token as a subprotocol, as the
 		// WebSocket handshake requires.
 		Subprotocols: []string{accessTokenProtocol},
+		Error:        handshakeError,
 	}
 )
 

@@ -131,7 +131,7 @@ func sendProfileError(c *gin.Context, err error) {
 	case errors.Is(err, errProfileNotFound):
 		helpers.SendResponse(c, http.StatusNotFound, "Profile not found", nil)
 	case errors.Is(err, errAccountUnavailable):
-		helpers.SendResponse(c, http.StatusForbidden, "This account is not available. Please contact support.", nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account is not available. Please contact support.", nil)
 	default:
 		log.Printf("Failed to load a profile: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to load the profile.", nil)
@@ -145,7 +145,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
 		return
 	}
 	profile, err := loadProfile(ctx, h.PostgresDB.DB, userID, false)
@@ -164,7 +164,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized - Invalid token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
 		return
 	}
 	update, errs, err := decodeProfileUpdate(c)
@@ -176,7 +176,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		errs = update.validate()
 	}
 	if errs != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
 		return
 	}
 

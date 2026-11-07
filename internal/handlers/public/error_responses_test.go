@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -19,14 +20,14 @@ import (
 )
 
 // assertBareError checks that a response is the standard envelope with the
-// expected status and message and nothing else: no info, and none of the
-// internal details in leaks.
+// expected status and message, and the code of the status, and nothing else:
+// no info, and none of the internal details in leaks.
 func assertBareError(t *testing.T, w *httptest.ResponseRecorder, status int, message string, leaks ...string) {
 	t.Helper()
 	assert.Equal(t, status, w.Code)
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
-	assert.Equal(t, map[string]interface{}{"status": float64(status), "message": message}, body)
+	assert.Equal(t, map[string]interface{}{"status": float64(status), "message": message, "code": helpers.StatusCode(status)}, body)
 	for _, leak := range leaks {
 		assert.NotContains(t, strings.ToLower(w.Body.String()), strings.ToLower(leak))
 	}

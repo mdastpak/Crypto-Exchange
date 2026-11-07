@@ -40,29 +40,60 @@ func TestSendResponse_SuccessStatusDoesNotAbort(t *testing.T) {
 	assert.NotNil(t, resp.Info)
 }
 
-func TestSendResponse_NonSuccessStatusAborts(t *testing.T) {
-	tests := []int{
-		http.StatusBadRequest,
-		http.StatusNotFound,
-		http.StatusInternalServerError,
-		http.StatusCreated,
-	}
-
-	for _, status := range tests {
+// TestSendResponse_OnlyErrorsAbort checks that a 201, like a 200, lets the
+// handlers after it run, and that every error response aborts them (#53).
+func TestSendResponse_OnlyErrorsAbort(t *testing.T) {
+	for status, aborts := range map[int]bool{
+		http.StatusOK:                  false,
+		http.StatusCreated:             false,
+		http.StatusBadRequest:          true,
+		http.StatusNotFound:            true,
+		http.StatusInternalServerError: true,
+	} {
 		w, c := performSendResponse(status, "something happened", nil)
 
 		assert.Equal(t, status, w.Code)
-		if status == http.StatusOK {
-			assert.False(t, c.IsAborted())
-		} else {
-			assert.True(t, c.IsAborted(), "status %d should abort the gin context", status)
-		}
-
+		assert.Equal(t, aborts, c.IsAborted(), "status %d", status)
 		var resp models.APIResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, status, resp.Status)
 		assert.Equal(t, "something happened", resp.Message)
 	}
+}
+
+func TestSendResponse_ErrorsCarryACodeAndTheRequestID(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Set("request_id", "req-42")
+	SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+
+	var resp models.APIResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "not_found", resp.Code, "the code of the status")
+	assert.Equal(t, "req-42", resp.RequestID)
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	SendError(c, http.StatusConflict, "version_conflict", "Changed since", map[string]int{"version": 3})
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "version_conflict", resp.Code, "a specific code wins")
+	assert.True(t, c.IsAborted())
+}
+
+func TestSendResponse_SuccessHasNoCode(t *testing.T) {
+	w, _ := performSendResponse(http.StatusCreated, "created", nil)
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	assert.NotContains(t, raw, "code")
+	assert.NotContains(t, raw, "request_id")
+}
+
+func TestStatusCode_HasAFallback(t *testing.T) {
+	assert.Equal(t, "rate_limited", StatusCode(http.StatusTooManyRequests))
+	assert.Equal(t, "body_too_large", StatusCode(http.StatusRequestEntityTooLarge))
+	assert.Equal(t, "error", StatusCode(http.StatusTeapot))
 }
 
 func TestSendResponse_NilInfoOmittedFromJSON(t *testing.T) {
