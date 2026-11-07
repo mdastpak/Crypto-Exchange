@@ -21,6 +21,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/pagination"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
@@ -423,27 +424,75 @@ func IdentifyInputType(input string) (string, string) {
 // PostgreSQL.
 const currencyReadTimeout = 10 * time.Second
 
-// GetActiveCurrencies lists the public currencies, oldest first.
+// CurrencyPage is a page of public currencies. It describes
+// pagination.Page[models.Currency] in the OpenAPI document, which swag
+// cannot read from the generic type.
+type CurrencyPage struct {
+	Items []models.Currency `json:"items"`
+	// NextCursor asks for the next page. It is left out on the last page.
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// GetActiveCurrencies lists the public currencies, oldest first by default,
+// with the filters of #218.
 //
 // @Summary List the public currencies
-// @Description The approved currencies, oldest first.
+// @Description The approved currencies, oldest first by default, a page at a time. The filters are optional and combine, and an unknown parameter is refused with 400 validation_failed. Text filters ignore case, and match Persian text typed with Arabic letters, Persian or Arabic digits, or a zero-width non-joiner. With q and no sort, the currencies whose symbol is q, then those whose symbol starts with it, come first. Every instance answers the same, from the shared cache or from the database.
 // @Tags currencies
 // @Produce json
-// @Success 200 {object} models.APIResponse{info=[]models.Currency}
+// @Param q query string false "Text in the symbol, English name, or Persian name, normalized; symbols that match it come first" maxLength(64)
+// @Param symbol query []string false "Symbols, in any case, repeated or comma-separated" collectionFormat(csv)
+// @Param en_name query string false "Text in the English name, in any case" maxLength(64)
+// @Param fa_name query string false "Text in the Persian name, with Arabic letters and Persian or Arabic digits matching the Persian ones" maxLength(64)
+// @Param contract query string false "The contract address, in any case" maxLength(128)
+// @Param has_contract query bool false "Only currencies with a contract, or only those without"
+// @Param is_token query bool false "Only tokens, or only currencies that are not"
+// @Param if_fiat query bool false "Only fiat currencies, or only those that are not"
+// @Param created_since query string false "Created at or after this RFC 3339 time" format(date-time)
+// @Param created_until query string false "Created before this RFC 3339 time" format(date-time)
+// @Param updated_since query string false "Updated at or after this RFC 3339 time" format(date-time)
+// @Param sort query string false "The order, with - for descending; the hk breaks ties" Enums(symbol, -symbol, en_name, -en_name, created_at, -created_at, updated_at, -updated_at)
+// @Param limit query int false "The number of currencies, 50 by default" minimum(1) maximum(200)
+// @Param cursor query string false "The next_cursor of the previous page"
+// @Success 200 {object} models.APIResponse{info=CurrencyPage}
+// @Failure 400 {object} models.APIResponse
 // @Failure 503 {object} models.APIResponse
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/public/currencies [get]
 func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
+	page, errs := pagination.Parse(c)
+	query, queryErrs := currencies.ParseQuery(c.Request.URL.Query())
+	if errs == nil {
+		errs = map[string]string{}
+	}
+	for field, problem := range queryErrs {
+		errs[field] = problem
+	}
+	if len(errs) > 0 {
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), currencyReadTimeout)
 	defer cancel()
-
 	list, err := h.Currencies.List(ctx)
 	if err != nil {
 		log.Printf("Error listing the public currencies: %v", err)
 		helpers.SendResponse(c, http.StatusServiceUnavailable, "Currencies are temporarily unavailable.", nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", list)
+	result, err := query.Page(list, page)
+	if errors.Is(err, pagination.ErrInvalidCursor) {
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed",
+			gin.H{"errors": map[string]string{"cursor": "is not a cursor of this list"}})
+		return
+	}
+	if err != nil {
+		log.Printf("Error paging the public currencies: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", result)
 }
 
 // GetCurrencyByHK returns one public currency. A currency that is not public

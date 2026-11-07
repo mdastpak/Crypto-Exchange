@@ -322,7 +322,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Every currency, whatever its status, deleted ones included, newest first, with its version. Read from the database, not the public cache. The filters are optional and combine. Pages follow the pagination convention of docs/api.md.",
+                "description": "Every currency, whatever its status, deleted ones included, newest first by default, with its version. Read from the database, not the public cache. The filters are those of GET /public/currencies, plus status; they are optional and combine, and an unknown parameter is refused. Pages follow the pagination convention of docs/api.md.",
                 "produces": [
                     "application/json"
                 ],
@@ -332,21 +332,63 @@ const docTemplate = `{
                 "summary": "List currencies",
                 "parameters": [
                     {
-                        "enum": [
-                            "approved",
-                            "pending",
-                            "suspend",
-                            "deleted"
-                        ],
-                        "type": "string",
-                        "description": "The status",
+                        "type": "array",
+                        "items": {
+                            "enum": [
+                                "approved",
+                                "pending",
+                                "suspend",
+                                "deleted"
+                            ],
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Statuses, repeated or comma-separated",
                         "name": "status",
                         "in": "query"
                     },
                     {
+                        "maxLength": 64,
                         "type": "string",
-                        "description": "The symbol, in any case",
+                        "description": "Text in the symbol, English name, or Persian name, normalized; symbols that match it come first",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Symbols, in any case, repeated or comma-separated",
                         "name": "symbol",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 64,
+                        "type": "string",
+                        "description": "Text in the English name, in any case",
+                        "name": "en_name",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 64,
+                        "type": "string",
+                        "description": "Text in the Persian name, with Arabic letters and Persian or Arabic digits matching the Persian ones",
+                        "name": "fa_name",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 128,
+                        "type": "string",
+                        "description": "The contract address, in any case",
+                        "name": "contract",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only currencies with a contract, or only those without",
+                        "name": "has_contract",
                         "in": "query"
                     },
                     {
@@ -359,6 +401,43 @@ const docTemplate = `{
                         "type": "boolean",
                         "description": "Only fiat currencies, or only those that are not",
                         "name": "if_fiat",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Created at or after this RFC 3339 time",
+                        "name": "created_since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Created before this RFC 3339 time",
+                        "name": "created_until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Updated at or after this RFC 3339 time",
+                        "name": "updated_since",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "symbol",
+                            "-symbol",
+                            "en_name",
+                            "-en_name",
+                            "created_at",
+                            "-created_at",
+                            "updated_at",
+                            "-updated_at"
+                        ],
+                        "type": "string",
+                        "description": "The order, with - for descending; the hk breaks ties",
+                        "name": "sort",
                         "in": "query"
                     },
                     {
@@ -1519,7 +1598,7 @@ const docTemplate = `{
         },
         "/api/v1/public/currencies": {
             "get": {
-                "description": "The approved currencies, oldest first.",
+                "description": "The approved currencies, oldest first by default, a page at a time. The filters are optional and combine, and an unknown parameter is refused with 400 validation_failed. Text filters ignore case, and match Persian text typed with Arabic letters, Persian or Arabic digits, or a zero-width non-joiner. With q and no sort, the currencies whose symbol is q, then those whose symbol starts with it, come first. Every instance answers the same, from the shared cache or from the database.",
                 "produces": [
                     "application/json"
                 ],
@@ -1527,6 +1606,115 @@ const docTemplate = `{
                     "currencies"
                 ],
                 "summary": "List the public currencies",
+                "parameters": [
+                    {
+                        "maxLength": 64,
+                        "type": "string",
+                        "description": "Text in the symbol, English name, or Persian name, normalized; symbols that match it come first",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Symbols, in any case, repeated or comma-separated",
+                        "name": "symbol",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 64,
+                        "type": "string",
+                        "description": "Text in the English name, in any case",
+                        "name": "en_name",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 64,
+                        "type": "string",
+                        "description": "Text in the Persian name, with Arabic letters and Persian or Arabic digits matching the Persian ones",
+                        "name": "fa_name",
+                        "in": "query"
+                    },
+                    {
+                        "maxLength": 128,
+                        "type": "string",
+                        "description": "The contract address, in any case",
+                        "name": "contract",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only currencies with a contract, or only those without",
+                        "name": "has_contract",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only tokens, or only currencies that are not",
+                        "name": "is_token",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only fiat currencies, or only those that are not",
+                        "name": "if_fiat",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Created at or after this RFC 3339 time",
+                        "name": "created_since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Created before this RFC 3339 time",
+                        "name": "created_until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Updated at or after this RFC 3339 time",
+                        "name": "updated_since",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "symbol",
+                            "-symbol",
+                            "en_name",
+                            "-en_name",
+                            "created_at",
+                            "-created_at",
+                            "updated_at",
+                            "-updated_at"
+                        ],
+                        "type": "string",
+                        "description": "The order, with - for descending; the hk breaks ties",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of currencies, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1539,14 +1727,17 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "info": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/models.Currency"
-                                            }
+                                            "$ref": "#/definitions/public.CurrencyPage"
                                         }
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
                         }
                     },
                     "503": {
@@ -2895,6 +3086,21 @@ const docTemplate = `{
                 "version": {
                     "type": "integer",
                     "example": 2
+                }
+            }
+        },
+        "public.CurrencyPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Currency"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor asks for the next page. It is left out on the last page.",
+                    "type": "string"
                 }
             }
         },

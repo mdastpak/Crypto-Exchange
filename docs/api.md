@@ -431,9 +431,23 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
 
 ### `GET /public/currencies`
 
-Lists the public currencies, oldest first. Response `200` with an array in `info`, which is empty when there are none. `created_at` and `updated_at` are in RFC 3339, in UTC.
+Lists the public currencies, oldest first by default, a page at a time, as in [Pagination](#pagination). Response `200` with `items` and, when more follow, `next_cursor`. `created_at` and `updated_at` are in RFC 3339, in UTC. The filters below are optional and combine ([#218](https://github.com/mdastpak/Crypto-Exchange/issues/218)):
 
-PostgreSQL holds the currencies, and Redis a copy of the whole list that every instance shares. A change through the admin routes drops the copy, so that the next read on any instance loads the list from PostgreSQL. A change made directly in the database shows after a little more than `redis.currency_cache_ttl_seconds`. While Redis is unavailable, the list is read from PostgreSQL. See [The shared currency list](architecture.md#the-shared-currency-list). `503` (`Currencies are temporarily unavailable.`) when the list is not cached and PostgreSQL cannot be read.
+| Parameter | Selects |
+| --- | --- |
+| `q` | Text in the symbol, the English name, or the Persian name. Without `sort`, the currencies whose symbol is `q` come first, then those whose symbol starts with it, then the rest. |
+| `symbol` | Symbols, in any case, repeated or comma-separated: `symbol=btc,eth` |
+| `en_name`, `fa_name` | Text in the name |
+| `contract` | The contract address, exactly, in any case |
+| `has_contract` | `true` or `false` |
+| `is_token`, `if_fiat` | `true` or `false` |
+| `created_since`, `created_until`, `updated_since` | RFC 3339 times. `created_until` excludes that time. |
+| `sort` | `symbol`, `en_name`, `created_at`, or `updated_at`, with `-` for descending. The `hk` breaks ties. |
+| `limit`, `cursor` | The page. A cursor is valid only with the order that issued it. |
+
+Text filters are at most 64 characters, ignore case, and match the parts of a name, such as `bitcoin` in `Wrapped Bitcoin`. Persian text is compared normalized on both sides: the Arabic `ي`, `ى`, and `ك` are read as the Persian `ی` and `ک`, Persian and Arabic digits as ASCII digits, and the zero-width non-joiner, tatweel, and diacritics are ignored, so `بيتكوين` finds `بیت‌کوین`. A parameter that is not one of these is refused with `400 validation_failed`, so that a misspelled filter does not return everything.
+
+PostgreSQL holds the currencies, and Redis a copy of the whole list that every instance shares. The filters, sorts, and pages run over that list, so every instance answers the same, from the cache or from PostgreSQL, and a cursor from one instance works on another. A change through the admin routes drops the copy, so that the next read on any instance loads the list from PostgreSQL. A change made directly in the database shows after a little more than `redis.currency_cache_ttl_seconds`. While Redis is unavailable, the list is read from PostgreSQL. See [The shared currency list](architecture.md#the-shared-currency-list). `503` (`Currencies are temporarily unavailable.`) when the list is not cached and PostgreSQL cannot be read.
 
 ### `GET /public/currencies/{hk}`
 
@@ -485,14 +499,11 @@ Errors:
 
 ### `GET /admin/currencies` (admin)
 
-Lists the currencies of every status, deleted ones included, newest first, each with its `version`. It reads PostgreSQL, not the public cache, so a change shows at once. Pages follow [Pagination](#pagination); the optional filters combine:
+Lists the currencies of every status, deleted ones included, newest first by default, each with its `version`. It reads PostgreSQL, not the public cache, so a change shows at once. It takes every filter, sort, and page parameter of [`GET /public/currencies`](#get-publiccurrencies), with the same meaning, and one more:
 
 | Parameter | Selects |
 | --- | --- |
-| `status` | `approved`, `pending`, `suspend`, or `deleted` |
-| `symbol` | One symbol, in any case |
-| `is_token`, `if_fiat` | `true` or `false` |
-| `limit`, `cursor` | The page, as in [Pagination](#pagination) |
+| `status` | `approved`, `pending`, `suspend`, or `deleted`, repeated or comma-separated |
 
 ```json
 {

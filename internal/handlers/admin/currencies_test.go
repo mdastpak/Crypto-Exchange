@@ -593,6 +593,27 @@ func (s *AdminCurrenciesTestSuite) TestListCurrencies_PagesCoverEveryCurrencyOnc
 	assert.Equal(s.T(), want, seen)
 }
 
+// TestListCurrencies_SharedFilters checks the filters that the admin list
+// shares with the public list (#218), with statuses that only it has.
+func (s *AdminCurrenciesTestSuite) TestListCurrencies_SharedFilters() {
+	btc := s.createCurrency("BTC", "")
+	s.update(btc, map[string]interface{}{"status": "approved"})
+	wbtc := s.createCurrency("WBTC", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599")
+	s.update(wbtc, map[string]interface{}{"status": "suspend"})
+	s.createCurrency("ETH", "")
+	// Distinct creation times, in the order of creation.
+	_, err := s.postgresSvc.DB.Exec(`UPDATE currencies SET created_at = NOW() + make_interval(secs => id)`)
+	require.NoError(s.T(), err)
+
+	assert.Equal(s.T(), []string{"BTC", "WBTC"}, symbols(s.list("?q=btc").Items), "the symbol that is the text first")
+	assert.Equal(s.T(), []string{"WBTC", "BTC"}, symbols(s.list("?status=approved,suspend&sort=-symbol").Items))
+	assert.Equal(s.T(), []string{"WBTC"}, symbols(s.list("?contract=0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599").Items))
+	assert.Equal(s.T(), []string{"ETH", "BTC"}, symbols(s.list("?has_contract=false").Items), "newest first")
+	assert.Equal(s.T(), []string{"BTC", "ETH", "WBTC"}, symbols(s.list("?sort=symbol").Items))
+	w := s.makeRequest(http.MethodGet, "/currencies?sort=price&colour=red", nil)
+	s.assertFieldErrors(w, "sort", "colour")
+}
+
 func (s *AdminCurrenciesTestSuite) TestListCurrencies_ValidationErrors() {
 	w := s.makeRequest(http.MethodGet, "/currencies?status=gone&is_token=maybe&limit=0&symbol=ABCDEFGHIJKLMNOP", nil)
 	s.assertFieldErrors(w, "status", "is_token", "limit", "symbol")
