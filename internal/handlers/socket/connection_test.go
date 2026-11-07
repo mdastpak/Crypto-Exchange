@@ -163,6 +163,10 @@ func TestServe_CapsConnectionsPerAddressAndInTotal(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = dial(t, url, nil)
 	require.NoError(t, err)
+	// A dial returns once the handshake is answered, which can be before
+	// the server registers the client: wait for both, so that the count
+	// below is of these two connections and not of a stale state.
+	require.Eventually(t, func() bool { return h.clientCount() == 2 }, 2*time.Second, 5*time.Millisecond)
 	_, resp, err := dial(t, url, nil)
 	require.Error(t, err, "a third connection from the same address")
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
