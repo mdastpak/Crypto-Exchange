@@ -75,6 +75,8 @@ An error response contains only a fixed message for each error. Internal details
 | `conflict` | `409` | The request conflicts with the current state, without a more specific code |
 | `duplicate_symbol`, `duplicate_contract` | `409` | Another currency has this symbol or contract; `info.field` names the field |
 | `session_limit_reached` | `409` | The user has the most active sessions allowed; `info` lists them with a challenge. See [Session limit](#session-limit) |
+| `favorites_limit_reached` | `409` | The user has `favorites.max_per_user` favorites; `info.max_favorites` says how many |
+| `order_mismatch` | `409` | A reorder of the favorites does not name each favorite of the kind once |
 | `session_not_found` | `409` | The session to end at the [session limit](#session-limit) is not an active session of the user |
 | `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
@@ -442,6 +444,7 @@ Lists the public currencies, oldest first by default, a page at a time, as in [P
 | `has_contract` | `true` or `false` |
 | `is_token`, `if_fiat` | `true` or `false` |
 | `created_since`, `created_until`, `updated_since` | RFC 3339 times. `created_until` excludes that time. |
+| `favorites` | `true`: only the [favorites](#favorites) of the signed-in user. It needs the user's access token in `Authorization`. Public list only. |
 | `sort` | `symbol`, `en_name`, `created_at`, or `updated_at`, with `-` for descending. The `hk` breaks ties. |
 | `limit`, `cursor` | The page. A cursor is valid only with the order that issued it. |
 
@@ -702,6 +705,20 @@ Changes the names in the profile and returns the updated profile, as `GET` does.
 | `first_name`, `last_name`, `display_name` | Optional. Spaces around the name are trimmed, and an empty string clears the field. At most 100 characters, without control characters or characters that reorder text (U+202A to U+202E and U+2066 to U+2069), and with at least one visible character. The zero-width non-joiner is allowed. |
 
 Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401` and `403` as for `GET`.
+
+### Favorites
+
+A user keeps a personal list of favorite currencies and trading pairs, each kind in their own order ([#217](https://github.com/mdastpak/Crypto-Exchange/issues/217)). Only an approved currency or an active pair can be added. A favorite stays when its currency is later suspended or deleted, or its pair stops trading, and is listed with that state, so it does not vanish without the user knowing. A user has at most `favorites.max_per_user` (100 by default) favorites, of both kinds together. The count runs in the transaction of the add, after a lock of the user's row, so concurrent adds on several instances cannot pass it. Favorites are personal preferences and are not audited.
+
+| Route | Effect |
+| --- | --- |
+| `GET /user/favorites` | `{"currencies": [...], "pairs": [...]}`, each in the user's order. A currency has `hk`, `symbol`, `en_name`, `fa_name`, `status`, and `added_at`; a pair has `id`, `base`, `quote`, `status`, and `added_at`. |
+| `PUT /user/favorites/currencies/{hk}` | Adds the currency at the end. `200` with `changed: false` when it already is a favorite. `404` for a currency that is not approved, and `409 favorites_limit_reached` past the cap, with `info.max_favorites`. |
+| `DELETE /user/favorites/currencies/{hk}` | Removes it. `200` with `changed: false` when it was not a favorite. |
+| `PUT` and `DELETE /user/favorites/pairs/{id}` | The same for a trading pair |
+| `PUT /user/favorites/order` | `{"currencies": ["<hk>", ...], "pairs": ["<id>", ...]}`: the new order of each kind that is sent. A kind that is sent must name each of its favorites exactly once, or the answer is `409 order_mismatch` and nothing changes. Answers the new list. |
+
+`GET /public/currencies?favorites=true` lists only the favorite currencies of the user of the request's access token, with every other filter. The token gets the checks of the user routes; without one the answer is `401 token_missing`.
 
 ### Contacts
 

@@ -125,7 +125,7 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	defer cancel()
 	require.NoError(s.T(), s.redisClient.Ping(ctx).Err())
 
-	_, err := s.postgresSvc.DB.Exec("TRUNCATE TABLE currencies, outbox_events, user_restrictions RESTART IDENTITY")
+	_, err := s.postgresSvc.DB.Exec("TRUNCATE TABLE currencies, outbox_events, user_restrictions, user_favorites RESTART IDENTITY")
 	require.NoError(s.T(), err)
 
 	services := &models.InfraServices{

@@ -294,6 +294,7 @@ internal/currencies/    The public currency catalog: Redis cache with a PostgreS
 internal/db/            PostgreSQL and Redis clients, SQL migrations
 internal/domain/        Exchange domain model: asset, market, order, trade, balance,
                         account, kyc, custody, shared types
+internal/favorites/     Personal favorites of currencies and trading pairs
 internal/handlers/      HTTP and WebSocket handlers (admin, public, socket, system, user)
 internal/helpers/       Response helpers
 internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit
