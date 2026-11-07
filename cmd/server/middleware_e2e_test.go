@@ -152,3 +152,43 @@ func TestRouter_RejectsOversizedBodies(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.NotEqual(t, http.StatusRequestEntityTooLarge, w.Code, "a body under the limit is handled")
 }
+
+// TestRouter_UnsupportedMethodsAnswer405 sends, to every path that the
+// router lists, a method that the path does not support (#124). The answer
+// is 405 with an Allow header that lists exactly the methods of the path.
+func TestRouter_UnsupportedMethodsAnswer405(t *testing.T) {
+	env := newE2EEnv(t)
+	config.Config.RateLimits.REST.RequestsPerSecond, config.Config.RateLimits.REST.Burst = 1000, 1000
+	router := newTestRouter(t, env)
+
+	methods := map[string]map[string]bool{}
+	for _, route := range router.Routes() {
+		if methods[route.Path] == nil {
+			methods[route.Path] = map[string]bool{}
+		}
+		methods[route.Path][route.Method] = true
+	}
+	require.NotEmpty(t, methods)
+	candidates := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	for path, allowed := range methods {
+		unsupported := ""
+		for _, method := range candidates {
+			if !allowed[method] {
+				unsupported = method
+				break
+			}
+		}
+		require.NotEmpty(t, unsupported, "%s supports every method", path)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(unsupported, concretePath(path), nil))
+		name := unsupported + " " + path
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code, name)
+		got := map[string]bool{}
+		for _, method := range strings.Split(w.Header().Get("Allow"), ",") {
+			got[strings.TrimSpace(method)] = true
+		}
+		assert.Equal(t, allowed, got, "%s: Allow lists the methods of the path", name)
+		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), "%s: the global middleware applies", name)
+	}
+}
