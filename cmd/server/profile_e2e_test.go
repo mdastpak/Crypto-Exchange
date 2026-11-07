@@ -139,6 +139,30 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		assert.Equal(t, "Alice", *resp.Info.FirstName)
 	})
 
+	t.Run("each change is audited with what changed", func(t *testing.T) {
+		// An update that changes nothing records nothing.
+		status, resp := env.profile(t, http.MethodPatch, map[string]string{"first_name": "Alice"}, aliceToken)
+		require.Equal(t, http.StatusOK, status, resp.Message)
+
+		rows, err := env.db.Query(`SELECT actor_type, actor_id, target_id, changes::text FROM audit_events
+			WHERE action = 'user.profile_update' ORDER BY hk`)
+		require.NoError(t, err)
+		defer rows.Close()
+		var changes []string
+		for rows.Next() {
+			var actor, actorID, target, change string
+			require.NoError(t, rows.Scan(&actor, &actorID, &target, &change))
+			assert.Equal(t, "user", actor)
+			assert.Equal(t, aliceID, actorID)
+			assert.Equal(t, aliceID, target)
+			changes = append(changes, change)
+		}
+		assert.Equal(t, []string{
+			`{"after": {"first_name": "Alice", "display_name": "alice"}, "before": {"first_name": null, "display_name": null}}`,
+			`{"after": {"display_name": null}, "before": {"display_name": "alice"}}`,
+		}, changes)
+	})
+
 	t.Run("invalid updates are rejected", func(t *testing.T) {
 		for _, body := range []interface{}{
 			map[string]string{"first_name": "a\u202Eb"},

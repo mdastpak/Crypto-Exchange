@@ -132,6 +132,8 @@ docker compose run --rm --no-deps --entrypoint /app/admin app -config config/con
 | `keys retire -purpose <purpose> -version <n>` | Stops loading one version. The newest version cannot be retired. |
 | `keys rewrap` | Unwraps every key, including retired ones, and wraps it again with the newest version of the KEK. The keys themselves do not change. |
 
+Every change, and the creation of the first keys by the server, records a `data_key.*` event in the audit log, in its transaction, with the key's purpose, version, and KEK, never the key. Pass `-operator <name>` before the command to name yourself in the event ([#195](https://github.com/mdastpak/Crypto-Exchange/issues/195)).
+
 ### Rotating a data key
 
 Rotate a data key on a schedule, such as once a year, and whenever it may have leaked.

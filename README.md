@@ -157,7 +157,7 @@ Add the admin key paths under `jwt.ssl.admin` in `config/config.local.yaml`, as 
 go run ./cmd/admin -config config/config.local.yaml create -email admin@example.com
 ```
 
-The server and the command must use the same `ADMIN_TOTP_KEY`. `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
+The server and the command must use the same `ADMIN_TOTP_KEY`. `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. Each command records an audit event; pass `-operator <name>` before the command to name yourself in it. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
 
 ### Run everything with Docker Compose
 

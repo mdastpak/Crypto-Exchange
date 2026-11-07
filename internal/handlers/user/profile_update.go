@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -128,4 +130,39 @@ func (u profileUpdate) apply(p *Profile) {
 	set(&p.FirstName, u.FirstName)
 	set(&p.LastName, u.LastName)
 	set(&p.DisplayName, u.DisplayName)
+}
+
+// nameChanges returns the names that differ between before and after, as
+// an audit change, or nil when none does.
+func nameChanges(before, after Profile) *audit.Changes {
+	c := &audit.Changes{Before: map[string]interface{}{}, After: map[string]interface{}{}}
+	for _, field := range []struct {
+		name          string
+		before, after *string
+	}{
+		{"first_name", before.FirstName, after.FirstName},
+		{"last_name", before.LastName, after.LastName},
+		{"display_name", before.DisplayName, after.DisplayName},
+	} {
+		if equalName(field.before, field.after) {
+			continue
+		}
+		c.Before[field.name], c.After[field.name] = nameValue(field.before), nameValue(field.after)
+	}
+	if len(c.After) == 0 {
+		return nil
+	}
+	return c
+}
+
+func equalName(a, b *string) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
+}
+
+// nameValue is a name for the audit log, nil when it is not set.
+func nameValue(s *string) interface{} {
+	if s == nil {
+		return nil
+	}
+	return *s
 }

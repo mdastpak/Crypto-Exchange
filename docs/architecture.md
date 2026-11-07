@@ -160,6 +160,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
   - The action, the target (type and id), and the outcome: `success`; `failure`, a wrong code; or `denied`, refused before it was tried, such as a rate limit. A failure or a denial adds a reason code.
   - The request ID, the client address (honoring `server.trusted_proxies`), the user agent (at most 512 characters), and, for a change, the fields that changed, before and after.
   - The event's hk, a UUID v7, which sorts the events by time.
+- **Commands.** The changes of `cmd/admin` have the `system` actor, and their user agent names the command, the person given with `-operator`, the operating-system user, and the host, for example `cmd/admin create; operator=alice; os_user=deploy; host=ops-1` ([#195](https://github.com/mdastpak/Crypto-Exchange/issues/195)). A command whose event cannot be written changes nothing.
 - **Personal data.** The client address and the user agent are to be encrypted with [#140](https://github.com/mdastpak/Crypto-Exchange/issues/140). The table only grows; its retention and partitioning are part of [#169](https://github.com/mdastpak/Crypto-Exchange/issues/169).
 
 | Action | When | Outcomes |
@@ -173,6 +174,10 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `user.sign_in` | A user signs in. A success targets the new session, and is in the transaction that creates it; a failure targets the sign-in, which links it to its code request. | `success`, without which no token is issued; `failure` with `code_invalid` (anonymous), `account_unavailable`, or `use_admin_sign_in`; `denied` with `rate_limited` (anonymous) |
 | `user.token_refresh` | A user's tokens are refreshed; the target is the session | `success`, in the transaction of the rotation, without which no token is issued, with `concurrent_refresh` for the replaced token within the grace period; `failure` with `refresh_token_reused`, in the transaction that revokes the session, `session_inactive`, or `account_unavailable` |
 | `user.logout` | A user signs out, in the transaction that revokes the session | `success` |
+| `user.profile_update` | A user changes their names, in the transaction of the change; the event holds the names that changed. An update that changes nothing records nothing. | `success` |
+| `admin.create`, `admin.totp_reset`, `admin.disable` | `cmd/admin` creates an administrator, replaces its authenticator secret, or disables it, in the transaction of the change; the target is the administrator. `admin.create` holds the address and the role, `admin.disable` the status before and after, and none holds a secret. | `success` |
+| `data_key.create`, `data_key.rotate`, `data_key.retire`, `data_key.rewrap` | The server creates the first data keys, or `cmd/admin keys` rotates, retires, or re-wraps one, in the transaction of the change; the target is `purpose/vN`, and the event holds the KEK, never the key | `success` |
+| `outbox.retry`, `outbox.discard` | `cmd/admin outbox` retries or discards a dead letter; the target is the message, and the event holds its topic | `success` |
 | `user.session_revoke` | A user ends a session from the session list, one event per ended session, in the transaction that revokes it; the target is the session | `success` |
 
 Failed and refused attempts, and admin logouts, are recorded on a best-effort basis: if the event cannot be written, it is logged, so that an unavailable audit log cannot be used to lock anyone out. A refresh token that does not parse records nothing, since it names no user.

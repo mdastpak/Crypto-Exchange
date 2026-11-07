@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
+
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -53,6 +55,35 @@ type Info struct {
 type Store struct {
 	DB       *sql.DB
 	Provider Provider
+	// Origin is who makes the changes, which record an audit event in
+	// their transaction (#195): for cmd/admin, audit.Operator. Zero is the
+	// system, as for the first keys that the server creates.
+	Origin audit.Event
+}
+
+// record writes the audit event of action on a key in tx. The event names
+// the key and its KEK, never the key.
+func (s *Store) record(ctx context.Context, tx *sql.Tx, action string, purpose Purpose, version int, changes *audit.Changes) error {
+	e := audit.Of(s.Origin, action, audit.TargetDataKey, fmt.Sprintf("%s/v%d", purpose, version))
+	e.Changes = changes
+	if err := audit.Record(ctx, tx, e); err != nil {
+		return fmt.Errorf("recording %s of data key %s/v%d: %w", action, purpose, version, err)
+	}
+	return nil
+}
+
+// inTx runs change in a transaction, which commits only when change, and
+// the audit event it records, succeed.
+func (s *Store) inTx(ctx context.Context, change func(tx *sql.Tx) error) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := change(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ErrConcurrentChange reports a rotation that lost a race with another one.
@@ -166,13 +197,28 @@ func (s *Store) createFirst(ctx context.Context, purpose Purpose) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx,
-		`INSERT INTO data_keys (purpose, version, kek_id, wrapped_key) VALUES ($1, 1, $2, $3) ON CONFLICT DO NOTHING`,
-		purpose, s.Provider.ID(), wrapped)
-	if err != nil {
-		return fmt.Errorf("storing data key %s/v1: %w", purpose, err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO data_keys (purpose, version, kek_id, wrapped_key) VALUES ($1, 1, $2, $3) ON CONFLICT DO NOTHING`,
+			purpose, s.Provider.ID(), wrapped)
+		if err != nil {
+			return fmt.Errorf("storing data key %s/v1: %w", purpose, err)
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			// Another instance created it, and recorded that.
+			return err
+		}
+		return s.record(ctx, tx, audit.ActionDataKeyCreate, purpose, 1, kekChange("", s.Provider.ID()))
+	})
+}
+
+// kekChange is the change of the KEK that wraps a key.
+func kekChange(before, after string) *audit.Changes {
+	c := &audit.Changes{After: map[string]interface{}{"kek_id": after}}
+	if before != "" {
+		c.Before = map[string]interface{}{"kek_id": before}
 	}
-	return nil
+	return c
 }
 
 // newWrappedKey generates a key and wraps it, bound to purpose and version.
@@ -204,9 +250,14 @@ func (s *Store) Rotate(ctx context.Context, purpose Purpose) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	_, err = s.DB.ExecContext(ctx,
-		`INSERT INTO data_keys (purpose, version, kek_id, wrapped_key) VALUES ($1, $2, $3, $4)`,
-		purpose, version, s.Provider.ID(), wrapped)
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO data_keys (purpose, version, kek_id, wrapped_key) VALUES ($1, $2, $3, $4)`,
+			purpose, version, s.Provider.ID(), wrapped); err != nil {
+			return err
+		}
+		return s.record(ctx, tx, audit.ActionDataKeyRotate, purpose, version, kekChange("", s.Provider.ID()))
+	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
 		return 0, ErrConcurrentChange
@@ -221,17 +272,26 @@ func (s *Store) Rotate(ctx context.Context, purpose Purpose) (int, error) {
 // needs that version anymore: data sealed or encrypted with it can no
 // longer be checked or read. The newest version cannot be retired.
 func (s *Store) Retire(ctx context.Context, purpose Purpose, version int) error {
-	res, err := s.DB.ExecContext(ctx, `
-		UPDATE data_keys SET retired_at = NOW()
-		WHERE purpose = $1 AND version = $2 AND retired_at IS NULL
-		  AND version < (SELECT MAX(version) FROM data_keys WHERE purpose = $1)`,
-		purpose, version)
+	retiredNow := false
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE data_keys SET retired_at = NOW()
+			WHERE purpose = $1 AND version = $2 AND retired_at IS NULL
+			  AND version < (SELECT MAX(version) FROM data_keys WHERE purpose = $1)`,
+			purpose, version)
+		if err != nil {
+			return err
+		}
+		if rows, err := res.RowsAffected(); err != nil || rows == 0 {
+			return err
+		}
+		retiredNow = true
+		return s.record(ctx, tx, audit.ActionDataKeyRetire, purpose, version, nil)
+	})
 	if err != nil {
 		return fmt.Errorf("retiring data key %s/v%d: %w", purpose, version, err)
 	}
-	if rows, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("retiring data key %s/v%d: %w", purpose, version, err)
-	} else if rows == 1 {
+	if retiredNow {
 		return nil
 	}
 
@@ -303,6 +363,9 @@ func (s *Store) Rewrap(ctx context.Context, from Provider) (int, error) {
 		if _, err := tx.ExecContext(ctx, `UPDATE data_keys SET kek_id = $1, wrapped_key = $2 WHERE purpose = $3 AND version = $4`,
 			s.Provider.ID(), wrapped, r.purpose, r.version); err != nil {
 			return 0, fmt.Errorf("storing data key %s/v%d: %w", r.purpose, r.version, err)
+		}
+		if err := s.record(ctx, tx, audit.ActionDataKeyRewrap, r.purpose, r.version, kekChange(r.kekID, s.Provider.ID())); err != nil {
+			return 0, err
 		}
 	}
 	if err := tx.Commit(); err != nil {

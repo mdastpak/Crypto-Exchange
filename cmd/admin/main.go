@@ -20,6 +20,10 @@
 // commands need the keys section of the server's configuration and never
 // print a key; docs/data-protection.md describes when to run them. The outbox
 // commands handle the messages that the server could not publish (#192).
+//
+// Every change is recorded in the audit log in its transaction (#195), with
+// the system as the actor and, in the user agent, the operating-system user,
+// the host, and the name given with -operator.
 package main
 
 import (
@@ -30,18 +34,23 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
 )
 
-const usage = `Usage: admin [-config path] [-migrations url] <command> [flags]
+const usage = `Usage: admin [-config path] [-migrations url] [-operator name] <command> [flags]
+
+-operator names the person who runs the command in the audit log, together
+with the operating-system user and the host.
 
 Administrators:
   create -email <address>      Create an administrator and print its authenticator secret.
@@ -74,6 +83,7 @@ type command struct {
 	purpose        keys.Purpose
 	version        int
 	id             int64
+	operator       string
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -83,6 +93,7 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 	global.Usage = func() { fmt.Fprint(stderr, usage) }
 	global.StringVar(&cmd.configPath, "config", "config/config.yaml", "Path to config file")
 	global.StringVar(&cmd.migrationsPath, "migrations", "file://internal/db/migrations", "Path to migrations")
+	global.StringVar(&cmd.operator, "operator", "", "Name of the person who runs the command, for the audit log")
 	if err := global.Parse(args); err != nil {
 		return command{}, err
 	}
@@ -233,6 +244,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
+	accounts.Origin = operator(cmd)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -294,7 +306,7 @@ func runKeys(cmd command, stdout, stderr io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := executeKeys(ctx, &keys.Store{DB: postgres.DB, Provider: provider}, cmd, stdout); err != nil {
+	if err := executeKeys(ctx, &keys.Store{DB: postgres.DB, Provider: provider, Origin: operator(cmd)}, cmd, stdout); err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
@@ -401,12 +413,12 @@ func executeOutbox(ctx context.Context, database *sql.DB, cmd command, stdout io
 			fmt.Fprintf(stdout, "Only the oldest %d are listed.\n", len(letters))
 		}
 	case "outbox retry":
-		if err := outbox.RetryDeadLetter(ctx, database, cmd.id); err != nil {
+		if err := outbox.RetryDeadLetter(ctx, database, cmd.id, operator(cmd)); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "Message %d is pending again. The relay publishes it within seconds, after the later messages of its topic that were published meanwhile.\n", cmd.id)
 	case "outbox discard":
-		if err := outbox.DiscardDeadLetter(ctx, database, cmd.id); err != nil {
+		if err := outbox.DiscardDeadLetter(ctx, database, cmd.id, operator(cmd)); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "Deleted message %d. It is never published.\n", cmd.id)
@@ -414,6 +426,17 @@ func executeOutbox(ctx context.Context, database *sql.DB, cmd command, stdout io
 		return fmt.Errorf("unknown command %q", cmd.name)
 	}
 	return nil
+}
+
+// operator is the origin of the changes of cmd in the audit log: the
+// system, with the command, -operator, and the user and host it runs as.
+func operator(cmd command) audit.Event {
+	osUser := ""
+	if u, err := user.Current(); err == nil {
+		osUser = u.Username
+	}
+	host, _ := os.Hostname()
+	return audit.Operator("cmd/admin "+cmd.name, cmd.operator, osUser, host)
 }
 
 // oneLine keeps an error on one line of the table.
