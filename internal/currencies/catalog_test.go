@@ -287,6 +287,64 @@ func TestList_InstancesShareOneLoad(t *testing.T) {
 	assert.Zero(t, n, "the lock is released")
 }
 
+// TestFetch_TakesAListWrittenBeforeTheLock lets another instance write the
+// list after this one read a miss, as when it releases the lock between this
+// instance's read and its lock. Once this instance holds the lock, it must
+// take the written list instead of loading it again.
+func TestFetch_TakesAListWrittenBeforeTheLock(t *testing.T) {
+	f := newFixture(t)
+	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
+	ctx := context.Background()
+	values, err := f.catalog.read(ctx)
+	require.NoError(t, err)
+	require.Nil(t, values[0], "this instance read a miss")
+	other := New(f.db, f.redis, time.Minute)
+	_, err = other.List(ctx)
+	require.NoError(t, err)
+
+	var loads atomic.Int32
+	f.catalog.load = func(ctx context.Context) ([]models.Currency, error) {
+		loads.Add(1)
+		return f.catalog.loadFromDatabase(ctx)
+	}
+	list, err := f.catalog.fetch(ctx, "0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"BTC"}, symbols(list))
+	assert.Zero(t, loads.Load(), "the list written by the other instance is taken")
+	n, err := f.redis.Exists(ctx, lockKey).Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "the lock is released")
+}
+
+// TestRefresh_TakesAListRefreshedBeforeTheLock lets another instance refresh
+// an old list before this one takes the lock to refresh it. This instance
+// must serve the refreshed list instead of loading it again, and must still
+// refresh a list that is still old.
+func TestRefresh_TakesAListRefreshedBeforeTheLock(t *testing.T) {
+	f := newFixture(t)
+	f.insert(t, "BTC", models.CurrencyStatusApproved, false)
+	ctx := context.Background()
+	var loads atomic.Int32
+	f.catalog.load = func(ctx context.Context) ([]models.Currency, error) {
+		loads.Add(1)
+		return f.catalog.loadFromDatabase(ctx)
+	}
+	other := New(f.db, f.redis, time.Minute)
+	_, err := other.List(ctx)
+	require.NoError(t, err)
+
+	list, ok := f.catalog.refresh(ctx, "0")
+	require.True(t, ok)
+	assert.Equal(t, []string{"BTC"}, symbols(list))
+	assert.Zero(t, loads.Load(), "the fresh list is taken")
+
+	f.catalog.ttl = time.Nanosecond
+	time.Sleep(time.Millisecond)
+	_, ok = f.catalog.refresh(ctx, "0")
+	require.True(t, ok)
+	assert.Equal(t, int32(1), loads.Load(), "a list that is still old is refreshed")
+}
+
 // TestList_ReadsTheDatabaseWhenTheLoadingInstanceStops holds the lock as an
 // instance would that was killed during a load. The others wait for the
 // list, then read the database without writing the list or taking the lock.

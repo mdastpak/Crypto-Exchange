@@ -150,7 +150,7 @@ func (c *Catalog) List(ctx context.Context) ([]models.Currency, error) {
 		generation = g
 	}
 	if cached, ok := c.decode(values[0]); ok {
-		if time.Since(time.UnixMilli(cached.LoadedAt)) < c.ttl {
+		if c.fresh(cached) {
 			return cached.Currencies, nil
 		}
 		if fresh, ok := c.refresh(ctx, generation); ok {
@@ -220,6 +220,10 @@ func (c *Catalog) refresh(ctx context.Context, generation string) ([]models.Curr
 		return nil, false
 	}
 	defer c.unlock(token)
+	cached, generation, ok := c.reread(ctx, generation)
+	if ok && c.fresh(cached) {
+		return cached.Currencies, true
+	}
 	list, err := c.loadAndWrite(ctx, generation)
 	if err != nil {
 		c.warn("The currency list could not be refreshed: %v", err)
@@ -254,9 +258,10 @@ func (c *Catalog) shared(ctx context.Context, generation string) ([]models.Curre
 	}
 }
 
-// fetch loads and writes the list if this instance gets the lock, and
-// otherwise waits for the instance that has it. If the list does not come
-// within wait, it reads the database without writing the list.
+// fetch loads and writes the list if this instance gets the lock and the
+// list is still missing, and otherwise waits for the instance that has it.
+// If the list does not come within wait, it reads the database without
+// writing the list.
 func (c *Catalog) fetch(ctx context.Context, generation string) ([]models.Currency, error) {
 	deadline := time.Now().Add(c.wait)
 	for {
@@ -266,7 +271,12 @@ func (c *Catalog) fetch(ctx context.Context, generation string) ([]models.Curren
 			return c.loadOnly(ctx)
 		}
 		if locked {
-			list, err := c.loadAndWrite(ctx, generation)
+			cached, current, ok := c.reread(ctx, generation)
+			if ok {
+				c.unlock(token)
+				return cached.Currencies, nil
+			}
+			list, err := c.loadAndWrite(ctx, current)
 			c.unlock(token)
 			return list, err
 		}
@@ -293,6 +303,29 @@ func (c *Catalog) fetch(ctx context.Context, generation string) ([]models.Curren
 			generation = g
 		}
 	}
+}
+
+// fresh reports whether a cached list is younger than the catalog's time.
+func (c *Catalog) fresh(cached cachedList) bool {
+	return time.Since(time.UnixMilli(cached.LoadedAt)) < c.ttl
+}
+
+// reread reads the list again once this instance holds the lock. The
+// previous holder writes the list before it releases the lock, so a caller
+// that read a miss, or an old list, just before that write finds the new
+// list here instead of loading it again. It also returns the generation,
+// under which a load that begins after this read may write; on an error, it
+// returns the one it was given.
+func (c *Catalog) reread(ctx context.Context, generation string) (cachedList, string, bool) {
+	values, err := c.read(ctx)
+	if err != nil {
+		return cachedList{}, generation, false
+	}
+	if g, ok := values[1].(string); ok {
+		generation = g
+	}
+	cached, ok := c.decode(values[0])
+	return cached, generation, ok
 }
 
 // read gets the list and the generation in one round trip.
