@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -29,6 +30,8 @@ type limits struct {
 	messageBurst      int
 	maxConnections    int
 	maxPerIP          int
+	// ipv6Prefix groups IPv6 clients for maxPerIP, as the rate limits do.
+	ipv6Prefix int
 }
 
 // limitsFromConfig reads the websocket settings, with the defaults of the
@@ -53,6 +56,7 @@ func limitsFromConfig() limits {
 		messageBurst:      or(ws.ClientMessageBurst, config.DefaultWSClientMessageBurst),
 		maxConnections:    or(ws.MaxConnections, config.DefaultWSMaxConnections),
 		maxPerIP:          or(ws.MaxConnectionsPerIP, config.DefaultWSMaxConnectionsPerIP),
+		ipv6Prefix:        config.Config.RateLimits.IPv6PrefixLength,
 	}
 }
 
@@ -92,6 +96,7 @@ func (h *WebSocketHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip string) {
+	ip = h.addressKey(ip)
 	select {
 	case <-h.ShutdownCh:
 		reject(w, http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), "The server is shutting down")
@@ -198,6 +203,13 @@ func (h *WebSocketHandler) authenticate(r *http.Request) (*auth.Claims, int, str
 		log.Printf("Failed to authenticate a WebSocket connection: %v", err)
 		return nil, http.StatusInternalServerError, helpers.StatusCode(http.StatusInternalServerError), "Failed to authenticate the connection"
 	}
+}
+
+// addressKey is the address that websocket.max_connections_per_ip counts
+// by: an IPv6 client counts by its prefix, so that the addresses of one /64
+// share the limit (#188), as they share the rate limits.
+func (h *WebSocketHandler) addressKey(ip string) string {
+	return clientip.Key(ip, h.limits.ipv6Prefix)
 }
 
 // reserve counts a new connection from ip, unless this instance already has

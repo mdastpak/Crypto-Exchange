@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -309,8 +310,11 @@ func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window 
 // forwarding headers (X-Forwarded-For, X-Real-IP) only when the request comes
 // from a proxy listed in server.trusted_proxies. Reading those headers directly
 // would let every client choose a fresh rate-limit identity for each request.
+//
+// The address is then grouped as clientip.Key does, so that an IPv6 client
+// cannot get a fresh budget from each address of its /64 (#188).
 func (rl *RateLimiter) getClientIP(c *gin.Context) string {
-	return c.ClientIP()
+	return clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength)
 }
 
 // getUserID identifies the signed-in user or administrator by the subject

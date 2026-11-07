@@ -165,7 +165,15 @@ func (c *Configuration) rangeProblems(p *problems) {
 	atLeast("rate_limits.trading.burst", limits.Trading.Burst, 1)
 	atLeast("rate_limits.auth.login_attempts_per_minute", limits.Auth.LoginAttemptsPerMinute, 1)
 	atLeast("rate_limits.auth.otp_requests_per_hour", limits.Auth.OTPRequestsPerHour, 1)
+	if n := limits.IPv6PrefixLength; n < MinIPv6PrefixLength || n > 128 {
+		p.add("rate_limits.ipv6_prefix_length", "is %d; it must be between %d and 128", n, MinIPv6PrefixLength)
+	}
 }
+
+// MinIPv6PrefixLength is the shortest prefix that IPv6 clients may be
+// grouped by. A shorter one would let a single client's limits cover a
+// whole provider.
+const MinIPv6PrefixLength = 32
 
 // tlsProblems checks the certificate and key when TLS is enabled, so that a
 // broken pair stops the server at startup instead of when it starts to

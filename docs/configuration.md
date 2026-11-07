@@ -243,7 +243,7 @@ The key service is only contacted at startup and by the `admin keys` commands: a
 | `write_timeout_seconds` | `10` | How long a write to a client may take |
 | `client_messages_per_second`, `client_message_burst` | `10`, `20` | The messages each connection may send, as a token bucket. A client that sends faster is disconnected. `rate_limits.ws` limits the upgrade requests per address instead. |
 | `max_connections` | `10000` | Open connections per server instance. Further upgrades get `503`. |
-| `max_connections_per_ip` | `20` | Open connections per client address, at most `max_connections`. Further upgrades get `429`. The client address honors `server.trusted_proxies`. |
+| `max_connections_per_ip` | `20` | Open connections per client address, at most `max_connections`. Further upgrades get `429`. The client address honors `server.trusted_proxies`, and IPv6 clients count by `rate_limits.ipv6_prefix_length`. |
 
 A connection may bring a user access token, which gets the checks of the `/user/*` routes; see [WebSocket](api.md#websocket).
 
@@ -251,6 +251,7 @@ A connection may bring a user access token, which gets the checks of the `/user/
 
 | Key | Default | Applies to |
 | --- | --- | --- |
+| `ipv6_prefix_length` | `64` | Every per-client limit, and `websocket.max_connections_per_ip`: an IPv6 client is counted by this prefix of its address, from 32 to 128, because one subscriber holds at least a /64 and could otherwise use a fresh address, and get a fresh budget, for every request. IPv4 addresses, and IPv4-mapped IPv6 addresses, count as the IPv4 address. Logs and the audit log keep the full address. Set it with `RATE_LIMITS_IPV6_PREFIX_LENGTH`. |
 | `timeout_ms` | `250` | Every limiter: how long it waits for Redis. A limiter that gets no answer in time treats Redis as unreachable, and its `on_error` decides. The limiters of one request wait at most once together: once one of them finds Redis unreachable, the others decide at once. |
 | `rest.requests_per_second`, `rest.burst` | `100`, `200` | Every route, as a token bucket per client IP. The health probes under `/system` are counted in the memory of each instance instead of in Redis, so that they answer while Redis is down. |
 | `ws.messages_per_second`, `ws.burst` | `50`, `100` | The WebSocket upgrade request |
@@ -264,7 +265,7 @@ The token buckets refill continuously and count fractions of a token, so any rat
 
 The two `auth` limits are counted in fixed windows of one minute and one hour, which start with a client's first request, so a blocked client is allowed again when its window ends. User and admin sign-in count separately, and the other `/public/*` routes, such as the currency reads, are only subject to the `rest` limit.
 
-Clients behind one address, such as a carrier-grade NAT or an office network, share these budgets. Size `auth.otp_requests_per_hour` for the busiest shared address you expect. Raising it does not let anyone flood a single email address or mobile number, because `otp.auth.contact_requests_per_hour` limits the codes sent to each contact.
+Clients behind one address, such as a carrier-grade NAT or an office network, share these budgets, and so do the IPv6 clients of one prefix. Size `auth.otp_requests_per_hour` for the busiest shared address you expect. Raising it does not let anyone flood a single email address or mobile number, because `otp.auth.contact_requests_per_hour` limits the codes sent to each contact.
 
 ## Settings reserved for roadmap features
 
@@ -377,6 +378,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `WS_MAX_CONNECTIONS` | `websocket.max_connections` |
 | `WS_MAX_CONNECTIONS_PER_IP` | `websocket.max_connections_per_ip` |
 | `RATE_LIMITS_TIMEOUT_MS` | `rate_limits.timeout_ms` |
+| `RATE_LIMITS_IPV6_PREFIX_LENGTH` | `rate_limits.ipv6_prefix_length` |
 | `RATE_LIMITS_REST_REQUESTS_PER_SECOND` | `rate_limits.rest.requests_per_second` |
 | `RATE_LIMITS_REST_BURST` | `rate_limits.rest.burst` |
 | `RATE_LIMITS_WS_MESSAGES_PER_SECOND` | `rate_limits.ws.messages_per_second` |

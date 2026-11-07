@@ -454,6 +454,7 @@ observability:
 # auth denies. See docs/configuration.md.
 rate_limits:
   timeout_ms: 250  # How long each limiter waits for Redis
+  ipv6_prefix_length: 64  # IPv6 clients count by this prefix (32 to 128)
   rest:            # Every route, per client IP
     requests_per_second: 100
     burst: 200
