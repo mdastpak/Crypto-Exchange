@@ -8,6 +8,14 @@ definitions:
         example: 1
         type: integer
     type: object
+  admin.CancelMigrationRequest:
+    properties:
+      version:
+        description: Version is the version of the migration that the cancel is based
+          on.
+        example: 1
+        type: integer
+    type: object
   admin.CapabilityOverrideRequest:
     properties:
       allowed:
@@ -98,6 +106,13 @@ definitions:
         description: Note says why, for the audit log, at most 1000 characters.
         type: string
     type: object
+  admin.MigrationList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/rebrand.Migration'
+        type: array
+    type: object
   admin.RestrictionList:
     properties:
       items:
@@ -129,6 +144,8 @@ definitions:
         type: boolean
       is_token:
         type: boolean
+      logo_url:
+        type: string
       symbol:
         type: string
     type: object
@@ -528,6 +545,22 @@ definitions:
         description: |-
           Lifecycle is where the currency is in a delisting, and what users may
           do with it now (#216).
+      migration:
+        allOf:
+        - $ref: '#/definitions/models.CurrencyMigration'
+        description: |-
+          Migration is the migration that moves the holders of this currency to
+          another one, from its announcement on (#215).
+      previous_symbols:
+        description: |-
+          PreviousSymbols are the symbols the currency had before a rebrand,
+          newest first (#215). They stay reserved for it, and the lists find the
+          currency by them.
+        example:
+        - MATIC
+        items:
+          type: string
+        type: array
       status:
         type: string
       updated_at:
@@ -582,6 +615,10 @@ definitions:
         type: boolean
       is_token:
         type: boolean
+      logo_url:
+        description: LogoURL is the https URL of the currency's logo (#215), or empty.
+        example: https://example.com/logos/usdt.svg
+        type: string
       symbol:
         type: string
     type: object
@@ -618,6 +655,50 @@ definitions:
         type: string
       state:
         example: deposits_disabled
+        type: string
+    type: object
+  models.CurrencyMigration:
+    properties:
+      forced:
+        description: |-
+          Forced is true when holdings are converted, and false when the
+          conversion is offered and the currency stays.
+        type: boolean
+      id:
+        format: uuid
+        type: string
+      next:
+        allOf:
+        - $ref: '#/definitions/models.CurrencyMigrationPhase'
+        description: Next is the next scheduled phase.
+      phase:
+        description: |-
+          Phase is announced, deposits_paused, trading_halted, converting, or
+          completed.
+        enum:
+        - announced
+        - deposits_paused
+        - trading_halted
+        - converting
+        - completed
+        example: announced
+        type: string
+      ratio:
+        description: |-
+          Ratio is the units of the target that one unit of this currency
+          becomes, as a decimal string.
+        example: "1"
+        type: string
+      target_hk:
+        format: uuid
+        type: string
+    type: object
+  models.CurrencyMigrationPhase:
+    properties:
+      at:
+        type: string
+      phase:
+        example: deposits_paused
         type: string
     type: object
   models.PingInfo:
@@ -712,6 +793,118 @@ definitions:
         type: string
       uuid:
         type: string
+    type: object
+  rebrand.Migration:
+    properties:
+      announcement_url:
+        type: string
+      cancelled_at:
+        type: string
+      cancelled_by:
+        format: uuid
+        type: string
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        format: uuid
+        type: string
+      forced:
+        type: boolean
+      id:
+        format: uuid
+        type: string
+      note:
+        type: string
+      phase:
+        allOf:
+        - $ref: '#/definitions/rebrand.Phase'
+        enum:
+        - scheduled
+        - announced
+        - deposits_paused
+        - trading_halted
+        - converting
+        - completed
+        - cancelled
+      sources:
+        items:
+          $ref: '#/definitions/rebrand.Source'
+        type: array
+      steps:
+        items:
+          $ref: '#/definitions/rebrand.Step'
+        type: array
+      target_hk:
+        format: uuid
+        type: string
+      version:
+        example: 1
+        type: integer
+    type: object
+  rebrand.Phase:
+    enum:
+    - scheduled
+    - announced
+    - deposits_paused
+    - trading_halted
+    - converting
+    - completed
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - PhaseScheduled
+    - PhaseAnnounced
+    - PhaseDepositsPaused
+    - PhaseTradingHalted
+    - PhaseConverting
+    - PhaseCompleted
+    - PhaseCancelled
+  rebrand.Plan:
+    properties:
+      announcement_url:
+        type: string
+      forced:
+        description: |-
+          Forced converts every holding, and pauses and retires the sources.
+          Without it, the conversion is offered and the sources stay.
+        type: boolean
+      note:
+        type: string
+      sources:
+        items:
+          $ref: '#/definitions/rebrand.Source'
+        type: array
+      steps:
+        items:
+          $ref: '#/definitions/rebrand.Step'
+        type: array
+    type: object
+  rebrand.Source:
+    properties:
+      currency_hk:
+        format: uuid
+        type: string
+      ratio:
+        example: "0.01"
+        type: string
+    type: object
+  rebrand.Step:
+    properties:
+      applied_at:
+        type: string
+      at:
+        type: string
+      phase:
+        allOf:
+        - $ref: '#/definitions/rebrand.Phase'
+        enum:
+        - announced
+        - deposits_paused
+        - trading_halted
+        - converting
+        - completed
     type: object
   restrictions.Operation:
     enum:
@@ -1863,6 +2056,184 @@ paths:
       summary: Cancel the delisting of a currency
       tags:
       - admin currencies
+  /api/v1/admin/currencies/{hk}/migrations:
+    get:
+      description: The migrations that the currency is the target or a source of,
+        newest first, at most 100, with their sources, phases, and when each applied.
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.MigrationList'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the migrations of a currency
+      tags:
+      - admin currencies
+    post:
+      consumes:
+      - application/json
+      description: 'Schedules a rebrand, a redenomination, or a merger that moves
+        the holders of one or more approved source currencies to this approved target,
+        each source at its ratio: the units of the target that one unit of the source
+        becomes, such as 0.01 for 100 LEND = 1 AAVE. The phases follow the order announced,
+        deposits_paused, trading_halted, converting, completed; announced and completed
+        are required. A forced migration pauses the deposits and withdrawals of its
+        sources at deposits_paused, halts their trading and conversions at trading_halted,
+        and retires them from the lists at completed; an optional one only offers
+        the conversion, and its sources stay. Each phase applies at its time, exactly
+        once, on any instance. From announced on, the sources show the migration.
+        Conversions round down to the precision of the target and record the dust;
+        they are carried out by the ledger. Audited as currency.migration_schedule,
+        and each phase as currency.migration_phase.'
+      parameters:
+      - description: The target's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The migration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/rebrand.Plan'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/rebrand.Migration'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: not_listed, source_in_migration, or target_in_migration
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Schedule a migration into a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/migrations/{id}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: 'Cancels a migration into this currency before it converts: the
+        phases that are left do not apply, and its sources get back what its phases
+        paused. From converting on, a cancel answers 409 migration_irreversible. With
+        version, a cancel based on another version answers 409 version_conflict. Audited
+        as currency.migration_cancel.'
+      parameters:
+      - description: The target's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The migration's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The version
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/admin.CancelMigrationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/rebrand.Migration'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel a migration
+      tags:
+      - admin currencies
   /api/v1/admin/currencies/{hk}/restore:
     post:
       description: 'Undoes a delete: the currency keeps its hk, symbol, and contract,
@@ -1921,6 +2292,61 @@ paths:
       security:
       - BearerAuth: []
       summary: Restore a deleted currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/symbols/{symbol}:
+    delete:
+      description: 'A rebrand keeps the symbol before as a previous symbol of the
+        currency: the lists find the currency by it, and no other currency can take
+        it, which answers 409 symbol_reserved. Releasing it lets another currency
+        take it, and the currency is no longer found by it. The current symbol cannot
+        be released. Audited as currency.symbol_release.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The previous symbol
+        in: path
+        name: symbol
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not a previous symbol of the currency
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: symbol_current
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Release a previous symbol of a currency
       tags:
       - admin currencies
   /api/v1/admin/logout:

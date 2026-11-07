@@ -206,3 +206,18 @@ func TestPage_CurrenciesOfOneSecondKeepTheirOrderOfCreation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ETH", "BTC"}, symbols(page.Items))
 }
+
+// TestMatch_PreviousSymbolsFindTheCurrency: after a rebrand, a search for
+// the symbol before finds the currency, after one whose symbol it is now.
+func TestMatch_PreviousSymbolsFindTheCurrency(t *testing.T) {
+	pol := currency("00000000-0000-0000-0000-0000000000a1", "POL", "Polygon", "x", "", false, false, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")
+	pol.PreviousSymbols = []string{"MATIC"}
+	other := currency("00000000-0000-0000-0000-0000000000a2", "MATICX", "Other", "y", "", false, false, "2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z")
+	list := []models.Currency{pol, other}
+	page, err := parse(t, "symbol=matic").Page(list, request(t, "limit=10"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"POL"}, symbols(page.Items))
+	page, err = parse(t, "q=matic").Page(list, request(t, "limit=10"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"POL", "MATICX"}, symbols(page.Items), "an exact previous symbol ranks with the prefixes")
+}

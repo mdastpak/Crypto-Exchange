@@ -1,4 +1,4 @@
-package delisting
+package currencies
 
 import (
 	"context"
@@ -12,11 +12,27 @@ import (
 // off in several runs and the run stops soon after Stop.
 const batch = 100
 
-// Scheduler applies the steps of delistings that are due. Every instance
-// runs one; Advance makes each step apply exactly once.
+// Change is a committed change of a currency by a scheduled step, which the
+// caller follows by dropping the cached currency list and nudging the outbox
+// relay.
+type Change struct {
+	CurrencyHK string
+	// Public reports whether the change is in the public view, and so has
+	// an event in the outbox.
+	Public bool
+}
+
+// Advancer applies the scheduled steps that are due at now, each exactly
+// once on all instances, at most limit of them, and returns the changes it
+// committed: the steps of delistings (#216) and of migrations (#215).
+type Advancer func(ctx context.Context, db *sql.DB, now time.Time, limit int) ([]Change, error)
+
+// Scheduler applies the scheduled steps of currencies that are due. Every
+// instance runs one; each Advancer makes each step apply exactly once.
 type Scheduler struct {
 	db       *sql.DB
 	interval time.Duration
+	advance  []Advancer
 	// after runs after each run that committed changes: it drops the cached
 	// currency list and nudges the outbox relay.
 	after func(ctx context.Context, changes []Change)
@@ -27,9 +43,9 @@ type Scheduler struct {
 	stopOnce sync.Once
 }
 
-// NewScheduler returns a scheduler that runs every interval.
-func NewScheduler(db *sql.DB, interval time.Duration, after func(ctx context.Context, changes []Change)) *Scheduler {
-	return &Scheduler{db: db, interval: interval, after: after, now: time.Now,
+// NewScheduler returns a scheduler that runs the advancers every interval.
+func NewScheduler(db *sql.DB, interval time.Duration, after func(ctx context.Context, changes []Change), advance ...Advancer) *Scheduler {
+	return &Scheduler{db: db, interval: interval, after: after, advance: advance, now: time.Now,
 		stop: make(chan struct{}), done: make(chan struct{})}
 }
 
@@ -53,13 +69,19 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) run() {
 	ctx, cancel := context.WithTimeout(context.Background(), s.interval+30*time.Second)
 	defer cancel()
+	for _, advance := range s.advance {
+		s.runOne(ctx, advance)
+	}
+}
+
+func (s *Scheduler) runOne(ctx context.Context, advance Advancer) {
 	for {
-		changes, err := Advance(ctx, s.db, s.now(), batch)
+		changes, err := advance(ctx, s.db, s.now(), batch)
 		if len(changes) > 0 && s.after != nil {
 			s.after(ctx, changes)
 		}
 		if err != nil {
-			log.Printf("Error applying the delisting steps that are due; the next run retries: %v", err)
+			log.Printf("Error applying the currency steps that are due; the next run retries: %v", err)
 			return
 		}
 		select {

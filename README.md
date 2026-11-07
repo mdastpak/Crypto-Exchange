@@ -306,6 +306,7 @@ internal/otp/           One-time codes: generation, hashed storage in Redis, att
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
 internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
+internal/rebrand/        Currency migrations: rebrands, redenominations, mergers, by phase
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and
                         currency holds, and the check that operations call
 internal/ssl/           Where local signing keys go; the key files are ignored

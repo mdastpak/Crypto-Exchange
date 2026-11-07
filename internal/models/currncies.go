@@ -10,6 +10,8 @@ type CurrencyInfo struct {
 	Symbol   string `json:"symbol"`
 	IsToken  bool   `json:"is_token"`
 	Contract string `json:"contract"`
+	// LogoURL is the https URL of the currency's logo (#215), or empty.
+	LogoURL string `json:"logo_url,omitempty" example:"https://example.com/logos/usdt.svg"`
 }
 
 // Currency defines the structure of the currency model
@@ -27,6 +29,37 @@ type Currency struct {
 	// Lifecycle is where the currency is in a delisting, and what users may
 	// do with it now (#216).
 	Lifecycle *CurrencyLifecycle `json:"lifecycle,omitempty"`
+	// PreviousSymbols are the symbols the currency had before a rebrand,
+	// newest first (#215). They stay reserved for it, and the lists find the
+	// currency by them.
+	PreviousSymbols []string `json:"previous_symbols,omitempty" example:"MATIC"`
+	// Migration is the migration that moves the holders of this currency to
+	// another one, from its announcement on (#215).
+	Migration *CurrencyMigration `json:"migration,omitempty"`
+}
+
+// CurrencyMigration is a migration of a currency into another, as its
+// source sees it.
+type CurrencyMigration struct {
+	ID       string `json:"id" format:"uuid"`
+	TargetHK string `json:"target_hk" format:"uuid"`
+	// Phase is announced, deposits_paused, trading_halted, converting, or
+	// completed.
+	Phase string `json:"phase" example:"announced" enums:"announced,deposits_paused,trading_halted,converting,completed"`
+	// Forced is true when holdings are converted, and false when the
+	// conversion is offered and the currency stays.
+	Forced bool `json:"forced"`
+	// Ratio is the units of the target that one unit of this currency
+	// becomes, as a decimal string.
+	Ratio string `json:"ratio" example:"1"`
+	// Next is the next scheduled phase.
+	Next *CurrencyMigrationPhase `json:"next,omitempty"`
+}
+
+// CurrencyMigrationPhase is a scheduled phase of a migration.
+type CurrencyMigrationPhase struct {
+	Phase string    `json:"phase" example:"deposits_paused"`
+	At    time.Time `json:"at"`
 }
 
 // CurrencyLifecycle is the lifecycle state of a currency and the

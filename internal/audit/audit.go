@@ -56,11 +56,20 @@ const (
 	ActionCurrencyDelistingCancel    = "currency.delisting_cancel"
 	ActionCurrencyCapabilityOverride = "currency.capability_override"
 	ActionCurrencyLifecycleChange    = "currency.lifecycle_change"
-	ActionUserCreate                 = "user.create"
-	ActionUserSignInCode             = "user.sign_in_code"
-	ActionUserSignIn                 = "user.sign_in"
-	ActionUserRefresh                = "user.token_refresh"
-	ActionUserLogout                 = "user.logout"
+	// ActionCurrencySymbolRelease is an administrator releasing a previous
+	// symbol of a currency, for another currency to take (#215).
+	ActionCurrencySymbolRelease = "currency.symbol_release"
+	// The migrations of currencies into others (#215): an administrator
+	// scheduling or cancelling one, and the scheduler applying a phase. The
+	// target is the currency that the migration is into.
+	ActionCurrencyMigrationSchedule = "currency.migration_schedule"
+	ActionCurrencyMigrationCancel   = "currency.migration_cancel"
+	ActionCurrencyMigrationPhase    = "currency.migration_phase"
+	ActionUserCreate                = "user.create"
+	ActionUserSignInCode            = "user.sign_in_code"
+	ActionUserSignIn                = "user.sign_in"
+	ActionUserRefresh               = "user.token_refresh"
+	ActionUserLogout                = "user.logout"
 	// ActionUserSessionRevoke is a user ending one of their sessions from
 	// the session list (#193); the target is the session.
 	ActionUserSessionRevoke = "user.session_revoke"

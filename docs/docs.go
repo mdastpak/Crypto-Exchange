@@ -1299,6 +1299,266 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/currencies/{hk}/migrations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The migrations that the currency is the target or a source of, newest first, at most 100, with their sources, phases, and when each applied.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "List the migrations of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.MigrationList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Schedules a rebrand, a redenomination, or a merger that moves the holders of one or more approved source currencies to this approved target, each source at its ratio: the units of the target that one unit of the source becomes, such as 0.01 for 100 LEND = 1 AAVE. The phases follow the order announced, deposits_paused, trading_halted, converting, completed; announced and completed are required. A forced migration pauses the deposits and withdrawals of its sources at deposits_paused, halts their trading and conversions at trading_halted, and retires them from the lists at completed; an optional one only offers the conversion, and its sources stay. Each phase applies at its time, exactly once, on any instance. From announced on, the sources show the migration. Conversions round down to the precision of the target and record the dust; they are carried out by the ledger. Audited as currency.migration_schedule, and each phase as currency.migration_phase.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Schedule a migration into a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The target's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The migration",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rebrand.Plan"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/rebrand.Migration"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "not_listed, source_in_migration, or target_in_migration",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/migrations/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cancels a migration into this currency before it converts: the phases that are left do not apply, and its sources get back what its phases paused. From converting on, a cancel answers 409 migration_irreversible. With version, a cancel based on another version answers 409 version_conflict. Audited as currency.migration_cancel.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Cancel a migration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The target's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The migration's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The version",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/admin.CancelMigrationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/rebrand.Migration"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/currencies/{hk}/restore": {
             "post": {
                 "security": [
@@ -1376,6 +1636,84 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/symbols/{symbol}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A rebrand keeps the symbol before as a previous symbol of the currency: the lists find the currency by it, and no other currency can take it, which answers 409 symbol_reserved. Releasing it lets another currency take it, and the currency is no longer found by it. The current symbol cannot be released. Audited as currency.symbol_release.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Release a previous symbol of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The previous symbol",
+                        "name": "symbol",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not a previous symbol of the currency",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "symbol_current",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -3550,6 +3888,16 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.CancelMigrationRequest": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "description": "Version is the version of the migration that the cancel is based on.",
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
         "admin.CapabilityOverrideRequest": {
             "type": "object",
             "properties": {
@@ -3676,6 +4024,17 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.MigrationList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rebrand.Migration"
+                    }
+                }
+            }
+        },
         "admin.RestrictionList": {
             "type": "object",
             "properties": {
@@ -3723,6 +4082,9 @@ const docTemplate = `{
                 },
                 "is_token": {
                     "type": "boolean"
+                },
+                "logo_url": {
+                    "type": "string"
                 },
                 "symbol": {
                     "type": "string"
@@ -4280,6 +4642,24 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "migration": {
+                    "description": "Migration is the migration that moves the holders of this currency to\nanother one, from its announcement on (#215).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CurrencyMigration"
+                        }
+                    ]
+                },
+                "previous_symbols": {
+                    "description": "PreviousSymbols are the symbols the currency had before a rebrand,\nnewest first (#215). They stay reserved for it, and the lists find the\ncurrency by them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "MATIC"
+                    ]
+                },
                 "status": {
                     "type": "string"
                 },
@@ -4354,6 +4734,11 @@ const docTemplate = `{
                 "is_token": {
                     "type": "boolean"
                 },
+                "logo_url": {
+                    "description": "LogoURL is the https URL of the currency's logo (#215), or empty.",
+                    "type": "string",
+                    "example": "https://example.com/logos/usdt.svg"
+                },
                 "symbol": {
                     "type": "string"
                 }
@@ -4404,6 +4789,60 @@ const docTemplate = `{
                 "state": {
                     "type": "string",
                     "example": "deposits_disabled"
+                }
+            }
+        },
+        "models.CurrencyMigration": {
+            "type": "object",
+            "properties": {
+                "forced": {
+                    "description": "Forced is true when holdings are converted, and false when the\nconversion is offered and the currency stays.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "next": {
+                    "description": "Next is the next scheduled phase.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.CurrencyMigrationPhase"
+                        }
+                    ]
+                },
+                "phase": {
+                    "description": "Phase is announced, deposits_paused, trading_halted, converting, or\ncompleted.",
+                    "type": "string",
+                    "enum": [
+                        "announced",
+                        "deposits_paused",
+                        "trading_halted",
+                        "converting",
+                        "completed"
+                    ],
+                    "example": "announced"
+                },
+                "ratio": {
+                    "description": "Ratio is the units of the target that one unit of this currency\nbecomes, as a decimal string.",
+                    "type": "string",
+                    "example": "1"
+                },
+                "target_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "models.CurrencyMigrationPhase": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "phase": {
+                    "type": "string",
+                    "example": "deposits_paused"
                 }
             }
         },
@@ -4533,6 +4972,163 @@ const docTemplate = `{
                 },
                 "uuid": {
                     "type": "string"
+                }
+            }
+        },
+        "rebrand.Migration": {
+            "type": "object",
+            "properties": {
+                "announcement_url": {
+                    "type": "string"
+                },
+                "cancelled_at": {
+                    "type": "string"
+                },
+                "cancelled_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "forced": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "phase": {
+                    "enum": [
+                        "scheduled",
+                        "announced",
+                        "deposits_paused",
+                        "trading_halted",
+                        "converting",
+                        "completed",
+                        "cancelled"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/rebrand.Phase"
+                        }
+                    ]
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rebrand.Source"
+                    }
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rebrand.Step"
+                    }
+                },
+                "target_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "rebrand.Phase": {
+            "type": "string",
+            "enum": [
+                "scheduled",
+                "announced",
+                "deposits_paused",
+                "trading_halted",
+                "converting",
+                "completed",
+                "cancelled"
+            ],
+            "x-enum-varnames": [
+                "PhaseScheduled",
+                "PhaseAnnounced",
+                "PhaseDepositsPaused",
+                "PhaseTradingHalted",
+                "PhaseConverting",
+                "PhaseCompleted",
+                "PhaseCancelled"
+            ]
+        },
+        "rebrand.Plan": {
+            "type": "object",
+            "properties": {
+                "announcement_url": {
+                    "type": "string"
+                },
+                "forced": {
+                    "description": "Forced converts every holding, and pauses and retires the sources.\nWithout it, the conversion is offered and the sources stay.",
+                    "type": "boolean"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rebrand.Source"
+                    }
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rebrand.Step"
+                    }
+                }
+            }
+        },
+        "rebrand.Source": {
+            "type": "object",
+            "properties": {
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ratio": {
+                    "type": "string",
+                    "example": "0.01"
+                }
+            }
+        },
+        "rebrand.Step": {
+            "type": "object",
+            "properties": {
+                "applied_at": {
+                    "type": "string"
+                },
+                "at": {
+                    "type": "string"
+                },
+                "phase": {
+                    "enum": [
+                        "announced",
+                        "deposits_paused",
+                        "trading_halted",
+                        "converting",
+                        "completed"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/rebrand.Phase"
+                        }
+                    ]
                 }
             }
         },

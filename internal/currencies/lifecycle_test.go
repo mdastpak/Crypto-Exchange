@@ -50,3 +50,26 @@ func TestSendRefusal(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"lifecycle":"deposits_disabled"`)
 	assert.False(t, SendRefusal(c, ErrNotFound))
 }
+
+func TestMigrationCapabilities(t *testing.T) {
+	active := StateCapabilities(LifecycleActive)
+	for _, phase := range []string{"announced", "deposits_paused", "trading_halted", "converting", "completed"} {
+		assert.Equal(t, active, MigrationCapabilities(phase, false), "an optional migration changes nothing at %s", phase)
+	}
+	assert.Equal(t, active, MigrationCapabilities("announced", true))
+	paused := MigrationCapabilities("deposits_paused", true)
+	assert.False(t, paused.Deposit)
+	assert.False(t, paused.Withdraw)
+	assert.True(t, paused.Sell)
+	assert.Equal(t, models.CurrencyCapabilities{Listed: true}, MigrationCapabilities("converting", true))
+	assert.Equal(t, models.CurrencyCapabilities{}, MigrationCapabilities("completed", true))
+}
+
+func TestValidDecimal(t *testing.T) {
+	for _, ok := range []string{"1", "0.01", "24000", "0.433350", "0", "12345678901234567890.123456789012345678"} {
+		assert.True(t, ValidDecimal(ok), ok)
+	}
+	for _, bad := range []string{"", ".", "1.", ".5", "-1", "1e3", "1,5", "0x10", "1.1234567890123456789", "123456789012345678901"} {
+		assert.False(t, ValidDecimal(bad), bad)
+	}
+}

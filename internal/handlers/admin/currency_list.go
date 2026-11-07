@@ -96,7 +96,7 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 // filters of the list to run over. Currencies created in the same second
 // are ordered by hk, so the order is total and a cursor never skips one.
 const allCurrenciesQuery = `SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, ` +
-	currencies.LifecycleColumns + ` FROM currencies c`
+	currencies.DetailColumns + ` FROM currencies c`
 
 func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
 	rows, err := db.QueryContext(ctx, allCurrenciesQuery)
@@ -110,7 +110,7 @@ func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
 		var info []byte
 		var created, updated time.Time
 		var deleted sql.NullTime
-		var lifecycle currencies.LifecycleScan
+		var lifecycle currencies.DetailScan
 		if err := rows.Scan(append([]any{&cur.ID, &cur.HK, &cur.Status, &info, &cur.Version, &created, &updated, &deleted}, lifecycle.Dest()...)...); err != nil {
 			return nil, err
 		}
@@ -118,7 +118,7 @@ func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
 			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
 		}
 		var err error
-		if cur.Lifecycle, err = lifecycle.Lifecycle(); err != nil {
+		if err = lifecycle.Apply(&cur); err != nil {
 			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
 		}
 		cur.CreatedAt = timestamp(sql.NullTime{Time: created, Valid: true})

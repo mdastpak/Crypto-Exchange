@@ -190,7 +190,8 @@ admin:
 favorites:
   max_per_user: 100            # Favorite currencies and pairs per user, together
 
-# Delistings of currencies: every instance applies the steps that are due.
+# Delistings and migrations of currencies: every instance applies the steps
+# that are due.
 delisting:
   interval_seconds: 30         # How often; a step applies at most this late
 
