@@ -111,6 +111,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 17 | Balance invariants: no negative amounts, `total` computed as `available + locked`, `on_chain` dropped, one balance per user, asset, and sub-account also without a sub-account | Not yet (the ledger is #60) |
 | 18 | `outbox_events`: the transactional outbox, with a partial index on the pending messages and one on the publish time for the cleanup | Yes |
 | 19 | `currencies.version`: counts the changes of a currency, for the optimistic concurrency of the admin routes | Yes |
+| 20 | `audit_events`: the append-only audit log, with triggers that refuse `UPDATE`, `DELETE`, and `TRUNCATE` | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
@@ -144,6 +145,28 @@ The public currency routes of every instance read one list in Redis ([#52](https
 - **An old list**, past `redis.currency_cache_ttl_seconds`, is refreshed by the one request that takes the lock, while every other request, on every instance, is served the old list at once. So the list never disappears at the end of its time, and no burst of misses follows.
 - **Changes** drop the list with one transaction that also counts the generation. Instances may drop it at the same time; each drop is the same. A load that began before a drop does not write what it read.
 - **Redis unavailable**: each Redis call of a read gives up after 250 ms, and the read goes to PostgreSQL.
+
+#### The audit log
+
+`audit_events` records who did what, when, from where, and with which outcome ([#51](https://github.com/mdastpak/Crypto-Exchange/issues/51)). `internal/audit` writes it.
+
+- **One event per action.** An event of a change is written in the transaction of the change, so it commits or rolls back with it: a currency cannot change without its event. If the event cannot be written, the change is refused with `500`. An attempt that changes nothing, such as a wrong code, writes its event on its own.
+- **Append-only.** Triggers refuse `UPDATE`, `DELETE`, and `TRUNCATE` on the table, to every role, the owner included. Removing them takes a schema change. A superuser could still turn the triggers off; running the server with a database role that cannot change the schema is [#180](https://github.com/mdastpak/Crypto-Exchange/issues/180).
+- **Fields.**
+  - The actor: a type (`user`, `admin`, `anonymous`, `system`) and the actor's hk, never a contact.
+  - The action, the target (type and id), and the outcome: `success`; `failure`, a wrong code; or `denied`, refused before it was tried, such as a rate limit. A failure or a denial adds a reason code.
+  - The request ID, the client address (honoring `server.trusted_proxies`), the user agent (at most 512 characters), and, for a change, the fields that changed, before and after.
+  - The event's hk, a UUID v7, which sorts the events by time.
+- **Personal data.** The client address and the user agent are to be encrypted with [#140](https://github.com/mdastpak/Crypto-Exchange/issues/140). The table only grows; its retention and partitioning are part of [#169](https://github.com/mdastpak/Crypto-Exchange/issues/169).
+
+| Action | When | Outcomes |
+| --- | --- | --- |
+| `currency.create`, `currency.update`, `currency.delete` | An administrator changes a currency; the event holds the fields that changed | `success`. Refused changes write no event. |
+| `admin.sign_in_code` | An administrator's sign-in code is requested | `success`; `failure` with `unknown_account`, without an actor; `denied` with `rate_limited` |
+| `admin.sign_in` | An administrator signs in | `success`, without which no token is issued; `failure` with `email_code_invalid`, `authenticator_code_invalid`, or `account_unavailable`; `denied` with `rate_limited`. The answer does not say which factor was wrong; the event does. |
+| `admin.logout` | An administrator signs out | `success` |
+
+Failed and refused attempts, and logouts, are recorded on a best-effort basis: if the event cannot be written, it is logged, so that an unavailable audit log cannot be used to lock administrators out. User sign-in events and an admin endpoint to query the log follow in #51.
 
 ### Redis
 

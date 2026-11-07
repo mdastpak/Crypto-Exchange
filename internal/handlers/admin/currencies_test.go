@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -54,6 +56,9 @@ type AdminCurrenciesTestSuite struct {
 	// relay publishes the events of the outbox to events; the tests flush
 	// it instead of starting it.
 	relay *outbox.Relay
+	// adminID is the administrator of the requests, as the admin middleware
+	// would set it.
+	adminID string
 	// cacheDown makes the relay's drop of the cached list fail, as while
 	// Redis is unavailable.
 	cacheDown atomic.Bool
@@ -141,7 +146,11 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	}, outbox.Options{Interval: time.Hour, Logger: log.New(io.Discard, "", 0)})
 	s.handler.Outbox = s.relay
 
+	s.adminID = uuid.NewString()
 	s.router = gin.New()
+	s.router.Use(func(c *gin.Context) {
+		auth.SetClaims(c, &auth.Claims{UUID: s.adminID, Role: auth.RoleAdmin})
+	})
 	s.router.POST("/currencies", s.handler.CreateCurrency)
 	s.router.GET("/currencies/:hk", s.handler.GetCurrency)
 	s.router.PUT("/currencies/:hk", s.handler.UpdateCurrency)
@@ -1066,4 +1075,88 @@ func (s *AdminCurrenciesTestSuite) TestGetCurrency_ReturnsAnyStatusWithItsVersio
 
 	assert.Equal(s.T(), http.StatusNotFound, s.makeRequest(http.MethodGet, "/currencies/"+uuid.NewString(), nil).Code)
 	assert.Equal(s.T(), http.StatusBadRequest, s.makeRequest(http.MethodGet, "/currencies/not-a-uuid", nil).Code)
+}
+
+// auditedChange is an audit event of a currency, as the tests read it.
+type auditedChange struct {
+	Action, ActorType, ActorID, Outcome string
+	Changes                             audit.Changes
+}
+
+// auditTrail returns the audit events of a currency, oldest first.
+func (s *AdminCurrenciesTestSuite) auditTrail(hk string) []auditedChange {
+	rows, err := s.postgresSvc.DB.Query(`SELECT action, actor_type, actor_id, outcome, changes::text
+		FROM audit_events WHERE target_type = 'currency' AND target_id = $1 ORDER BY hk`, hk)
+	require.NoError(s.T(), err)
+	defer rows.Close()
+	var trail []auditedChange
+	for rows.Next() {
+		var e auditedChange
+		var changes string
+		require.NoError(s.T(), rows.Scan(&e.Action, &e.ActorType, &e.ActorID, &e.Outcome, &changes))
+		require.NoError(s.T(), json.Unmarshal([]byte(changes), &e.Changes))
+		trail = append(trail, e)
+	}
+	require.NoError(s.T(), rows.Err())
+	return trail
+}
+
+// TestAudit_EveryChangeWritesOneEvent creates, updates, and deletes a
+// currency, and expects one event for each, by the administrator of the
+// request, with the fields that changed (#51).
+func (s *AdminCurrenciesTestSuite) TestAudit_EveryChangeWritesOneEvent() {
+	hk := s.createCurrency("AUD", "")
+	s.update(hk, map[string]interface{}{"status": "approved", "info": map[string]interface{}{"en_name": "Audited"}})
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+
+	trail := s.auditTrail(hk)
+	require.Len(s.T(), trail, 3)
+	for _, e := range trail {
+		assert.Equal(s.T(), audit.ActorAdmin, e.ActorType)
+		assert.Equal(s.T(), s.adminID, e.ActorID)
+		assert.Equal(s.T(), audit.Success, e.Outcome)
+	}
+	assert.Equal(s.T(), audit.ActionCurrencyCreate, trail[0].Action)
+	assert.Equal(s.T(), "AUD", trail[0].Changes.After["symbol"])
+	assert.Empty(s.T(), trail[0].Changes.Before)
+
+	assert.Equal(s.T(), audit.ActionCurrencyUpdate, trail[1].Action)
+	assert.Equal(s.T(), map[string]interface{}{"status": "pending", "en_name": "Bitcoin"}, trail[1].Changes.Before,
+		"only the fields that changed")
+	assert.Equal(s.T(), map[string]interface{}{"status": "approved", "en_name": "Audited"}, trail[1].Changes.After)
+
+	assert.Equal(s.T(), audit.ActionCurrencyDelete, trail[2].Action)
+	assert.Equal(s.T(), map[string]interface{}{"status": "approved"}, trail[2].Changes.Before)
+	assert.Equal(s.T(), map[string]interface{}{"status": "deleted"}, trail[2].Changes.After)
+}
+
+func (s *AdminCurrenciesTestSuite) TestAudit_RefusedChangesWriteNoEvent() {
+	hk := s.createCurrency("NOP", "")
+	stale := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "X"}, "version": 9})
+	require.Equal(s.T(), http.StatusConflict, stale.Code)
+	invalid := s.makeRequest(http.MethodPut, "/currencies/"+hk, map[string]interface{}{"info": map[string]interface{}{"symbol": "x"}})
+	require.Equal(s.T(), http.StatusBadRequest, invalid.Code)
+
+	trail := s.auditTrail(hk)
+	require.Len(s.T(), trail, 1, "only the create")
+	assert.Equal(s.T(), audit.ActionCurrencyCreate, trail[0].Action)
+}
+
+// TestAudit_AChangeWithoutAnAdministratorIsRefused calls the handler without
+// the claims of an administrator. Its event cannot name the actor, so the
+// change rolls back with it.
+func (s *AdminCurrenciesTestSuite) TestAudit_AChangeWithoutAnAdministratorIsRefused() {
+	router := gin.New()
+	router.POST("/currencies", s.handler.CreateCurrency)
+	body, err := json.Marshal(sampleCurrencyPayload("ORP", ""))
+	require.NoError(s.T(), err)
+	req := httptest.NewRequest(http.MethodPost, "/currencies", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	var n int
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow("SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'ORP'").Scan(&n))
+	assert.Zero(s.T(), n, "no change without its event")
 }
