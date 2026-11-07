@@ -127,6 +127,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - An update may send the `version` it is based on, and a delete `?version=`. If the currency has changed since, it is refused with `409` and the code `version_conflict`, with the current version, and changes nothing.
   - The new `GET /admin/currencies/{hk}` returns a currency with its version, whatever its status.
   - Updates without a version are still applied one after the other, as before.
+- The RabbitMQ URI escapes the user, the password, and the virtual host, so a password with characters such as `@`, `/`, `:`, `#`, `?`, or `%` no longer changes the host the server connects to. The new `rabbitmq.vhost` setting (`RABBITMQ_VHOST`, default `/`) selects the virtual host ([#185](https://github.com/mdastpak/Crypto-Exchange/issues/185)).
 
 ### Security
 

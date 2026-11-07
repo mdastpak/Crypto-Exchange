@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,10 +116,13 @@ type Configuration struct {
 	} `yaml:"redis"`
 
 	RabbitMQ struct {
-		Username  string `yaml:"username"`
-		Password  string `yaml:"password"`
-		Host      string `yaml:"host"`
-		Port      string `yaml:"port"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+		Host     string `yaml:"host"`
+		Port     string `yaml:"port"`
+		// VHost is the virtual host to connect to. Empty is the broker's
+		// default virtual host, "/".
+		VHost     string `yaml:"vhost"`
 		Exchanges struct {
 			PriceUpdates  string `yaml:"price_updates"`
 			TradeEvents   string `yaml:"trade_events"`
@@ -905,13 +910,30 @@ func (c *Configuration) JWTPublicKeyPath() string {
 }
 
 func GetRabbitMQURL() string {
-	return fmt.Sprintf(
-		"amqp://%s:%s@%s:%s/",
-		Config.RabbitMQ.Username,
-		Config.RabbitMQ.Password,
-		Config.RabbitMQ.Host,
-		Config.RabbitMQ.Port,
-	)
+	return RabbitMQURL(Config.RabbitMQ.Username, Config.RabbitMQ.Password,
+		Config.RabbitMQ.Host, Config.RabbitMQ.Port, Config.RabbitMQ.VHost)
+}
+
+// RabbitMQURL builds the AMQP URI of a broker (#185). The user, the
+// password, and the virtual host are escaped, so that generated passwords
+// with characters such as "@", "/", ":", "#", "?", or "%" reach the broker
+// unchanged instead of changing the host or the virtual host of the URI.
+// An empty vhost, or "/", is the broker's default virtual host, which an
+// empty path selects. The URI holds the password, so it must never be
+// logged.
+func RabbitMQURL(username, password, host, port, vhost string) string {
+	u := url.URL{
+		Scheme: "amqp",
+		User:   url.UserPassword(username, password),
+		Host:   net.JoinHostPort(host, port),
+		Path:   "/",
+	}
+	if vhost != "" && vhost != "/" {
+		// The AMQP URI spec puts the virtual host, percent-encoded, in the
+		// single path segment, so a "/" in it becomes "%2F".
+		u.Path, u.RawPath = "/"+vhost, "/"+url.PathEscape(vhost)
+	}
+	return u.String()
 }
 
 // The defaults of the websocket settings. Clients send small control

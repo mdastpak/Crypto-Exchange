@@ -150,6 +150,7 @@ var envVars = []EnvVar{
 	stringVar("RABBITMQ_PORT", "rabbitmq.port", func(c *Configuration) *string { return &c.RabbitMQ.Port }),
 	stringVar("RABBITMQ_USER", "rabbitmq.username", func(c *Configuration) *string { return &c.RabbitMQ.Username }),
 	stringVar("RABBITMQ_PASSWORD", "rabbitmq.password", func(c *Configuration) *string { return &c.RabbitMQ.Password }),
+	stringVar("RABBITMQ_VHOST", "rabbitmq.vhost", func(c *Configuration) *string { return &c.RabbitMQ.VHost }),
 
 	pathVar("JWT_SSL_USER_PRIVATE_KEY", "jwt.ssl.user.private_key", func(c *Configuration) *KeyPath { return &c.JWT.SSL.User.PrivateKey }),
 	pathVar("JWT_SSL_USER_PUBLIC_KEY", "jwt.ssl.user.public_key", func(c *Configuration) *KeyPath { return &c.JWT.SSL.User.PublicKey }),
