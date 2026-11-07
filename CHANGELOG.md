@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `README.md` matches the code again: the status table covers the audit log, the outbox, the data-protection keys, sessions, and contacts, the API table lists the new routes, the layout lists every package, and the unit-test command covers every package that needs no infrastructure. A test fails when a package under `cmd/` or `internal/` is missing from the layout ([#200](https://github.com/mdastpak/Crypto-Exchange/issues/200)).
 - Migration 24 changes the timestamps of `currencies` to `TIMESTAMPTZ`, so that they no longer depend on the session time zone of the writer ([#196](https://github.com/mdastpak/Crypto-Exchange/issues/196)).
 - Moved the technical audit notes of 2026-09-14 from this file to [`docs/audits/2026-09-14-technical-audit.md`](docs/audits/2026-09-14-technical-audit.md).
 - `config/config.local.yaml` is now ignored by Git.
