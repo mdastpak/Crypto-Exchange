@@ -184,7 +184,11 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 			if strings.Contains(pgErr.ConstraintName, "contract") {
 				field, code, what = "info.contract", "duplicate_contract", "contract"
 			}
-			helpers.SendError(c, http.StatusConflict, code, "A currency with this "+what+" already exists.",
+			// The indexes include deleted currencies, so that a symbol keeps
+			// naming one hk for clients that cached it (#196): a deleted one
+			// is restored, not created again.
+			helpers.SendError(c, http.StatusConflict, code,
+				"A currency with this "+what+" already exists. If it was deleted, restore it instead.",
 				gin.H{"code": code, "field": field})
 			return
 		case "23514", "22P02": // check_violation, invalid_text_representation

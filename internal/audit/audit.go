@@ -47,6 +47,8 @@ const (
 	ActionCurrencyCreate  = "currency.create"
 	ActionCurrencyUpdate  = "currency.update"
 	ActionCurrencyDelete  = "currency.delete"
+	// ActionCurrencyRestore is an administrator undoing a delete (#196).
+	ActionCurrencyRestore = "currency.restore"
 	ActionUserCreate      = "user.create"
 	ActionUserSignInCode  = "user.sign_in_code"
 	ActionUserSignIn      = "user.sign_in"

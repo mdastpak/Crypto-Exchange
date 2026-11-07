@@ -115,6 +115,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 21 | `outbox_events.failed_at`: dead letters of the outbox, and the pending index by topic and id | Yes |
 | 22 | `sessions.last_used_at`, and an index of the active sessions of each user, for the session list | Yes |
 | 23 | `sessions.previous_refresh_hash` and `sessions.rotated_at`, for the grace period of concurrent refreshes | Yes |
+| 24 | `currencies.created_at`, `updated_at`, and `deleted_at` become `TIMESTAMPTZ`, read as UTC | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
@@ -165,7 +166,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
 
 | Action | When | Outcomes |
 | --- | --- | --- |
-| `currency.create`, `currency.update`, `currency.delete` | An administrator changes a currency; the event holds the fields that changed | `success`. Refused changes write no event. |
+| `currency.create`, `currency.update`, `currency.delete`, `currency.restore` | An administrator changes a currency; the event holds the fields that changed | `success`. Refused changes write no event. |
 | `admin.sign_in_code` | An administrator's sign-in code is requested | `success`; `failure` with `unknown_account`, without an actor; `denied` with `rate_limited` |
 | `admin.sign_in` | An administrator signs in | `success`, without which no token is issued; `failure` with `email_code_invalid`, `authenticator_code_invalid`, or `account_unavailable`; `denied` with `rate_limited`. The answer does not say which factor was wrong; the event does. |
 | `admin.logout` | An administrator signs out | `success` |
