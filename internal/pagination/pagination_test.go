@@ -23,18 +23,18 @@ func request(t *testing.T, query string) (Request, map[string]string) {
 }
 
 // position is the sort key of the items in these tests: newest first, with
-// the id to break ties.
+// the public identifier to break ties.
 type position struct {
 	CreatedAt time.Time `json:"t"`
-	ID        int64     `json:"id"`
+	HK        string    `json:"hk"`
 }
 
 type item struct {
-	ID        int64
+	HK        string
 	CreatedAt time.Time
 }
 
-func positionOf(i item) interface{} { return position{CreatedAt: i.CreatedAt, ID: i.ID} }
+func positionOf(i item) interface{} { return position{CreatedAt: i.CreatedAt, HK: i.HK} }
 
 func TestParse_Limits(t *testing.T) {
 	r, errs := request(t, "")
@@ -56,7 +56,7 @@ func TestParse_Limits(t *testing.T) {
 }
 
 func TestCursor_RoundTrips(t *testing.T) {
-	want := position{CreatedAt: time.Date(2026, 11, 7, 10, 0, 0, 123, time.UTC), ID: 42}
+	want := position{CreatedAt: time.Date(2026, 11, 7, 10, 0, 0, 123, time.UTC), HK: "019a5a5e-7c1b-7d2e-9f30-1a2b3c4d5e6f"}
 	cursor, err := Cursor(want)
 	require.NoError(t, err)
 	assert.NotContains(t, cursor, "=", "URL-safe, without padding")
@@ -75,7 +75,7 @@ func TestParse_RefusesCursorsItDidNotIssue(t *testing.T) {
 	for name, cursor := range map[string]string{
 		"not base64":          "not*base64!",
 		"not JSON":            encode("not json"),
-		"another version":     encode(`{"v": 2, "a": {"id": 1}}`),
+		"another version":     encode(`{"v": 2, "a": {"hk": "x"}}`),
 		"no position":         encode(`{"v": 1}`),
 		"padded base64":       base64.URLEncoding.EncodeToString([]byte(`{"v":1,"a":1}`)),
 		"longer than allowed": strings.Repeat("a", maxCursorLength+1),
@@ -99,7 +99,7 @@ func TestRequest_AfterRefusesAPositionOfAnotherShape(t *testing.T) {
 
 func TestNewPage_KnowsTheNextPageFromTheExtraItem(t *testing.T) {
 	base := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
-	items := []item{{ID: 3, CreatedAt: base.Add(3 * time.Hour)}, {ID: 2, CreatedAt: base.Add(2 * time.Hour)}, {ID: 1, CreatedAt: base}}
+	items := []item{{HK: "c", CreatedAt: base.Add(3 * time.Hour)}, {HK: "b", CreatedAt: base.Add(2 * time.Hour)}, {HK: "a", CreatedAt: base}}
 	r := Request{Limit: 2}
 
 	page, err := NewPage(items, r, positionOf)
@@ -111,7 +111,7 @@ func TestNewPage_KnowsTheNextPageFromTheExtraItem(t *testing.T) {
 	var after position
 	_, err = next.After(&after)
 	require.NoError(t, err)
-	assert.Equal(t, position{CreatedAt: items[1].CreatedAt, ID: 2}, after, "the next page starts after the last item kept")
+	assert.Equal(t, position{CreatedAt: items[1].CreatedAt, HK: "b"}, after, "the next page starts after the last item kept")
 
 	page, err = NewPage(items[:2], r, positionOf)
 	require.NoError(t, err)

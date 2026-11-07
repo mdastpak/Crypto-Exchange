@@ -6,14 +6,19 @@
 // the last page has no next_cursor. The cursor holds the sort key of the
 // last item of the page, so the next page starts right after it:
 //
-//	SELECT ... WHERE (created_at, id) < ($1, $2)
-//	ORDER BY created_at DESC, id DESC LIMIT <limit + 1>
+//	SELECT ... WHERE (created_at, hk) < ($1, $2)
+//	ORDER BY created_at DESC, hk DESC LIMIT <limit + 1>
 //
 // Unlike an offset, a cursor keeps the pages stable while rows are added,
 // every page costs one range scan of the index on the sort key however deep
 // it is, and no state is kept on the server, so any instance can serve the
 // next page. Fetching limit + 1 rows tells whether there is a next page
 // without counting.
+//
+// A cursor is opaque by convention only: it is base64 of JSON, which anyone
+// can decode. The sort key must therefore hold only what the client may
+// see. Break ties with a public identifier, such as a UUID, never with an
+// internal serial id, which would tell how many rows a table has.
 package pagination
 
 import (
