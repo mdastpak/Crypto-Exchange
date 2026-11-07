@@ -12,6 +12,8 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -79,23 +81,23 @@ func (h *WebSocketHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip string) {
 	select {
 	case <-h.ShutdownCh:
-		reject(w, http.StatusServiceUnavailable, "The server is shutting down")
+		reject(w, http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), "The server is shutting down")
 		return
 	default:
 	}
 
 	// The token is checked before the upgrade, so that a bad token gets a
 	// plain HTTP answer.
-	claims, status, message := h.authenticate(r)
+	claims, status, code, message := h.authenticate(r)
 	if status != 0 {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 		}
-		reject(w, status, message)
+		reject(w, status, code, message)
 		return
 	}
 	if status, message := h.reserve(ip); status != 0 {
-		reject(w, status, message)
+		reject(w, status, helpers.StatusCode(status), message)
 		return
 	}
 
@@ -158,29 +160,30 @@ func connectionToken(r *http.Request) (token string, present bool, err error) {
 }
 
 // authenticate checks the token of an upgrade request, when it brings one.
-// It returns a status and message to refuse the request with, or a zero
-// status. A connection without a token is anonymous.
-func (h *WebSocketHandler) authenticate(r *http.Request) (*auth.Claims, int, string) {
+// It returns a status, an error code, and a message to refuse the request
+// with, or a zero status. A connection without a token is anonymous. The
+// codes are those of the REST routes for the same failures.
+func (h *WebSocketHandler) authenticate(r *http.Request) (*auth.Claims, int, string, string) {
 	token, present, err := connectionToken(r)
 	if !present {
-		return nil, 0, ""
+		return nil, 0, "", ""
 	}
 	if err != nil || h.Authenticate == nil {
-		return nil, http.StatusUnauthorized, "Unauthorized - Invalid token"
+		return nil, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token"
 	}
 	claims, err := h.Authenticate(r.Context(), token)
 	switch {
 	case err == nil:
-		return claims, 0, ""
+		return claims, 0, "", ""
 	case errors.Is(err, auth.ErrAccountUnavailable):
-		return nil, http.StatusForbidden, "This account is not available. Please contact support."
+		return nil, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account is not available. Please contact support."
 	case errors.Is(err, auth.ErrSessionInvalid):
-		return nil, http.StatusUnauthorized, "Unauthorized - Session is not active"
+		return nil, http.StatusUnauthorized, "session_inactive", "Unauthorized - Session is not active"
 	case errors.Is(err, auth.ErrInvalidToken), errors.Is(err, auth.ErrWrongTokenType), errors.Is(err, auth.ErrWrongRole):
-		return nil, http.StatusUnauthorized, "Unauthorized - Invalid token"
+		return nil, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token"
 	default:
 		log.Printf("Failed to authenticate a WebSocket connection: %v", err)
-		return nil, http.StatusInternalServerError, "Failed to authenticate the connection"
+		return nil, http.StatusInternalServerError, helpers.StatusCode(http.StatusInternalServerError), "Failed to authenticate the connection"
 	}
 }
 
@@ -217,12 +220,27 @@ func (h *WebSocketHandler) release(ip string) {
 	}
 }
 
-// reject answers an upgrade request that is refused, in the envelope of the
-// REST API.
-func reject(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+// reject answers an upgrade request that is refused, in the error envelope
+// of the REST API: with a code and the request ID, which the request ID
+// middleware has set as a response header.
+func reject(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": status, "message": message})
+	_ = json.NewEncoder(w).Encode(models.APIResponse{
+		Status: status, Message: message, Code: code, RequestID: w.Header().Get(requestIDHeader),
+	})
+}
+
+// requestIDHeader is the header of middleware.RequestIDHeader, which this
+// package cannot import without a cycle.
+const requestIDHeader = "X-Request-ID"
+
+// handshakeError answers an upgrade request that is not a valid WebSocket
+// handshake, as the upgrader finds it, in the same envelope instead of the
+// upgrader's plain text. Like the upgrader, it names the supported version.
+func handshakeError(w http.ResponseWriter, _ *http.Request, status int, reason error) {
+	w.Header().Set("Sec-Websocket-Version", "13")
+	reject(w, status, helpers.StatusCode(status), reason.Error())
 }
 
 // maxTimezoneLength bounds a time zone name from a client; IANA names are

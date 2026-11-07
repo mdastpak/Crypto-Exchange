@@ -57,6 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Most errors take the code of their status (`invalid_request`, `not_found`, `rate_limited`, `internal_error`, and so on). The cases a client must tell apart have codes of their own: `token_missing`, `token_invalid`, `token_revoked`, `session_inactive`, `refresh_token_missing`, `refresh_token_invalid`, `code_invalid`, `account_unavailable`, `use_admin_sign_in`, `admin_inactive`, `validation_failed`, `duplicate_symbol`, `duplicate_contract`, and `version_conflict`.
   - The codes that were in `info.code` stay there too.
   - An unknown path answers `404` and a wrong method `405`, in the envelope, instead of Gin's plain text.
+  - The WebSocket gateway refuses an upgrade in the same envelope, with the codes of the user routes, and answers a request that is not a WebSocket handshake with `400` `invalid_request` in JSON instead of the upgrader's plain text.
   - `SendResponse` no longer aborts the handlers after a successful response such as `201`; only errors do.
 
 ### Fixed

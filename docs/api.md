@@ -539,12 +539,15 @@ A connection may bring a user access token. Without a token, the connection is a
 - `Authorization: Bearer <access token>`, for clients that can set headers on the upgrade request;
 - from a browser, which cannot, as the subprotocols `access_token` and the token: `new WebSocket(url, ["access_token", token])`. The server selects the subprotocol `access_token` in its answer, as the handshake requires.
 
-A token in the URL is not read, because URLs end up in access logs. A request that brings a token gets a plain HTTP answer instead of the upgrade when the token is refused:
+A token in the URL is not read, because URLs end up in access logs. A request that brings a token gets an HTTP answer instead of the upgrade when the token is refused, in the error envelope of the REST API, with the codes of the user routes:
 
-| Status | When |
-| --- | --- |
-| `401` | The token is invalid, or its session has ended (`Unauthorized - Session is not active`). Also when the `Authorization` header has another scheme, or the `access_token` subprotocol comes without a token. |
-| `403` | The user can no longer sign in |
+| Status | Code | When |
+| --- | --- | --- |
+| `401` | `token_invalid` | The token is invalid. Also when the `Authorization` header has another scheme, or the `access_token` subprotocol comes without a token. |
+| `401` | `session_inactive` | The token's session has ended |
+| `403` | `account_unavailable` | The user can no longer sign in |
+
+A request that is not a WebSocket handshake gets `400` (`invalid_request`) in the same envelope, with `Sec-Websocket-Version: 13`, and an origin that is not allowed `403` (`forbidden`).
 
 ### Connection behavior
 
@@ -555,7 +558,7 @@ A token in the URL is not read, because URLs end up in access logs. A request th
 | Server ping interval | `websocket.ping_interval_seconds`, 30 seconds by default |
 | Read deadline | Two ping intervals, extended on every pong |
 | Write timeout | `websocket.write_timeout_seconds`, 10 seconds by default |
-| Connections | At most `websocket.max_connections` per server instance (10000), and `websocket.max_connections_per_ip` per client address (20). Further upgrades get `503` and `429`. The client address honors `server.trusted_proxies`. |
+| Connections | At most `websocket.max_connections` per server instance (10000), and `websocket.max_connections_per_ip` per client address (20). Further upgrades get `503` (`unavailable`) and `429` (`rate_limited`). The client address honors `server.trusted_proxies`. |
 | Per-client outbound buffer | 256 messages. Messages are dropped when the buffer is full. |
 | Instance shutdown | When an instance stops, for example during a rolling deploy, its clients get a close frame with `1001` (going away) and the reason `server is shutting down`. The other instances keep serving. Reconnect after a short random delay, so that the clients of one instance do not all reconnect at the same moment, and send the time zone again, since it belongs to the connection. |
 
