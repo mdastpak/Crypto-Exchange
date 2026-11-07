@@ -179,6 +179,7 @@ var envVars = []EnvVar{
 	intVar("OTP_AUTH_RETRY_LIMIT", "otp.auth.retry_limit", func(c *Configuration) *int { return &c.OTP.Auth.RetryLimit }),
 	stringVar("OTP_SECRET", "otp.auth.secret", func(c *Configuration) *string { return &c.OTP.Auth.Secret }),
 	stringVar("ADMIN_TOTP_KEY", "admin.totp_key", func(c *Configuration) *string { return &c.Admin.TOTPKey }),
+	intVar("ADMIN_SIGN_IN_MIN_RESPONSE_MS", "admin.sign_in_min_response_ms", func(c *Configuration) *int { return &c.Admin.SignInMinResponseMS }),
 
 	stringVar("KEYS_PROVIDER", "keys.provider", func(c *Configuration) *string { return &c.Keys.Provider }),
 	stringVar("KEYS_LOCAL_KEK", "keys.local.kek", func(c *Configuration) *string { return &c.Keys.Local.KEK }),
