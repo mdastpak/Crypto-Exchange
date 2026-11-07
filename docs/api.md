@@ -250,8 +250,9 @@ These limits apply on top of the per-IP [rate limits](#rate-limiting):
 
 - A code is valid for `otp.auth.ttl_seconds` and signs in only once, even when it is sent in concurrent requests.
 - A code can be tried `otp.auth.retry_limit` times. Each attempt is counted before the code is checked, so concurrent requests cannot get more tries. A code that cannot be right, because it is not `otp.auth.length` digits, gets `401` (`code_invalid`) without using up an attempt. After the last failed attempt, the code is erased and further attempts get `429` until the session expires.
-- Each email address or mobile number receives at most `otp.auth.contact_requests_per_hour` codes per hour. Email addresses are compared case-insensitively.
-- Each contact gets at most `otp.auth.contact_attempts_per_hour` attempts per hour across all of its codes, so requesting a new code does not bring new attempts. While they are used up, no new code is issued for the contact. A successful sign-in resets the count.
+- Each email address or mobile number receives at most `otp.auth.contact_requests_per_hour` codes per hour for one client (its address, with IPv6 grouped by prefix), and at most `otp.auth.contact_requests_total_per_hour` from every client together. A client that signed in with the contact in the last 30 days is exempt from the total. Email addresses are compared case-insensitively.
+- Each contact gets at most `otp.auth.contact_attempts_per_hour` attempts per hour across all of its codes, counted for the client that requested the codes, so requesting a new code does not bring new attempts. While they are used up, no new code is issued for the contact to that client. A successful sign-in resets the count.
+- These limits count per client so that someone who knows only a contact cannot lock its owner out by failing codes for it ([#187](https://github.com/mdastpak/Crypto-Exchange/issues/187)). They are kept in Redis, so every server instance applies the same counts.
 
 Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by `otp.auth.secret`.
 

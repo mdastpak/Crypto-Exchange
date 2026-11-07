@@ -166,11 +166,16 @@ type Configuration struct {
 			// contacts in Redis. Every server instance must use the same
 			// secret, and it is required in release mode.
 			Secret string `yaml:"secret"`
-			// ContactRequestsPerHour bounds the codes issued to one contact.
+			// ContactRequestsPerHour bounds the codes issued to one contact
+			// for one client.
 			ContactRequestsPerHour int `yaml:"contact_requests_per_hour"`
 			// ContactAttemptsPerHour bounds the verification attempts for
-			// one contact across all of its codes.
+			// one contact across all of its codes, from one client.
 			ContactAttemptsPerHour int `yaml:"contact_attempts_per_hour"`
+			// ContactRequestsTotalPerHour bounds the codes issued to one
+			// contact for all clients together, except the clients that
+			// signed in with it before (#187).
+			ContactRequestsTotalPerHour int `yaml:"contact_requests_total_per_hour"`
 		} `yaml:"auth"`
 	} `yaml:"otp"`
 
