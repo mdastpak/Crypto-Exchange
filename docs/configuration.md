@@ -64,6 +64,9 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `tls.enabled` | `false` | Serve HTTPS with `ListenAndServeTLS` |
 | `tls.cert_file`, `tls.key_file` | none | Certificate and key paths, used when TLS is enabled. The server checks at startup that they load as a pair. |
 | `tls.behind_proxy` | `false` | A reverse proxy terminates TLS in front of the server, which then serves plain HTTP to it. Release mode needs TLS one way or the other. |
+| `hsts.enabled` | unset | Sends `Strict-Transport-Security` on every response. When it is not set, the header is sent when `tls.enabled` or `tls.behind_proxy` is true. Browsers ignore it on plain HTTP. |
+| `hsts.max_age_seconds` | `31536000` | How long browsers remember to use HTTPS only, one year by default |
+| `hsts.include_subdomains` | `false` | Adds `includeSubDomains`. Turn it on only when every subdomain serves HTTPS. |
 | `cors.allowed_origins` | `[]` | Browser origins (`scheme://host[:port]`, for example `https://app.example.com` or `http://localhost:3000`) that may call the API across origins with credentials. Matching is exact and case-insensitive. With an empty list, no cross-origin access is granted. A wildcard (`"*"`), a path, or any other malformed entry stops the server at startup, because a wildcard combined with credentials would let any site read authenticated responses. |
 
 ### `postgres`
@@ -304,6 +307,9 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SERVER_TLS_CERT_FILE` | `server.tls.cert_file` |
 | `SERVER_TLS_KEY_FILE` | `server.tls.key_file` |
 | `SERVER_TLS_BEHIND_PROXY` | `server.tls.behind_proxy` |
+| `SERVER_HSTS_ENABLED` | `server.hsts.enabled` |
+| `SERVER_HSTS_MAX_AGE_SECONDS` | `server.hsts.max_age_seconds` |
+| `SERVER_HSTS_INCLUDE_SUBDOMAINS` | `server.hsts.include_subdomains` |
 | `SERVER_SWAGGER_ENABLED` | `server.swagger.enabled` |
 | `SERVER_MAX_BODY_BYTES` | `server.max_body_bytes` |
 | `SERVER_SHUTDOWN_TIMEOUT_SECONDS` | `server.shutdown_timeout_seconds` |

@@ -19,7 +19,7 @@ func corsResponse(t *testing.T, allowedOrigins []string, method, origin string) 
 	require.NoError(t, err)
 
 	engine := gin.New()
-	engine.Use(cors)
+	engine.Use(cors, Preflight())
 	engine.Any("/resource", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	req := httptest.NewRequest(method, "/resource", nil)
@@ -70,6 +70,8 @@ func TestCORS_Preflight(t *testing.T) {
 	assert.Equal(t, "https://app.example.com", w.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "GET, POST, PUT, PATCH, DELETE, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
 	assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Authorization")
+	assert.Equal(t, "X-Request-ID, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, Deprecation, Link",
+		w.Header().Get("Access-Control-Expose-Headers"), "browsers may read only the exposed headers")
 
 	w = corsResponse(t, allowed, http.MethodOptions, "https://evil.example")
 	assert.Equal(t, http.StatusNoContent, w.Code)

@@ -111,6 +111,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	atLeast("server.idle_timeout_seconds", c.Server.IdleTimeout, 1)
 	atLeast("server.shutdown_timeout_seconds", c.Server.ShutdownTimeout, 1)
 	atLeast("server.drain_seconds", c.Server.DrainSeconds, 0)
+	atLeast("server.hsts.max_age_seconds", c.Server.HSTS.MaxAgeSeconds, 1)
 	if c.Server.DrainSeconds >= c.Server.ShutdownTimeout && c.Server.ShutdownTimeout >= 1 {
 		p.add("server.drain_seconds", "is %d; it must be less than server.shutdown_timeout_seconds (%d), which includes it", c.Server.DrainSeconds, c.Server.ShutdownTimeout)
 	}
