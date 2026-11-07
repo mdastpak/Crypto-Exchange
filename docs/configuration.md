@@ -114,7 +114,8 @@ Redis is on the path of most requests, so these timeouts are short: while Redis 
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port`, `username`, `password` | **required** | Connection settings. The server connects to `amqp://username:password@host:port/`. Set the credentials with `RABBITMQ_USER` and `RABBITMQ_PASSWORD`. |
+| `host`, `port`, `username`, `password` | **required** | Connection settings. The server connects to `amqp://username:password@host:port/vhost`, with the user, the password, and the virtual host percent-encoded, so a password may hold any character, such as `@`, `/`, or `%`. Set the credentials with `RABBITMQ_USER` and `RABBITMQ_PASSWORD`. The URI holds the password and is never logged. |
+| `vhost` | `/` | Virtual host (`RABBITMQ_VHOST`). On a broker shared by several services, give each service a virtual host of its own. |
 | `exchanges.price_updates` | none | Fan-out exchange used for currency change events |
 | `exchanges.trade_events` | none | Declared at startup. Not used yet. |
 | `exchanges.notifications` | none | Fan-out exchange for sign-in code jobs. The delivery worker consumes it through the `notifications.otp` queue (see [`notifications`](#notifications)). |
@@ -313,6 +314,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `RABBITMQ_PORT` | `rabbitmq.port` |
 | `RABBITMQ_USER` | `rabbitmq.username` |
 | `RABBITMQ_PASSWORD` | `rabbitmq.password` |
+| `RABBITMQ_VHOST` | `rabbitmq.vhost` |
 | `JWT_SSL_USER_PRIVATE_KEY` | `jwt.ssl.user.private_key` |
 | `JWT_SSL_USER_PUBLIC_KEY` | `jwt.ssl.user.public_key` |
 | `JWT_SSL_ADMIN_PRIVATE_KEY` | `jwt.ssl.admin.private_key` |

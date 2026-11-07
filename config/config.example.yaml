@@ -72,6 +72,7 @@ rabbitmq:
   password: ""  # Set with RABBITMQ_PASSWORD
   host: "localhost"
   port: "5672"
+  vhost: "/"                    # Set with RABBITMQ_VHOST
   exchanges:                    # Fan-out exchanges, declared at startup
     price_updates: "price_updates"  # Currency events for WebSocket clients
     trade_events: "trade_events"
