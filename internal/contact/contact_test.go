@@ -72,3 +72,17 @@ func TestCode(t *testing.T) {
 		assert.Equal(t, want.ok, ok, "%q", input)
 	}
 }
+
+func TestIdentify(t *testing.T) {
+	for input, want := range map[string][2]string{
+		"someone@example.com": {"email", "som*****@example.com"},
+		"09121234567":         {"mobile", "091*****567"},
+		"username":            {"", ""},
+		"a@example.com":       {"", ""},
+	} {
+		typ, masked := Identify(input)
+		if typ != want[0] || masked != want[1] {
+			t.Errorf("Identify(%q) = %q, %q; want %q, %q", input, typ, masked, want[0], want[1])
+		}
+	}
+}

@@ -59,6 +59,11 @@ const (
 	ActionUserSessionRevoke = "user.session_revoke"
 	// ActionUserProfileUpdate is a user changing their names (#195).
 	ActionUserProfileUpdate = "user.profile_update"
+	// The contact changes of a user (#199). The target is the user, and the
+	// event holds the contacts masked.
+	ActionUserContactAdd     = "user.contact_add"
+	ActionUserContactReplace = "user.contact_replace"
+	ActionUserContactRemove  = "user.contact_remove"
 
 	// The commands of cmd/admin (#195). Their actor is the system, and the
 	// operator who ran them is named in the user agent; see Operator.

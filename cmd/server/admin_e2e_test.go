@@ -199,6 +199,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	handlers := initializeHandlers(services)
 	sender := &capturingSender{}
 	handlers.Public.OTPSender = sender
+	handlers.User.OTPSender = sender
 	key, err := adminSignInKey()
 	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, key, sender))
@@ -226,6 +227,7 @@ type e2eResponse struct {
 	Status  int                    `json:"status"`
 	Message string                 `json:"message"`
 	Info    map[string]interface{} `json:"info"`
+	Code    string                 `json:"code"`
 }
 
 func (e *e2eEnv) post(t *testing.T, path string, body interface{}, token string) (int, e2eResponse) {

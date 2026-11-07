@@ -96,6 +96,9 @@ func NewStore(client *redis.Client, settings Settings) *Store {
 	}
 }
 
+// TTL is how long a code of the store is valid.
+func (s *Store) TTL() time.Duration { return s.settings.TTL }
+
 // deriveKey derives an independent 32-byte key for each purpose.
 func deriveKey(secret []byte, purpose string) []byte {
 	mac := hmac.New(sha256.New, secret)

@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -437,29 +435,7 @@ func validateUUID(s string) bool {
 // input is neither. Usernames are not accepted: a code cannot be delivered to
 // a username, so it cannot prove who is signing in.
 func IdentifyInputType(input string) (string, string) {
-	emailRegex := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
-	mobileRegex := `^09\d{9}$`
-
-	mask := func(visibleStart, visibleEnd int, str string) string {
-		if len(str) <= visibleStart+visibleEnd {
-			return str
-		}
-		maskedPart := strings.Repeat("*", 5)
-		return str[:visibleStart] + maskedPart + str[len(str)-visibleEnd:]
-	}
-
-	if matched, _ := regexp.MatchString(emailRegex, input); matched {
-		atIndex := strings.Index(input, "@")
-		if atIndex > 1 {
-			return "email", mask(3, len(input)-atIndex, input)
-		}
-	}
-
-	if matched, _ := regexp.MatchString(mobileRegex, input); matched {
-		return "mobile", mask(3, 3, input)
-	}
-
-	return "", ""
+	return contact.Identify(input)
 }
 
 // currencyReadTimeout bounds a currency read, which may load the list from

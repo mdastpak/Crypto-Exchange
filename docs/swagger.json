@@ -1224,6 +1224,249 @@
                 }
             }
         },
+        "/api/v1/user/contacts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The verified email address and mobile number of the signed-in user, masked. Either one signs in.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user contacts"
+                ],
+                "summary": "List my contacts",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.ContactList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/contacts/changes": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends a code to a verified contact of the account and, to add or replace a contact, a code to the new one. Confirm the change with both codes at POST /user/contacts/changes/{id}. A user holds at most one email address and one mobile number; the last verified contact cannot be removed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user contacts"
+                ],
+                "summary": "Start a contact change",
+                "parameters": [
+                    {
+                        "description": "The change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.ContactChangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.ContactChangeStarted"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/contacts/changes/{id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Applies the change once both codes are right. A wrong code answers 401 code_invalid and names it in info.field; the codes already accepted stay accepted, so a retry needs only the others. Codes expire with the change.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user contacts"
+                ],
+                "summary": "Confirm a contact change",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The change_id of the started change",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The codes",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.ContactChangeConfirmation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.ContactList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/logout": {
             "post": {
                 "security": [
@@ -2140,6 +2383,108 @@
                 },
                 "status": {
                     "type": "string"
+                }
+            }
+        },
+        "user.Contact": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "example": "mobile"
+                },
+                "value": {
+                    "type": "string",
+                    "example": "091*****789"
+                },
+                "verified_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "user.ContactChangeConfirmation": {
+            "type": "object",
+            "properties": {
+                "account_code": {
+                    "type": "string",
+                    "example": "123456"
+                },
+                "new_code": {
+                    "type": "string",
+                    "example": "654321"
+                }
+            }
+        },
+        "user.ContactChangeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "Action is add, replace, or remove.",
+                    "type": "string",
+                    "enum": [
+                        "add",
+                        "replace",
+                        "remove"
+                    ],
+                    "example": "add"
+                },
+                "type": {
+                    "description": "Type is the contact to remove. For add and replace, it is taken from\nValue and may be left out.",
+                    "type": "string",
+                    "enum": [
+                        "email",
+                        "mobile"
+                    ],
+                    "example": "mobile"
+                },
+                "value": {
+                    "description": "Value is the new contact, for add and replace.",
+                    "type": "string",
+                    "example": "09123456789"
+                },
+                "verify_with": {
+                    "description": "VerifyWith is the verified contact that receives the code that proves\nthe change is the account owner's. By default, the contact that is\nreplaced or removed, or for add, the other contact.",
+                    "type": "string",
+                    "enum": [
+                        "email",
+                        "mobile"
+                    ],
+                    "example": "email"
+                }
+            }
+        },
+        "user.ContactChangeStarted": {
+            "type": "object",
+            "properties": {
+                "account_code_sent_to": {
+                    "description": "AccountCodeSentTo is the verified contact that received the code of\naccount_code.",
+                    "type": "string",
+                    "example": "ali*****@example.com"
+                },
+                "change_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "expires_in": {
+                    "description": "ExpiresIn is the number of seconds the codes are valid.",
+                    "type": "integer",
+                    "example": 60
+                },
+                "new_code_sent_to": {
+                    "description": "NewCodeSentTo is the new contact that received the code of new_code.\nIt is left out for a removal.",
+                    "type": "string",
+                    "example": "091*****789"
+                }
+            }
+        },
+        "user.ContactList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/user.Contact"
+                    }
                 }
             }
         },

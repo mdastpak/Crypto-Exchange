@@ -583,6 +583,50 @@ Changes the names in the profile and returns the updated profile, as `GET` does.
 
 Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401` and `403` as for `GET`.
 
+### Contacts
+
+A user holds at most one email address and one mobile number, both verified, and signs in with either one: they reach the same account. Every change needs two proofs. A code goes to a verified contact that the account already has, which shows that the change is the owner's and not only a stolen session's. To add or replace a contact, a second code goes to the new contact, which shows that the user controls it. These codes are not sign-in codes and cannot sign in.
+
+`GET /user/contacts` lists the contacts, masked as in the profile:
+
+```json
+{ "items": [ { "type": "email", "value": "ali*****@example.com", "verified_at": "2026-11-07T10:00:00Z" } ] }
+```
+
+`POST /user/contacts/changes` starts a change:
+
+| Field | Rules |
+| --- | --- |
+| `action` | `add`, `replace`, or `remove` |
+| `value` | The new contact, for `add` and `replace`. An email address, or an Iranian mobile number in any usual form, which is normalized. |
+| `type` | `email` or `mobile`: the contact to remove. For `add` and `replace`, it is taken from `value`. |
+| `verify_with` | Optional, `email` or `mobile`: the verified contact that receives the account code. By default, the contact being replaced or removed, or for `add`, the one the user has. A user who lost a mobile number replaces it with `verify_with: "email"`. |
+
+The answer names where the codes went, and for how many seconds they are valid:
+
+```json
+{ "change_id": "3f1c…", "account_code_sent_to": "ali*****@example.com", "new_code_sent_to": "091*****789", "expires_in": 60 }
+```
+
+`POST /user/contacts/changes/{change_id}` with `{"account_code": "…", "new_code": "…"}` applies the change and answers with the contacts after it. A wrong code answers `401` with `code_invalid` and names it in `info.field`. A code that was accepted stays accepted, so a retry needs only the other one. A change applies once.
+
+Errors of both routes, with their `code`:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `400` | `validation_failed` | An invalid field, named in `info.errors` |
+| `401` | `code_invalid` | A wrong or expired code |
+| `404` | `change_not_found` | An unknown or expired change, or one that another user started |
+| `409` | `contact_exists` | Adding a type the user already has; replace it instead |
+| `409` | `contact_not_found` | Replacing or removing a type the user does not have, or verifying with one |
+| `409` | `same_contact` | Replacing a contact with itself |
+| `409` | `last_contact` | Removing the last verified contact |
+| `409` | `contact_in_use` | The new contact belongs to another account. This is only said once the code proved control of it. Starting the change does not tell. |
+| `409` | `channel_unavailable` | Codes cannot be sent to that type of contact |
+| `429` | `rate_limited` | Too many codes, or too many wrong codes, which also end the change |
+
+Each applied change is audited as `user.contact_add`, `user.contact_replace`, or `user.contact_remove`, with the contacts masked. A confirmation with a wrong code is recorded as a `failure`. The contacts are checked again when the change is applied, under a lock of the user, so that concurrent changes on any instance see each other.
+
 ## System
 
 These endpoints return plain JSON without the envelope.

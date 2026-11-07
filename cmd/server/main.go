@@ -151,6 +151,7 @@ func run() error {
 		_ = handlers.Socket.Shutdown(ctx)
 	}()
 	handlers.Public.OTPSender = otpSender
+	handlers.User.OTPSender = otpSender
 	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
 		return fmt.Errorf("failed to configure admin sign-in: %w", err)
 	}
@@ -700,6 +701,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/sessions", ih.User.ListSessions)
 		activeGroup.DELETE("/sessions", ih.User.RevokeOtherSessions)
 		activeGroup.DELETE("/sessions/:id", ih.User.RevokeSession)
+		activeGroup.GET("/contacts", ih.User.ListContacts)
+		// Starting a change sends codes, so it has the limit of a code
+		// request, on top of the limits of the codes themselves.
+		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), ih.User.StartContactChange)
+		activeGroup.POST("/contacts/changes/:id", rl.AuthRateLimit(middleware.AuthLogin), ih.User.ConfirmContactChange)
 	}
 }
 
