@@ -1,5 +1,63 @@
 basePath: /
 definitions:
+  admin.CreateRestrictionRequest:
+    properties:
+      case_ref:
+        description: CaseRef is the reference of the case, at most 64 characters.
+        example: AML-2026-0042
+        type: string
+      currency_hk:
+        description: CurrencyHK is the held currency of an asset restriction.
+        format: uuid
+        type: string
+      ends_at:
+        description: EndsAt, when set, ends the restriction without a lift.
+        type: string
+      note:
+        description: Note is for administrators, at most 1000 characters.
+        type: string
+      operations:
+        description: |-
+          Operations are the blocked operations of an operation or asset
+          restriction; an account freeze blocks everything and takes none.
+        items:
+          $ref: '#/definitions/restrictions.Operation'
+          enum:
+          - deposit
+          - withdraw
+          - convert
+          - buy
+          - sell
+          - trade
+        type: array
+      reason:
+        allOf:
+        - $ref: '#/definitions/restrictions.Reason'
+        enum:
+        - court_order
+        - aml_review
+        - sanctions
+        - fraud
+        - security
+        - user_request
+        - other
+      scope:
+        allOf:
+        - $ref: '#/definitions/restrictions.Scope'
+        enum:
+        - account
+        - operation
+        - asset
+    type: object
+  admin.CreatedRestriction:
+    properties:
+      ended_sessions:
+        description: EndedSessions is the number of sessions that a freeze ended.
+        example: 2
+        type: integer
+      restriction:
+        $ref: '#/definitions/restrictions.Restriction'
+    type: object
   admin.CurrencyPage:
     properties:
       items:
@@ -10,6 +68,19 @@ definitions:
         description: NextCursor asks for the next page. It is left out on the last
           page.
         type: string
+    type: object
+  admin.LiftRestrictionRequest:
+    properties:
+      note:
+        description: Note says why, for the audit log, at most 1000 characters.
+        type: string
+    type: object
+  admin.RestrictionList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/restrictions.Restriction'
+        type: array
     type: object
   admin.adminSignInRequest:
     properties:
@@ -308,6 +379,131 @@ definitions:
       uuid:
         type: string
     type: object
+  restrictions.Operation:
+    enum:
+    - deposit
+    - withdraw
+    - convert
+    - buy
+    - sell
+    - trade
+    type: string
+    x-enum-varnames:
+    - OpDeposit
+    - OpWithdraw
+    - OpConvert
+    - OpBuy
+    - OpSell
+    - OpTrade
+  restrictions.PublicRestriction:
+    properties:
+      created_at:
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+      id:
+        format: uuid
+        type: string
+      operations:
+        items:
+          $ref: '#/definitions/restrictions.Operation'
+        type: array
+      scope:
+        allOf:
+        - $ref: '#/definitions/restrictions.Scope'
+        enum:
+        - account
+        - operation
+        - asset
+      until:
+        description: |-
+          Until is when the restriction ends. It is absent when the restriction
+          has no end, or its end is not shown.
+        type: string
+    type: object
+  restrictions.Reason:
+    enum:
+    - court_order
+    - aml_review
+    - sanctions
+    - fraud
+    - security
+    - user_request
+    - other
+    type: string
+    x-enum-varnames:
+    - ReasonCourtOrder
+    - ReasonAMLReview
+    - ReasonSanctions
+    - ReasonFraud
+    - ReasonSecurity
+    - ReasonUserRequest
+    - ReasonOther
+  restrictions.Restriction:
+    properties:
+      active:
+        description: |-
+          Active is whether the restriction applies now: not lifted, and not
+          past its end.
+        type: boolean
+      case_ref:
+        example: AML-2026-0042
+        type: string
+      created_at:
+        type: string
+      created_by:
+        format: uuid
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+      ends_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      lift_note:
+        type: string
+      lifted_at:
+        type: string
+      lifted_by:
+        format: uuid
+        type: string
+      note:
+        type: string
+      operations:
+        items:
+          $ref: '#/definitions/restrictions.Operation'
+        type: array
+      reason:
+        allOf:
+        - $ref: '#/definitions/restrictions.Reason'
+        example: aml_review
+      scope:
+        allOf:
+        - $ref: '#/definitions/restrictions.Scope'
+        enum:
+        - account
+        - operation
+        - asset
+      user_hk:
+        format: uuid
+        type: string
+      version:
+        example: 1
+        type: integer
+    type: object
+  restrictions.Scope:
+    enum:
+    - account
+    - operation
+    - asset
+    type: string
+    x-enum-varnames:
+    - ScopeAccount
+    - ScopeOperation
+    - ScopeAsset
   system.HealthStatus:
     properties:
       details:
@@ -431,6 +627,13 @@ definitions:
         type: string
       uuid:
         type: string
+    type: object
+  user.RestrictionList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/restrictions.PublicRestriction'
+        type: array
     type: object
   user.RevokedSessions:
     properties:
@@ -1013,6 +1216,192 @@ paths:
       summary: Sign out an administrator
       tags:
       - admin sign-in
+  /api/v1/admin/users/{hk}/restrictions:
+    get:
+      description: 'The restrictions of a user, newest first, at most 200: every one,
+        lifted and ended ones included, or with active=true only those that apply
+        now. With the reasons, cases, and notes.'
+      parameters:
+      - description: The user's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: Only the restrictions that apply now
+        in: query
+        name: active
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.RestrictionList'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the restrictions of a user
+      tags:
+      - admin users
+    post:
+      consumes:
+      - application/json
+      description: Freezes the account (scope account), blocks operations on every
+        currency (scope operation), or holds one currency (scope asset). A freeze
+        ends every session of the user in the same transaction, so that their tokens
+        stop working on every instance at once, and refuses sign-in with 403 account_frozen.
+        The restriction applies until it is lifted or reaches ends_at. The reason,
+        case, and note are never shown to the user. Audited as user.restriction_add,
+        and each ended session as user.session_revoke with the reason account_frozen.
+      parameters:
+      - description: The user's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The restriction
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.CreateRestrictionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.CreatedRestriction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: 'not_a_user: an administrator or a deleted user'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Restrict a user
+      tags:
+      - admin users
+  /api/v1/admin/users/{hk}/restrictions/{id}/lift:
+    post:
+      consumes:
+      - application/json
+      description: Ends a restriction now. A lifted freeze lets the user sign in again;
+        the sessions it ended stay ended. With version, the lift is refused with 409
+        version_conflict when the restriction has changed since. A lifted restriction
+        answers 409 already_lifted. Audited as user.restriction_lift.
+      parameters:
+      - description: The user's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The restriction's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The version the lift is based on
+        in: query
+        minimum: 1
+        name: version
+        type: integer
+      - description: Why
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.LiftRestrictionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/restrictions.Restriction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Lift a restriction of a user
+      tags:
+      - admin users
   /api/v1/public/auth:
     post:
       consumes:
@@ -1557,6 +1946,41 @@ paths:
       security:
       - BearerAuth: []
       summary: Change the names in the profile
+      tags:
+      - user
+  /api/v1/user/restrictions:
+    get:
+      description: 'The restrictions that apply now to the signed-in user: the operations
+        they block, on every currency or on one, and when they end when that is shown.
+        Never the reason. A frozen account cannot sign in, so it is not listed here:
+        its requests answer 403 account_frozen.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.RestrictionList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List my restrictions
       tags:
       - user
   /api/v1/user/sessions:

@@ -64,6 +64,11 @@ const (
 	ActionUserContactAdd     = "user.contact_add"
 	ActionUserContactReplace = "user.contact_replace"
 	ActionUserContactRemove  = "user.contact_remove"
+	// The restrictions of a user by an administrator (#220). The target is
+	// the user, the reason is the restriction's, and the event names the
+	// restriction.
+	ActionUserRestrictionAdd  = "user.restriction_add"
+	ActionUserRestrictionLift = "user.restriction_lift"
 
 	// The commands of cmd/admin (#195). Their actor is the system, and the
 	// operator who ran them is named in the user agent; see Operator.

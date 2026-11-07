@@ -220,9 +220,10 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
 		return
 	case errors.Is(err, ErrAccountUnavailable):
-		refused(helpers.CodeAccountUnavailable)
+		code, message := AccountError(err)
+		refused(code)
 		ClearRefreshTokenCookie(c)
-		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, accountUnavailableMessage, nil)
+		helpers.SendError(c, http.StatusForbidden, code, message, nil)
 		return
 	case err != nil:
 		log.Printf("Error verifying session %s: %v", claims.SessionID, err)

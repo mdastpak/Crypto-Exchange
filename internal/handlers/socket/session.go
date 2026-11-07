@@ -92,7 +92,8 @@ func (h *WebSocketHandler) closeClient(client *Client, code int, reason string) 
 func (h *WebSocketHandler) closeFor(client *Client, err error) bool {
 	switch {
 	case errors.Is(err, auth.ErrAccountUnavailable):
-		h.closeClient(client, CloseForbidden, reasonAccountUnavailable)
+		code, _ := auth.AccountError(err)
+		h.closeClient(client, CloseForbidden, code)
 	case errors.Is(err, auth.ErrSessionInvalid):
 		h.closeClient(client, CloseUnauthorized, reasonSessionInactive)
 	case errors.Is(err, auth.ErrInvalidToken), errors.Is(err, auth.ErrWrongTokenType), errors.Is(err, auth.ErrWrongRole):
