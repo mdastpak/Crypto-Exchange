@@ -10,6 +10,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/clientip"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -123,7 +125,9 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 		return
 	}
 
-	issued, err := h.OTP.Issue(ctx, admin.Email)
+	// As for users, the per-contact limits count by the client that asks,
+	// so that a stranger cannot lock an administrator out (#187).
+	issued, err := h.OTP.Issue(ctx, admin.Email, clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength))
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
 		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Denied, "rate_limited")

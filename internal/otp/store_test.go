@@ -48,7 +48,7 @@ func newTestStore(t *testing.T, settings Settings) (*Store, *redis.Client) {
 
 func issue(t *testing.T, store *Store, contact string) Issued {
 	t.Helper()
-	issued, err := store.Issue(context.Background(), contact)
+	issued, err := store.Issue(context.Background(), contact, "")
 	require.NoError(t, err)
 	return issued
 }
@@ -220,7 +220,7 @@ func TestStore_NewCodesDoNotResetTheContactBudget(t *testing.T) {
 
 	_, err := store.Verify(ctx, second.SessionID, second.Code)
 	assert.ErrorIs(t, err, ErrTooManyAttempts, "the contact's attempts are used up across its codes")
-	_, err = store.Issue(ctx, "alice@example.com")
+	_, err = store.Issue(ctx, "alice@example.com", "")
 	assert.ErrorIs(t, err, ErrTooManyAttempts, "no code is issued that could not be verified")
 
 	other := issue(t, store, "bob@example.com")
@@ -253,7 +253,7 @@ func TestStore_LimitsCodesPerContact(t *testing.T) {
 
 	issue(t, store, "alice@example.com")
 	issue(t, store, "ALICE@example.com")
-	_, err := store.Issue(ctx, "alice@example.com")
+	_, err := store.Issue(ctx, "alice@example.com", "")
 	assert.ErrorIs(t, err, ErrTooManyRequests, "email addresses are counted case-insensitively")
 
 	issue(t, store, "09121234567")
@@ -269,7 +269,7 @@ func TestStore_RedisHoldsNeitherCodesNorContacts(t *testing.T) {
 
 	keys, err := client.Keys(ctx, "*").Result()
 	require.NoError(t, err)
-	require.Len(t, keys, 3, "the session and the contact's request and attempt counters")
+	require.Len(t, keys, 4, "the session, the contact's total requests, and the requests and attempts of its client")
 	for _, key := range keys {
 		assert.NotContains(t, key, issued.Code)
 		assert.NotContains(t, strings.ToLower(key), "private.person")
@@ -390,4 +390,89 @@ func mapDigits(s string, zero rune) string {
 		out = append(out, zero+(r-'0'))
 	}
 	return string(out)
+}
+
+// issueFrom issues a code for contact requested by client.
+func issueFrom(t *testing.T, store *Store, contact, client string) Issued {
+	t.Helper()
+	issued, err := store.Issue(context.Background(), contact, client)
+	require.NoError(t, err)
+	return issued
+}
+
+// TestStore_StrangerCannotLockOutTheOwner checks #187: someone who knows only
+// a contact requests codes for it and fails them, which uses up the attempts
+// of the stranger's client, not those of the owner.
+func TestStore_StrangerCannotLockOutTheOwner(t *testing.T) {
+	store, _ := newTestStore(t, Settings{AttemptsPerCode: 3, ContactAttemptsPerHour: 3})
+	ctx := context.Background()
+	const victim = "victim@example.com"
+
+	attack := issueFrom(t, store, victim, "198.51.100.66")
+	for i := 0; i < 3; i++ {
+		_, err := store.Verify(ctx, attack.SessionID, wrongCode(attack.Code))
+		require.ErrorIs(t, err, ErrInvalidCode)
+	}
+	_, err := store.Issue(ctx, victim, "198.51.100.66")
+	require.ErrorIs(t, err, ErrTooManyAttempts, "the stranger is locked out")
+
+	own := issueFrom(t, store, victim, "203.0.113.7")
+	contact, err := store.Verify(ctx, own.SessionID, own.Code)
+	require.NoError(t, err, "the owner still signs in")
+	assert.Equal(t, victim, contact)
+}
+
+// TestStore_AttemptsCountAgainstTheRequester checks that guessing on a code
+// that another client requested still counts for the requester, so that a
+// stranger gains nothing by sending guesses from many addresses.
+func TestStore_AttemptsCountAgainstTheRequester(t *testing.T) {
+	store, _ := newTestStore(t, Settings{AttemptsPerCode: 2, ContactAttemptsPerHour: 2})
+	ctx := context.Background()
+	a := issueFrom(t, store, "target@example.com", "client-a")
+	for i := 0; i < 2; i++ {
+		_, err := store.Verify(ctx, a.SessionID, wrongCode(a.Code))
+		require.ErrorIs(t, err, ErrInvalidCode)
+	}
+	_, err := store.Issue(ctx, "target@example.com", "client-a")
+	assert.ErrorIs(t, err, ErrTooManyAttempts)
+	_, err = store.Issue(ctx, "target@example.com", "client-b")
+	assert.NoError(t, err)
+}
+
+func TestStore_LimitsRequestsPerClient(t *testing.T) {
+	store, _ := newTestStore(t, Settings{ContactRequestsPerHour: 2, ContactRequestsTotalPerHour: 10})
+	ctx := context.Background()
+	issueFrom(t, store, "busy@example.com", "client-a")
+	issueFrom(t, store, "busy@example.com", "client-a")
+	_, err := store.Issue(ctx, "Busy@Example.com", "client-a")
+	assert.ErrorIs(t, err, ErrTooManyRequests)
+	issueFrom(t, store, "busy@example.com", "client-b")
+}
+
+// TestStore_TotalLimitSparesKnownClients checks the total limit, which
+// bounds the codes sent to a contact from every client together: once it is
+// reached, a new client is refused, but a client that signed in with the
+// contact before is not.
+func TestStore_TotalLimitSparesKnownClients(t *testing.T) {
+	store, _ := newTestStore(t, Settings{ContactRequestsPerHour: 2, ContactRequestsTotalPerHour: 3})
+	ctx := context.Background()
+	const owner = "owner@example.com"
+
+	first := issueFrom(t, store, owner, "home")
+	_, err := store.Verify(ctx, first.SessionID, first.Code)
+	require.NoError(t, err, "home becomes a known client")
+
+	issueFrom(t, store, owner, "stranger-1")
+	issueFrom(t, store, owner, "stranger-2")
+	_, err = store.Issue(ctx, owner, "stranger-3")
+	assert.ErrorIs(t, err, ErrTooManyRequests, "the total is reached")
+
+	issueFrom(t, store, owner, "home")
+}
+
+func TestSettings_TotalRequestsAtLeastPerClient(t *testing.T) {
+	err := Settings{Secret: strings.Repeat("s", 32), ContactRequestsPerHour: 30, ContactRequestsTotalPerHour: 10}.Validate(false)
+	assert.ErrorContains(t, err, "contact_requests_total_per_hour")
+	assert.Equal(t, 30, Settings{ContactRequestsPerHour: 30}.WithDefaults().ContactRequestsTotalPerHour, "the default is never below the per-client limit")
+	assert.Equal(t, DefaultContactRequestsTotalPerHour, Settings{}.WithDefaults().ContactRequestsTotalPerHour)
 }

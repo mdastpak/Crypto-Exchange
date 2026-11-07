@@ -13,6 +13,8 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/clientip"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
@@ -108,7 +110,9 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	event.Action = audit.ActionUserSignInCode
 	event.ActorType, event.ActorID = h.contactOwner(ctx, contactType, req.Username)
 
-	issued, err := h.OTP.Issue(ctx, req.Username)
+	// The per-contact limits count by the client that asks, so that a
+	// stranger cannot use up the budget of the contact's owner (#187).
+	issued, err := h.OTP.Issue(ctx, req.Username, clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength))
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
 		h.noteSignIn(ctx, event, audit.Denied, reasonRateLimited)

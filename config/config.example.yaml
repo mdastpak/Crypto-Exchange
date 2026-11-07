@@ -129,8 +129,9 @@ otp:
     # in release mode. Prefer the OTP_SECRET environment variable, for example
     # generated with: openssl rand -base64 48
     secret: ""
-    contact_requests_per_hour: 5   # Codes issued to one email address or mobile number
-    contact_attempts_per_hour: 10  # Verification attempts for one contact across all of its codes
+    contact_requests_per_hour: 5   # Codes issued to one email address or mobile number, per client
+    contact_attempts_per_hour: 10  # Verification attempts for one contact across all of its codes, per client
+    contact_requests_total_per_hour: 20  # Codes for one contact from all clients; known clients are exempt
     # Development only: write sign-in codes to the log instead of delivering
     # them. The server refuses to start with this enabled in release mode
     # (GIN_MODE=release).

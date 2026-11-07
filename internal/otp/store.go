@@ -30,7 +30,7 @@ var (
 	// contact are used up.
 	ErrTooManyAttempts = errors.New("too many failed attempts")
 	// ErrTooManyRequests reports that the contact received too many codes in
-	// the current hour.
+	// the current hour, from the client or in total.
 	ErrTooManyRequests = errors.New("too many codes requested for this contact")
 )
 
@@ -38,12 +38,18 @@ var (
 // first request or attempt and is not extended by later ones.
 const contactWindow = time.Hour
 
+// knownClientTTL is how long a client that signed in with a contact stays
+// known to it. A known client may still request codes after the contact's
+// total limit is reached, so that strangers cannot lock out its owner (#187).
+const knownClientTTL = 30 * 24 * time.Hour
+
 // Redis layout. Keys never contain a code or a raw contact. A store with a
 // namespace prefixes its keys with "otp:<namespace>:" instead of "otp:".
 const (
 	fieldCode      = "code"       // HMAC of the session ID and the code
 	fieldContact   = "contact"    // the contact, encrypted
 	fieldContactID = "contact_id" // HMAC of the normalized contact
+	fieldClientID  = "client_id"  // HMAC of the client that requested the code
 	fieldAttempts  = "attempts"
 )
 
@@ -111,12 +117,32 @@ func (s *Store) contactID(contact string) string {
 
 func (s *Store) sessionKey(sessionID string) string { return s.keyPrefix + "session:" + sessionID }
 
-func (s *Store) contactRequestsKey(contactID string) string {
+// clientID identifies a client in Redis keys, without its address.
+func (s *Store) clientID(client string) string {
+	return hex.EncodeToString(s.mac("client", client))
+}
+
+// The per-contact limits (#187). The requests and the attempts are counted
+// per contact and client, so that a stranger who fails codes for a contact,
+// or requests many, uses up only the budget of the stranger's own client.
+// The total limit bounds the codes that one contact receives from every
+// client together, and the cost of the SMS sent to it; a client that has
+// signed in with the contact before is exempt from it.
+
+func (s *Store) contactTotalKey(contactID string) string {
 	return s.keyPrefix + "contact:" + contactID + ":requests"
 }
 
-func (s *Store) contactAttemptsKey(contactID string) string {
-	return s.keyPrefix + "contact:" + contactID + ":attempts"
+func (s *Store) contactRequestsKey(contactID, clientID string) string {
+	return s.keyPrefix + "contact:" + contactID + ":client:" + clientID + ":requests"
+}
+
+func (s *Store) contactAttemptsKey(contactID, clientID string) string {
+	return s.keyPrefix + "contact:" + contactID + ":client:" + clientID + ":attempts"
+}
+
+func (s *Store) knownClientKey(contactID, clientID string) string {
+	return s.keyPrefix + "contact:" + contactID + ":client:" + clientID + ":known"
 }
 
 // Issued is a new sign-in session.
@@ -125,18 +151,27 @@ type Issued struct {
 	Code      string
 }
 
-// issueScript counts a code request for a contact. It refuses the request when
-// the contact has used up its attempts, so that no code is sent that could
-// not be verified, or when the contact has received too many codes.
+// issueScript counts a code request for a contact from a client. It refuses
+// the request when the client has used up its attempts for the contact, so
+// that no code is sent that could not be verified; when the client has
+// requested too many codes for the contact; or when the contact has
+// received too many codes in total, unless the client is known to it.
 //
-// KEYS[1]: contact requests, KEYS[2]: contact attempts
-// ARGV[1]: requests per hour, ARGV[2]: attempts per hour, ARGV[3]: window in seconds
+// KEYS[1]: requests of the client, KEYS[2]: attempts of the client,
+// KEYS[3]: total requests of the contact, KEYS[4]: the known-client marker
+// ARGV[1]: requests per hour per client, ARGV[2]: attempts per hour per
+// client, ARGV[3]: window in seconds, ARGV[4]: total requests per hour
 // Returns 1 when allowed, -1 when there are too many requests, and -2 when
 // there are too many attempts.
 var issueScript = redis.NewScript(`
 local attempts = tonumber(redis.call('GET', KEYS[2]) or '0')
 if attempts >= tonumber(ARGV[2]) then
 	return -2
+end
+local known = redis.call('EXISTS', KEYS[4]) == 1
+local total = tonumber(redis.call('GET', KEYS[3]) or '0')
+if not known and total >= tonumber(ARGV[4]) then
+	return -1
 end
 local requests = redis.call('INCR', KEYS[1])
 if requests == 1 then
@@ -145,15 +180,25 @@ end
 if requests > tonumber(ARGV[1]) then
 	return -1
 end
+if redis.call('INCR', KEYS[3]) == 1 then
+	redis.call('EXPIRE', KEYS[3], ARGV[3])
+end
 return 1
 `)
 
-// Issue creates a session with a new code for contact.
-func (s *Store) Issue(ctx context.Context, contact string) (Issued, error) {
-	contactID := s.contactID(contact)
+// Issue creates a session with a new code for contact, requested by client.
+// client identifies the requester for the per-contact limits, usually its
+// address as clientip.Key groups it; every instance must pass the same
+// identity for the same client. An empty client is one client of its own.
+func (s *Store) Issue(ctx context.Context, contact, client string) (Issued, error) {
+	contactID, clientID := s.contactID(contact), s.clientID(client)
 	result, err := issueScript.Run(ctx, s.client,
-		[]string{s.contactRequestsKey(contactID), s.contactAttemptsKey(contactID)},
+		[]string{
+			s.contactRequestsKey(contactID, clientID), s.contactAttemptsKey(contactID, clientID),
+			s.contactTotalKey(contactID), s.knownClientKey(contactID, clientID),
+		},
 		s.settings.ContactRequestsPerHour, s.settings.ContactAttemptsPerHour, int(contactWindow/time.Second),
+		s.settings.ContactRequestsTotalPerHour,
 	).Int()
 	if err != nil {
 		return Issued{}, fmt.Errorf("count the code request: %w", err)
@@ -181,6 +226,7 @@ func (s *Store) Issue(ctx context.Context, contact string) (Issued, error) {
 			fieldCode, hex.EncodeToString(s.mac("code", sessionID, code)),
 			fieldContact, encrypted,
 			fieldContactID, contactID,
+			fieldClientID, clientID,
 			fieldAttempts, 0,
 		)
 		pipe.Expire(ctx, key, s.settings.TTL)
@@ -193,11 +239,12 @@ func (s *Store) Issue(ctx context.Context, contact string) (Issued, error) {
 }
 
 // attemptScript reserves one verification attempt, for the session and for its
-// contact, and returns what is needed to check the code. A session whose code
+// contact and the client that requested the code, and returns what is needed to check the code. A session whose code
 // field is gone is locked: its attempts are used up.
 //
-// KEYS[1]: session, KEYS[2]: contact attempts
-// ARGV[1]: attempts per code, ARGV[2]: attempts per contact, ARGV[3]: window in seconds
+// KEYS[1]: session, KEYS[2]: attempts of the contact and the client
+// ARGV[1]: attempts per code, ARGV[2]: attempts per contact and client,
+// ARGV[3]: window in seconds
 // Returns {0} when the session does not exist, {-1} when the attempts are used
 // up, and otherwise {attempt number, code HMAC, encrypted contact}.
 var attemptScript = redis.NewScript(`
@@ -223,8 +270,12 @@ return {attempt, redis.call('HGET', KEYS[1], 'code'), redis.call('HGET', KEYS[1]
 `)
 
 // Verify checks code against the session and returns its contact. A correct
-// code ends the session, so it works only once, and resets the attempts of
-// the contact. The attempt is counted before the code is checked, so
+// code ends the session, so it works only once, resets the attempts of the
+// contact from the client that requested the code, and makes that client
+// known to the contact. The attempts count against the client that
+// requested the code, not the one that sends it: a stranger who requests
+// codes for someone else's contact and fails them locks only the stranger's
+// own client out (#187). The attempt is counted before the code is checked, so
 // concurrent attempts can never exceed the limits.
 //
 // The code may be typed with Persian or Arabic-Indic digits and surrounding
@@ -236,15 +287,22 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 		return "", ErrInvalidCode
 	}
 	key := s.sessionKey(sessionID)
-	contactID, err := s.client.HGet(ctx, key, fieldContactID).Result()
-	if errors.Is(err, redis.Nil) {
-		return "", ErrInvalidCode
-	}
+	ids, err := s.client.HMGet(ctx, key, fieldContactID, fieldClientID).Result()
 	if err != nil {
 		return "", fmt.Errorf("load the session: %w", err)
 	}
+	contactID, _ := ids[0].(string)
+	clientID, _ := ids[1].(string)
+	if contactID == "" {
+		return "", ErrInvalidCode
+	}
+	if clientID == "" {
+		// A session issued before #187 counted its attempts per contact
+		// only; it expires within otp.auth.ttl_seconds of the upgrade.
+		clientID = s.clientID("")
+	}
 
-	attempt, storedMAC, encrypted, err := s.reserveAttempt(ctx, key, contactID)
+	attempt, storedMAC, encrypted, err := s.reserveAttempt(ctx, key, s.contactAttemptsKey(contactID, clientID))
 	if err != nil {
 		return "", err
 	}
@@ -273,17 +331,23 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 	if deleted == 0 {
 		return "", ErrInvalidCode
 	}
-	if err := s.client.Del(ctx, s.contactAttemptsKey(contactID)).Err(); err != nil {
+	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, s.contactAttemptsKey(contactID, clientID))
+		pipe.Set(ctx, s.knownClientKey(contactID, clientID), 1, knownClientTTL)
+		return nil
+	})
+	if err != nil {
 		return "", fmt.Errorf("reset the contact attempts: %w", err)
 	}
 	return s.decryptContact(sessionID, encrypted)
 }
 
-// reserveAttempt counts one attempt for the session and its contact, and
-// returns the attempt number with the stored code HMAC and encrypted contact.
-func (s *Store) reserveAttempt(ctx context.Context, key, contactID string) (attempt int64, storedMAC, encrypted string, err error) {
+// reserveAttempt counts one attempt for the session and in attemptsKey, the
+// attempts of its contact and client, and returns the attempt number with the
+// stored code HMAC and encrypted contact.
+func (s *Store) reserveAttempt(ctx context.Context, key, attemptsKey string) (attempt int64, storedMAC, encrypted string, err error) {
 	result, err := attemptScript.Run(ctx, s.client,
-		[]string{key, s.contactAttemptsKey(contactID)},
+		[]string{key, attemptsKey},
 		s.settings.AttemptsPerCode, s.settings.ContactAttemptsPerHour, int(contactWindow/time.Second),
 	).Slice()
 	if err != nil {

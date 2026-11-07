@@ -17,6 +17,9 @@ const (
 	DefaultAttemptsPerCode        = 3
 	DefaultContactRequestsPerHour = 5
 	DefaultContactAttemptsPerHour = 10
+	// DefaultContactRequestsTotalPerHour bounds the codes sent to one
+	// contact from every client together.
+	DefaultContactRequestsTotalPerHour = 20
 )
 
 // MinSecretLength is the shortest accepted secret, in bytes.
@@ -35,11 +38,17 @@ type Settings struct {
 	TTL        time.Duration
 	// AttemptsPerCode bounds the verification attempts for one code.
 	AttemptsPerCode int
-	// ContactRequestsPerHour bounds the codes issued to one contact.
+	// ContactRequestsPerHour bounds the codes issued to one contact for one
+	// client (#187).
 	ContactRequestsPerHour int
 	// ContactAttemptsPerHour bounds the verification attempts for one
-	// contact across all of its codes. A successful sign-in resets it.
+	// contact, across all of its codes, from the client that requested
+	// them. A successful sign-in resets it.
 	ContactAttemptsPerHour int
+	// ContactRequestsTotalPerHour bounds the codes issued to one contact
+	// for every client together, except the clients that signed in with
+	// the contact before.
+	ContactRequestsTotalPerHour int
 }
 
 // SettingsFromConfig returns the settings in config.Config.OTP.Auth.
@@ -52,6 +61,8 @@ func SettingsFromConfig() Settings {
 		AttemptsPerCode:        cfg.RetryLimit,
 		ContactRequestsPerHour: cfg.ContactRequestsPerHour,
 		ContactAttemptsPerHour: cfg.ContactAttemptsPerHour,
+
+		ContactRequestsTotalPerHour: cfg.ContactRequestsTotalPerHour,
 	}
 }
 
@@ -71,6 +82,9 @@ func (s Settings) WithDefaults() Settings {
 	}
 	if s.ContactAttemptsPerHour == 0 {
 		s.ContactAttemptsPerHour = DefaultContactAttemptsPerHour
+	}
+	if s.ContactRequestsTotalPerHour == 0 {
+		s.ContactRequestsTotalPerHour = max(DefaultContactRequestsTotalPerHour, s.ContactRequestsPerHour)
 	}
 	return s
 }
@@ -97,6 +111,8 @@ func (s Settings) Validate(releaseMode bool) error {
 		return fmt.Errorf("otp.auth.contact_requests_per_hour must be positive")
 	case s.ContactAttemptsPerHour < s.AttemptsPerCode:
 		return fmt.Errorf("otp.auth.contact_attempts_per_hour must be at least otp.auth.retry_limit")
+	case s.ContactRequestsTotalPerHour < s.ContactRequestsPerHour:
+		return fmt.Errorf("otp.auth.contact_requests_total_per_hour must be at least otp.auth.contact_requests_per_hour")
 	}
 	return nil
 }
