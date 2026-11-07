@@ -211,6 +211,7 @@ Failed attempts and abandoned codes are also logged with the masked contact. Del
 | Key | Default | Description |
 | --- | --- | --- |
 | `totp_key` | none | Encrypts the authenticator (TOTP) secrets of administrators in the database with AES-256-GCM: 32 random bytes, base64-encoded, for example from `openssl rand -base64 32`. `ADMIN_TOTP_KEY` overrides it. Without it, admin sign-in is disabled. The server and the `cmd/admin` command must use the same key. If it changes, every administrator must be enrolled again with `reset-totp`. |
+| `sign_in_min_response_ms` | `400` | The least time, from 1 to 5000 ms, that an answer to `POST /admin/auth` takes once the address is valid, so that its duration does not tell an administrator's address from an unknown one. It must be longer than the work for an administrator, which includes the confirm of the broker for the email; check the latency of that route in production and raise the setting if it comes close. |
 
 Authenticator apps show `exchange.name` as the issuer of the account. Each encrypted secret is bound to its administrator's ID, so it cannot be copied to another user row.
 
@@ -360,6 +361,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `OTP_AUTH_RETRY_LIMIT` | `otp.auth.retry_limit` |
 | `OTP_SECRET` | `otp.auth.secret` |
 | `ADMIN_TOTP_KEY` | `admin.totp_key` |
+| `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `KEYS_PROVIDER` | `keys.provider` |
 | `KEYS_LOCAL_KEK` | `keys.local.kek` |
 | `VAULT_ADDR` | `keys.transit.address` |

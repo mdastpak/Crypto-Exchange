@@ -310,6 +310,8 @@ Response `200` for every valid address, so that it does not reveal which address
 
 A code is only emailed when the address belongs to an active administrator. The [sign-in limits](#sign-in-limits) apply, counted separately from user sign-in.
 
+Neither the answer nor its limits nor its duration tell an administrator's address from an unknown one ([#190](https://github.com/mdastpak/Crypto-Exchange/issues/190)). An unknown address gets a code too, which is never sent, so it reaches the limits after the same number of requests, and its session is refused like a wrong code. Every answer to a valid address takes at least `admin.sign_in_min_response_ms` (400 ms by default), which covers the email that only an administrator gets. A `500`, when the email cannot be queued, can still only happen for an administrator.
+
 Errors: `400` for an invalid address, `429` when a limit is reached, `503` when admin sign-in is not configured.
 
 ### `POST /admin/auth/{uuid}`

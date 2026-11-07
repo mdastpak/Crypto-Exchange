@@ -112,34 +112,55 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 		return
 	}
 
+	// From here on, an administrator's address and an unknown one must be
+	// told apart neither by the answer nor by its duration (#190): both
+	// issue a code under the same limits, and every answer waits until the
+	// same minimum time has passed. Only the email of an administrator is
+	// sent, which takes longer, mostly for the confirm of the broker. The
+	// wait comes before the answer is written, since a written answer may
+	// already be on its way.
+	start := time.Now()
+	minimum := time.Duration(config.Config.Admin.SignInMinResponseMS) * time.Millisecond
+	respond := func(status int, message string, info interface{}) {
+		padResponse(ctx, start, minimum)
+		helpers.SendResponse(c, status, message, info)
+	}
+
 	admin, err := h.Accounts.FindActive(ctx, email)
-	if errors.Is(err, adminauth.ErrNotFound) {
-		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, "", audit.Failure, "unknown_account")
-		// A session ID that leads nowhere keeps the answer identical.
-		helpers.SendResponse(c, http.StatusOK, signInCodeSent, gin.H{"uuid": uuid.NewString()})
+	known := err == nil
+	if err != nil && !errors.Is(err, adminauth.ErrNotFound) {
+		log.Printf("Failed to look up an administrator for sign-in: %v", err)
+		respond(http.StatusInternalServerError, "Failed to start the sign-in", nil)
 		return
 	}
-	if err != nil {
-		log.Printf("Failed to look up an administrator for sign-in: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the sign-in", nil)
-		return
+	adminID := ""
+	if known {
+		adminID, email = admin.ID, admin.Email
 	}
 
 	// As for users, the per-contact limits count by the client that asks,
-	// so that a stranger cannot lock an administrator out (#187).
-	issued, err := h.OTP.Issue(ctx, admin.Email, clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength))
+	// so that a stranger cannot lock an administrator out (#187). An
+	// unknown address gets a code too, which is never sent and expires, so
+	// that it reaches the limits after as many requests as an
+	// administrator's address, and its session leads nowhere.
+	issued, err := h.OTP.Issue(ctx, email, clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength))
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
-		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Denied, "rate_limited")
-		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
+		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, adminID, audit.Denied, "rate_limited")
+		respond(http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrTooManyAttempts):
-		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Denied, "rate_limited")
-		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
+		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, adminID, audit.Denied, "rate_limited")
+		respond(http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case err != nil:
-		log.Printf("Failed to issue an admin sign-in code for administrator %s: %v", admin.ID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the sign-in", nil)
+		log.Printf("Failed to issue an admin sign-in code: %v", err)
+		respond(http.StatusInternalServerError, "Failed to start the sign-in", nil)
+		return
+	}
+	if !known {
+		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, "", audit.Failure, "unknown_account")
+		respond(http.StatusOK, signInCodeSent, gin.H{"uuid": issued.SessionID})
 		return
 	}
 
@@ -151,11 +172,11 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	})
 	if err != nil {
 		log.Printf("Failed to send the admin sign-in code to administrator %s: %v", admin.ID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the sign-in", nil)
+		respond(http.StatusInternalServerError, "Failed to start the sign-in", nil)
 		return
 	}
 	h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Success, "")
-	helpers.SendResponse(c, http.StatusOK, signInCodeSent, gin.H{"uuid": issued.SessionID})
+	respond(http.StatusOK, signInCodeSent, gin.H{"uuid": issued.SessionID})
 }
 
 // VerifySignIn completes an admin sign-in with the emailed code and a code
@@ -259,6 +280,21 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	}
 	log.Printf("Administrator %s signed in", admin.ID)
 	helpers.SendResponse(c, http.StatusOK, "Signed in successfully", gin.H{"access_token": accessToken})
+}
+
+// padResponse waits until minimum has passed since start, so that every
+// answer it pads takes at least as long. It returns early when ctx ends.
+func padResponse(ctx context.Context, start time.Time, minimum time.Duration) {
+	wait := time.Until(start.Add(minimum))
+	if wait <= 0 {
+		return
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
 }
 
 // auditSignIn records an event of the admin sign-in. It is written on its

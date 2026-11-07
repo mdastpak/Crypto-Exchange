@@ -186,6 +186,10 @@ type Configuration struct {
 		// administrators in the database: 32 random bytes, base64-encoded.
 		// Admin sign-in is disabled without it.
 		TOTPKey string `yaml:"totp_key"`
+		// SignInMinResponseMS is the least time an answer to an admin
+		// sign-in request takes, so that its duration does not tell an
+		// administrator's address from an unknown one (#190).
+		SignInMinResponseMS int `yaml:"sign_in_min_response_ms"`
 	} `yaml:"admin"`
 
 	// Keys says where the key-encryption key (KEK) of the data-protection
@@ -754,6 +758,7 @@ func setDefaults() {
 		{&Config.WebSocket.MaxConnections, DefaultWSMaxConnections},
 		{&Config.WebSocket.MaxConnectionsPerIP, DefaultWSMaxConnectionsPerIP},
 		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
+		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -962,6 +967,14 @@ func RabbitMQURL(username, password, host, port, vhost string, useTLS bool) stri
 	}
 	return u.String()
 }
+
+// DefaultAdminSignInMinResponseMS is longer than the work of a sign-in
+// request for an administrator, which includes a broker confirm, and
+// MaxAdminSignInMinResponseMS keeps it below the request timeout.
+const (
+	DefaultAdminSignInMinResponseMS = 400
+	MaxAdminSignInMinResponseMS     = 5000
+)
 
 // The defaults of the websocket settings. Clients send small control
 // messages, such as pings and subscriptions, so a message is at most 4 KiB.
