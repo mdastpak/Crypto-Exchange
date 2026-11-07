@@ -21,7 +21,7 @@ func newTestRouter(t *testing.T, env *e2eEnv) *gin.Engine {
 	t.Helper()
 	router, err := newEngine()
 	require.NoError(t, err)
-	require.NoError(t, RouteHandler(router, env.handlers))
+	routeForTest(t, router, env.handlers)
 	return router
 }
 

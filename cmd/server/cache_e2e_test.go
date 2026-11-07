@@ -66,7 +66,7 @@ func TestShutdown_KeepsTheSharedCurrencyCache(t *testing.T) {
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
 	router, err := newEngine()
 	require.NoError(t, err)
-	require.NoError(t, RouteHandler(router, handlers))
+	routeForTest(t, router, handlers)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	srv.Handler = router

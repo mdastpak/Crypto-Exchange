@@ -79,7 +79,7 @@ func TestWebSocket_AnotherInstanceRelaysTheEvent(t *testing.T) {
 	require.NoError(t, configureAdminSignIn(handlers, services, key, env.sender))
 	second, err := newEngine()
 	require.NoError(t, err)
-	require.NoError(t, RouteHandler(second, handlers))
+	routeForTest(t, second, handlers)
 
 	admin, err := env.accounts.Create(context.Background(), "relay@example.com")
 	require.NoError(t, err)

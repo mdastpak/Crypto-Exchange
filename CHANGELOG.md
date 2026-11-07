@@ -64,6 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The paths are absolute (`/api/v1/...`, `/system/...`), so the document holds both the API and the health probes. The deprecated unversioned aliases are described in its description.
   - CI regenerates the document with the swag version of `go.mod` and fails when the committed one is stale. `TestOpenAPI_DocumentsEveryRoute` compares it with the routes of the server.
   - `cmd.bat` runs the right command; it ran `swag init -g ./main.go`, a file that does not exist. CONTRIBUTING explains how to regenerate the document.
+- Contract tests: every response that the end-to-end tests receive is checked against the OpenAPI document ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53), third part).
+  - The status must be documented for the operation, or covered by its `default` response, and the JSON body must match the schema, with no property that the schema lacks. A deprecated alias is checked against the operation of its versioned path.
+  - The new `internal/testutil/openapitest` reads the subset of Swagger 2.0 that swag generates, without a new dependency.
 
 ### Fixed
 

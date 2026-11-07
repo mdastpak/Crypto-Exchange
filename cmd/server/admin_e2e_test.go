@@ -216,6 +216,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	gin.SetMode(gin.TestMode)
 	router, err := newEngine()
 	require.NoError(t, err)
+	router.Use(contractCheck(t))
 	router.Use(middleware.RecoveryMiddleware())
 	require.NoError(t, RouteHandler(router, handlers))
 	return &e2eEnv{router: router, handlers: handlers, sender: sender, accounts: handlers.Admin.Accounts, db: services.Postgres.DB}
