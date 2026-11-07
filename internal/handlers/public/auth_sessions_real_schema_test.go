@@ -112,6 +112,14 @@ type storedSession struct {
 	revoked                                     bool
 }
 
+// endRefreshGrace moves the last rotation of every session past the grace
+// period, so that the previous refresh token counts as reused.
+func (e *sessionTestEnv) endRefreshGrace(t *testing.T) {
+	t.Helper()
+	_, err := e.conn.Exec(`UPDATE sessions SET rotated_at = rotated_at - INTERVAL '1 hour' WHERE rotated_at IS NOT NULL`)
+	require.NoError(t, err)
+}
+
 func (e *sessionTestEnv) sessionOf(t *testing.T, email string) storedSession {
 	t.Helper()
 	var s storedSession
@@ -172,7 +180,9 @@ func TestSession_RealSchema_RefreshRotatesAndDetectsReuse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, env.send(http.MethodGet, "/user/ping", nil, withAuthorization(newAccessToken)).Code)
 	assert.Equal(t, auth.HashToken(secondCookie.Value), env.sessionOf(t, email).refreshHash)
 
-	// Replaying the rotated token is treated as theft: the session is revoked.
+	// Replaying the rotated token after the grace period of a concurrent
+	// refresh (#194) is treated as theft: the session is revoked.
+	env.endRefreshGrace(t)
 	w = env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(firstCookie.Value))
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	session := env.sessionOf(t, email)
@@ -183,13 +193,15 @@ func TestSession_RealSchema_RefreshRotatesAndDetectsReuse(t *testing.T) {
 		"after reuse is detected, the latest refresh token must stop working too")
 }
 
-func TestSession_RealSchema_ConcurrentRefreshesWithOneTokenSucceedOnce(t *testing.T) {
+// Concurrent refreshes with one token, as from several tabs of a browser,
+// all get an access token, and only one rotates the refresh token (#194).
+func TestSession_RealSchema_ConcurrentRefreshesWithOneTokenRotateOnce(t *testing.T) {
 	env := newSessionTestEnv(t)
 	const email = "session-concurrent@example.com"
 	_, cookie, _ := env.signIn(t, email)
 	const requests = 5
 
-	codes := make([]int, requests)
+	responses := make([]*httptest.ResponseRecorder, requests)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < requests; i++ {
@@ -197,22 +209,50 @@ func TestSession_RealSchema_ConcurrentRefreshesWithOneTokenSucceedOnce(t *testin
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			codes[i] = env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(cookie.Value)).Code
+			responses[i] = env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(cookie.Value))
 		}(i)
 	}
 	close(start)
 	wg.Wait()
 
-	succeeded := 0
-	for _, code := range codes {
-		if code == http.StatusOK {
-			succeeded++
-		} else {
-			assert.Equal(t, http.StatusUnauthorized, code)
+	var rotated []*http.Cookie
+	for _, w := range responses {
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "access_token")
+		if c := findRefreshCookie(w); c != nil {
+			rotated = append(rotated, c)
 		}
 	}
-	assert.Equal(t, 1, succeeded, "one refresh token must be exchanged at most once")
-	assert.Equal(t, "REVOKED", env.sessionOf(t, email).status, "the replayed requests count as reuse and revoke the session")
+	require.Len(t, rotated, 1, "one refresh token is exchanged once; the others leave the cookie as the winner set it")
+	session := env.sessionOf(t, email)
+	assert.Equal(t, "ACTIVE", session.status, "concurrent refreshes are not a reuse")
+	assert.Equal(t, auth.HashToken(rotated[0].Value), session.refreshHash, "one valid refresh token is left")
+
+	// The new token rotates as usual, and the first one, past the grace
+	// period, is a reuse.
+	w := env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(rotated[0].Value))
+	require.Equal(t, http.StatusOK, w.Code)
+	env.endRefreshGrace(t)
+	w = env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(rotated[0].Value))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, "REVOKED", env.sessionOf(t, email).status)
+}
+
+// Only the token that the last rotation replaced has the grace period: an
+// older one is a reuse at once.
+func TestSession_RealSchema_AnOlderTokenHasNoGrace(t *testing.T) {
+	env := newSessionTestEnv(t)
+	const email = "session-older@example.com"
+	_, first, _ := env.signIn(t, email)
+	w := env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(first.Value))
+	require.Equal(t, http.StatusOK, w.Code)
+	second := findRefreshCookie(w)
+	w = env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(second.Value))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(first.Value))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, "REVOKED", env.sessionOf(t, email).status)
 }
 
 func TestSession_RealSchema_LogoutEndsTheSession(t *testing.T) {

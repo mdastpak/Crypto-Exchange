@@ -114,6 +114,7 @@ Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 | 20 | `audit_events`: the append-only audit log, with triggers that refuse `UPDATE`, `DELETE`, and `TRUNCATE` | Yes |
 | 21 | `outbox_events.failed_at`: dead letters of the outbox, and the pending index by topic and id | Yes |
 | 22 | `sessions.last_used_at`, and an index of the active sessions of each user, for the session list | Yes |
+| 23 | `sessions.previous_refresh_hash` and `sessions.rotated_at`, for the grace period of concurrent refreshes | Yes |
 
 Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
@@ -170,7 +171,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `user.sign_in_code` | A user's sign-in code is requested. The actor is the account that owns the contact, or `anonymous` for a contact without one; the target is the sign-in (`sign_in` and the `uuid` of the answer). | `success`; `failure` with `delivery_failed`; `denied` with `rate_limited` |
 | `user.create` | A first sign-in creates a user, in the transaction that creates it | `success` |
 | `user.sign_in` | A user signs in. A success targets the new session, and is in the transaction that creates it; a failure targets the sign-in, which links it to its code request. | `success`, without which no token is issued; `failure` with `code_invalid` (anonymous), `account_unavailable`, or `use_admin_sign_in`; `denied` with `rate_limited` (anonymous) |
-| `user.token_refresh` | A user's tokens are refreshed; the target is the session | `success`, in the transaction of the rotation, without which no token is issued; `failure` with `refresh_token_reused`, in the transaction that revokes the session, `session_inactive`, or `account_unavailable` |
+| `user.token_refresh` | A user's tokens are refreshed; the target is the session | `success`, in the transaction of the rotation, without which no token is issued, with `concurrent_refresh` for the replaced token within the grace period; `failure` with `refresh_token_reused`, in the transaction that revokes the session, `session_inactive`, or `account_unavailable` |
 | `user.logout` | A user signs out, in the transaction that revokes the session | `success` |
 | `user.session_revoke` | A user ends a session from the session list, one event per ended session, in the transaction that revokes it; the target is the session | `success` |
 

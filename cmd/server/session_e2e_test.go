@@ -88,6 +88,14 @@ func (e *e2eEnv) refreshSession(t *testing.T, s userSession) userSession {
 	return s
 }
 
+// endRefreshGrace moves the last rotation of every session past the grace
+// period of a concurrent refresh (#194).
+func (e *e2eEnv) endRefreshGrace(t *testing.T) {
+	t.Helper()
+	_, err := e.db.Exec(`UPDATE sessions SET rotated_at = rotated_at - INTERVAL '1 hour' WHERE rotated_at IS NOT NULL`)
+	require.NoError(t, err)
+}
+
 // profileStatus returns the status of GET /user/profile with token.
 func (e *e2eEnv) profileStatus(t *testing.T, token string) int {
 	t.Helper()
@@ -129,7 +137,9 @@ func TestUserSessions_EndToEnd(t *testing.T) {
 		first := env.startSession(t, "reuse@example.com")
 		second := env.refreshSession(t, first)
 
-		// Replaying the rotated refresh token is treated as theft.
+		// Replaying the rotated refresh token after the grace period of a
+		// concurrent refresh is treated as theft.
+		env.endRefreshGrace(t)
 		w := env.send(t, http.MethodPost, "/api/v1/public/auth/refresh", nil, "", first.refresh)
 		require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
 		require.Equal(t, "REVOKED", env.sessionStatus(t, first.sessionID))

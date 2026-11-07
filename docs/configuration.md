@@ -152,6 +152,7 @@ Every server instance connects with its own TLS session, so several instances be
 | `issuer` | `crypto-exchange` | Issuer claim written into tokens and required on every token |
 | `access_token.expiration_minutes` | **required** | Access token lifetime, at most 1440 (a day). There is no default. |
 | `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age`. It must be at least the access token lifetime. |
+| `refresh_token.reuse_grace_seconds` | `10` | From 1 to 60. How long after a refresh the refresh token that it replaced still gets a new access token, for tabs that refresh at the same moment, instead of revoking the session as a reuse. See [`POST /public/auth/refresh`](api.md#post-publicauthrefresh). |
 
 Keys must be RSA keys of at least 2048 bits, and a public key must belong to its private key. Tokens name their signing key in the `kid` header, which is derived from a SHA-256 hash of the public key, so key IDs need no configuration. The server refuses to start if a key is invalid or shared between the roles.
 
@@ -361,6 +362,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `JWT_ISSUER` | `jwt.issuer` |
 | `JWT_ACCESS_TOKEN_EXPIRATION_MINUTES` | `jwt.access_token.expiration_minutes` |
 | `JWT_REFRESH_TOKEN_EXPIRATION_MINUTES` | `jwt.refresh_token.expiration_minutes` |
+| `JWT_REFRESH_TOKEN_REUSE_GRACE_SECONDS` | `jwt.refresh_token.reuse_grace_seconds` |
 | `OTP_AUTH_NAME` | `otp.auth.name` |
 | `OTP_AUTH_TTL_SECONDS` | `otp.auth.ttl_seconds` |
 | `OTP_AUTH_LENGTH` | `otp.auth.length` |

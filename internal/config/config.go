@@ -160,6 +160,10 @@ type Configuration struct {
 		} `yaml:"access_token"`
 		RefreshToken struct {
 			Expiration int `yaml:"expiration_minutes"`
+			// ReuseGraceSeconds is how long the previous refresh token of
+			// a session still works after a rotation, for two tabs that
+			// refresh at once (#194). Later, it revokes the session.
+			ReuseGraceSeconds int `yaml:"reuse_grace_seconds"`
 		} `yaml:"refresh_token"`
 	} `yaml:"jwt"`
 
@@ -772,6 +776,7 @@ func setDefaults() {
 		{&Config.WebSocket.MaxConnectionsPerIP, DefaultWSMaxConnectionsPerIP},
 		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
+		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -980,6 +985,14 @@ func RabbitMQURL(username, password, host, port, vhost string, useTLS bool) stri
 	}
 	return u.String()
 }
+
+// DefaultRefreshReuseGraceSeconds covers refreshes that start together, and
+// MaxRefreshReuseGraceSeconds keeps a stolen previous token useful only
+// briefly.
+const (
+	DefaultRefreshReuseGraceSeconds = 10
+	MaxRefreshReuseGraceSeconds     = 60
+)
 
 // DefaultAdminSignInMinResponseMS is longer than the work of a sign-in
 // request for an administrator, which includes a broker confirm, and
