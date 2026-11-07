@@ -239,6 +239,40 @@ func TestMigration_EachPhaseAppliesOnceOnEveryInstance(t *testing.T) {
 	}
 }
 
+// TestMigration_ALaterPhaseWaitsForThePhaseBefore holds the earliest phase
+// of a migration as an instance that is applying it would: another instance
+// must not apply a later phase first, which would leave the earlier one
+// behind for good once the migration completes.
+func TestMigration_ALaterPhaseWaitsForThePhaseBefore(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	start := time.Now()
+	source, target := insertCurrency(t, db, "WS"), insertCurrency(t, db, "WT")
+	m, err := rebrand.Schedule(ctx, db, target, plan(start, true, []rebrand.Source{{CurrencyHK: source, Ratio: "1"}}, allPhases...), origin())
+	require.NoError(t, err)
+	held, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer held.Rollback()
+	var phase string
+	require.NoError(t, held.QueryRowContext(ctx, `SELECT phase FROM currency_migration_phases WHERE migration_hk = $1
+		ORDER BY scheduled_at LIMIT 1 FOR UPDATE`, m.ID).Scan(&phase))
+
+	_, err = rebrand.Advance(ctx, db, start.Add(24*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Zero(t, phaseAudits(t, db, target), "no phase applies while the one before is being applied")
+	require.NoError(t, held.Rollback())
+
+	_, err = rebrand.Advance(ctx, db, start.Add(24*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Equal(t, len(allPhases), phaseAudits(t, db, target))
+}
+
+func phaseAudits(t *testing.T, db *sql.DB, target string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM audit_events WHERE action = 'currency.migration_phase' AND target_id = $1`, target).Scan(&n))
+	return n
+}
+
 func TestMigration_OnlyApprovedCurrencies(t *testing.T) {
 	db := pgtest.Migrated(t, testDBName)
 	a, target := insertCurrency(t, db, "AA"), insertCurrency(t, db, "BB")

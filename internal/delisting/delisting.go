@@ -532,8 +532,10 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) (Change, bool, e
 		return Change{}, false, fmt.Errorf("failed to start a step: %w", err)
 	}
 	defer tx.Rollback()
-	// The steps of a delisting are due in the order of the lifecycle, so the
-	// earliest due step of a delisting is its next one. Only the scheduler
+	// The steps of a delisting apply in the order of the lifecycle: only its
+	// earliest step that is not applied can be claimed, so while one instance
+	// holds it, another skips the delisting rather than claim a later step
+	// and apply it first. Only the scheduler
 	// locks steps, so claiming one first, and then the currency and the
 	// delisting, in the order of every other change, cannot deadlock.
 	var delistingHK, currencyHK string
@@ -542,6 +544,8 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) (Change, bool, e
 		SELECT s.delisting_hk, s.state, d.currency_hk
 		FROM currency_delisting_steps s JOIN currency_delistings d ON d.hk = s.delisting_hk
 		WHERE d.status = 'scheduled' AND s.applied_at IS NULL AND s.scheduled_at <= $1
+		  AND NOT EXISTS (SELECT 1 FROM currency_delisting_steps e
+		    WHERE e.delisting_hk = s.delisting_hk AND e.applied_at IS NULL AND e.scheduled_at < s.scheduled_at)
 		ORDER BY s.scheduled_at, s.delisting_hk
 		FOR UPDATE OF s SKIP LOCKED LIMIT 1`, now).Scan(&delistingHK, &state, &currencyHK)
 	if errors.Is(err, sql.ErrNoRows) {

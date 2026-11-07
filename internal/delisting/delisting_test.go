@@ -223,6 +223,34 @@ func TestDelisting_EachStepAppliesOnceOnEveryInstance(t *testing.T) {
 	}
 }
 
+// TestDelisting_ALaterStepWaitsForTheStepBefore holds the earliest step of
+// a delisting as an instance that is applying it would: another instance
+// must not apply a later step first, which would leave the earlier one
+// behind for good once the delisting completes.
+func TestDelisting_ALaterStepWaitsForTheStepBefore(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	start := time.Now()
+	hk := insertCurrency(t, db, "WT", "approved")
+	_, _, err := delisting.Schedule(ctx, db, hk, plan(start, fullDelisting...), origin())
+	require.NoError(t, err)
+	held, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer held.Rollback()
+	var state string
+	require.NoError(t, held.QueryRowContext(ctx, `SELECT s.state FROM currency_delisting_steps s JOIN currency_delistings d ON d.hk = s.delisting_hk
+		WHERE d.currency_hk = $1 ORDER BY s.scheduled_at LIMIT 1 FOR UPDATE OF s`, hk).Scan(&state))
+
+	changes, err := delisting.Advance(ctx, db, start.Add(24*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Empty(t, changes, "no step applies while the one before is being applied")
+	require.NoError(t, held.Rollback())
+
+	changes, err = delisting.Advance(ctx, db, start.Add(24*time.Hour), 10)
+	require.NoError(t, err)
+	assert.Len(t, changes, len(fullDelisting))
+	assert.Equal(t, "delisted", lifecycle(t, db, hk).State)
+}
+
 func TestDelisting_CancelBeforeFrozenRestoresEverything(t *testing.T) {
 	db := pgtest.Migrated(t, testDBName)
 	hk := insertCurrency(t, db, "BACK", "approved")

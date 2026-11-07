@@ -425,8 +425,10 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 		return nil, false, fmt.Errorf("failed to start a phase: %w", err)
 	}
 	defer tx.Rollback()
-	// The phases of a migration are due in their order, so its earliest due
-	// phase is its next one. Only the scheduler locks phases, so claiming
+	// The phases of a migration apply in their order: only its earliest
+	// phase that is not applied can be claimed, so while one instance holds
+	// it, another skips the migration rather than claim a later phase and
+	// apply it first. Only the scheduler locks phases, so claiming
 	// one first, and then the currencies and the migration, in the order of
 	// every other change, cannot deadlock.
 	var hk, targetHK string
@@ -435,6 +437,8 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 		SELECT ph.migration_hk, ph.phase, m.target_hk
 		FROM currency_migration_phases ph JOIN currency_migrations m ON m.hk = ph.migration_hk
 		WHERE m.phase NOT IN ('completed', 'cancelled') AND ph.applied_at IS NULL AND ph.scheduled_at <= $1
+		  AND NOT EXISTS (SELECT 1 FROM currency_migration_phases e
+		    WHERE e.migration_hk = ph.migration_hk AND e.applied_at IS NULL AND e.scheduled_at < ph.scheduled_at)
 		ORDER BY ph.scheduled_at, ph.migration_hk
 		FOR UPDATE OF ph SKIP LOCKED LIMIT 1`, now).Scan(&hk, &phase, &targetHK)
 	if errors.Is(err, sql.ErrNoRows) {
