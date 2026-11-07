@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/contact"
+
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -224,7 +226,15 @@ return {attempt, redis.call('HGET', KEYS[1], 'code'), redis.call('HGET', KEYS[1]
 // code ends the session, so it works only once, and resets the attempts of
 // the contact. The attempt is counted before the code is checked, so
 // concurrent attempts can never exceed the limits.
+//
+// The code may be typed with Persian or Arabic-Indic digits and surrounding
+// white space (#197). A code that is not then CodeLength digits cannot be
+// right, so it is refused without spending an attempt.
 func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, error) {
+	code, wellFormed := contact.Code(code, s.settings.CodeLength)
+	if !wellFormed {
+		return "", ErrInvalidCode
+	}
 	key := s.sessionKey(sessionID)
 	contactID, err := s.client.HGet(ctx, key, fieldContactID).Result()
 	if errors.Is(err, redis.Nil) {

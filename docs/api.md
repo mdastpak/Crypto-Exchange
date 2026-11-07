@@ -184,6 +184,14 @@ The `username` field holds the contact that receives the code, as one of the fol
 
 Usernames are not accepted, because a code cannot be delivered to a username, so it cannot prove who is signing in.
 
+The contact is normalized before it is used, so that every way users usually type it reaches the same account ([#197](https://github.com/mdastpak/Crypto-Exchange/issues/197)):
+
+- surrounding white space and invisible characters, such as the zero-width non-joiner, are removed;
+- Persian digits (`۰` to `۹`) and Arabic-Indic digits (`٠` to `٩`) become ASCII digits;
+- a mobile number with `+98`, `0098`, or `98` in front, without the leading `0`, or with spaces, dashes, dots, or parentheses becomes `09…`: `+98 912 345 6789` and `۰۹۱۲۳۴۵۶۷۸۹` are both `09123456789`.
+
+The code and the authenticator code of admin sign-in may be typed with Persian or Arabic-Indic digits too.
+
 Response `200`:
 
 ```json
@@ -241,7 +249,7 @@ The first successful verification for a contact creates the user. Each email add
 These limits apply on top of the per-IP [rate limits](#rate-limiting):
 
 - A code is valid for `otp.auth.ttl_seconds` and signs in only once, even when it is sent in concurrent requests.
-- A code can be tried `otp.auth.retry_limit` times. Each attempt is counted before the code is checked, so concurrent requests cannot get more tries. After the last failed attempt, the code is erased and further attempts get `429` until the session expires.
+- A code can be tried `otp.auth.retry_limit` times. Each attempt is counted before the code is checked, so concurrent requests cannot get more tries. A code that cannot be right, because it is not `otp.auth.length` digits, gets `401` (`code_invalid`) without using up an attempt. After the last failed attempt, the code is erased and further attempts get `429` until the session expires.
 - Each email address or mobile number receives at most `otp.auth.contact_requests_per_hour` codes per hour. Email addresses are compared case-insensitively.
 - Each contact gets at most `otp.auth.contact_attempts_per_hour` attempts per hour across all of its codes, so requesting a new code does not bring new attempts. While they are used up, no new code is issued for the contact. A successful sign-in resets the count.
 

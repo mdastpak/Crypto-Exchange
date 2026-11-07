@@ -353,3 +353,41 @@ func TestStore_NamespacesAreIndependent(t *testing.T) {
 	_, err = admins.Verify(ctx, adminCode.SessionID, adminCode.Code)
 	assert.NoError(t, err)
 }
+
+// TestVerify_AcceptsPersianDigits checks #197: a code typed with Persian or
+// Arabic-Indic digits, or with surrounding spaces, is the same code.
+func TestVerify_AcceptsPersianDigits(t *testing.T) {
+	store, _ := newTestStore(t, Settings{})
+	for _, typed := range []func(string) string{
+		func(code string) string { return mapDigits(code, '۰') },
+		func(code string) string { return mapDigits(code, '٠') },
+		func(code string) string { return "  " + code + "\n" },
+	} {
+		issued := issue(t, store, "digits@example.com")
+		contact, err := store.Verify(context.Background(), issued.SessionID, typed(issued.Code))
+		require.NoError(t, err)
+		assert.Equal(t, "digits@example.com", contact)
+	}
+}
+
+// TestVerify_MalformedCodesSpendNoAttempt checks that a code that cannot be
+// right is refused before an attempt is counted.
+func TestVerify_MalformedCodesSpendNoAttempt(t *testing.T) {
+	store, _ := newTestStore(t, Settings{AttemptsPerCode: 1, ContactAttemptsPerHour: 1})
+	issued := issue(t, store, "careful@example.com")
+	for _, malformed := range []string{"", "12345", "1234567", "abcdef", "12 456"} {
+		_, err := store.Verify(context.Background(), issued.SessionID, malformed)
+		assert.ErrorIs(t, err, ErrInvalidCode, "%q", malformed)
+	}
+	contact, err := store.Verify(context.Background(), issued.SessionID, issued.Code)
+	require.NoError(t, err, "the only attempt is still there")
+	assert.Equal(t, "careful@example.com", contact)
+}
+
+func mapDigits(s string, zero rune) string {
+	out := []rune{}
+	for _, r := range s {
+		out = append(out, zero+(r-'0'))
+	}
+	return string(out)
+}

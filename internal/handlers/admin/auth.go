@@ -10,9 +10,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/totp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -189,6 +191,9 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: OTP and TOTP are required", nil)
 		return
 	}
+	// An authenticator code typed in Persian digits is the same code (#197);
+	// the emailed code is normalized by the OTP store.
+	req.TOTP, _ = contact.Code(req.TOTP, totp.Digits)
 
 	// The emailed code is checked first and ends the session, so every
 	// guess of the authenticator code needs a new emailed code.
