@@ -39,7 +39,7 @@ func startInstance(t *testing.T, ctx context.Context, env *e2eEnv) *runningInsta
 	t.Helper()
 	router, err := newEngine()
 	require.NoError(t, err)
-	require.NoError(t, RouteHandler(router, env.handlers))
+	routeForTest(t, router, env.handlers)
 	released := make(chan struct{})
 	var once sync.Once
 	inst := &runningInstance{

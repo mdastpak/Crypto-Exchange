@@ -26,7 +26,7 @@ func TestRateLimits_PerRouteGroup(t *testing.T) {
 	limits.Auth.OTPRequestsPerHour = 2
 	router, err := newEngine()
 	require.NoError(t, err)
-	require.NoError(t, RouteHandler(router, env.handlers))
+	routeForTest(t, router, env.handlers)
 
 	send := func(method, path, ip string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
