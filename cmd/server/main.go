@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
@@ -33,6 +34,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -330,14 +332,14 @@ func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers) *ou
 }
 
 // newDelistingScheduler returns the scheduler that applies the steps of
-// delistings that are due (#216). Every instance runs one; each step is
+// delistings (#216) and the phases of migrations (#215) that are due. Every instance runs one; each step is
 // applied once. After a change of the public view, it drops the cached
 // currency list and nudges the relay, which publishes the currency event
 // and drops the list again.
-func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandlers, relay *outbox.Relay) *delisting.Scheduler {
+func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandlers, relay *outbox.Relay) *currencies.Scheduler {
 	interval := time.Duration(config.Config.Delisting.IntervalSeconds) * time.Second
-	return delisting.NewScheduler(services.Postgres.DB, interval, func(ctx context.Context, changes []delisting.Change) {
-		if !slices.ContainsFunc(changes, func(c delisting.Change) bool { return c.Public }) {
+	return currencies.NewScheduler(services.Postgres.DB, interval, func(ctx context.Context, changes []currencies.Change) {
+		if !slices.ContainsFunc(changes, func(c currencies.Change) bool { return c.Public }) {
 			return
 		}
 		if catalog := handlers.Public.Currencies; catalog != nil {
@@ -346,7 +348,7 @@ func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandle
 			}
 		}
 		relay.Nudge()
-	})
+	}, delisting.Advance, rebrand.Advance)
 }
 
 // adminSignInKey decodes admin.totp_key. Without it, admin sign-in is
@@ -710,6 +712,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)
+		adminGroup.DELETE("/currencies/:hk/symbols/:symbol", ih.Admin.ReleaseSymbol)
+		adminGroup.GET("/currencies/:hk/migrations", ih.Admin.ListMigrations)
+		adminGroup.POST("/currencies/:hk/migrations", ih.Admin.ScheduleMigration)
+		adminGroup.POST("/currencies/:hk/migrations/:id/cancel", ih.Admin.CancelMigration)
 		adminGroup.GET("/currencies/:hk/delistings", ih.Admin.ListDelistings)
 		adminGroup.POST("/currencies/:hk/delistings", ih.Admin.ScheduleDelisting)
 		adminGroup.POST("/currencies/:hk/delistings/:id/cancel", ih.Admin.CancelDelisting)

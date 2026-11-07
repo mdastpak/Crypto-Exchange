@@ -401,7 +401,7 @@ func (c *Catalog) warn(format string, args ...interface{}) {
 
 func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+LifecycleColumns+` FROM currencies c
+		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+DetailColumns+` FROM currencies c
 		WHERE c.status = 'approved' AND c.deleted_at IS NULL ORDER BY c.id`)
 	if err != nil {
 		return nil, err
@@ -413,7 +413,7 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 		var currency models.Currency
 		var info []byte
 		var created, updated sql.NullTime
-		var lifecycle LifecycleScan
+		var lifecycle DetailScan
 		if err := rows.Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated}, lifecycle.Dest()...)...); err != nil {
 			return nil, err
 		}
@@ -421,7 +421,7 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 			return nil, fmt.Errorf("currency %s: %w", currency.HK, err)
 		}
 		var err error
-		if currency.Lifecycle, err = lifecycle.Lifecycle(); err != nil {
+		if err = lifecycle.Apply(&currency); err != nil {
 			return nil, fmt.Errorf("currency %s: %w", currency.HK, err)
 		}
 		currency.CreatedAt = timestamp(created)

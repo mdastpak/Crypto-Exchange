@@ -75,6 +75,7 @@ An error response contains only a fixed message for each error. Internal details
 | `method_not_allowed` | `405` | The path exists with other methods |
 | `conflict` | `409` | The request conflicts with the current state, without a more specific code |
 | `duplicate_symbol`, `duplicate_contract` | `409` | Another currency has this symbol or contract; `info.field` names the field |
+| `symbol_reserved` | `409` | The symbol is a [previous symbol](#previous-symbols) of another currency, until an administrator releases it |
 | `session_limit_reached` | `409` | The user has the most active sessions allowed; `info` lists them with a challenge. See [Session limit](#session-limit) |
 | `favorites_limit_reached` | `409` | The user has `favorites.max_per_user` favorites; `info.max_favorites` says how many |
 | `order_mismatch` | `409` | A reorder of the favorites does not name each favorite of the kind once |
@@ -423,7 +424,8 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
     "symbol": "USDT",
     "if_fiat": false,
     "is_token": true,
-    "contract": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    "contract": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    "logo_url": "https://example.com/logos/usdt.svg"
   },
   "created_at": "2026-11-06T09:00:00Z",
   "updated_at": "2026-11-06T09:30:00Z",
@@ -437,7 +439,7 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
 }
 ```
 
-`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. `lifecycle` says where the currency is in a [delisting](#delistings) and what users may do with it now; `next`, when present, is the next scheduled step. The field name `if_fiat` is a known typo for `is_fiat`. It will be renamed together with the move from `currencies` to the assets table ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), so that clients change only once.
+`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. `logo_url`, optional, is an https URL of at most 2048 characters. `lifecycle` says where the currency is in a [delisting](#delistings) and what users may do with it now, with what a [migration](#currency-migrations) pauses; `next`, when present, is the next scheduled step. `previous_symbols`, when present, are the symbols the currency had before a rebrand, newest first. `migration`, on the source of a migration from its announcement on, has its `id`, `target_hk`, `phase`, `forced`, `ratio`, and `next` phase, so that clients can show a banner. The field name `if_fiat` is a known typo for `is_fiat`. It will be renamed together with the move from `currencies` to the assets table ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), so that clients change only once.
 
 ### `GET /public/currencies`
 
@@ -445,8 +447,8 @@ Lists the public currencies, oldest first by default, a page at a time, as in [P
 
 | Parameter | Selects |
 | --- | --- |
-| `q` | Text in the symbol, the English name, or the Persian name. Without `sort`, the currencies whose symbol is `q` come first, then those whose symbol starts with it, then the rest. |
-| `symbol` | Symbols, in any case, repeated or comma-separated: `symbol=btc,eth` |
+| `q` | Text in the symbol, a previous symbol, the English name, or the Persian name. Without `sort`, the currencies whose symbol is `q` come first, then those whose symbol starts with it or whose previous symbol is `q`, then the rest. |
+| `symbol` | Symbols, in any case, repeated or comma-separated: `symbol=btc,eth`. A previous symbol finds the currency too. |
 | `en_name`, `fa_name` | Text in the name |
 | `contract` | The contract address, exactly, in any case |
 | `has_contract` | `true` or `false` |
@@ -509,7 +511,7 @@ Errors:
 
 - `400` with the message `Invalid input: Please check the provided data format.`: the body is not a JSON object of this shape.
 - `400` with the message `Validation failed`: `info.errors` names each invalid field, for example `{"errors": {"info.symbol": "must be 2 to 15 upper-case letters or digits"}}`.
-- `409`: the symbol or the contract belongs to another currency. `info` holds a stable code and the field: `{"code": "duplicate_symbol", "field": "info.symbol"}`, or `duplicate_contract` and `info.contract`.
+- `409`: the symbol or the contract belongs to another currency. `info` holds a stable code and the field: `{"code": "duplicate_symbol", "field": "info.symbol"}`, or `duplicate_contract` and `info.contract`. A symbol that another currency had before a rebrand answers `symbol_reserved`; see [Previous symbols](#previous-symbols).
 
 ### `GET /admin/currencies` (admin)
 
@@ -595,6 +597,59 @@ Events and the cache describe what public clients can see, so they follow the vi
 | The lifecycle of an approved currency changes: a delisting is scheduled or cancelled, a step applies, or a capability is overridden | Replaced | `update` with the currency's `info` and its new `lifecycle` |
 
 An event without `lifecycle` leaves the lifecycle as it was.
+
+### Previous symbols
+
+A rebrand that changes the symbol, as MATIC became POL, keeps the symbol before as a previous symbol of the currency ([#215](https://github.com/mdastpak/Crypto-Exchange/issues/215)). The lists find the currency by it, and no other currency can take it: a create or an update with it answers `409 symbol_reserved`. A currency can take back a symbol it had. A database trigger keeps the symbols in the transaction of every change, and their primary key makes a symbol name one currency at a time under concurrent changes on any instance.
+
+`DELETE /admin/currencies/{hk}/symbols/{symbol}` (admin) releases a previous symbol, so that another currency can take it, as the new LUNA took LUNA from the renamed LUNC. Response `200`. Errors: `404` when it is not a previous symbol of the currency, and `409 symbol_current` for the current one. Audited as `currency.symbol_release`.
+
+The history of a currency, each change with its fields before and after, is in the audit log: `GET /admin/audit?target_type=currency&target_id={hk}`.
+
+## Currency migrations
+
+A migration moves the holders of one or more source currencies to one target, each source at its ratio: the units of the target that one unit of the source becomes ([#215](https://github.com/mdastpak/Crypto-Exchange/issues/215)). It models a rebrand with a new token (MATIC to POL, 1), a redenomination (100 LEND = 1 AAVE, 0.01; 1 MKR = 24,000 SKY, 24000), and a merger (AGIX and OCEAN into FET, each at its own ratio). Ratios are decimals with at most 18 digits after the point, never floats.
+
+A migration goes through scheduled phases, each applied at its time by the scheduler of every instance, exactly once, as the steps of a [delisting](#delistings) are:
+
+| Phase | A forced migration | An optional migration |
+| --- | --- | --- |
+| `announced` | The sources show the migration; everything is allowed | The same |
+| `deposits_paused` | Deposits and withdrawals of the sources stop | Not allowed |
+| `trading_halted` | Trading and conversions of the sources stop too | Not allowed |
+| `converting` | Balances are converted | The conversion is offered |
+| `completed` | The sources leave the lists | The sources stay |
+
+The phases narrow the capabilities of the sources, which an operation checks, and refuse with `403 currency_operation_disabled`, whose `info.migration` names the migration. The conversion of balances, idempotent per migration and account, rounded down to the precision of the target with the dust recorded, and the conversion of late deposits of an old token, come with the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)); the notices to holders with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
+
+### `POST /admin/currencies/{hk}/migrations` (admin)
+
+`hk` is the target.
+
+```json
+{
+  "sources": [{ "currency_hk": "<hk of LEND>", "ratio": "0.01" }],
+  "forced": true,
+  "steps": [
+    { "phase": "announced", "at": "2026-12-01T00:00:00Z" },
+    { "phase": "deposits_paused", "at": "2026-12-08T00:00:00Z" },
+    { "phase": "trading_halted", "at": "2026-12-08T00:10:00Z" },
+    { "phase": "converting", "at": "2026-12-08T01:00:00Z" },
+    { "phase": "completed", "at": "2026-12-08T06:00:00Z" }
+  ],
+  "announcement_url": "https://example.com/news/lend-to-aave"
+}
+```
+
+The steps follow the order of the phases, each at a later time, and start with `announced` and end with `completed`. An optional migration takes no pause phases. The target and the sources are approved currencies, and a source is in one open migration at a time. Response `201` with the migration. Errors: `400` (`validation_failed`), and `409` with `not_listed`, `source_in_migration`, or `target_in_migration`. Audited as `currency.migration_schedule`, and each phase as `currency.migration_phase`.
+
+### `GET /admin/currencies/{hk}/migrations` (admin)
+
+The migrations that the currency is the target or a source of, newest first, with their sources, phases, and when each applied.
+
+### `POST /admin/currencies/{hk}/migrations/{id}/cancel` (admin)
+
+Cancels a migration into `hk` before it converts: the phases that are left do not apply, and the sources get back what the phases paused. The optional body `{"version": 3}` refuses a cancel based on another version with `409 version_conflict`. Other errors: `404`, and `409` with `migration_not_open` for a completed or cancelled migration, or `migration_irreversible` from `converting` on. Audited as `currency.migration_cancel`.
 
 ## Delistings
 

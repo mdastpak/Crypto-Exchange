@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ var (
 
 const (
 	maxCurrencyNameLength  = 100
+	maxLogoURL             = 2048
 	maxCurrencyRequestBody = 64 << 10
 )
 
@@ -45,6 +47,7 @@ type currencyInfoFields struct {
 	Symbol   *string `json:"symbol"`
 	IsToken  *bool   `json:"is_token"`
 	Contract *string `json:"contract"`
+	LogoURL  *string `json:"logo_url"`
 }
 
 // currencyRequest is the body of POST /admin/currencies and
@@ -104,6 +107,7 @@ func (req currencyRequest) apply(status string, info models.CurrencyInfo) (strin
 	setText(&info.EnName, req.Info.EnName)
 	setText(&info.FaName, req.Info.FaName)
 	setText(&info.Contract, req.Info.Contract)
+	setText(&info.LogoURL, req.Info.LogoURL)
 	if req.Info.Symbol != nil {
 		info.Symbol = strings.ToUpper(strings.TrimSpace(*req.Info.Symbol))
 	}
@@ -141,6 +145,12 @@ func validateCurrency(status string, info models.CurrencyInfo) fieldErrors {
 		errs["info.contract"] = "is required for a token"
 	case info.Contract != "" && !contractPattern.MatchString(info.Contract):
 		errs["info.contract"] = "must be 1 to 128 letters, digits, or ':', '_', '.', '-'"
+	}
+	if info.LogoURL != "" {
+		u, err := url.Parse(info.LogoURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || len(info.LogoURL) > maxLogoURL {
+			errs["info.logo_url"] = "must be an https URL of at most 2048 characters"
+		}
 	}
 	if info.IfFiat && info.IsToken {
 		errs["info.is_token"] = "must be false for a fiat currency"
@@ -183,6 +193,14 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 			field, code, what := "info.symbol", "duplicate_symbol", "symbol"
 			if strings.Contains(pgErr.ConstraintName, "contract") {
 				field, code, what = "info.contract", "duplicate_contract", "contract"
+			}
+			if pgErr.ConstraintName == "currency_symbols_reserved" {
+				// A previous symbol of another currency, after a rebrand
+				// (#215).
+				helpers.SendError(c, http.StatusConflict, "symbol_reserved",
+					"This symbol was the symbol of another currency, which keeps it until an administrator releases it.",
+					gin.H{"code": "symbol_reserved", "field": field})
+				return
 			}
 			// The indexes include deleted currencies, so that a symbol keeps
 			// naming one hk for clients that cached it (#196): a deleted one

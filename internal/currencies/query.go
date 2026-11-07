@@ -206,13 +206,17 @@ func (q Query) Match(c models.Currency) bool {
 	if q.HKs != nil && !q.HKs[c.HK] {
 		return false
 	}
+	// A previous symbol finds the currency too, so that a search for MATIC
+	// finds POL after the rebrand (#215).
 	if q.Text != "" {
 		if !strings.Contains(Normalize(c.Info.Symbol), q.Text) && !strings.Contains(Normalize(c.Info.EnName), q.Text) &&
-			!strings.Contains(Normalize(c.Info.FaName), q.Text) {
+			!strings.Contains(Normalize(c.Info.FaName), q.Text) &&
+			!slices.ContainsFunc(c.PreviousSymbols, func(s string) bool { return strings.Contains(Normalize(s), q.Text) }) {
 			return false
 		}
 	}
-	if len(q.Symbols) > 0 && !slices.Contains(q.Symbols, strings.ToUpper(c.Info.Symbol)) {
+	if len(q.Symbols) > 0 && !slices.Contains(q.Symbols, strings.ToUpper(c.Info.Symbol)) &&
+		!slices.ContainsFunc(c.PreviousSymbols, func(s string) bool { return slices.Contains(q.Symbols, strings.ToUpper(s)) }) {
 		return false
 	}
 	if q.EnName != "" && !strings.Contains(Normalize(c.Info.EnName), q.EnName) {
@@ -318,7 +322,8 @@ func (q Query) position(c models.Currency) position {
 		switch {
 		case symbol == q.Text:
 			p.Rank = 0
-		case strings.HasPrefix(symbol, q.Text):
+		case strings.HasPrefix(symbol, q.Text),
+			slices.ContainsFunc(c.PreviousSymbols, func(s string) bool { return Normalize(s) == q.Text }):
 			p.Rank = 1
 		default:
 			p.Rank = 2

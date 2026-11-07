@@ -365,8 +365,8 @@ func TestScheduler_RunsTheStepsThatAreDue(t *testing.T) {
 	hk := insertCurrency(t, db, "RUN", "approved")
 	_, _, err := delisting.Schedule(ctx, db, hk, plan(time.Now(), fullDelisting[0]), origin())
 	require.NoError(t, err)
-	got := make(chan []delisting.Change, 1)
-	s := delisting.NewScheduler(db, 50*time.Millisecond, func(_ context.Context, changes []delisting.Change) { got <- changes })
+	got := make(chan []currencies.Change, 1)
+	s := currencies.NewScheduler(db, 50*time.Millisecond, func(_ context.Context, changes []currencies.Change) { got <- changes }, delisting.Advance)
 	s.Start()
 	defer func() { require.NoError(t, s.Stop(ctx)) }()
 	select {

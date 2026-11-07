@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -144,28 +145,78 @@ func Listed(c models.Currency) bool {
 	return c.Lifecycle == nil || c.Lifecycle.Capabilities.Listed
 }
 
-// LifecycleColumns are the columns that ScanLifecycle reads, for a query of
-// the currencies table under the alias c.
-const LifecycleColumns = `c.lifecycle,
+// DetailColumns are the columns of a currency beyond its row, which
+// DetailScan reads, for a query of the currencies table under the alias c:
+// the lifecycle with its overrides and next step, and the previous symbols.
+const DetailColumns = `c.lifecycle,
 	COALESCE((SELECT json_object_agg(o.capability, o.allowed) FROM currency_capability_overrides o
 		WHERE o.currency_hk = c.hk), '{}'::json),
 	(SELECT json_build_object('state', s.state, 'at', s.scheduled_at)
 		FROM currency_delisting_steps s JOIN currency_delistings d ON d.hk = s.delisting_hk
 		WHERE d.currency_hk = c.hk AND d.status = 'scheduled' AND s.applied_at IS NULL
-		ORDER BY s.scheduled_at LIMIT 1)`
+		ORDER BY s.scheduled_at LIMIT 1),
+	COALESCE((SELECT string_agg(p.symbol, ',' ORDER BY p.created_at DESC, p.symbol) FROM currency_symbols p
+		WHERE p.currency_hk = c.hk AND NOT p.current), ''),
+	(SELECT json_build_object('id', m.hk, 'target_hk', m.target_hk, 'phase', m.phase, 'forced', m.forced,
+			'ratio', trim_scale(src.ratio)::TEXT,
+			'next', (SELECT json_build_object('phase', ph.phase, 'at', ph.scheduled_at) FROM currency_migration_phases ph
+				WHERE ph.migration_hk = m.hk AND ph.applied_at IS NULL ORDER BY ph.scheduled_at LIMIT 1))
+		FROM currency_migration_sources src JOIN currency_migrations m ON m.hk = src.migration_hk
+		WHERE src.currency_hk = c.hk AND m.phase NOT IN ('scheduled', 'cancelled')
+		ORDER BY m.created_at DESC LIMIT 1)`
 
-// LifecycleScan holds the LifecycleColumns of a row, for Scan.
-type LifecycleScan struct {
+// DetailScan holds the DetailColumns of a row, for Scan.
+type DetailScan struct {
 	state     string
 	overrides []byte
 	next      []byte
+	previous  string
+	migration []byte
 }
 
-// Dest returns the scan destinations of the LifecycleColumns.
-func (s *LifecycleScan) Dest() []any { return []any{&s.state, &s.overrides, &s.next} }
+// Dest returns the scan destinations of the DetailColumns.
+func (s *DetailScan) Dest() []any {
+	return []any{&s.state, &s.overrides, &s.next, &s.previous, &s.migration}
+}
 
-// Lifecycle decodes the scanned columns.
-func (s *LifecycleScan) Lifecycle() (*models.CurrencyLifecycle, error) {
+// Apply sets the details of the scanned row on c.
+func (s *DetailScan) Apply(c *models.Currency) error {
+	l, err := s.Lifecycle()
+	if err != nil {
+		return err
+	}
+	c.Lifecycle = l
+	c.Migration, err = s.Migration()
+	if err != nil {
+		return err
+	}
+	c.PreviousSymbols = nil
+	if s.previous != "" {
+		c.PreviousSymbols = strings.Split(s.previous, ",")
+	}
+	return nil
+}
+
+// Migration decodes the migration of the scanned row, nil when it is the
+// source of none.
+func (s *DetailScan) Migration() (*models.CurrencyMigration, error) {
+	if len(s.migration) == 0 {
+		return nil, nil
+	}
+	var m models.CurrencyMigration
+	if err := json.Unmarshal(s.migration, &m); err != nil {
+		return nil, fmt.Errorf("invalid migration: %w", err)
+	}
+	return &m, nil
+}
+
+// Lifecycle decodes the scanned columns: the capabilities of the lifecycle
+// state, narrowed by the phase of a migration, with the overrides.
+func (s *DetailScan) Lifecycle() (*models.CurrencyLifecycle, error) {
+	m, err := s.Migration()
+	if err != nil {
+		return nil, err
+	}
 	overrides := map[Capability]bool{}
 	if err := json.Unmarshal(s.overrides, &overrides); err != nil {
 		return nil, fmt.Errorf("invalid capability overrides: %w", err)
@@ -177,7 +228,49 @@ func (s *LifecycleScan) Lifecycle() (*models.CurrencyLifecycle, error) {
 			return nil, fmt.Errorf("invalid next step: %w", err)
 		}
 	}
-	return LifecycleOf(Lifecycle(s.state), overrides, next), nil
+	l := LifecycleOf(Lifecycle(s.state), nil, next)
+	if m != nil {
+		l.Capabilities = narrow(l.Capabilities, MigrationCapabilities(m.Phase, m.Forced))
+	}
+	for k, allowed := range overrides {
+		if p := capability(&l.Capabilities, k); p != nil {
+			*p = allowed
+		}
+	}
+	return l, nil
+}
+
+// narrow allows what both a and b allow.
+func narrow(a, b models.CurrencyCapabilities) models.CurrencyCapabilities {
+	for _, k := range Capabilities {
+		if p := capability(&a, k); p != nil {
+			*p = *p && Allows(b, k)
+		}
+	}
+	return a
+}
+
+// MigrationCapabilities returns what the source of a migration allows in a
+// phase. A forced migration pauses deposits and withdrawals of its sources,
+// then halts their trading and conversions, and retires them from the lists
+// once completed. An optional one changes nothing: the source stays, and the
+// conversion is offered.
+func MigrationCapabilities(phase string, forced bool) models.CurrencyCapabilities {
+	all := StateCapabilities(LifecycleActive)
+	if !forced {
+		return all
+	}
+	switch phase {
+	case "announced":
+		return all
+	case "deposits_paused":
+		all.Deposit, all.Withdraw = false, false
+		return all
+	case "trading_halted", "converting":
+		return models.CurrencyCapabilities{Listed: true}
+	default:
+		return models.CurrencyCapabilities{}
+	}
 }
 
 // Querier runs a query, on a database or in a transaction.
@@ -193,19 +286,27 @@ var ErrNotFound = errors.New("currency not found")
 // a delisting, which takes an update lock, waits for the transaction: a
 // flow that checked a capability finishes before the capability changes.
 func ReadLifecycle(ctx context.Context, q Querier, currencyHK string, lock bool) (*models.CurrencyLifecycle, error) {
-	query := `SELECT ` + LifecycleColumns + ` FROM currencies c WHERE c.hk = $1 AND c.deleted_at IS NULL`
+	var c models.Currency
+	if err := readDetails(ctx, q, currencyHK, lock, &c); err != nil {
+		return nil, err
+	}
+	return c.Lifecycle, nil
+}
+
+func readDetails(ctx context.Context, q Querier, currencyHK string, lock bool, c *models.Currency) error {
+	query := `SELECT ` + DetailColumns + ` FROM currencies c WHERE c.hk = $1 AND c.deleted_at IS NULL`
 	if lock {
 		query += ` FOR SHARE OF c`
 	}
-	var s LifecycleScan
+	var s DetailScan
 	err := q.QueryRowContext(ctx, query, currencyHK).Scan(s.Dest()...)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to read the lifecycle of the currency: %w", err)
+		return fmt.Errorf("failed to read the lifecycle of the currency: %w", err)
 	}
-	return s.Lifecycle()
+	return s.Apply(c)
 }
 
 // CodeCurrencyOperationDisabled is the error code of a refusal by a
@@ -218,6 +319,8 @@ type Refusal struct {
 	CurrencyHK string
 	Capability Capability
 	Lifecycle  *models.CurrencyLifecycle
+	// Migration is the migration of the currency, when it has one.
+	Migration *models.CurrencyMigration
 }
 
 func (r *Refusal) Error() string {
@@ -231,12 +334,12 @@ func Check(ctx context.Context, q Querier, currencyHK string, k Capability, lock
 	if !slices.Contains(Capabilities, k) {
 		return fmt.Errorf("unknown capability %q", k)
 	}
-	l, err := ReadLifecycle(ctx, q, currencyHK, lock)
-	if err != nil {
+	var c models.Currency
+	if err := readDetails(ctx, q, currencyHK, lock, &c); err != nil {
 		return err
 	}
-	if !Allows(l.Capabilities, k) {
-		return &Refusal{CurrencyHK: currencyHK, Capability: k, Lifecycle: l}
+	if !Allows(c.Lifecycle.Capabilities, k) {
+		return &Refusal{CurrencyHK: currencyHK, Capability: k, Lifecycle: c.Lifecycle, Migration: c.Migration}
 	}
 	return nil
 }
@@ -251,13 +354,35 @@ func SendRefusal(c *gin.Context, err error) bool {
 	}
 	info := gin.H{"currency_hk": r.CurrencyHK, "capability": r.Capability, "lifecycle": r.Lifecycle.State}
 	message := "This operation is not available for this currency now."
+	if r.Migration != nil {
+		info["migration"] = gin.H{"id": r.Migration.ID, "target_hk": r.Migration.TargetHK, "phase": r.Migration.Phase}
+	}
 	switch Lifecycle(r.Lifecycle.State) {
 	case LifecycleActive:
+		if r.Migration != nil && r.Migration.Forced {
+			message = "This currency is migrating to another currency, and this operation is paused."
+		}
 	case LifecycleFrozen, LifecycleDelisted:
 		message = "This currency is delisted, and no operation is available for it."
 	default:
 		message = "This currency is being delisted, and this operation is no longer available for it."
 	}
 	helpers.SendError(c, http.StatusForbidden, CodeCurrencyOperationDisabled, message, info)
+	return true
+}
+
+// ValidDecimal reports whether s is a plain positive-or-zero decimal number,
+// as NUMERIC(38, 18) holds it: digits, with at most one point and at most
+// 18 digits after it, and at most 20 before.
+func ValidDecimal(s string) bool {
+	whole, frac, _ := strings.Cut(s, ".")
+	if whole == "" || len(whole) > 20 || len(frac) > 18 || strings.Contains(s, ".") && frac == "" {
+		return false
+	}
+	for _, r := range whole + frac {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
 	return true
 }

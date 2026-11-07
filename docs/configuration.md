@@ -232,7 +232,7 @@ Writing to the database is not enough to create an administrator: changing `user
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `interval_seconds` | `30` | From 1 to 3600. How often the scheduler of each instance applies the steps of [delistings](api.md#delistings) that are due, so a step applies at most this late. Every instance runs it; each step is applied once. |
+| `interval_seconds` | `30` | From 1 to 3600. How often the scheduler of each instance applies the steps of [delistings](api.md#delistings) and the phases of [currency migrations](api.md#currency-migrations) that are due, so a step applies at most this late. Every instance runs it; each step is applied once. |
 
 ### `keys`
 

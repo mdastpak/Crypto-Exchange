@@ -208,7 +208,7 @@ func (p *Plan) Validate(now time.Time) map[string]string {
 				errs["fixed_price"] = "is only for a fixed price"
 			}
 		case PriceFixed:
-			if f, err := strconv.ParseFloat(p.FixedPrice, 64); err != nil || f <= 0 || !decimal(p.FixedPrice) {
+			if f, err := strconv.ParseFloat(p.FixedPrice, 64); err != nil || f <= 0 || !currencies.ValidDecimal(p.FixedPrice) {
 				errs["fixed_price"] = "must be a positive decimal number"
 			}
 		default:
@@ -239,31 +239,8 @@ func (p *Plan) Validate(now time.Time) map[string]string {
 	return errs
 }
 
-// decimal reports whether s is a plain decimal number: digits, with at most
-// one point, and at most 18 digits after it.
-func decimal(s string) bool {
-	point := -1
-	for i, r := range s {
-		switch {
-		case r >= '0' && r <= '9':
-		case r == '.' && point < 0:
-			point = i
-		default:
-			return false
-		}
-	}
-	return s != "" && s != "." && (point < 0 || len(s)-point-1 <= 18) && len(s) <= 40
-}
-
-// Change is a change of the lifecycle of a currency, which the caller
-// follows, after the commit, by dropping the cached currency list and
-// nudging the outbox relay.
-type Change struct {
-	CurrencyHK string
-	// Public reports whether the change is in the public view, and so has
-	// an event in the outbox.
-	Public bool
-}
+// Change is a committed change of the lifecycle of a currency.
+type Change = currencies.Change
 
 // currency is the locked row of a currency.
 type currency struct {
@@ -641,7 +618,7 @@ type querier interface {
 }
 
 const columns = `hk, currency_hk, kind, status, settlement, settlement_currency_hk, COALESCE(price_source, ''),
-	fixed_price::TEXT, claim_days, COALESCE(announcement_url, ''), COALESCE(note, ''), created_by, created_at,
+	trim_scale(fixed_price)::TEXT, claim_days, COALESCE(announcement_url, ''), COALESCE(note, ''), created_by, created_at,
 	cancelled_at, cancelled_by, completed_at, version`
 
 // List returns the delistings of a currency, newest first, with their
@@ -680,10 +657,6 @@ func list(ctx context.Context, q querier, query string, args ...any) ([]Delistin
 			n := int(claim.Int64)
 			d.ClaimDays = &n
 		}
-		if d.FixedPrice != nil {
-			trimmed := trimDecimal(*d.FixedPrice)
-			d.FixedPrice = &trimmed
-		}
 		d.Steps = []Step{}
 		out = append(out, d)
 	}
@@ -711,16 +684,4 @@ func list(ctx context.Context, q querier, query string, args ...any) ([]Delistin
 		}
 	}
 	return out, nil
-}
-
-// trimDecimal drops the trailing zeros of a NUMERIC, which PostgreSQL pads
-// to its scale.
-func trimDecimal(s string) string {
-	for len(s) > 1 && s[len(s)-1] == '0' && slices.Contains([]byte(s), '.') {
-		s = s[:len(s)-1]
-	}
-	if len(s) > 1 && s[len(s)-1] == '.' {
-		s = s[:len(s)-1]
-	}
-	return s
 }

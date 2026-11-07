@@ -512,9 +512,9 @@ func (h *AdminHandler) GetCurrency(c *gin.Context) {
 	var currency models.Currency
 	var info []byte
 	var created, updated, deleted sql.NullTime
-	var lifecycle currencies.LifecycleScan
+	var lifecycle currencies.DetailScan
 	err = h.PostgresDB.DB.QueryRowContext(ctx,
-		"SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, "+currencies.LifecycleColumns+" FROM currencies c WHERE c.hk = $1", id.String(),
+		"SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, "+currencies.DetailColumns+" FROM currencies c WHERE c.hk = $1", id.String(),
 	).Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &currency.Version, &created, &updated, &deleted}, lifecycle.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
@@ -524,7 +524,7 @@ func (h *AdminHandler) GetCurrency(c *gin.Context) {
 		err = json.Unmarshal(info, &currency.Info)
 	}
 	if err == nil {
-		currency.Lifecycle, err = lifecycle.Lifecycle()
+		err = lifecycle.Apply(&currency)
 	}
 	if err != nil {
 		log.Printf("Error reading currency %s: %v", id, err)
@@ -580,7 +580,7 @@ func (h *AdminHandler) currencyEvent(c *gin.Context, action, hk string, changes 
 func currencyFields(status string, info models.CurrencyInfo) map[string]interface{} {
 	return map[string]interface{}{
 		"status": status, "en_name": info.EnName, "fa_name": info.FaName, "symbol": info.Symbol,
-		"if_fiat": info.IfFiat, "is_token": info.IsToken, "contract": info.Contract,
+		"if_fiat": info.IfFiat, "is_token": info.IsToken, "contract": info.Contract, "logo_url": info.LogoURL,
 	}
 }
 
