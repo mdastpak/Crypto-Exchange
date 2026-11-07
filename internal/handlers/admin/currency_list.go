@@ -8,24 +8,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
-
-// listableStatuses are the statuses that the admin list can filter by:
-// those an administrator sets, and deleted.
-var listableStatuses = map[string]bool{
-	models.CurrencyStatusApproved: true, models.CurrencyStatusPending: true,
-	models.CurrencyStatusSuspend: true, models.CurrencyStatusDeleted: true,
-}
 
 // CurrencyPage is a page of currencies. It describes
 // pagination.Page[models.Currency] in the OpenAPI document, which swag
@@ -36,39 +27,27 @@ type CurrencyPage struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-// currencyFilter selects currencies. An empty field selects any value.
-type currencyFilter struct {
-	Status          string
-	Symbol          string
-	IsToken, IfFiat *bool
-}
-
-// currencyPosition is the cursor of the admin list: the creation time and
-// the hk of the last currency of a page. Both are public to administrators.
-type currencyPosition struct {
-	CreatedAt time.Time `json:"c"`
-	HK        string    `json:"h"`
-}
-
-// listedCurrency is a currency of the list with its exact creation time,
-// which the cursor needs and the response rounds to the second.
-type listedCurrency struct {
-	models.Currency
-	created time.Time
-}
-
 // ListCurrencies returns the currencies of every status, newest first, a
 // page at a time.
 //
 // @Summary List currencies
-// @Description Every currency, whatever its status, deleted ones included, newest first, with its version. Read from the database, not the public cache. The filters are optional and combine. Pages follow the pagination convention of docs/api.md.
+// @Description Every currency, whatever its status, deleted ones included, newest first by default, with its version. Read from the database, not the public cache. The filters are those of GET /public/currencies, plus status; they are optional and combine, and an unknown parameter is refused. Pages follow the pagination convention of docs/api.md.
 // @Tags admin currencies
 // @Produce json
 // @Security BearerAuth
-// @Param status query string false "The status" Enums(approved, pending, suspend, deleted)
-// @Param symbol query string false "The symbol, in any case"
+// @Param status query []string false "Statuses, repeated or comma-separated" collectionFormat(csv) Enums(approved, pending, suspend, deleted)
+// @Param q query string false "Text in the symbol, English name, or Persian name, normalized; symbols that match it come first" maxLength(64)
+// @Param symbol query []string false "Symbols, in any case, repeated or comma-separated" collectionFormat(csv)
+// @Param en_name query string false "Text in the English name, in any case" maxLength(64)
+// @Param fa_name query string false "Text in the Persian name, with Arabic letters and Persian or Arabic digits matching the Persian ones" maxLength(64)
+// @Param contract query string false "The contract address, in any case" maxLength(128)
+// @Param has_contract query bool false "Only currencies with a contract, or only those without"
 // @Param is_token query bool false "Only tokens, or only currencies that are not"
 // @Param if_fiat query bool false "Only fiat currencies, or only those that are not"
+// @Param created_since query string false "Created at or after this RFC 3339 time" format(date-time)
+// @Param created_until query string false "Created before this RFC 3339 time" format(date-time)
+// @Param updated_since query string false "Updated at or after this RFC 3339 time" format(date-time)
+// @Param sort query string false "The order, with - for descending; the hk breaks ties" Enums(symbol, -symbol, en_name, -en_name, created_at, -created_at, updated_at, -updated_at)
 // @Param limit query int false "The number of currencies, 50 by default" minimum(1) maximum(200)
 // @Param cursor query string false "The next_cursor of the previous page"
 // @Success 200 {object} models.APIResponse{info=CurrencyPage}
@@ -79,21 +58,28 @@ type listedCurrency struct {
 // @Router /api/v1/admin/currencies [get]
 func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 	page, errs := pagination.Parse(c)
-	filter, filterErrs := parseCurrencyFilter(c)
+	query, queryErrs := currencies.ParseQuery(c.Request.URL.Query(), "status")
 	if errs == nil {
 		errs = map[string]string{}
 	}
-	for field, problem := range filterErrs {
+	for field, problem := range queryErrs {
 		errs[field] = problem
 	}
 	if len(errs) > 0 {
 		sendValidationErrors(c, errs)
 		return
 	}
+	query.DefaultDesc = true
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	result, err := listCurrencies(ctx, h.PostgresDB.DB, filter, page)
+	all, err := allCurrencies(ctx, h.PostgresDB.DB)
+	if err != nil {
+		log.Printf("Error listing currencies: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		return
+	}
+	result, err := query.Page(all, page)
 	if errors.Is(err, pagination.ErrInvalidCursor) {
 		sendValidationErrors(c, fieldErrors{"cursor": "is not a cursor of this list"})
 		return
@@ -106,124 +92,34 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "Currencies retrieved successfully.", result)
 }
 
-// parseCurrencyFilter reads the filters of the list, and the problems of
-// those that are invalid.
-func parseCurrencyFilter(c *gin.Context) (currencyFilter, fieldErrors) {
-	var f currencyFilter
-	errs := fieldErrors{}
-	if raw := c.Query("status"); raw != "" {
-		if !listableStatuses[raw] {
-			errs["status"] = "must be approved, pending, suspend, or deleted"
-		}
-		f.Status = raw
-	}
-	if raw := strings.TrimSpace(c.Query("symbol")); raw != "" {
-		if len(raw) > 15 {
-			errs["symbol"] = "must be at most 15 characters"
-		}
-		// Symbols are stored in upper case, as a create normalizes them.
-		f.Symbol = strings.ToUpper(raw)
-	}
-	for name, flag := range map[string]**bool{"is_token": &f.IsToken, "if_fiat": &f.IfFiat} {
-		if raw := c.Query(name); raw != "" {
-			v, err := strconv.ParseBool(raw)
-			if err != nil {
-				errs[name] = "must be true or false"
-				continue
-			}
-			*flag = &v
-		}
-	}
-	if len(errs) == 0 {
-		return f, nil
-	}
-	return f, errs
-}
-
-// listCurrencies returns a page of the currencies that f selects. The keyset
-// on (created_at, hk) uses idx_currencies_created_hk, so that every page
-// costs one range scan however deep it is, and any instance can serve the
-// next page, since the cursor holds the whole position.
-func listCurrencies(ctx context.Context, db *sql.DB, f currencyFilter, page pagination.Request) (pagination.Page[models.Currency], error) {
-	var where []string
-	var args []interface{}
-	add := func(condition string, values ...interface{}) {
-		numbers := make([]interface{}, len(values))
-		for i, v := range values {
-			args = append(args, v)
-			numbers[i] = len(args)
-		}
-		where = append(where, fmt.Sprintf(condition, numbers...))
-	}
-	if f.Status != "" {
-		add("status = $%d::status_enum", f.Status)
-	}
-	if f.Symbol != "" {
-		add("info->>'symbol' = $%d", f.Symbol)
-	}
-	if f.IsToken != nil {
-		add("(info->>'is_token')::boolean = $%d", *f.IsToken)
-	}
-	if f.IfFiat != nil {
-		add("(info->>'if_fiat')::boolean = $%d", *f.IfFiat)
-	}
-	var after currencyPosition
-	more, err := page.After(&after)
+// allCurrencies reads every currency, deleted ones included, for the
+// filters of the list to run over. Currencies created in the same second
+// are ordered by hk, so the order is total and a cursor never skips one.
+func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, hk, status, info, version, created_at, updated_at, deleted_at FROM currencies`)
 	if err != nil {
-		return pagination.Page[models.Currency]{}, err
-	}
-	if more {
-		if _, err := uuid.Parse(after.HK); err != nil || after.CreatedAt.IsZero() {
-			return pagination.Page[models.Currency]{}, pagination.ErrInvalidCursor
-		}
-		add("(created_at, hk) < ($%d, $%d)", after.CreatedAt, after.HK)
-	}
-
-	query := `SELECT id, hk, status, info, version, created_at, updated_at, deleted_at FROM currencies`
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
-	}
-	args = append(args, page.Limit+1)
-	query += fmt.Sprintf(" ORDER BY created_at DESC, hk DESC LIMIT $%d", len(args)) //nolint:gosec // G202: the query joins constant fragments and placeholder numbers only; every value is an argument.
-
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return pagination.Page[models.Currency]{}, err
+		return nil, err
 	}
 	defer rows.Close()
-	var listed []listedCurrency
+	var list []models.Currency
 	for rows.Next() {
-		var l listedCurrency
+		var cur models.Currency
 		var info []byte
-		var updated time.Time
+		var created, updated time.Time
 		var deleted sql.NullTime
-		if err := rows.Scan(&l.ID, &l.HK, &l.Status, &info, &l.Version, &l.created, &updated, &deleted); err != nil {
-			return pagination.Page[models.Currency]{}, err
+		if err := rows.Scan(&cur.ID, &cur.HK, &cur.Status, &info, &cur.Version, &created, &updated, &deleted); err != nil {
+			return nil, err
 		}
-		if err := json.Unmarshal(info, &l.Info); err != nil {
-			return pagination.Page[models.Currency]{}, fmt.Errorf("currency %s: %w", l.HK, err)
+		if err := json.Unmarshal(info, &cur.Info); err != nil {
+			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
 		}
-		l.CreatedAt = timestamp(sql.NullTime{Time: l.created, Valid: true})
-		l.UpdatedAt = timestamp(sql.NullTime{Time: updated, Valid: true})
+		cur.CreatedAt = timestamp(sql.NullTime{Time: created, Valid: true})
+		cur.UpdatedAt = timestamp(sql.NullTime{Time: updated, Valid: true})
 		if deleted.Valid {
 			at := timestamp(deleted)
-			l.DeletedAt = &at
+			cur.DeletedAt = &at
 		}
-		listed = append(listed, l)
+		list = append(list, cur)
 	}
-	if err := rows.Err(); err != nil {
-		return pagination.Page[models.Currency]{}, err
-	}
-
-	built, err := pagination.NewPage(listed, page, func(l listedCurrency) interface{} {
-		return currencyPosition{CreatedAt: l.created, HK: l.HK}
-	})
-	if err != nil {
-		return pagination.Page[models.Currency]{}, err
-	}
-	result := pagination.Page[models.Currency]{Items: make([]models.Currency, len(built.Items)), NextCursor: built.NextCursor}
-	for i, l := range built.Items {
-		result.Items[i] = l.Currency
-	}
-	return result, nil
+	return list, rows.Err()
 }

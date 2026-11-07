@@ -20,11 +20,13 @@ func listedSymbols(t *testing.T, w *httptest.ResponseRecorder) []string {
 	t.Helper()
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp struct {
-		Info []models.Currency `json:"info"`
+		Info struct {
+			Items []models.Currency `json:"items"`
+		} `json:"info"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	symbols := make([]string, 0, len(resp.Info))
-	for _, c := range resp.Info {
+	symbols := make([]string, 0, len(resp.Info.Items))
+	for _, c := range resp.Info.Items {
 		symbols = append(symbols, c.Info.Symbol)
 	}
 	return symbols

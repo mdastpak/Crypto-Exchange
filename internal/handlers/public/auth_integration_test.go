@@ -479,8 +479,9 @@ func (s *PublicHandlerTestSuite) TestGetActiveCurrencies_Empty() {
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), "Active currencies retrieved successfully.", resp.Message)
 
-	currencies := resp.Info.([]interface{})
-	assert.Empty(s.T(), currencies)
+	page := resp.Info.(map[string]interface{})
+	assert.Empty(s.T(), page["items"])
+	assert.NotContains(s.T(), page, "next_cursor")
 }
 
 func (s *PublicHandlerTestSuite) TestGetCurrencyByHK_NotFound() {
@@ -518,12 +519,14 @@ func (s *PublicHandlerTestSuite) TestCurrencies_HideCurrenciesThatAreNotPublic()
 	w := s.makeRequest(http.MethodGet, "/public/currencies", nil, "")
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	var list struct {
-		Info []models.Currency `json:"info"`
+		Info struct {
+			Items []models.Currency `json:"items"`
+		} `json:"info"`
 	}
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &list))
-	require.Len(s.T(), list.Info, 1)
-	assert.Equal(s.T(), approved, list.Info[0].HK)
-	assert.NotEmpty(s.T(), list.Info[0].CreatedAt)
+	require.Len(s.T(), list.Info.Items, 1)
+	assert.Equal(s.T(), approved, list.Info.Items[0].HK)
+	assert.NotEmpty(s.T(), list.Info.Items[0].CreatedAt)
 
 	// The hk is read in any spelling of the UUID.
 	for _, hk := range []string{approved, strings.ToUpper(approved)} {
@@ -567,4 +570,63 @@ func (s *PublicHandlerTestSuite) TestCurrencies_WhileTheDatabaseIsDown() {
 		w := s.makeRequest(http.MethodGet, path, nil, "")
 		assert.Equal(s.T(), http.StatusOK, w.Code, "%s from the cached list", path)
 	}
+}
+
+// TestCurrencies_FiltersAnswerTheSameFromTheDatabaseAndTheCache lists with
+// the filters of #218 twice: from the database, which also fills the shared
+// cache, and from the cache alone, with the database closed, as another
+// instance whose database is unreachable would.
+func (s *PublicHandlerTestSuite) TestCurrencies_FiltersAnswerTheSameFromTheDatabaseAndTheCache() {
+	for _, c := range []models.CurrencyInfo{
+		{Symbol: "BTC", EnName: "Bitcoin", FaName: "بیت\u200cکوین"},
+		{Symbol: "WBTC", EnName: "Wrapped Bitcoin", FaName: "بیت\u200cکوین رپد", IsToken: true, Contract: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"},
+		{Symbol: "ETH", EnName: "Ethereum", FaName: "اتریوم"},
+	} {
+		info, err := json.Marshal(c)
+		require.NoError(s.T(), err)
+		_, err = s.postgresService.DB.Exec(`INSERT INTO currencies (status, info) VALUES ('approved', $1::jsonb)`, info)
+		require.NoError(s.T(), err)
+	}
+	require.NoError(s.T(), s.handler.Currencies.Invalidate(context.Background()))
+
+	// Arabic yeh and kaf, without the ZWNJ, match the Persian name.
+	const path = "/public/currencies?fa_name=" + "بيتكوين" + "&sort=-symbol&limit=1"
+	list := func() (symbols []string, next string, body string) {
+		w := s.makeRequest(http.MethodGet, path, nil, "")
+		require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+		var resp struct {
+			Info struct {
+				Items      []models.Currency `json:"items"`
+				NextCursor string            `json:"next_cursor"`
+			} `json:"info"`
+		}
+		require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+		for _, c := range resp.Info.Items {
+			symbols = append(symbols, c.Info.Symbol)
+		}
+		return symbols, resp.Info.NextCursor, w.Body.String()
+	}
+	fromDB, next, dbBody := list()
+	assert.Equal(s.T(), []string{"WBTC"}, fromDB)
+	require.NotEmpty(s.T(), next)
+
+	closed, err := sql.Open("pgx", "host=localhost port=5432 user=postgres password=test dbname=testdb sslmode=disable")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), closed.Close())
+	healthy := s.handler.Currencies
+	s.handler.Currencies = currencies.New(closed, s.redisClient, time.Minute)
+	defer func() { s.handler.Currencies = healthy }()
+	fromCache, _, cacheBody := list()
+	assert.Equal(s.T(), fromDB, fromCache)
+	assert.JSONEq(s.T(), dbBody, cacheBody)
+
+	w := s.makeRequest(http.MethodGet, path+"&cursor="+next, nil, "")
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	assert.Contains(s.T(), w.Body.String(), `"BTC"`, "the next page, from the cache")
+
+	w = s.makeRequest(http.MethodGet, "/public/currencies?symbl=BTC", nil, "")
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code, "a misspelled filter is refused")
+	assert.Contains(s.T(), w.Body.String(), "symbl")
+	w = s.makeRequest(http.MethodGet, "/public/currencies?status=pending", nil, "")
+	assert.Equal(s.T(), http.StatusBadRequest, w.Code, "the public list has no status filter")
 }

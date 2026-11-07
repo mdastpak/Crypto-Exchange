@@ -337,6 +337,17 @@ definitions:
         example: 2
         type: integer
     type: object
+  public.CurrencyPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.Currency'
+        type: array
+      next_cursor:
+        description: NextCursor asks for the next page. It is left out on the last
+          page.
+        type: string
+    type: object
   public.OTPRequest:
     properties:
       username:
@@ -856,23 +867,56 @@ paths:
   /api/v1/admin/currencies:
     get:
       description: Every currency, whatever its status, deleted ones included, newest
-        first, with its version. Read from the database, not the public cache. The
-        filters are optional and combine. Pages follow the pagination convention of
-        docs/api.md.
+        first by default, with its version. Read from the database, not the public
+        cache. The filters are those of GET /public/currencies, plus status; they
+        are optional and combine, and an unknown parameter is refused. Pages follow
+        the pagination convention of docs/api.md.
       parameters:
-      - description: The status
-        enum:
-        - approved
-        - pending
-        - suspend
-        - deleted
+      - collectionFormat: csv
+        description: Statuses, repeated or comma-separated
         in: query
+        items:
+          enum:
+          - approved
+          - pending
+          - suspend
+          - deleted
+          type: string
         name: status
-        type: string
-      - description: The symbol, in any case
+        type: array
+      - description: Text in the symbol, English name, or Persian name, normalized;
+          symbols that match it come first
         in: query
-        name: symbol
+        maxLength: 64
+        name: q
         type: string
+      - collectionFormat: csv
+        description: Symbols, in any case, repeated or comma-separated
+        in: query
+        items:
+          type: string
+        name: symbol
+        type: array
+      - description: Text in the English name, in any case
+        in: query
+        maxLength: 64
+        name: en_name
+        type: string
+      - description: Text in the Persian name, with Arabic letters and Persian or
+          Arabic digits matching the Persian ones
+        in: query
+        maxLength: 64
+        name: fa_name
+        type: string
+      - description: The contract address, in any case
+        in: query
+        maxLength: 128
+        name: contract
+        type: string
+      - description: Only currencies with a contract, or only those without
+        in: query
+        name: has_contract
+        type: boolean
       - description: Only tokens, or only currencies that are not
         in: query
         name: is_token
@@ -881,6 +925,34 @@ paths:
         in: query
         name: if_fiat
         type: boolean
+      - description: Created at or after this RFC 3339 time
+        format: date-time
+        in: query
+        name: created_since
+        type: string
+      - description: Created before this RFC 3339 time
+        format: date-time
+        in: query
+        name: created_until
+        type: string
+      - description: Updated at or after this RFC 3339 time
+        format: date-time
+        in: query
+        name: updated_since
+        type: string
+      - description: The order, with - for descending; the hk breaks ties
+        enum:
+        - symbol
+        - -symbol
+        - en_name
+        - -en_name
+        - created_at
+        - -created_at
+        - updated_at
+        - -updated_at
+        in: query
+        name: sort
+        type: string
       - description: The number of currencies, 50 by default
         in: query
         maximum: 200
@@ -1629,7 +1701,93 @@ paths:
       - sign-in
   /api/v1/public/currencies:
     get:
-      description: The approved currencies, oldest first.
+      description: The approved currencies, oldest first by default, a page at a time.
+        The filters are optional and combine, and an unknown parameter is refused
+        with 400 validation_failed. Text filters ignore case, and match Persian text
+        typed with Arabic letters, Persian or Arabic digits, or a zero-width non-joiner.
+        With q and no sort, the currencies whose symbol is q, then those whose symbol
+        starts with it, come first. Every instance answers the same, from the shared
+        cache or from the database.
+      parameters:
+      - description: Text in the symbol, English name, or Persian name, normalized;
+          symbols that match it come first
+        in: query
+        maxLength: 64
+        name: q
+        type: string
+      - collectionFormat: csv
+        description: Symbols, in any case, repeated or comma-separated
+        in: query
+        items:
+          type: string
+        name: symbol
+        type: array
+      - description: Text in the English name, in any case
+        in: query
+        maxLength: 64
+        name: en_name
+        type: string
+      - description: Text in the Persian name, with Arabic letters and Persian or
+          Arabic digits matching the Persian ones
+        in: query
+        maxLength: 64
+        name: fa_name
+        type: string
+      - description: The contract address, in any case
+        in: query
+        maxLength: 128
+        name: contract
+        type: string
+      - description: Only currencies with a contract, or only those without
+        in: query
+        name: has_contract
+        type: boolean
+      - description: Only tokens, or only currencies that are not
+        in: query
+        name: is_token
+        type: boolean
+      - description: Only fiat currencies, or only those that are not
+        in: query
+        name: if_fiat
+        type: boolean
+      - description: Created at or after this RFC 3339 time
+        format: date-time
+        in: query
+        name: created_since
+        type: string
+      - description: Created before this RFC 3339 time
+        format: date-time
+        in: query
+        name: created_until
+        type: string
+      - description: Updated at or after this RFC 3339 time
+        format: date-time
+        in: query
+        name: updated_since
+        type: string
+      - description: The order, with - for descending; the hk breaks ties
+        enum:
+        - symbol
+        - -symbol
+        - en_name
+        - -en_name
+        - created_at
+        - -created_at
+        - updated_at
+        - -updated_at
+        in: query
+        name: sort
+        type: string
+      - description: The number of currencies, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
       produces:
       - application/json
       responses:
@@ -1640,10 +1798,12 @@ paths:
             - $ref: '#/definitions/models.APIResponse'
             - properties:
                 info:
-                  items:
-                    $ref: '#/definitions/models.Currency'
-                  type: array
+                  $ref: '#/definitions/public.CurrencyPage'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
         "503":
           description: Service Unavailable
           schema:
