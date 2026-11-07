@@ -69,7 +69,28 @@ type Session struct {
 	UserAgent        string
 	IP               string
 	ExpiresAt        time.Time
+	// MaxActive, when above 0, caps the active sessions of the user (#212):
+	// Create fails with ErrSessionLimit instead of exceeding it.
+	MaxActive int
+	// Replace is an active session of the user that Create ends in the
+	// same transaction, so that a user at the cap can sign in by giving up
+	// one session. Create fails with ErrReplacedSessionNotFound when it is
+	// not one.
+	Replace string
 }
+
+var (
+	// ErrSessionLimit reports a user who has Session.MaxActive active
+	// sessions already.
+	ErrSessionLimit = errors.New("the user has the most active sessions allowed")
+	// ErrReplacedSessionNotFound reports a Session.Replace that is not an
+	// active session of the user.
+	ErrReplacedSessionNotFound = errors.New("the session to replace is not an active session of the user")
+)
+
+// ReasonReplacedAtSignIn is the audit reason of a session that a user ended
+// to sign in past the session limit.
+const ReasonReplacedAtSignIn = "replaced_at_sign_in"
 
 // SessionRotation replaces the tokens of a session, provided that the
 // presented refresh token is the session's current one.
@@ -179,6 +200,11 @@ func recordInTx(ctx context.Context, tx *sql.Tx, event audit.Event, revokes bool
 
 func (s *PostgresSessionStore) Create(ctx context.Context, session Session, event audit.Event) error {
 	return s.inTx(ctx, func(tx *sql.Tx) (*audit.Event, bool, error) {
+		if session.MaxActive > 0 || session.Replace != "" {
+			if err := limitSessions(ctx, tx, session, event); err != nil {
+				return nil, false, err
+			}
+		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO sessions (id, user_id, auth_method, access_token_hash, refresh_token_hash, user_agent, ip, expires_at, last_used_at)
 			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, '')::inet, $8, NOW())`,
@@ -190,6 +216,50 @@ func (s *PostgresSessionStore) Create(ctx context.Context, session Session, even
 		}
 		return &event, false, nil
 	})
+}
+
+// limitSessions ends session.Replace, if set, and then checks that the user
+// has fewer than session.MaxActive active sessions, in the transaction that
+// creates the new one. It first locks the user's row: sign-ins of one user
+// on every instance then count one after the other, so that concurrent
+// sign-ins cannot all pass the count and exceed the cap together.
+func limitSessions(ctx context.Context, tx *sql.Tx, session Session, event audit.Event) error {
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM users WHERE hk = $1 FOR UPDATE`, session.UserID); err != nil {
+		return fmt.Errorf("failed to lock the user: %w", err)
+	}
+	if session.Replace != "" {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
+			WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE' AND expires_at > NOW()`,
+			session.Replace, session.UserID)
+		if err != nil {
+			return fmt.Errorf("failed to end the replaced session: %w", err)
+		}
+		if rows, err := res.RowsAffected(); err != nil {
+			return fmt.Errorf("failed to end the replaced session: %w", err)
+		} else if rows != 1 {
+			return ErrReplacedSessionNotFound
+		}
+		revoked := event
+		revoked.Action, revoked.Outcome, revoked.Reason = audit.ActionUserSessionRevoke, audit.Success, ReasonReplacedAtSignIn
+		revoked.TargetType, revoked.TargetID = audit.TargetSession, session.Replace
+		if err := audit.Record(ctx, tx, revoked); err != nil {
+			return err
+		}
+	}
+	if session.MaxActive <= 0 {
+		return nil
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT count(*) FROM sessions WHERE user_id = $1 AND status = 'ACTIVE' AND expires_at > NOW()`,
+		session.UserID).Scan(&active); err != nil {
+		return fmt.Errorf("failed to count the active sessions: %w", err)
+	}
+	if active >= session.MaxActive {
+		return ErrSessionLimit
+	}
+	return nil
 }
 
 // Rotate swaps the session's tokens in a single conditional update, so that two
