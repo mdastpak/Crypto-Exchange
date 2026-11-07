@@ -627,9 +627,7 @@ func userLogout(ih *InfraHandlers) gin.HandlerFunc {
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/logout [post]
 func adminLogout(ih *InfraHandlers) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		auth.LogoutHandler(c, ih.TokenBlacklist, nil)
-	}
+	return ih.Admin.Logout(ih.TokenBlacklist)
 }
 
 // apiV1Since is when the unversioned paths were deprecated.

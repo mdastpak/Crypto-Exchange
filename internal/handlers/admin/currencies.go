@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -203,6 +205,10 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 	if err == nil {
 		public, err = enqueuePublicEvent(ctx, tx, false, models.Currency{HK: generatedHK, Status: status, Info: info})
 	}
+	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyCreate, generatedHK,
+		&audit.Changes{After: currencyFields(status, info)})) {
+		return
+	}
 	if err == nil {
 		err = tx.Commit()
 	}
@@ -301,6 +307,7 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 
 	// Only the fields in the request change. The result is validated as a
 	// whole, so an update cannot leave a currency invalid.
+	before := currencyFields(currentStatus, currentInfo)
 	currentStatus, currentInfo = req.apply(currentStatus, currentInfo)
 	if errs := validateCurrency(currentStatus, currentInfo); errs != nil {
 		sendValidationErrors(c, errs)
@@ -322,6 +329,10 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 	var public bool
 	if err == nil {
 		public, err = enqueuePublicEvent(ctx, tx, wasPublic, models.Currency{HK: hk, Status: currentStatus, Info: currentInfo})
+	}
+	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyUpdate, hk,
+		changedFields(before, currencyFields(currentStatus, currentInfo)))) {
+		return
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -412,6 +423,12 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		public, err = enqueuePublicEvent(ctx, tx, previousStatus == models.CurrencyStatusApproved,
 			models.Currency{HK: hk, Status: models.CurrencyStatusDeleted})
 	}
+	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyDelete, hk, &audit.Changes{
+		Before: map[string]interface{}{"status": previousStatus},
+		After:  map[string]interface{}{"status": models.CurrencyStatusDeleted},
+	})) {
+		return
+	}
 	if err == nil {
 		err = tx.Commit()
 	}
@@ -486,4 +503,52 @@ func timestamp(t sql.NullTime) string {
 		return ""
 	}
 	return t.Time.UTC().Format(time.RFC3339)
+}
+
+// recordChange writes the audit event of a change in its transaction, and
+// reports whether it did. When it cannot, it answers 500, and the caller
+// returns, so that the transaction rolls back: no change without its event.
+// The failure is the server's, never a problem of the request, whatever
+// constraint the event broke.
+func (h *AdminHandler) recordChange(ctx context.Context, c *gin.Context, tx *sql.Tx, e audit.Event) bool {
+	if err := audit.Record(ctx, tx, e); err != nil {
+		log.Printf("Refused the change %s of %s, which could not be recorded: %v", e.Action, e.TargetID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to record the change.", nil)
+		return false
+	}
+	return true
+}
+
+// currencyEvent is the audit event of a change to a currency by the
+// administrator of the request. Without an administrator, the event, and so
+// the change, is refused.
+func (h *AdminHandler) currencyEvent(c *gin.Context, action, hk string, changes *audit.Changes) audit.Event {
+	e := audit.FromRequest(c)
+	e.ActorType, e.Action, e.Outcome = audit.ActorAdmin, action, audit.Success
+	if claims, ok := auth.GetClaims(c); ok {
+		e.ActorID = claims.UUID
+	}
+	e.TargetType, e.TargetID = audit.TargetCurrency, hk
+	e.Changes = changes
+	return e
+}
+
+// currencyFields are the fields of a currency as the audit log records them.
+func currencyFields(status string, info models.CurrencyInfo) map[string]interface{} {
+	return map[string]interface{}{
+		"status": status, "en_name": info.EnName, "fa_name": info.FaName, "symbol": info.Symbol,
+		"if_fiat": info.IfFiat, "is_token": info.IsToken, "contract": info.Contract,
+	}
+}
+
+// changedFields keeps the fields whose values differ between before and
+// after.
+func changedFields(before, after map[string]interface{}) *audit.Changes {
+	changes := &audit.Changes{Before: map[string]interface{}{}, After: map[string]interface{}{}}
+	for name, value := range after {
+		if before[name] != value {
+			changes.Before[name], changes.After[name] = before[name], value
+		}
+	}
+	return changes
 }

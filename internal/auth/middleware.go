@@ -75,7 +75,7 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 			}
 		}
 
-		c.Set(claimsContextKey, claims)
+		SetClaims(c, claims)
 		c.Set(accessTokenContextKey, token)
 		c.Next()
 	}
@@ -150,6 +150,12 @@ func JWTAdminVerification(tb *TokenBlacklist) gin.HandlerFunc {
 // JWTUserVerification accepts only user access tokens.
 func JWTUserVerification(tb *TokenBlacklist) gin.HandlerFunc {
 	return RequireRole(RoleUser, tb)
+}
+
+// SetClaims stores the claims of an accepted token, which GetClaims returns.
+// RequireRole calls it, and so may tests of handlers that run without it.
+func SetClaims(c *gin.Context, claims *Claims) {
+	c.Set(claimsContextKey, claims)
 }
 
 // GetClaims returns the claims of the token that RequireRole accepted.

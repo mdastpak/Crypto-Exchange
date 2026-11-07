@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -109,6 +110,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 
 	admin, err := h.Accounts.FindActive(ctx, email)
 	if errors.Is(err, adminauth.ErrNotFound) {
+		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, "", audit.Failure, "unknown_account")
 		// A session ID that leads nowhere keeps the answer identical.
 		helpers.SendResponse(c, http.StatusOK, signInCodeSent, gin.H{"uuid": uuid.NewString()})
 		return
@@ -122,9 +124,11 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	issued, err := h.OTP.Issue(ctx, admin.Email)
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
+		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Denied, "rate_limited")
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrTooManyAttempts):
+		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Denied, "rate_limited")
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case err != nil:
@@ -144,6 +148,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the sign-in", nil)
 		return
 	}
+	h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Success, "")
 	helpers.SendResponse(c, http.StatusOK, signInCodeSent, gin.H{"uuid": issued.SessionID})
 }
 
@@ -190,9 +195,11 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	email, err := h.OTP.Verify(ctx, sessionID, req.OTP)
 	switch {
 	case errors.Is(err, otp.ErrTooManyAttempts):
+		h.noteSignIn(ctx, c, audit.ActionAdminSignIn, "", audit.Denied, "rate_limited")
 		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
 		return
 	case errors.Is(err, otp.ErrInvalidCode):
+		h.noteSignIn(ctx, c, audit.ActionAdminSignIn, "", audit.Failure, "email_code_invalid")
 		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired code", nil)
 		return
 	case err != nil:
@@ -208,6 +215,11 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	switch {
 	case errors.Is(err, adminauth.ErrNotFound), errors.Is(err, adminauth.ErrInvalidCode):
 		log.Printf("Rejected an admin sign-in for %s: %v", adminauth.MaskEmail(email), err)
+		if errors.Is(err, adminauth.ErrNotFound) {
+			h.noteSignIn(ctx, c, audit.ActionAdminSignIn, "", audit.Failure, "account_unavailable")
+		} else {
+			h.noteSignIn(ctx, c, audit.ActionAdminSignIn, admin.ID, audit.Failure, "authenticator_code_invalid")
+		}
 		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired code", nil)
 		return
 	case err != nil:
@@ -230,6 +242,49 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
 		return
 	}
+	// An administrator signs in only with a record of it.
+	if err := h.auditSignIn(ctx, c, audit.ActionAdminSignIn, admin.ID, audit.Success, ""); err != nil {
+		log.Printf("Refused the sign-in of administrator %s, which could not be recorded: %v", admin.ID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the sign-in", nil)
+		return
+	}
 	log.Printf("Administrator %s signed in", admin.ID)
 	helpers.SendResponse(c, http.StatusOK, "Signed in successfully", gin.H{"access_token": accessToken})
+}
+
+// auditSignIn records an event of the admin sign-in. It is written on its
+// own: an attempt changes nothing that it could share a transaction with.
+// An empty adminID is an anonymous actor, such as an unknown address.
+func (h *AdminHandler) auditSignIn(ctx context.Context, c *gin.Context, action, adminID, outcome, reason string) error {
+	e := audit.FromRequest(c)
+	e.Action, e.Outcome, e.Reason = action, outcome, reason
+	e.ActorType = audit.ActorAnonymous
+	if adminID != "" {
+		e.ActorType, e.ActorID = audit.ActorAdmin, adminID
+	}
+	return audit.Record(ctx, h.PostgresDB.DB, e)
+}
+
+// noteSignIn records an event that must not block the answer: an attempt
+// that failed or was refused. A failure to record it is logged, so that an
+// unavailable audit log cannot be used to lock administrators out.
+func (h *AdminHandler) noteSignIn(ctx context.Context, c *gin.Context, action, adminID, outcome, reason string) {
+	if err := h.auditSignIn(ctx, c, action, adminID, outcome, reason); err != nil {
+		log.Printf("Failed to record the audit event %s (%s): %v", action, outcome, err)
+	}
+}
+
+// Logout revokes the admin access token of the request, and records it.
+// The record is best effort: a sign-out is never refused.
+func (h *AdminHandler) Logout(tb *auth.TokenBlacklist) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth.LogoutHandler(c, tb, nil)
+		claims, ok := auth.GetClaims(c)
+		if !ok || c.Writer.Status() != http.StatusOK {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+		defer cancel()
+		h.noteSignIn(ctx, c, audit.ActionAdminLogout, claims.UUID, audit.Success, "")
+	}
 }
