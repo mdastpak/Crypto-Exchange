@@ -165,6 +165,11 @@ type Configuration struct {
 			// refresh at once (#194). Later, it revokes the session.
 			ReuseGraceSeconds int `yaml:"reuse_grace_seconds"`
 		} `yaml:"refresh_token"`
+		Sessions struct {
+			// MaxPerUser caps the active sessions of one user (#212). A
+			// sign-in past it is refused until the user ends one of them.
+			MaxPerUser int `yaml:"max_per_user"`
+		} `yaml:"sessions"`
 	} `yaml:"jwt"`
 
 	OTP struct {
@@ -777,6 +782,7 @@ func setDefaults() {
 		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
+		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -992,6 +998,11 @@ func RabbitMQURL(username, password, host, port, vhost string, useTLS bool) stri
 const (
 	DefaultRefreshReuseGraceSeconds = 10
 	MaxRefreshReuseGraceSeconds     = 60
+	// DefaultMaxSessionsPerUser allows a phone, a laptop, and a few
+	// browsers; MaxSessionsPerUser keeps the list of sessions short enough
+	// to show in a refusal.
+	DefaultMaxSessionsPerUser = 5
+	MaxSessionsPerUser        = 50
 )
 
 // DefaultAdminSignInMinResponseMS is longer than the work of a sign-in

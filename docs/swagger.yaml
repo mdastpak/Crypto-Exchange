@@ -271,6 +271,36 @@ definitions:
       username:
         type: string
     type: object
+  public.ReplaceSessionRequest:
+    properties:
+      challenge:
+        type: string
+      session_id:
+        description: |-
+          SessionID is the session to end, one of the sessions that the
+          refusal listed.
+        format: uuid
+        type: string
+    type: object
+  public.SessionLimitInfo:
+    properties:
+      challenge:
+        description: Challenge replaces a session with POST /public/auth/sessions/replace.
+        type: string
+      expires_in:
+        description: ExpiresIn is the number of seconds the challenge can be used.
+        example: 300
+        type: integer
+      max_sessions:
+        description: MaxSessions is the limit.
+        example: 5
+        type: integer
+      sessions:
+        description: Sessions are the active sessions of the user, newest first.
+        items:
+          $ref: '#/definitions/auth.SessionInfo'
+        type: array
+    type: object
   public.VerifyOTPRequest:
     properties:
       otp:
@@ -1066,6 +1096,16 @@ paths:
           description: Forbidden
           schema:
             $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: 'session_limit_reached: the user has the most active sessions
+            allowed'
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/public.SessionLimitInfo'
+              type: object
         "429":
           description: Too Many Requests
           schema:
@@ -1133,6 +1173,69 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
       summary: Refresh the access token
+      tags:
+      - sign-in
+  /api/v1/public/auth/sessions/replace:
+    post:
+      consumes:
+      - application/json
+      description: After a sign-in answered 409 session_limit_reached, ends one of
+        the listed sessions and signs in, without a new code. The challenge works
+        once, for five minutes. A session_id that is not one of the user's active
+        sessions answers 409 session_not_found and leaves the challenge usable.
+      parameters:
+      - description: The challenge and the session to end
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.ReplaceSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The access token. The refresh token is set as an HttpOnly cookie.
+          headers:
+            Set-Cookie:
+              description: The refresh token, HttpOnly
+              type: string
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.AccessTokenInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: session_not_found, or session_limit_reached with a new challenge
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/public.SessionLimitInfo'
+              type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: End a session to sign in past the session limit
       tags:
       - sign-in
   /api/v1/public/currencies:

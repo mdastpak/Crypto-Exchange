@@ -1035,6 +1035,106 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/public/auth/sessions/replace": {
+            "post": {
+                "description": "After a sign-in answered 409 session_limit_reached, ends one of the listed sessions and signs in, without a new code. The challenge works once, for five minutes. A session_id that is not one of the user's active sessions answers 409 session_not_found and leaves the challenge usable.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sign-in"
+                ],
+                "summary": "End a session to sign in past the session limit",
+                "parameters": [
+                    {
+                        "description": "The challenge and the session to end",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.ReplaceSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The access token. The refresh token is set as an HttpOnly cookie.",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/models.AccessTokenInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "headers": {
+                            "Set-Cookie": {
+                                "type": "string",
+                                "description": "The refresh token, HttpOnly"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "session_not_found, or session_limit_reached with a new challenge",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SessionLimitInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth/{uuid}": {
             "post": {
                 "description": "Returns an access token, and sets the refresh token in the HttpOnly refresh_token cookie.",
@@ -1102,6 +1202,24 @@ const docTemplate = `{
                         "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "session_limit_reached: the user has the most active sessions allowed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SessionLimitInfo"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "429": {
@@ -2351,6 +2469,45 @@ const docTemplate = `{
             "properties": {
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "public.ReplaceSessionRequest": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "description": "SessionID is the session to end, one of the sessions that the\nrefusal listed.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "public.SessionLimitInfo": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "description": "Challenge replaces a session with POST /public/auth/sessions/replace.",
+                    "type": "string"
+                },
+                "expires_in": {
+                    "description": "ExpiresIn is the number of seconds the challenge can be used.",
+                    "type": "integer",
+                    "example": 300
+                },
+                "max_sessions": {
+                    "description": "MaxSessions is the limit.",
+                    "type": "integer",
+                    "example": 5
+                },
+                "sessions": {
+                    "description": "Sessions are the active sessions of the user, newest first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/auth.SessionInfo"
+                    }
                 }
             }
         },

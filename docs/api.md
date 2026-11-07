@@ -63,6 +63,7 @@ An error response contains only a fixed message for each error. Internal details
 | `refresh_token_missing` | `401` | `POST /public/auth/refresh` without the `refresh_token` cookie |
 | `refresh_token_invalid` | `401` | The refresh token is invalid, expired, rotated, or of an ended session |
 | `code_invalid` | `401` | A sign-in code is wrong, expired, or used up |
+| `challenge_invalid` | `401` | A [session limit](#session-limit) challenge is unknown, used, or expired |
 | `admin_inactive` | `401` | The administrator of an admin token is no longer active |
 | `forbidden` | `403` | The request is not allowed, without a more specific code |
 | `account_unavailable` | `403` | The account can no longer sign in: disabled, suspended, or deleted |
@@ -71,6 +72,8 @@ An error response contains only a fixed message for each error. Internal details
 | `method_not_allowed` | `405` | The path exists with other methods |
 | `conflict` | `409` | The request conflicts with the current state, without a more specific code |
 | `duplicate_symbol`, `duplicate_contract` | `409` | Another currency has this symbol or contract; `info.field` names the field |
+| `session_limit_reached` | `409` | The user has the most active sessions allowed; `info` lists them with a challenge. See [Session limit](#session-limit) |
+| `session_not_found` | `409` | The session to end at the [session limit](#session-limit) is not an active session of the user |
 | `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
@@ -253,6 +256,7 @@ Errors:
 - `400`: invalid UUID or missing code
 - `401`: wrong, expired, or already used code
 - `403`: the account is disabled, deleted, or suspended (`This account cannot sign in. Please contact support.`), or belongs to an administrator (`Administrators must use the admin sign-in.`). The code was right, so no information is revealed to someone who does not control the contact.
+- `409` (`session_limit_reached`): the user has `jwt.sessions.max_per_user` active sessions. See [Session limit](#session-limit).
 - `429`: the attempts of the code or of the contact are used up. See [Sign-in limits](#sign-in-limits).
 - `500`: the user could not be created or loaded, or the session could not be read
 
@@ -269,6 +273,48 @@ These limits apply on top of the per-IP [rate limits](#rate-limiting):
 - These limits count per client so that someone who knows only a contact cannot lock its owner out by failing codes for it ([#187](https://github.com/mdastpak/Crypto-Exchange/issues/187)). They are kept in Redis, so every server instance applies the same counts.
 
 Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by `otp.auth.secret`.
+
+### Session limit
+
+A user has at most `jwt.sessions.max_per_user` (default 5) active sessions, so that a sign-in on another device means ending one of them ([#212](https://github.com/mdastpak/Crypto-Exchange/issues/212)). Sessions that were ended, revoked, or have expired do not count. A sign-in with a right code past the limit creates no session and answers `409`:
+
+```json
+{
+  "status": 409,
+  "code": "session_limit_reached",
+  "message": "You have the most active sessions allowed. End one of them to sign in.",
+  "info": {
+    "challenge": "<opaque>",
+    "expires_in": 300,
+    "max_sessions": 5,
+    "sessions": [
+      { "id": "<uuid>", "auth_method": "OTP", "user_agent": "…", "ip": "203.0.113.7",
+        "created_at": "…", "last_used_at": "…", "expires_at": "…", "current": false }
+    ]
+  }
+}
+```
+
+The sessions are listed newest first, in the form of [`GET /user/sessions`](#sessions). The client shows them and lets the user pick one to end, then sends:
+
+#### `POST /public/auth/sessions/replace`
+
+```json
+{ "challenge": "<opaque>", "session_id": "<uuid>" }
+```
+
+It ends that session and signs in, in one transaction, and answers like `POST /public/auth/{uuid}`, with the access token and the refresh cookie. No new code is needed: the challenge stands for the verified code, works once, and expires after five minutes. The ended session is audited as `user.session_revoke` with the reason `replaced_at_sign_in`, and its tokens stop working at once.
+
+Errors:
+
+- `400` (`validation_failed`): the challenge is missing or `session_id` is not a UUID
+- `401` (`challenge_invalid`): the challenge is unknown, used, or expired. Sign in again.
+- `403` (`account_unavailable`): the account was disabled since the code was verified
+- `409` (`session_not_found`): the session is not one of the user's active sessions. The challenge stays usable until it expires, so the client can pick another one.
+- `409` (`session_limit_reached`): another sign-in took the free slot in the meantime. The answer carries a new challenge and the current sessions.
+- `429`: the rate limit of code verifications
+
+On several instances, the count runs in the transaction that creates the session, after a lock of the user's row, so concurrent sign-ins on any instance never exceed the limit. The challenge is kept in Redis under its SHA-256 hash and taken atomically, so it is used once across instances.
 
 ### `POST /public/auth/refresh`
 

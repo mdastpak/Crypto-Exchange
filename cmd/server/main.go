@@ -656,6 +656,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.GET("/currencies/:hk", ih.Public.GetCurrencyByHK)
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), ih.Public.RequestOTP)
 		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.VerifyOTP)
+		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.ReplaceSession)
 		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
 		// here too, behind the same authentication as /user/logout.

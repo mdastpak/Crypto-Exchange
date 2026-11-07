@@ -41,6 +41,7 @@ func newSessionTestEnv(t *testing.T) *sessionTestEnv {
 	router := gin.New()
 	router.POST("/public/auth", handler.RequestOTP)
 	router.POST("/public/auth/:uuid", handler.VerifyOTP)
+	router.POST("/public/auth/sessions/replace", handler.ReplaceSession)
 	router.POST("/public/auth/refresh", handler.RefreshToken)
 	router.POST("/public/auth/logout", auth.JWTUserVerification(blacklist), func(c *gin.Context) {
 		auth.LogoutHandler(c, blacklist, handler.Sessions)

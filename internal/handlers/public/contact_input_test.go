@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/contact"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,7 @@ func persianDigits(s string) string {
 func TestVerifyOTP_RealSchema_EveryFormOfAMobileReachesOneAccount(t *testing.T) {
 	handler, router, sender := newOTPLimitRouter(t)
 	handler.OTP = otp.NewStore(handler.RedisClient.Client, otp.Settings{ContactRequestsPerHour: 10})
+	config.Config.JWT.Sessions.MaxPerUser = 10 // every form signs in to one account
 	db := handler.PostgresDB.DB
 	for _, typed := range []string{"09121112233", "۰۹۱۲۱۱۱۲۲۳۳", "+98 912 111 2233", "00989121112233", "0912-111-2233", "٠٩١٢١١١٢٢٣٣"} {
 		sessionID, code := requestCode(t, router, sender, typed)

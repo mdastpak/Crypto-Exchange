@@ -157,6 +157,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 // @Failure 400 {object} models.APIResponse
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse{info=SessionLimitInfo} "session_limit_reached: the user has the most active sessions allowed"
 // @Failure 429 {object} models.APIResponse
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/public/auth/{uuid} [post]
@@ -229,40 +230,8 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	sessionID := uuid.NewString()
-	accessToken, err := auth.GenerateAccessToken(userHK.String(), auth.RoleUser, sessionID)
-	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
-		return
-	}
-	refreshToken, err := auth.GenerateRefreshToken(userHK.String(), auth.RoleUser, sessionID)
-	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate refresh token", nil)
-		return
-	}
-
-	err = h.Sessions.Create(ctx, auth.Session{
-		ID:               sessionID,
-		UserID:           userHK.String(),
-		AuthMethod:       "OTP",
-		AccessTokenHash:  auth.HashToken(accessToken),
-		RefreshTokenHash: auth.HashToken(refreshToken),
-		UserAgent:        c.Request.UserAgent(),
-		IP:               c.ClientIP(),
-		ExpiresAt:        time.Now().Add(auth.RefreshTokenLifetime()),
-	}, auth.SessionEvent(c, audit.ActionUserSignIn, userHK.String(), sessionID))
-	if err != nil {
-		// No tokens without the session, nor without its audit event.
-		log.Printf("Failed to create session: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
-		return
-	}
-
-	// The refresh token is only delivered in the HttpOnly cookie, never in the
-	// body, so scripts running in the page cannot read it.
-	auth.SetRefreshTokenCookie(c, refreshToken)
-
-	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken})
+	attempt.ActorType, attempt.ActorID = audit.ActorUser, userHK.String()
+	h.startSession(c, ctx, userHK, "", attempt)
 }
 
 // reasonRateLimited is the audit reason of a sign-in refused by its limits.

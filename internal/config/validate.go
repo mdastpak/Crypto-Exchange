@@ -156,6 +156,9 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.JWT.RefreshToken.ReuseGraceSeconds; v < 1 || v > MaxRefreshReuseGraceSeconds {
 		p.add("jwt.refresh_token.reuse_grace_seconds", "is %d; it must be from 1 to %d", v, MaxRefreshReuseGraceSeconds)
 	}
+	if v := c.JWT.Sessions.MaxPerUser; v < 1 || v > MaxSessionsPerUser {
+		p.add("jwt.sessions.max_per_user", "is %d; it must be from 1 to %d", v, MaxSessionsPerUser)
+	}
 	if v := c.Admin.SignInMinResponseMS; v < 1 || v > MaxAdminSignInMinResponseMS {
 		p.add("admin.sign_in_min_response_ms", "is %d; it must be from 1 to %d", v, MaxAdminSignInMinResponseMS)
 	}
