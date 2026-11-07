@@ -55,6 +55,20 @@ const (
 	// ActionUserSessionRevoke is a user ending one of their sessions from
 	// the session list (#193); the target is the session.
 	ActionUserSessionRevoke = "user.session_revoke"
+	// ActionUserProfileUpdate is a user changing their names (#195).
+	ActionUserProfileUpdate = "user.profile_update"
+
+	// The commands of cmd/admin (#195). Their actor is the system, and the
+	// operator who ran them is named in the user agent; see Operator.
+	ActionAdminCreate    = "admin.create"
+	ActionAdminTOTPReset = "admin.totp_reset"
+	ActionAdminDisable   = "admin.disable"
+	ActionDataKeyCreate  = "data_key.create"
+	ActionDataKeyRotate  = "data_key.rotate"
+	ActionDataKeyRetire  = "data_key.retire"
+	ActionDataKeyRewrap  = "data_key.rewrap"
+	ActionOutboxRetry    = "outbox.retry"
+	ActionOutboxDiscard  = "outbox.discard"
 )
 
 // Target types.
@@ -66,7 +80,37 @@ const (
 	// TargetSignIn is a sign-in in progress, by the ID that a code request
 	// returns, which links the code request to the attempts to verify it.
 	TargetSignIn = "sign_in"
+	// TargetDataKey is a data-protection key, as purpose/vN.
+	TargetDataKey = "data_key"
+	// TargetOutboxMessage is a message of the outbox, by its id.
+	TargetOutboxMessage = "outbox_message"
 )
+
+// Operator returns the origin of the changes that an operator makes with a
+// command, such as cmd/admin: the system actor, with the command, the name
+// that the operator gave, the operating-system user, and the host in the
+// user agent, since a command has no request.
+func Operator(command, name, osUser, host string) Event {
+	parts := []string{command}
+	for _, p := range []struct{ key, value string }{{"operator", name}, {"os_user", osUser}, {"host", host}} {
+		if p.value != "" {
+			parts = append(parts, p.key+"="+p.value)
+		}
+	}
+	return Event{ActorType: ActorSystem, UserAgent: strings.Join(parts, "; ")}
+}
+
+// Of returns a copy of origin for action on a target, with the outcome
+// success. An origin without an actor is the system.
+func Of(origin Event, action, targetType, targetID string) Event {
+	e := origin
+	if e.ActorType == "" {
+		e.ActorType = ActorSystem
+	}
+	e.Action, e.Outcome = action, Success
+	e.TargetType, e.TargetID = targetType, targetID
+	return e
+}
 
 // maxUserAgent is the longest user agent kept, in characters.
 const maxUserAgent = 512

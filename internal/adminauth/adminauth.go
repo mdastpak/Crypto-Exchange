@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 
@@ -45,6 +46,10 @@ type Service struct {
 	// issuer names the exchange in authenticator apps.
 	issuer string
 	now    func() time.Time
+	// Origin is who makes the changes of Create, ResetTOTP, and Disable,
+	// which record an audit event in their transaction (#195): for
+	// cmd/admin, audit.Operator. Zero is the system.
+	Origin audit.Event
 }
 
 // DecodeKey decodes admin.totp_key.
@@ -155,6 +160,12 @@ func (s *Service) Create(ctx context.Context, email string) (Enrollment, error) 
 		return Enrollment{}, ErrUserExists
 	}
 	if err == nil {
+		// The event holds the address and the role, never the secret.
+		e := audit.Of(s.Origin, audit.ActionAdminCreate, audit.TargetUser, adminID)
+		e.Changes = &audit.Changes{After: map[string]interface{}{"email": email, "role": "admin", "status": "ACTIVE"}}
+		err = audit.Record(ctx, tx, e)
+	}
+	if err == nil {
 		err = tx.Commit()
 	}
 	if err != nil {
@@ -185,15 +196,35 @@ func (s *Service) ResetTOTP(ctx context.Context, email string) (Enrollment, erro
 	if err != nil {
 		return Enrollment{}, err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE users SET totp_secret = $2, totp_enabled = TRUE, totp_last_step = NULL, updated_at = NOW()
-		 WHERE hk = $1 AND role = 'admin'`,
-		adminID, sealed,
-	)
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE users SET totp_secret = $2, totp_enabled = TRUE, totp_last_step = NULL, updated_at = NOW()
+			 WHERE hk = $1 AND role = 'admin'`,
+			adminID, sealed,
+		); err != nil {
+			return err
+		}
+		// The event says that the secret changed, never what it is.
+		return audit.Record(ctx, tx, audit.Of(s.Origin, audit.ActionAdminTOTPReset, audit.TargetUser, adminID))
+	})
 	if err != nil {
 		return Enrollment{}, fmt.Errorf("store the new secret: %w", err)
 	}
 	return s.enrollment(adminID, email, secret), nil
+}
+
+// inTx runs change in a transaction, which commits only when change, and
+// the audit event it records, succeed.
+func (s *Service) inTx(ctx context.Context, change func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := change(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Disable stops an administrator from signing in. Admin tokens issued
@@ -203,16 +234,27 @@ func (s *Service) Disable(ctx context.Context, email string) error {
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE users SET status = 'INACTIVE', updated_at = NOW() WHERE role = 'admin' AND `+ownsEmail, emailContact, email,
-	)
-	if err != nil {
-		return fmt.Errorf("disable the administrator: %w", err)
-	}
-	if n, err := result.RowsAffected(); err != nil || n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var adminID, before string
+		err := tx.QueryRowContext(ctx,
+			`UPDATE users u SET status = 'INACTIVE', updated_at = NOW()
+			 FROM (SELECT hk, status FROM users WHERE role = 'admin' AND `+ownsEmail+` FOR UPDATE) old
+			 WHERE u.hk = old.hk
+			 RETURNING u.hk, old.status`, emailContact, email,
+		).Scan(&adminID, &before)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("disable the administrator: %w", err)
+		}
+		e := audit.Of(s.Origin, audit.ActionAdminDisable, audit.TargetUser, adminID)
+		e.Changes = &audit.Changes{Before: map[string]interface{}{"status": before}, After: map[string]interface{}{"status": "INACTIVE"}}
+		if err := audit.Record(ctx, tx, e); err != nil {
+			return fmt.Errorf("disable the administrator: %w", err)
+		}
+		return nil
+	})
 }
 
 // FindActive returns the administrator with email who may sign in: role

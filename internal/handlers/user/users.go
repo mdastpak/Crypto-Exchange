@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -219,11 +220,21 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		sendProfileError(c, err)
 		return
 	}
+	before := profile
 	update.apply(&profile)
 	_, err = tx.ExecContext(ctx,
 		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, updated_at = NOW() WHERE hk = $4",
 		profile.FirstName, profile.LastName, profile.DisplayName, userID,
 	)
+	if changes := nameChanges(before, profile); err == nil && changes != nil {
+		// The change commits only with its event (#195).
+		e := audit.FromRequest(c)
+		e.ActorType, e.ActorID = audit.ActorUser, userID.String()
+		e.Action, e.Outcome = audit.ActionUserProfileUpdate, audit.Success
+		e.TargetType, e.TargetID = audit.TargetUser, userID.String()
+		e.Changes = changes
+		err = audit.Record(ctx, tx, e)
+	}
 	if err == nil {
 		err = tx.Commit()
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
@@ -313,4 +314,73 @@ func TestConfirmEmail_VerifiesTheAddressOnce(t *testing.T) {
 
 	require.NoError(t, service.ConfirmEmail(ctx, enrollment.AdminID))
 	assert.Equal(t, first.Time, verifiedAt().Time, "later sign-ins keep the first verification")
+}
+
+// auditRows returns the action, actor type, target, changes, and user agent
+// of the audit events, oldest first.
+func auditRows(t *testing.T, conn *sql.DB) []string {
+	t.Helper()
+	rows, err := conn.Query(`SELECT action || ' ' || actor_type || ' ' || target_type || '/' || target_id || ' ' ||
+		COALESCE(changes::text, '-') || ' ' || COALESCE(user_agent, '-') FROM audit_events ORDER BY hk`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var row string
+		require.NoError(t, rows.Scan(&row))
+		got = append(got, row)
+	}
+	require.NoError(t, rows.Err())
+	return got
+}
+
+// Every change of an administrator records one event in its transaction,
+// with the operator and never the secret (#195).
+func TestChanges_AreAudited(t *testing.T) {
+	service, conn := newTestService(t)
+	service.Origin = audit.Operator("cmd/admin test", "alice", "root", "ops-1")
+	ctx := context.Background()
+
+	enrollment, err := service.Create(ctx, "audited@example.com")
+	require.NoError(t, err)
+	reset, err := service.ResetTOTP(ctx, "audited@example.com")
+	require.NoError(t, err)
+	require.NoError(t, service.Disable(ctx, "audited@example.com"))
+
+	target := "user/" + enrollment.AdminID
+	agent := "cmd/admin test; operator=alice; os_user=root; host=ops-1"
+	assert.Equal(t, []string{
+		`admin.create system ` + target + ` {"after": {"role": "admin", "email": "audited@example.com", "status": "ACTIVE"}} ` + agent,
+		`admin.totp_reset system ` + target + ` - ` + agent,
+		`admin.disable system ` + target + ` {"after": {"status": "INACTIVE"}, "before": {"status": "ACTIVE"}} ` + agent,
+	}, auditRows(t, conn))
+	var all string
+	require.NoError(t, conn.QueryRow(`SELECT string_agg(row_to_json(audit_events)::text, '') FROM audit_events`).Scan(&all))
+	assert.NotContains(t, all, enrollment.Secret)
+	assert.NotContains(t, all, reset.Secret)
+}
+
+// A change is refused when its event cannot be written: here, an origin
+// that the checks of audit_events refuse, an admin actor without an id.
+func TestChanges_AreRefusedWithoutTheirEvent(t *testing.T) {
+	service, conn := newTestService(t)
+	ctx := context.Background()
+	enrollment, err := service.Create(ctx, "kept@example.com")
+	require.NoError(t, err)
+	service.Origin = audit.Event{ActorType: audit.ActorAdmin}
+
+	_, err = service.Create(ctx, "refused@example.com")
+	assert.Error(t, err)
+	_, err = service.FindActive(ctx, "refused@example.com")
+	assert.ErrorIs(t, err, ErrNotFound, "the administrator is not created")
+
+	_, err = service.ResetTOTP(ctx, "kept@example.com")
+	assert.Error(t, err)
+	now := time.Unix(1_900_000_000, 0)
+	require.NoError(t, service.VerifyTOTP(ctx, enrollment.AdminID, at(t, service, now, enrollment)), "the old secret still works")
+
+	assert.Error(t, service.Disable(ctx, "kept@example.com"))
+	_, err = service.FindActive(ctx, "kept@example.com")
+	assert.NoError(t, err, "the administrator is not disabled")
+	assert.Len(t, auditRows(t, conn), 1, "only the first creation is recorded")
 }

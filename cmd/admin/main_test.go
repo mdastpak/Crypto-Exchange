@@ -133,6 +133,40 @@ func TestRun_ManagesAdministrators(t *testing.T) {
 	code, _, stderr = runCLI(t, append(base, "disable", "-email", "nobody@example.com")...)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr, "no active administrator")
+
+	// Each change is audited, with the operator (#195).
+	code, _, stderr = runCLI(t, append(append(base, "-operator", "alice"), "reset-totp", "-email", "admin@example.com")...)
+	require.Equal(t, 0, code, stderr)
+	events := cliAuditEvents(t)
+	require.Len(t, events, 4, "create, reset-totp, disable, and reset-totp; the refused commands record nothing")
+	assert.Equal(t, []string{"admin.create", "admin.totp_reset", "admin.disable", "admin.totp_reset"},
+		[]string{events[0].action, events[1].action, events[2].action, events[3].action})
+	for _, e := range events {
+		assert.Equal(t, "system", e.actor)
+		assert.Regexp(t, `^cmd/admin \S+; (operator=alice; )?os_user=`, e.agent)
+	}
+	assert.Contains(t, events[3].agent, "operator=alice")
+}
+
+type cliAuditEvent struct{ action, actor, target, agent string }
+
+// cliAuditEvents returns the audit events of the test database, oldest first.
+func cliAuditEvents(t *testing.T) []cliAuditEvent {
+	t.Helper()
+	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
+	require.NoError(t, err)
+	defer conn.Close()
+	rows, err := conn.Query(`SELECT action, actor_type, COALESCE(target_id, ''), COALESCE(user_agent, '') FROM audit_events ORDER BY hk`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var events []cliAuditEvent
+	for rows.Next() {
+		var e cliAuditEvent
+		require.NoError(t, rows.Scan(&e.action, &e.actor, &e.target, &e.agent))
+		events = append(events, e)
+	}
+	require.NoError(t, rows.Err())
+	return events
 }
 
 func TestRun_RequiresTheTOTPKey(t *testing.T) {
@@ -227,6 +261,15 @@ func TestRun_ManagesDataKeys(t *testing.T) {
 	assert.Regexp(t, `^row-mac\s+1\s+retired\s+local:[0-9a-f]{16}\s+\S+\s+\d{4}-`, lines[1])
 	assert.Regexp(t, `^row-mac\s+2\s+current\s+local:[0-9a-f]{16}\s+\S+\s+-$`, lines[2])
 	assert.NotContains(t, stdout, base64.StdEncoding.EncodeToString(kek))
+
+	var targets []string
+	for _, e := range cliAuditEvents(t) {
+		targets = append(targets, e.action+" "+e.target)
+	}
+	assert.Equal(t, []string{
+		"data_key.rotate row-mac/v1", "data_key.rotate row-mac/v2", "data_key.retire row-mac/v1",
+		"data_key.rewrap row-mac/v1", "data_key.rewrap row-mac/v2",
+	}, targets)
 }
 
 func TestRun_KeysNeedAProvider(t *testing.T) {
@@ -305,4 +348,9 @@ by the broker', NOW()) RETURNING id`).Scan(&retryID))
 	code, stdout, stderr = runCLI(t, append(base, "outbox", "list")...)
 	require.Equal(t, 0, code, stderr)
 	assert.Regexp(t, `^2 messages pending, the oldest for \S+; 0 dead letters\.\n$`, stdout)
+
+	events := cliAuditEvents(t)
+	require.Len(t, events, 2)
+	assert.Equal(t, cliAuditEvent{"outbox.retry", "system", fmt.Sprint(retryID), events[0].agent}, events[0])
+	assert.Equal(t, cliAuditEvent{"outbox.discard", "system", fmt.Sprint(discardID), events[1].agent}, events[1])
 }

@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 )
 
 // Stats is the state of the outbox.
@@ -91,30 +94,41 @@ func ListDeadLetters(ctx context.Context, db *sql.DB, limit int) ([]DeadLetter, 
 
 // RetryDeadLetter makes a dead letter pending again, with all its attempts.
 // It is published after the messages of its topic that were published
-// while it was set aside, so out of order.
-func RetryDeadLetter(ctx context.Context, db *sql.DB, id int64) error {
-	return changeDeadLetter(ctx, db, id,
+// while it was set aside, so out of order. origin is who retries it, which
+// is recorded in the audit log (#195).
+func RetryDeadLetter(ctx context.Context, db *sql.DB, id int64, origin audit.Event) error {
+	return changeDeadLetter(ctx, db, id, audit.ActionOutboxRetry, origin,
 		`UPDATE outbox_events SET failed_at = NULL, attempts = 0, next_attempt_at = NOW()
-		WHERE id = $1 AND failed_at IS NOT NULL AND published_at IS NULL`)
+		WHERE id = $1 AND failed_at IS NOT NULL AND published_at IS NULL RETURNING topic`)
 }
 
 // DiscardDeadLetter deletes a dead letter, which is then never published.
-func DiscardDeadLetter(ctx context.Context, db *sql.DB, id int64) error {
-	return changeDeadLetter(ctx, db, id,
-		`DELETE FROM outbox_events WHERE id = $1 AND failed_at IS NOT NULL AND published_at IS NULL`)
+// The audit event keeps its topic.
+func DiscardDeadLetter(ctx context.Context, db *sql.DB, id int64, origin audit.Event) error {
+	return changeDeadLetter(ctx, db, id, audit.ActionOutboxDiscard, origin,
+		`DELETE FROM outbox_events WHERE id = $1 AND failed_at IS NOT NULL AND published_at IS NULL RETURNING topic`)
 }
 
-func changeDeadLetter(ctx context.Context, db *sql.DB, id int64, query string) error {
-	result, err := db.ExecContext(ctx, query, id)
+// changeDeadLetter runs query, which returns the topic of the message it
+// changed, and records action in the same transaction.
+func changeDeadLetter(ctx context.Context, db *sql.DB, id int64, action string, origin audit.Event, query string) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
+	defer tx.Rollback()
+	var topic string
+	err = tx.QueryRowContext(ctx, query, id).Scan(&topic)
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("message %d: %w", id, ErrNotDeadLetter)
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	e := audit.Of(origin, action, audit.TargetOutboxMessage, strconv.FormatInt(id, 10))
+	e.Changes = &audit.Changes{Before: map[string]interface{}{"topic": topic}}
+	if err := audit.Record(ctx, tx, e); err != nil {
+		return fmt.Errorf("recording %s of message %d: %w", action, id, err)
+	}
+	return tx.Commit()
 }

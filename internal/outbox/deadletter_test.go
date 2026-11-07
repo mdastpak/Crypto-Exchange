@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 
 	"github.com/stretchr/testify/assert"
@@ -61,10 +63,10 @@ func TestFlush_AMessageThatAlwaysFailsBecomesADeadLetter(t *testing.T) {
 
 	// Retried once the cause is fixed, it is published.
 	p.failOn("none", nil)
-	require.NoError(t, RetryDeadLetter(ctx, db, letters[0].ID))
+	require.NoError(t, RetryDeadLetter(ctx, db, letters[0].ID, audit.Event{}))
 	flushTimes(t, r, 1)
 	assert.Equal(t, []string{"ex-a:a2", "ex-a:a3", "ex-a:poison"}, p.messages())
-	assert.ErrorIs(t, RetryDeadLetter(ctx, db, letters[0].ID), ErrNotDeadLetter, "a published message is no dead letter")
+	assert.ErrorIs(t, RetryDeadLetter(ctx, db, letters[0].ID, audit.Event{}), ErrNotDeadLetter, "a published message is no dead letter")
 }
 
 func TestDiscardDeadLetter(t *testing.T) {
@@ -79,11 +81,15 @@ func TestDiscardDeadLetter(t *testing.T) {
 	letters, err := ListDeadLetters(ctx, db, 10)
 	require.NoError(t, err)
 	require.Len(t, letters, 1)
-	require.NoError(t, DiscardDeadLetter(ctx, db, letters[0].ID))
-	assert.ErrorIs(t, DiscardDeadLetter(ctx, db, letters[0].ID), ErrNotDeadLetter)
+	require.NoError(t, DiscardDeadLetter(ctx, db, letters[0].ID, audit.Event{}))
+	assert.ErrorIs(t, DiscardDeadLetter(ctx, db, letters[0].ID, audit.Event{}), ErrNotDeadLetter)
 	var rows int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM outbox_events`).Scan(&rows))
 	assert.Zero(t, rows)
+	var topic string
+	require.NoError(t, db.QueryRow(`SELECT changes->'before'->>'topic' FROM audit_events WHERE action = 'outbox.discard' AND target_id = $1`,
+		fmt.Sprint(letters[0].ID)).Scan(&topic), "the discard is audited with the topic of the message")
+	assert.Equal(t, "a", topic)
 }
 
 // A route that never gives up keeps its topic in order instead.

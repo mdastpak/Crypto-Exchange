@@ -285,3 +285,27 @@ func TestStore_WithOpenBao(t *testing.T) {
 	require.NoError(t, conn.QueryRow(`SELECT convert_from(wrapped_key, 'UTF8') FROM data_keys WHERE purpose = 'field-enc'`).Scan(&wrapped))
 	assert.True(t, strings.HasPrefix(wrapped, "vault:v2:"), wrapped)
 }
+
+// The first keys are recorded once, with the system as the actor, however
+// many instances load them (#195).
+func TestStore_TheFirstKeysAreAudited(t *testing.T) {
+	ctx := context.Background()
+	store, conn := newTestStore(t, localProvider(t))
+	_, err := store.Load(ctx)
+	require.NoError(t, err)
+	_, err = store.Load(ctx)
+	require.NoError(t, err)
+
+	rows, err := conn.Query(`SELECT actor_type, target_id, changes->'after'->>'kek_id' FROM audit_events WHERE action = 'data_key.create' ORDER BY target_id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var actor, target, kek string
+		require.NoError(t, rows.Scan(&actor, &target, &kek))
+		assert.Equal(t, "system", actor)
+		assert.Equal(t, store.Provider.ID(), kek)
+		got = append(got, target)
+	}
+	assert.Equal(t, []string{"blind-index/v1", "field-enc/v1", "row-mac/v1"}, got)
+}
