@@ -58,6 +58,16 @@ type Configuration struct {
 			// of the server. Release mode needs it or Enabled.
 			BehindProxy bool `yaml:"behind_proxy"`
 		} `yaml:"tls"`
+		// HSTS is the Strict-Transport-Security header (#191).
+		HSTS struct {
+			// Enabled sends it. Unset, it is sent when the server or a
+			// proxy in front of it terminates TLS.
+			Enabled *bool `yaml:"enabled"`
+			// MaxAgeSeconds is how long browsers remember to use HTTPS.
+			MaxAgeSeconds int `yaml:"max_age_seconds"`
+			// IncludeSubdomains applies it to every subdomain too.
+			IncludeSubdomains bool `yaml:"include_subdomains"`
+		} `yaml:"hsts"`
 		CORS struct {
 			// AllowedOrigins lists the browser origins (scheme://host[:port])
 			// that may call the API with credentials. Empty means none.
@@ -673,6 +683,9 @@ func setDefaults() {
 	if Config.Server.MaxBodyBytes == 0 {
 		Config.Server.MaxBodyBytes = DefaultMaxBodyBytes
 	}
+	if Config.Server.HSTS.MaxAgeSeconds == 0 {
+		Config.Server.HSTS.MaxAgeSeconds = DefaultHSTSMaxAgeSeconds
+	}
 	if Config.Server.ShutdownTimeout == 0 {
 		Config.Server.ShutdownTimeout = DefaultShutdownTimeoutSeconds
 	}
@@ -999,6 +1012,10 @@ const DefaultCurrencyCacheTTLSeconds = 300
 // is not set.
 const DefaultShutdownTimeoutSeconds = 30
 
+// DefaultHSTSMaxAgeSeconds is server.hsts.max_age_seconds when it is not
+// set: one year.
+const DefaultHSTSMaxAgeSeconds = 365 * 24 * 60 * 60
+
 // DefaultMaxBodyBytes is server.max_body_bytes when it is not set: 1 MiB.
 const DefaultMaxBodyBytes = 1 << 20
 
@@ -1025,6 +1042,17 @@ func Milliseconds(ms, fallback int) time.Duration {
 
 // SwaggerEnabled reports whether the Swagger UI is served: as
 // server.swagger.enabled says, or, when it is not set, outside release mode.
+// HSTSEnabled reports whether responses carry Strict-Transport-Security:
+// as set, or else when the server or a proxy in front of it terminates TLS.
+// Browsers ignore the header on plain HTTP, so a proxy that also serves
+// HTTP is not a problem.
+func (c *Configuration) HSTSEnabled() bool {
+	if c.Server.HSTS.Enabled != nil {
+		return *c.Server.HSTS.Enabled
+	}
+	return c.Server.TLS.Enabled || c.Server.TLS.BehindProxy
+}
+
 func (c *Configuration) SwaggerEnabled() bool {
 	if c.Server.Swagger.Enabled != nil {
 		return *c.Server.Swagger.Enabled

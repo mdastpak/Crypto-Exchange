@@ -34,6 +34,11 @@ server:
     # Or: a reverse proxy terminates TLS in front of the server. Release mode
     # needs one of the two, and trusted_proxies with this one.
     behind_proxy: false
+  hsts:
+    # Strict-Transport-Security. Unset "enabled" sends it when tls.enabled or
+    # tls.behind_proxy is true.
+    max_age_seconds: 31536000
+    include_subdomains: false
   cors:
     # Exact browser origins (scheme://host[:port]) allowed to call the API with
     # credentials, for example "https://app.example.com". Empty: no

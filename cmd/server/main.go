@@ -712,11 +712,24 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.RequestID())
-	r.Use(middleware.SecurityHeaders())
+	security := middleware.SecurityOptions{
+		HSTS:                  config.Config.HSTSEnabled(),
+		HSTSMaxAge:            config.Config.Server.HSTS.MaxAgeSeconds,
+		HSTSIncludeSubdomains: config.Config.Server.HSTS.IncludeSubdomains,
+	}
+	if security.HSTSMaxAge <= 0 {
+		security.HSTSMaxAge = config.DefaultHSTSMaxAgeSeconds
+	}
+	if config.Config.SwaggerEnabled() {
+		security.DocsPrefix = "/swagger/"
+	}
+	r.Use(middleware.SecurityHeaders(security))
 	r.Use(cors)
 	// The rate limit comes before the body limit, so that a flood of
-	// requests is rejected before their bodies are read.
+	// requests is rejected before their bodies are read, and before the
+	// answer to preflights, so that they are counted too.
 	r.Use(rl.RESTRateLimit(probeRoutes...))
+	r.Use(middleware.Preflight())
 	bodyLimit := config.Config.Server.MaxBodyBytes
 	if bodyLimit <= 0 {
 		bodyLimit = config.DefaultMaxBodyBytes
