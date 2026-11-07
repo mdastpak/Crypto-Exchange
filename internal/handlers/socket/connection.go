@@ -239,6 +239,11 @@ func (h *WebSocketHandler) reserve(ip string) (int, string) {
 func (h *WebSocketHandler) release(ip string) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
+	h.releaseLocked(ip)
+}
+
+// releaseLocked is release for a caller that holds Mu.
+func (h *WebSocketHandler) releaseLocked(ip string) {
 	if h.open > 0 {
 		h.open--
 	}
