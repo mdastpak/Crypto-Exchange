@@ -401,8 +401,8 @@ func (c *Catalog) warn(format string, args ...interface{}) {
 
 func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, hk, status, info, created_at, updated_at FROM currencies
-		WHERE status = 'approved' AND deleted_at IS NULL ORDER BY id`)
+		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+LifecycleColumns+` FROM currencies c
+		WHERE c.status = 'approved' AND c.deleted_at IS NULL ORDER BY c.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -413,10 +413,15 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 		var currency models.Currency
 		var info []byte
 		var created, updated sql.NullTime
-		if err := rows.Scan(&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated); err != nil {
+		var lifecycle LifecycleScan
+		if err := rows.Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated}, lifecycle.Dest()...)...); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(info, &currency.Info); err != nil {
+			return nil, fmt.Errorf("currency %s: %w", currency.HK, err)
+		}
+		var err error
+		if currency.Lifecycle, err = lifecycle.Lifecycle(); err != nil {
 			return nil, fmt.Errorf("currency %s: %w", currency.HK, err)
 		}
 		currency.CreatedAt = timestamp(created)

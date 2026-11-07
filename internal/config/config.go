@@ -217,6 +217,12 @@ type Configuration struct {
 		MaxPerUser int `yaml:"max_per_user"`
 	} `yaml:"favorites"`
 
+	Delisting struct {
+		// IntervalSeconds is how often the scheduler of each instance
+		// applies the steps of delistings that are due (#216).
+		IntervalSeconds int `yaml:"interval_seconds"`
+	} `yaml:"delisting"`
+
 	// Keys says where the key-encryption key (KEK) of the data-protection
 	// keys lives. See docs/data-protection.md.
 	Keys KeysConfig `yaml:"keys"`
@@ -790,6 +796,7 @@ func setDefaults() {
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
+		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -1014,6 +1021,11 @@ const (
 	// favorites of a user, which are listed in one answer.
 	DefaultMaxFavoritesPerUser = 100
 	MaxFavoritesPerUser        = 1000
+
+	// DefaultDelistingIntervalSeconds and MaxDelistingIntervalSeconds bound
+	// how late after its time a step of a delisting is applied.
+	DefaultDelistingIntervalSeconds = 30
+	MaxDelistingIntervalSeconds     = 3600
 )
 
 // DefaultAdminSignInMinResponseMS is longer than the work of a sign-in

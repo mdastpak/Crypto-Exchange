@@ -49,11 +49,18 @@ const (
 	ActionCurrencyDelete  = "currency.delete"
 	// ActionCurrencyRestore is an administrator undoing a delete (#196).
 	ActionCurrencyRestore = "currency.restore"
-	ActionUserCreate      = "user.create"
-	ActionUserSignInCode  = "user.sign_in_code"
-	ActionUserSignIn      = "user.sign_in"
-	ActionUserRefresh     = "user.token_refresh"
-	ActionUserLogout      = "user.logout"
+	// The lifecycle of a currency (#216): an administrator scheduling or
+	// cancelling a delisting, or overriding a capability, and the scheduler
+	// applying a step.
+	ActionCurrencyDelistingSchedule  = "currency.delisting_schedule"
+	ActionCurrencyDelistingCancel    = "currency.delisting_cancel"
+	ActionCurrencyCapabilityOverride = "currency.capability_override"
+	ActionCurrencyLifecycleChange    = "currency.lifecycle_change"
+	ActionUserCreate                 = "user.create"
+	ActionUserSignInCode             = "user.sign_in_code"
+	ActionUserSignIn                 = "user.sign_in"
+	ActionUserRefresh                = "user.token_refresh"
+	ActionUserLogout                 = "user.logout"
 	// ActionUserSessionRevoke is a user ending one of their sessions from
 	// the session list (#193); the target is the session.
 	ActionUserSessionRevoke = "user.session_revoke"

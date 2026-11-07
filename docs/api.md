@@ -68,6 +68,7 @@ An error response contains only a fixed message for each error. Internal details
 | `forbidden` | `403` | The request is not allowed, without a more specific code |
 | `account_unavailable` | `403` | The account can no longer sign in: disabled, suspended, or deleted |
 | `account_frozen` | `403` | The account is frozen by a [restriction](#restrictions); its tokens no longer work and it cannot sign in |
+| `currency_operation_disabled` | `403` | The [lifecycle](#delistings) of the currency does not allow the operation now; `info` names the capability and the state |
 | `operation_restricted`, `asset_restricted` | `403` | A [restriction](#restrictions) blocks the operation; `info` names it |
 | `use_admin_sign_in` | `403` | An administrator used the user sign-in |
 | `not_found` | `404` | No such resource, or a hidden one, or no such route |
@@ -425,11 +426,18 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
     "contract": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
   },
   "created_at": "2026-11-06T09:00:00Z",
-  "updated_at": "2026-11-06T09:30:00Z"
+  "updated_at": "2026-11-06T09:30:00Z",
+  "lifecycle": {
+    "state": "active",
+    "capabilities": {
+      "deposit": true, "withdraw": true, "buy": true, "sell": true,
+      "convert_into": true, "convert_from": true, "listed": true
+    }
+  }
 }
 ```
 
-`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. The field name `if_fiat` is a known typo for `is_fiat`. It will be renamed together with the move from `currencies` to the assets table ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), so that clients change only once.
+`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. `lifecycle` says where the currency is in a [delisting](#delistings) and what users may do with it now; `next`, when present, is the next scheduled step. The field name `if_fiat` is a known typo for `is_fiat`. It will be renamed together with the move from `currencies` to the assets table ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), so that clients change only once.
 
 ### `GET /public/currencies`
 
@@ -444,9 +452,12 @@ Lists the public currencies, oldest first by default, a page at a time, as in [P
 | `has_contract` | `true` or `false` |
 | `is_token`, `if_fiat` | `true` or `false` |
 | `created_since`, `created_until`, `updated_since` | RFC 3339 times. `created_until` excludes that time. |
+| `lifecycle` | [Lifecycle states](#delistings), several: `lifecycle=delist_announced,sell_only` |
 | `favorites` | `true`: only the [favorites](#favorites) of the signed-in user. It needs the user's access token in `Authorization`. Public list only. |
-| `sort` | `symbol`, `en_name`, `created_at`, or `updated_at`, with `-` for descending. The `hk` breaks ties. |
+| `sort` | `symbol`, `en_name`, `created_at`, or `updated_at`, with `-` for descending. The `hk` breaks ties; in the default order by creation, the `id` does, so currencies created in one second keep their order. |
 | `limit`, `cursor` | The page. A cursor is valid only with the order that issued it. |
+
+A [delisted](#delistings) currency, whose `listed` capability is false, leaves the public list; it can still be read with `GET /public/currencies/{hk}`, for history.
 
 Text filters are at most 64 characters, ignore case, and match the parts of a name, such as `bitcoin` in `Wrapped Bitcoin`. Persian text is compared normalized on both sides: the Arabic `ي`, `ى`, and `ك` are read as the Persian `ی` and `ک`, Persian and Arabic digits as ASCII digits, and the zero-width non-joiner, tatweel, and diacritics are ignored, so `بيتكوين` finds `بیت‌کوین`. A parameter that is not one of these is refused with `400 validation_failed`, so that a misspelled filter does not return everything.
 
@@ -581,6 +592,74 @@ Events and the cache describe what public clients can see, so they follow the vi
 | An approved currency is updated and stays approved | Replaced | `update` with the currency's `info` |
 | An approved currency is suspended, set back to pending, or deleted | Removed | `delete` with `info` set to `{"status": "<new status>"}` |
 | A currency that is not approved is created, updated, or deleted | Not cached | None |
+| The lifecycle of an approved currency changes: a delisting is scheduled or cancelled, a step applies, or a capability is overridden | Replaced | `update` with the currency's `info` and its new `lifecycle` |
+
+An event without `lifecycle` leaves the lifecycle as it was.
+
+## Delistings
+
+A delisting takes an approved currency, step by step, from `active` to `delisted`, so that holders can act before each step ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)). Each lifecycle state sets the capabilities of the currency, which every flow that moves it checks:
+
+| State | Deposit | Buy, convert into | Sell, convert from | Withdraw | Listed |
+| --- | --- | --- | --- | --- | --- |
+| `active`, `delist_announced` | yes | yes | yes | yes | yes |
+| `deposits_disabled` | no | yes | yes | yes | yes |
+| `sell_only` | no | no | yes | yes | yes |
+| `trading_halted`, `withdrawal_only` | no | no | no | yes | yes |
+| `frozen` | no | no | no | no | yes |
+| `delisted` | no | no | no | no | no |
+
+An administrator can override any capability of a currency, whatever its state, until the override is removed: to pause the deposits of one currency during an incident, or to keep withdrawals open at `frozen`. An operation that a capability refuses answers `403 currency_operation_disabled`, with the currency, the capability, and the state in `info`:
+
+```json
+{
+  "status": 403,
+  "message": "This currency is being delisted, and this operation is no longer available for it.",
+  "code": "currency_operation_disabled",
+  "info": { "currency_hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10", "capability": "deposit", "lifecycle": "deposits_disabled" }
+}
+```
+
+The steps apply at their times. Every instance runs a scheduler, every `delisting.interval_seconds`, which claims each step that is due with `FOR UPDATE SKIP LOCKED` and applies it in one transaction with its audit event (`currency.lifecycle_change`) and its currency event in the outbox, so each step applies exactly once, and a step whose instance stopped before its commit is applied by the next run. Steps that came due while every instance was down apply in order. A flow that checks a capability in its transaction holds a share lock of the currency, so a step waits for it to finish.
+
+At `frozen`, the balances that are left are settled per the delisting's `settlement`: converted into another approved currency at the last trade price, a TWAP, or a fixed price, or held for their owners to claim for `claim_days`. The policy is recorded and announced with the schedule; the settlement itself, the cancellation of open orders, and the notices to holders come with the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)) and notifications ([#170](https://github.com/mdastpak/Crypto-Exchange/issues/170)).
+
+### `POST /admin/currencies/{hk}/delistings` (admin)
+
+```json
+{
+  "kind": "standard",
+  "steps": [
+    { "state": "delist_announced", "at": "2026-12-01T00:00:00Z" },
+    { "state": "deposits_disabled", "at": "2026-12-15T00:00:00Z" },
+    { "state": "sell_only", "at": "2026-12-22T00:00:00Z" },
+    { "state": "trading_halted", "at": "2026-12-29T00:00:00Z" },
+    { "state": "withdrawal_only", "at": "2026-12-29T00:01:00Z" },
+    { "state": "frozen", "at": "2027-01-29T00:00:00Z" },
+    { "state": "delisted", "at": "2027-02-01T00:00:00Z" }
+  ],
+  "settlement": "convert",
+  "settlement_currency_hk": "<hk of USDT>",
+  "price_source": "twap",
+  "announcement_url": "https://example.com/news/delisting"
+}
+```
+
+The steps follow the order of the lifecycle, each at a later time, and any of them may be left out. A `standard` delisting starts with `delist_announced`; an `emergency` one, for a security or regulatory reason, starts at `trading_halted` or later, and can start now. A delisting that stops before `delisted`, such as an emergency halt, stays `scheduled`: cancelling it relists the currency, and a new delisting, whose first step is after the state of the currency, supersedes it. `settlement` is `convert`, with `settlement_currency_hk` and `price_source` (`last_trade`, `twap`, or `fixed` with `fixed_price`), or `claim`, with `claim_days`. The schedule is audited as `currency.delisting_schedule`.
+
+Response `201` with the delisting. Errors: `400` (`validation_failed`), `404` for an unknown currency, `409` with `not_listed` for a currency that is not approved, or `delisting_in_progress` when a delisting of the currency has steps left or it is delisted.
+
+### `GET /admin/currencies/{hk}/delistings` (admin)
+
+The delistings of the currency, newest first, with their steps and when each applied.
+
+### `POST /admin/currencies/{hk}/delistings/{id}/cancel` (admin)
+
+Cancels a delisting before `frozen`: the steps that are left do not apply, and the currency returns to `active`. The optional body `{"version": 3}` refuses a cancel based on another version with `409 version_conflict`. Other errors: `404`, and `409` with `delisting_not_scheduled` for a completed or cancelled delisting, or `delisting_irreversible` from `frozen` on. Audited as `currency.delisting_cancel`.
+
+### `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` (admin)
+
+`PUT` with `{"allowed": false, "note": "node upgrade"}` overrides `deposit`, `withdraw`, `buy`, `sell`, `convert_into`, `convert_from`, or `listed`; `DELETE` removes the override. Response `200` with the lifecycle of the currency. Audited as `currency.capability_override`.
 
 ## Restrictions
 

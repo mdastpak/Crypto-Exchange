@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/google/uuid"
@@ -81,6 +82,22 @@ func sanitizeCurrencyEvent(body []byte, now time.Time) ([]byte, error) {
 		return nil, fmt.Errorf("unknown action %s", quoted(event.Action))
 	}
 
+	var lifecycle *models.CurrencyLifecycle
+	if event.Lifecycle != nil && event.Action != models.CurrencyEventDelete {
+		l := *event.Lifecycle
+		if currencies.Lifecycle(l.State).Rank() < 0 {
+			return nil, fmt.Errorf("%s event of %s: unknown lifecycle %s", event.Action, event.HK, quoted(l.State))
+		}
+		if l.Next != nil {
+			next := *l.Next
+			if currencies.Lifecycle(next.State).Rank() < 0 {
+				return nil, fmt.Errorf("%s event of %s: unknown next lifecycle %s", event.Action, event.HK, quoted(next.State))
+			}
+			l.Next = &next
+		}
+		lifecycle = &l
+	}
+
 	infoJSON, err := json.Marshal(info)
 	if err != nil {
 		return nil, err
@@ -91,6 +108,7 @@ func sanitizeCurrencyEvent(body []byte, now time.Time) ([]byte, error) {
 		Action:     event.Action,
 		HK:         event.HK,
 		Info:       infoJSON,
+		Lifecycle:  lifecycle,
 		ServerTime: now.UTC().Format(time.RFC3339),
 	})
 }

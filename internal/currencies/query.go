@@ -55,9 +55,11 @@ type Query struct {
 	HasContract     *bool
 	IsToken, IfFiat *bool
 	Statuses        []string
-	CreatedSince    *time.Time
-	CreatedUntil    *time.Time
-	UpdatedSince    *time.Time
+	// Lifecycles keeps the currencies at one of these lifecycle states.
+	Lifecycles   []string
+	CreatedSince *time.Time
+	CreatedUntil *time.Time
+	UpdatedSince *time.Time
 	// Sort is a sort field, or empty for the default order; Desc reverses
 	// it.
 	Sort string
@@ -99,7 +101,7 @@ func Normalize(s string) string {
 // QueryParams are the parameters of the public list. The admin list also
 // takes status.
 var QueryParams = []string{"q", "symbol", "en_name", "fa_name", "contract", "has_contract", "is_token", "if_fiat",
-	"created_since", "created_until", "updated_since", "sort", "limit", "cursor"}
+	"created_since", "created_until", "updated_since", "lifecycle", "sort", "limit", "cursor"}
 
 // ParseQuery reads a query from the URL query of a list. extra names the
 // other parameters that the list takes, which the caller reads; status is
@@ -146,6 +148,12 @@ func ParseQuery(values url.Values, extra ...string) (Query, map[string]string) {
 			if !slices.Contains(Statuses, s) {
 				errs["status"] = "must be approved, pending, suspend, or deleted"
 			}
+		}
+	}
+	q.Lifecycles = list(values["lifecycle"], strings.ToLower)
+	for _, s := range q.Lifecycles {
+		if Lifecycle(s).Rank() < 0 {
+			errs["lifecycle"] = "must be lifecycle states: active, delist_announced, deposits_disabled, sell_only, trading_halted, withdrawal_only, frozen, or delisted"
 		}
 	}
 	for name, flag := range map[string]**bool{"has_contract": &q.HasContract, "is_token": &q.IsToken, "if_fiat": &q.IfFiat} {
@@ -227,6 +235,15 @@ func (q Query) Match(c models.Currency) bool {
 	}
 	if len(q.Statuses) > 0 && !slices.Contains(q.Statuses, c.Status) {
 		return false
+	}
+	if len(q.Lifecycles) > 0 {
+		state := string(LifecycleActive)
+		if c.Lifecycle != nil {
+			state = c.Lifecycle.State
+		}
+		if !slices.Contains(q.Lifecycles, state) {
+			return false
+		}
 	}
 	if q.CreatedSince != nil || q.CreatedUntil != nil {
 		created, ok := parseTime(c.CreatedAt)

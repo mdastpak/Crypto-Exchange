@@ -332,3 +332,23 @@ func TestConsumer_Broker_DropsInvalidEventsAndKeepsConsuming(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// TestSanitizeCurrencyEvent_KeepsTheLifecycle: the lifecycle of #216 reaches
+// clients, with only its known fields, and an unknown state is refused.
+func TestSanitizeCurrencyEvent_KeepsTheLifecycle(t *testing.T) {
+	body := `{"entity":"currencies","action":"update","hk":"` + testHK + `","info":{"symbol":"OLD"},` +
+		`"lifecycle":{"state":"sell_only","extra":1,"capabilities":{"withdraw":true,"sell":true,"listed":true,"fly":true},` +
+		`"next":{"state":"trading_halted","at":"2026-12-01T00:00:00Z"}}}`
+	out, err := sanitizeCurrencyEvent([]byte(body), time.Now())
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"lifecycle":{"state":"sell_only","capabilities":{"deposit":false,"withdraw":true,"buy":false,"sell":true,"convert_into":false,"convert_from":false,"listed":true},"next":{"state":"trading_halted","at":"2026-12-01T00:00:00Z"}}`)
+	assert.NotContains(t, string(out), "fly")
+
+	for _, bad := range []string{`{"state":"gone"}`, `{"state":"active","next":{"state":"later","at":"2026-12-01T00:00:00Z"}}`} {
+		_, err = sanitizeCurrencyEvent([]byte(`{"entity":"currencies","action":"update","hk":"`+testHK+`","info":{"symbol":"OLD"},"lifecycle":`+bad+`}`), time.Now())
+		assert.Error(t, err, bad)
+	}
+	out, err = sanitizeCurrencyEvent([]byte(`{"entity":"currencies","action":"delete","hk":"`+testHK+`","info":{"status":"deleted"},"lifecycle":{"state":"active"}}`), time.Now())
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "lifecycle", "a delete has none")
+}

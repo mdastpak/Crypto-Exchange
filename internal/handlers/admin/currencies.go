@@ -18,7 +18,6 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
-	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -67,58 +66,10 @@ type nudger interface {
 	Nudge()
 }
 
-// publicEvent returns the event of a change to currency in the public view,
-// which only approved currencies are in, or nil when the view does not
-// change:
-//
-//   - a currency that becomes public is announced as created,
-//   - a public currency that changes is announced as updated,
-//   - a currency that stops being public, by a status change or deletion,
-//     is announced as deleted,
-//   - changes to a currency that stays hidden are not announced at all.
-func publicEvent(wasPublic bool, currency models.Currency) ([]byte, error) {
-	isPublic := currency.IsPublic()
-	var action string
-	var info interface{} = currency.Info
-	switch {
-	case isPublic && !wasPublic:
-		action = models.CurrencyEventCreate
-	case isPublic && wasPublic:
-		action = models.CurrencyEventUpdate
-	case !isPublic && wasPublic:
-		action = models.CurrencyEventDelete
-		info = models.CurrencyRemoval{Status: currency.Status}
-	default:
-		return nil, nil
-	}
-	infoJSON, err := json.Marshal(info)
-	if err != nil {
-		return nil, err
-	}
-	// Version 7 UUIDs grow with time, so the IDs also sort the events.
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(models.CurrencyEvent{
-		ID:         id.String(),
-		Entity:     models.CurrencyEventEntity,
-		Action:     action,
-		HK:         currency.HK,
-		Info:       infoJSON,
-		ServerTime: time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
 // enqueuePublicEvent writes the event of a change, if it has one, to the
-// outbox in tx, so that it is published if and only if the change commits.
-// It reports whether the change touches the public view.
+// outbox in tx; see currencies.EnqueueEvent.
 func enqueuePublicEvent(ctx context.Context, tx *sql.Tx, wasPublic bool, currency models.Currency) (bool, error) {
-	event, err := publicEvent(wasPublic, currency)
-	if err != nil || event == nil {
-		return false, err
-	}
-	return true, outbox.Enqueue(ctx, tx, models.CurrencyEventTopic, event)
+	return currencies.EnqueueEvent(ctx, tx, wasPublic, currency)
 }
 
 // syncTimeout bounds the steps that follow a committed currency change.
@@ -561,15 +512,19 @@ func (h *AdminHandler) GetCurrency(c *gin.Context) {
 	var currency models.Currency
 	var info []byte
 	var created, updated, deleted sql.NullTime
+	var lifecycle currencies.LifecycleScan
 	err = h.PostgresDB.DB.QueryRowContext(ctx,
-		"SELECT id, hk, status, info, version, created_at, updated_at, deleted_at FROM currencies WHERE hk = $1", id.String(),
-	).Scan(&currency.ID, &currency.HK, &currency.Status, &info, &currency.Version, &created, &updated, &deleted)
+		"SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, "+currencies.LifecycleColumns+" FROM currencies c WHERE c.hk = $1", id.String(),
+	).Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &currency.Version, &created, &updated, &deleted}, lifecycle.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
 		return
 	}
 	if err == nil {
 		err = json.Unmarshal(info, &currency.Info)
+	}
+	if err == nil {
+		currency.Lifecycle, err = lifecycle.Lifecycle()
 	}
 	if err != nil {
 		log.Printf("Error reading currency %s: %v", id, err)

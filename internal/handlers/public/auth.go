@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -503,6 +504,8 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, "Currencies are temporarily unavailable.", nil)
 		return
 	}
+	// A delisted currency leaves the list, but can still be read by its hk.
+	list = slices.DeleteFunc(slices.Clone(list), func(c models.Currency) bool { return !currencies.Listed(c) })
 	result, err := query.Page(list, page)
 	if errors.Is(err, pagination.ErrInvalidCursor) {
 		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed",

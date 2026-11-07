@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/public"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/socket"
@@ -136,6 +138,9 @@ func run() error {
 	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
 	relay := newOutboxRelay(services, handlers)
 	workers := []worker{{"outbox relay", relay.Stop}}
+	scheduler := newDelistingScheduler(services, handlers, relay)
+	scheduler.Start()
+	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
 	if otpWorker != nil {
 		workers = append(workers, worker{"OTP delivery worker", otpWorker.Stop})
 	}
@@ -322,6 +327,26 @@ func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers) *ou
 		map[string]outbox.Route{models.CurrencyEventTopic: route}, outbox.Options{})
 	handlers.Admin.Outbox = relay
 	return relay
+}
+
+// newDelistingScheduler returns the scheduler that applies the steps of
+// delistings that are due (#216). Every instance runs one; each step is
+// applied once. After a change of the public view, it drops the cached
+// currency list and nudges the relay, which publishes the currency event
+// and drops the list again.
+func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandlers, relay *outbox.Relay) *delisting.Scheduler {
+	interval := time.Duration(config.Config.Delisting.IntervalSeconds) * time.Second
+	return delisting.NewScheduler(services.Postgres.DB, interval, func(ctx context.Context, changes []delisting.Change) {
+		if !slices.ContainsFunc(changes, func(c delisting.Change) bool { return c.Public }) {
+			return
+		}
+		if catalog := handlers.Public.Currencies; catalog != nil {
+			if err := catalog.Invalidate(ctx); err != nil {
+				log.Printf("Error dropping the cached currency list after a delisting step; the outbox relay retries: %v", err)
+			}
+		}
+		relay.Nudge()
+	})
 }
 
 // adminSignInKey decodes admin.totp_key. Without it, admin sign-in is
@@ -685,6 +710,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)
+		adminGroup.GET("/currencies/:hk/delistings", ih.Admin.ListDelistings)
+		adminGroup.POST("/currencies/:hk/delistings", ih.Admin.ScheduleDelisting)
+		adminGroup.POST("/currencies/:hk/delistings/:id/cancel", ih.Admin.CancelDelisting)
+		adminGroup.PUT("/currencies/:hk/capabilities/:capability", ih.Admin.OverrideCapability)
+		adminGroup.DELETE("/currencies/:hk/capabilities/:capability", ih.Admin.RemoveCapabilityOverride)
 		adminGroup.GET("/users/:hk/restrictions", ih.Admin.ListRestrictions)
 		adminGroup.POST("/users/:hk/restrictions", ih.Admin.CreateRestriction)
 		adminGroup.POST("/users/:hk/restrictions/:id/lift", ih.Admin.LiftRestriction)

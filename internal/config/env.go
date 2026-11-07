@@ -186,6 +186,7 @@ var envVars = []EnvVar{
 	stringVar("ADMIN_TOTP_KEY", "admin.totp_key", func(c *Configuration) *string { return &c.Admin.TOTPKey }),
 	intVar("ADMIN_SIGN_IN_MIN_RESPONSE_MS", "admin.sign_in_min_response_ms", func(c *Configuration) *int { return &c.Admin.SignInMinResponseMS }),
 	intVar("FAVORITES_MAX_PER_USER", "favorites.max_per_user", func(c *Configuration) *int { return &c.Favorites.MaxPerUser }),
+	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
 
 	stringVar("KEYS_PROVIDER", "keys.provider", func(c *Configuration) *string { return &c.Keys.Provider }),
 	stringVar("KEYS_LOCAL_KEK", "keys.local.kek", func(c *Configuration) *string { return &c.Keys.Local.KEK }),
