@@ -204,6 +204,7 @@ var envVars = []EnvVar{
 	intVar("WS_MAX_CONNECTIONS_PER_IP", "websocket.max_connections_per_ip", func(c *Configuration) *int { return &c.WebSocket.MaxConnectionsPerIP }),
 
 	intVar("RATE_LIMITS_TIMEOUT_MS", "rate_limits.timeout_ms", func(c *Configuration) *int { return &c.RateLimits.TimeoutMs }),
+	intVar("RATE_LIMITS_IPV6_PREFIX_LENGTH", "rate_limits.ipv6_prefix_length", func(c *Configuration) *int { return &c.RateLimits.IPv6PrefixLength }),
 	intVar("RATE_LIMITS_REST_REQUESTS_PER_SECOND", "rate_limits.rest.requests_per_second", func(c *Configuration) *int { return &c.RateLimits.REST.RequestsPerSecond }),
 	intVar("RATE_LIMITS_REST_BURST", "rate_limits.rest.burst", func(c *Configuration) *int { return &c.RateLimits.REST.Burst }),
 	intVar("RATE_LIMITS_WS_MESSAGES_PER_SECOND", "rate_limits.ws.messages_per_second", func(c *Configuration) *int { return &c.RateLimits.WS.MessagesPerSecond }),

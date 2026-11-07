@@ -80,6 +80,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		"Redis without TLS":            {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
 		"RabbitMQ without TLS":         {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
 		"Redis CA file missing":        {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
+		"IPv6 prefix too short":        {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
+		"IPv6 prefix too long":         {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
 		"RabbitMQ half a client pair": {func(c *Configuration) {
 			c.RabbitMQ.TLS.Enabled, c.RabbitMQ.TLS.CertFile = true, "/run/secrets/client.pem"
 		}, "rabbitmq.tls cannot be used: cert_file and key_file must be set together"},

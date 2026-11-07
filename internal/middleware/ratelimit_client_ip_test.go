@@ -96,3 +96,58 @@ func TestAuthRateLimit_SpoofedForwardedForDoesNotBypassTheLimit(t *testing.T) {
 	assert.Equal(t, []int{200, 200, 200, 200, 200, http.StatusTooManyRequests}, codes,
 		"changing X-Forwarded-For on every request must not reset the limit")
 }
+
+// TestGetClientIP_GroupsIPv6ByPrefix checks the identity of IPv6 clients
+// (#188): the addresses of one /64 are one client.
+func TestGetClientIP_GroupsIPv6ByPrefix(t *testing.T) {
+	saved := config.Config.RateLimits
+	t.Cleanup(func() { config.Config.RateLimits = saved })
+
+	config.Config.RateLimits.IPv6PrefixLength = 64
+	assert.Equal(t, "2001:db8:1:2::/64", clientIPSeenBy(t, nil, "[2001:db8:1:2:aaaa:bbbb:cccc:dddd]:40000", nil))
+	assert.Equal(t, "203.0.113.7", clientIPSeenBy(t, nil, "[::ffff:203.0.113.7]:40000", nil), "IPv4-mapped addresses count as IPv4")
+	assert.Equal(t, "2001:db8:5::/64", clientIPSeenBy(t, []string{"10.1.0.0/16"}, "10.1.2.3:50000",
+		map[string]string{"X-Forwarded-For": "2001:db8:5::77"}), "an address from a trusted proxy is grouped too")
+
+	config.Config.RateLimits.IPv6PrefixLength = 56
+	assert.Equal(t, "2001:db8:1::/56", clientIPSeenBy(t, nil, "[2001:db8:1:2::1]:40000", nil))
+}
+
+// TestAuthRateLimit_RotatingIPv6AddressesDoNotBypassTheLimit needs Redis on
+// localhost:6379 and uses the database of this package.
+func TestAuthRateLimit_RotatingIPv6AddressesDoNotBypassTheLimit(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: redistest.Middleware})
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis is not reachable at localhost:6379: %v", err)
+	}
+	t.Cleanup(func() {
+		client.FlushDB(context.Background())
+		client.Close()
+	})
+
+	savedLimits := config.Config.RateLimits
+	t.Cleanup(func() { config.Config.RateLimits = savedLimits })
+	config.Config.RateLimits.Auth.LoginAttemptsPerMinute = 5
+	config.Config.RateLimits.IPv6PrefixLength = 64
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	require.NoError(t, engine.SetTrustedProxies(nil))
+	rl := NewRateLimiter(&db.RedisService{Client: client})
+	engine.POST("/public/auth/:uuid", rl.AuthRateLimit(AuthLogin), func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	send := func(addr string) int {
+		req := httptest.NewRequest(http.MethodPost, "/public/auth/x", nil)
+		req.RemoteAddr = "[" + addr + "]:40000"
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		return w.Code
+	}
+	codes := make([]int, 0, 6)
+	for i := 0; i < 6; i++ {
+		codes = append(codes, send(fmt.Sprintf("2001:db8:aa:1::%x", i+1)))
+	}
+	assert.Equal(t, []int{200, 200, 200, 200, 200, http.StatusTooManyRequests}, codes,
+		"a fresh address of the same /64 on every request must not reset the limit")
+	assert.Equal(t, http.StatusOK, send("2001:db8:aa:2::1"), "another /64 is another client")
+}

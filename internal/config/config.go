@@ -12,6 +12,7 @@ import (
 	"time"
 
 	configfiles "github.com/mdastpak/crypto-exchange/config"
+	"github.com/mdastpak/crypto-exchange/internal/clientip"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -294,7 +295,12 @@ type Configuration struct {
 	// Redis; a call that takes longer counts as Redis being unreachable.
 	RateLimits struct {
 		TimeoutMs int `yaml:"timeout_ms"`
-		REST      struct {
+		// IPv6PrefixLength groups IPv6 clients by this prefix for every
+		// per-client limit and connection count (#188), since one
+		// subscriber holds at least a /64. 0 is the default of
+		// clientip.DefaultIPv6PrefixLength.
+		IPv6PrefixLength int `yaml:"ipv6_prefix_length"`
+		REST             struct {
 			RequestsPerSecond int    `yaml:"requests_per_second"`
 			Burst             int    `yaml:"burst"`
 			OnError           string `yaml:"on_error"`
@@ -707,6 +713,7 @@ func setDefaults() {
 		{&Config.Redis.MaxRetries, DefaultRedisMaxRetries},
 		{&Config.Redis.CurrencyCacheTTL, DefaultCurrencyCacheTTLSeconds},
 		{&Config.RateLimits.TimeoutMs, DefaultRateLimitTimeoutMs},
+		{&Config.RateLimits.IPv6PrefixLength, clientip.DefaultIPv6PrefixLength},
 	} {
 		if *ms.value == 0 {
 			*ms.value = ms.fallback

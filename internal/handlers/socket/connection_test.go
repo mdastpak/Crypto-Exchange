@@ -354,3 +354,24 @@ func TestServe_RejectsInTheErrorEnvelope(t *testing.T) {
 		resp.Body.Close()
 	}
 }
+
+// TestReserve_GroupsIPv6ClientsByPrefix checks that the addresses of one
+// IPv6 /64 share websocket.max_connections_per_ip (#188).
+func TestReserve_GroupsIPv6ClientsByPrefix(t *testing.T) {
+	h := newTestHandler()
+	h.limits.maxPerIP, h.limits.maxConnections, h.limits.ipv6Prefix = 2, 100, 64
+
+	status, _ := h.reserve(h.addressKey("2001:db8:1:2::1"))
+	require.Zero(t, status)
+	status, _ = h.reserve(h.addressKey("2001:db8:1:2::2"))
+	require.Zero(t, status)
+	status, _ = h.reserve(h.addressKey("2001:db8:1:2:ffff::3"))
+	assert.Equal(t, http.StatusTooManyRequests, status, "a third address of the same /64")
+
+	status, _ = h.reserve(h.addressKey("2001:db8:1:3::1"))
+	assert.Zero(t, status, "another /64 has a budget of its own")
+
+	h.release(h.addressKey("2001:db8:1:2::1"))
+	status, _ = h.reserve(h.addressKey("2001:db8:1:2::9"))
+	assert.Zero(t, status, "releasing any address of the /64 frees its place")
+}
