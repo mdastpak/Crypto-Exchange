@@ -203,6 +203,7 @@ websocket:
   client_message_burst: 20
   max_connections: 10000           # Per server instance
   max_connections_per_ip: 20       # Per client address
+  session_check_seconds: 60        # How often ended sessions are disconnected
 
 # The sections from here to observability are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe

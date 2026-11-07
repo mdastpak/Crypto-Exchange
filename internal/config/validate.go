@@ -151,6 +151,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	atLeast("websocket.client_message_burst", ws.ClientMessageBurst, 1)
 	atLeast("websocket.max_connections", ws.MaxConnections, 1)
 	atLeast("websocket.max_connections_per_ip", ws.MaxConnectionsPerIP, 1)
+	atLeast("websocket.session_check_seconds", ws.SessionCheckSeconds, 1)
 	if ws.MaxConnectionsPerIP > ws.MaxConnections && ws.MaxConnections >= 1 {
 		p.add("websocket.max_connections_per_ip", "is %d; it must not exceed websocket.max_connections (%d)", ws.MaxConnectionsPerIP, ws.MaxConnections)
 	}

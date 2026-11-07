@@ -158,6 +158,7 @@ func run() error {
 	if err := handlers.Socket.StartConsumer(context.Background()); err != nil {
 		return fmt.Errorf("failed to start the WebSocket event consumer: %w", err)
 	}
+	handlers.Socket.StartSessionWatcher(context.Background())
 	if otpWorker != nil {
 		if err := otpWorker.Start(); err != nil {
 			return fmt.Errorf("failed to start the OTP delivery worker: %w", err)
@@ -572,6 +573,9 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	ws.Authenticate = func(ctx context.Context, token string) (*auth.Claims, error) {
 		return auth.AuthenticateUserToken(ctx, token, tb, sessions)
 	}
+	// An open connection keeps those checks: it is closed once its session
+	// ends or its user can no longer sign in (#189).
+	ws.VerifySession = sessions.Verify
 	return &InfraHandlers{
 		Socket:         ws,
 		System:         system.NewHandler(services),

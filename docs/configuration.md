@@ -245,6 +245,7 @@ The key service is only contacted at startup and by the `admin keys` commands: a
 | `client_messages_per_second`, `client_message_burst` | `10`, `20` | The messages each connection may send, as a token bucket. A client that sends faster is disconnected. `rate_limits.ws` limits the upgrade requests per address instead. |
 | `max_connections` | `10000` | Open connections per server instance. Further upgrades get `503`. |
 | `max_connections_per_ip` | `20` | Open connections per client address, at most `max_connections`. Further upgrades get `429`. The client address honors `server.trusted_proxies`, and IPv6 clients count by `rate_limits.ipv6_prefix_length`. |
+| `session_check_seconds` | `60` | How often each instance checks the sessions of its authenticated connections, and closes those whose session ended or whose user can no longer sign in. A revoked session can stay connected for up to this long. Each check reads the database once per session, so a shorter interval costs more queries. |
 
 A connection may bring a user access token, which gets the checks of the `/user/*` routes; see [WebSocket](api.md#websocket).
 
@@ -378,6 +379,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `WS_CLIENT_MESSAGE_BURST` | `websocket.client_message_burst` |
 | `WS_MAX_CONNECTIONS` | `websocket.max_connections` |
 | `WS_MAX_CONNECTIONS_PER_IP` | `websocket.max_connections_per_ip` |
+| `WS_SESSION_CHECK_SECONDS` | `websocket.session_check_seconds` |
 | `RATE_LIMITS_TIMEOUT_MS` | `rate_limits.timeout_ms` |
 | `RATE_LIMITS_IPV6_PREFIX_LENGTH` | `rate_limits.ipv6_prefix_length` |
 | `RATE_LIMITS_REST_REQUESTS_PER_SECOND` | `rate_limits.rest.requests_per_second` |

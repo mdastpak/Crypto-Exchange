@@ -30,6 +30,11 @@ type WebSocketHandler struct {
 	// connection without a token is anonymous. Without Authenticate, every
 	// token is refused.
 	Authenticate func(ctx context.Context, token string) (*auth.Claims, error)
+	// VerifySession checks that a session is still active and that its user
+	// may still sign in, with the errors of auth: ErrSessionInvalid or
+	// ErrAccountUnavailable. StartSessionWatcher uses it to close the
+	// connections of sessions that ended (#189).
+	VerifySession func(ctx context.Context, sessionID, userID string) error
 
 	limits limits
 	// open and openPerIP count the connections, guarded by Mu, including
@@ -45,9 +50,15 @@ type Client struct {
 	Timezone string
 	// UserID and SessionID name the signed-in user of an authenticated
 	// connection, for the account channels of #66. They are empty for an
-	// anonymous connection.
+	// anonymous connection. A reauth may set them while the connection is
+	// open, so they are read with principal once it is registered.
 	UserID    string
 	SessionID string
+
+	// mu guards UserID, SessionID, and the expiry of the token.
+	mu        sync.Mutex
+	expiresAt time.Time
+	expiry    *time.Timer
 
 	ip       string
 	location *time.Location
@@ -117,6 +128,7 @@ func (h *WebSocketHandler) unregisterClient(client *Client) {
 	h.Mu.Lock()
 	delete(h.Clients, client)
 	h.Mu.Unlock()
+	client.forget()
 	h.release(client.ip)
 	close(client.Send)
 	client.Conn.Close()
@@ -243,6 +255,9 @@ func (h *WebSocketHandler) handleClientMessage(client *Client, message []byte) {
 			client.setTimezone(tz)
 		}
 		h.handleClientPing(client)
+
+	case "reauth":
+		h.handleReauth(client, event)
 
 	case "subscribe":
 		// Future: handle channel subscriptions (#66)
