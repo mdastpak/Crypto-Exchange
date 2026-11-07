@@ -141,6 +141,19 @@ func (h *AdminHandler) afterPublicChange(ctx context.Context, hk string) {
 	}
 }
 
+// @Summary Create a currency
+// @Tags admin currencies
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body currencyRequest true "The currency"
+// @Success 201 {object} models.APIResponse{info=models.CurrencyCreatedInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies [post]
 func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -204,6 +217,22 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusCreated, "Currency created successfully.", gin.H{"hk": generatedHK, "status": status, "version": version})
 }
 
+// @Summary Update a currency
+// @Description Changes only the fields sent. With version, the update is refused with 409 version_conflict when the currency has changed since.
+// @Tags admin currencies
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Param body body currencyRequest true "The fields to change, and optionally the version the change is based on"
+// @Success 200 {object} models.APIResponse{info=models.VersionInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk} [put]
 func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -308,6 +337,21 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "Currency updated successfully.", gin.H{"version": newVersion})
 }
 
+// @Summary Delete a currency
+// @Description Soft-deletes the currency. With version, the delete is refused with 409 version_conflict when the currency has changed since.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Param version query int false "The version the delete is based on" minimum(1)
+// @Success 200 {object} models.APIResponse{info=models.VersionInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk} [delete]
 func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -386,6 +430,20 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 // GetCurrency returns one currency, whatever its status, with its version:
 // what an update or a delete sends to be refused if the currency changed in
 // the meantime.
+//
+// @Summary Get a currency with its version
+// @Description Whatever its status, deleted ones included.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Success 200 {object} models.APIResponse{info=models.Currency}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk} [get]
 func (h *AdminHandler) GetCurrency(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("hk"))
 	if err != nil {

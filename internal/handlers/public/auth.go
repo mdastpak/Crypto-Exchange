@@ -66,6 +66,17 @@ type VerifyOTPRequest struct {
 	OTP  string `json:"otp"`
 }
 
+// @Summary Request a sign-in code
+// @Description Sends a one-time code to an email address or a mobile number. Limited per hour and client address.
+// @Tags sign-in
+// @Accept json
+// @Produce json
+// @Param body body OTPRequest true "The email address or mobile number to send the code to"
+// @Success 200 {object} models.APIResponse{info=models.SignInCodeInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 429 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/public/auth [post]
 func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -117,6 +128,20 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "OTP sent to your contact", gin.H{"type": contactType, "username": maskedContact, "uuid": issued.SessionID})
 }
 
+// @Summary Verify a sign-in code
+// @Description Returns an access token, and sets the refresh token in the HttpOnly refresh_token cookie.
+// @Tags sign-in
+// @Accept json
+// @Produce json
+// @Param uuid path string true "The sign-in session from the code request" format(uuid)
+// @Param body body VerifyOTPRequest true "The code"
+// @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 429 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/public/auth/{uuid} [post]
 func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
@@ -300,6 +325,15 @@ func (h *PublicHandler) createUser(ctx context.Context, contactType, contact str
 	return userHK, nil
 }
 
+// @Summary Refresh the access token
+// @Description Exchanges the refresh_token cookie for a new access token, and rotates the cookie. A rotated refresh token that is presented again revokes the session.
+// @Tags sign-in
+// @Produce json
+// @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo}
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/public/auth/refresh [post]
 func (h *PublicHandler) RefreshToken(c *gin.Context) {
 	auth.RefreshTokenHandler(c, h.Sessions)
 }
@@ -344,6 +378,15 @@ func IdentifyInputType(input string) (string, string) {
 const currencyReadTimeout = 10 * time.Second
 
 // GetActiveCurrencies lists the public currencies, oldest first.
+//
+// @Summary List the public currencies
+// @Description The approved currencies, oldest first.
+// @Tags currencies
+// @Produce json
+// @Success 200 {object} models.APIResponse{info=[]models.Currency}
+// @Failure 503 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/public/currencies [get]
 func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), currencyReadTimeout)
 	defer cancel()
@@ -359,6 +402,17 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 
 // GetCurrencyByHK returns one public currency. A currency that is not public
 // gets the same 404 as one that does not exist.
+//
+// @Summary Get a public currency
+// @Tags currencies
+// @Produce json
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Success 200 {object} models.APIResponse{info=models.Currency}
+// @Failure 400 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/public/currencies/{hk} [get]
 func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("hk"))
 	if err != nil {

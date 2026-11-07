@@ -15,3 +15,9 @@ Dockerfile text eol=lf
 # Docker Compose reads .env, copied from .env.example; a CR would end up in
 # the values.
 .env.example text eol=lf
+
+# The OpenAPI document that swag generates keeps LF line endings, as swag
+# writes them, so that the CI check that regenerates it finds no difference
+# after a Windows checkout either.
+docs/swagger.json text eol=lf
+docs/swagger.yaml text eol=lf

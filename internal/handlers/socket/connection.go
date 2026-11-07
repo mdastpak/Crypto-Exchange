@@ -64,6 +64,19 @@ const accessTokenProtocol = "access_token"
 // ServeWSGin serves a WebSocket upgrade. The client address, which the
 // connection caps count, is Gin's client IP, which honors
 // server.trusted_proxies.
+//
+// @Summary Connect to the WebSocket gateway
+// @Description Upgrades to a WebSocket. An optional user access token comes as Authorization: Bearer, or from a browser as the subprotocols access_token and the token. docs/api.md describes the messages.
+// @Tags websocket
+// @Produce json
+// @Param Authorization header string false "Bearer <access token>"
+// @Success 101 "Switching Protocols"
+// @Failure 400 {object} models.APIResponse "Not a WebSocket handshake"
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 429 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse
+// @Router /api/v1/ws/ [get]
 func (h *WebSocketHandler) ServeWSGin(c *gin.Context) {
 	h.serve(c.Writer, c.Request, c.ClientIP())
 }

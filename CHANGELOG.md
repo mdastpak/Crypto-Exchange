@@ -59,6 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - An unknown path answers `404` and a wrong method `405`, in the envelope, instead of Gin's plain text.
   - The WebSocket gateway refuses an upgrade in the same envelope, with the codes of the user routes, and answers a request that is not a WebSocket handshake with `400` `invalid_request` in JSON instead of the upgrader's plain text.
   - `SendResponse` no longer aborts the handlers after a successful response such as `201`; only errors do.
+- The OpenAPI document covers every route ([#54](https://github.com/mdastpak/Crypto-Exchange/issues/54)). It covered only the currency routes, generated once from annotations that had since been removed.
+  - Each handler, and `main` for the general information, now carries swag annotations: its parameters, its success response with the payload in `info`, and its errors in the envelope with a code.
+  - The paths are absolute (`/api/v1/...`, `/system/...`), so the document holds both the API and the health probes. The deprecated unversioned aliases are described in its description.
+  - CI regenerates the document with the swag version of `go.mod` and fails when the committed one is stale. `TestOpenAPI_DocumentsEveryRoute` compares it with the routes of the server.
+  - `cmd.bat` runs the right command; it ran `swag init -g ./main.go`, a file that does not exist. CONTRIBUTING explains how to regenerate the document.
 
 ### Fixed
 
