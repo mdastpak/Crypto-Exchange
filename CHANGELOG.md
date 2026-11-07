@@ -78,6 +78,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The new `internal/pagination` implements it as keyset pagination. The cursor holds the sort key of the last item, so pages stay stable as rows are added, each page costs one index range scan, and no state is kept on the server.
   - The public currency list stays whole.
 - **Breaking:** release mode refuses Redis and RabbitMQ without TLS, unless `redis.tls.private_network` or `rabbitmq.tls.private_network` (`REDIS_TLS_PRIVATE_NETWORK`, `RABBITMQ_TLS_PRIVATE_NETWORK`) states that only a trusted private network carries the connection. A release deployment that connects without TLS must set one or the other before it upgrades ([#186](https://github.com/mdastpak/Crypto-Exchange/issues/186)).
+- Sign-in accepts the contact as users usually type it: Persian and Arabic-Indic digits, mobile numbers with `+98`, `0098`, or `98`, or with spaces and dashes, and surrounding white space. Every form reaches the same account. Codes may be typed with Persian or Arabic-Indic digits, and a code that is not `otp.auth.length` digits is refused without using up an attempt ([#197](https://github.com/mdastpak/Crypto-Exchange/issues/197)).
 
 ### Fixed
 

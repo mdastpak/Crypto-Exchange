@@ -13,6 +13,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
@@ -87,6 +88,9 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: Email or Mobile is required", nil)
 		return
 	}
+	// Every form of a contact that users type, such as a mobile number in
+	// Persian digits or with +98, reaches the same account (#197).
+	req.Username = contact.Normalize(req.Username)
 
 	contactType, maskedContact := IdentifyInputType(req.Username)
 	if contactType == "" {

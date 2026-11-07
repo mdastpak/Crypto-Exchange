@@ -360,12 +360,12 @@ func (s *PublicHandlerTestSuite) TestVerifyOTP_TooManyAttempts() {
 
 	for i := 0; i < 5; i++ {
 		s.makeRequest(http.MethodPost, fmt.Sprintf("/public/auth/%s", otpUUID), map[string]string{
-			"otp": "wrong_otp",
+			"otp": "000000",
 		}, "")
 	}
 
 	w = s.makeRequest(http.MethodPost, fmt.Sprintf("/public/auth/%s", otpUUID), map[string]string{
-		"otp": "wrong_otp",
+		"otp": "000000",
 	}, "")
 
 	assert.Equal(s.T(), http.StatusTooManyRequests, w.Code)
