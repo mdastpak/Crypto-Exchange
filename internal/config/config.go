@@ -92,8 +92,10 @@ type Configuration struct {
 	} `yaml:"postgres"`
 
 	Redis struct {
-		Host                string `yaml:"host"`
-		Port                string `yaml:"port"`
+		Host string `yaml:"host"`
+		Port string `yaml:"port"`
+		// Username selects a Redis ACL user. Empty is the default user.
+		Username            string `yaml:"username"`
 		Password            string `yaml:"password"`
 		DB                  int    `yaml:"db"`
 		PoolSize            int    `yaml:"pool_size"`
@@ -112,7 +114,8 @@ type Configuration struct {
 		// CurrencyCacheTTL is how long the list of public currencies stays
 		// cached. Changes invalidate it at once; the time bounds how long a
 		// missed invalidation can leave it out of date.
-		CurrencyCacheTTL int `yaml:"currency_cache_ttl_seconds"`
+		CurrencyCacheTTL int       `yaml:"currency_cache_ttl_seconds"`
+		TLS              ClientTLS `yaml:"tls"`
 	} `yaml:"redis"`
 
 	RabbitMQ struct {
@@ -122,7 +125,8 @@ type Configuration struct {
 		Port     string `yaml:"port"`
 		// VHost is the virtual host to connect to. Empty is the broker's
 		// default virtual host, "/".
-		VHost     string `yaml:"vhost"`
+		VHost     string    `yaml:"vhost"`
+		TLS       ClientTLS `yaml:"tls"`
 		Exchanges struct {
 			PriceUpdates  string `yaml:"price_updates"`
 			TradeEvents   string `yaml:"trade_events"`
@@ -911,7 +915,7 @@ func (c *Configuration) JWTPublicKeyPath() string {
 
 func GetRabbitMQURL() string {
 	return RabbitMQURL(Config.RabbitMQ.Username, Config.RabbitMQ.Password,
-		Config.RabbitMQ.Host, Config.RabbitMQ.Port, Config.RabbitMQ.VHost)
+		Config.RabbitMQ.Host, Config.RabbitMQ.Port, Config.RabbitMQ.VHost, Config.RabbitMQ.TLS.Enabled)
 }
 
 // RabbitMQURL builds the AMQP URI of a broker (#185). The user, the
@@ -921,9 +925,15 @@ func GetRabbitMQURL() string {
 // An empty vhost, or "/", is the broker's default virtual host, which an
 // empty path selects. The URI holds the password, so it must never be
 // logged.
-func RabbitMQURL(username, password, host, port, vhost string) string {
+//
+// With useTLS, the scheme is amqps, so that the client dials with TLS.
+func RabbitMQURL(username, password, host, port, vhost string, useTLS bool) string {
+	scheme := "amqp"
+	if useTLS {
+		scheme = "amqps"
+	}
 	u := url.URL{
-		Scheme: "amqp",
+		Scheme: scheme,
 		User:   url.UserPassword(username, password),
 		Host:   net.JoinHostPort(host, port),
 		Path:   "/",

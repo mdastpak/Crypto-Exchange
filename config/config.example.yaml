@@ -56,6 +56,7 @@ postgres:
 redis:
   host: "localhost"
   port: "6379"
+  username: ""  # Redis ACL user; set with REDIS_USERNAME. Empty is the default user.
   password: ""  # Set with REDIS_PASSWORD
   db: 0
   pool_size: 10                 # Connection pool size
@@ -66,6 +67,13 @@ redis:
   pool_timeout_ms: 2000
   max_retries: 1  # -1 turns retries off
   currency_cache_ttl_seconds: 300  # Changes invalidate the list at once; this bounds a missed invalidation
+  tls:                          # Release mode needs TLS, or private_network: true
+    enabled: false              # REDIS_TLS_ENABLED
+    ca_file: ""                 # PEM file of a private CA; empty uses the system CAs
+    server_name: ""             # Name in the certificate, when it differs from host
+    cert_file: ""               # Client certificate for mutual TLS, with key_file
+    key_file: ""
+    private_network: false      # Only a trusted private network carries the connection
 
 rabbitmq:
   username: ""  # Set with RABBITMQ_USER
@@ -73,6 +81,9 @@ rabbitmq:
   host: "localhost"
   port: "5672"
   vhost: "/"                    # Set with RABBITMQ_VHOST
+  tls:                          # Release mode needs enabled, or private_network (see redis.tls)
+    enabled: false
+    ca_file: ""
   exchanges:                    # Fan-out exchanges, declared at startup
     price_updates: "price_updates"  # Currency events for WebSocket clients
     trade_events: "trade_events"

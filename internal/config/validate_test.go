@@ -36,6 +36,9 @@ func secureRelease(t *testing.T) Configuration {
 	c.Postgres.Password, c.Postgres.SSLMode = "a-password-of-its-own", "verify-full"
 	c.Redis.Host, c.Redis.Port, c.Redis.Password = "redis", "6379", "a-redis-password"
 	c.RabbitMQ.Host, c.RabbitMQ.Port, c.RabbitMQ.Username, c.RabbitMQ.Password = "mq", "5672", "exchange", "an-mq-password"
+	// One dependency with TLS, the other on an acknowledged private network.
+	c.Redis.TLS.Enabled = true
+	c.RabbitMQ.TLS.PrivateNetwork = true
 	c.JWT.SSL.User.PrivateKey, c.JWT.SSL.User.PublicKey = "/run/secrets/private.pem", "/run/secrets/public.pem"
 	c.JWT.AccessToken.Expiration, c.JWT.RefreshToken.Expiration = 15, 10080
 	setDefaults()
@@ -74,10 +77,16 @@ func TestValidateServer_Rules(t *testing.T) {
 		"no Redis password":            {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
 		"RabbitMQ guest user":          {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
 		"RabbitMQ guest password":      {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
-		"CORS wildcard":                {func(c *Configuration) { c.Server.CORS.AllowedOrigins = []string{"*"} }, `server.cors.allowed_origins (SERVER_CORS_ALLOWED_ORIGINS) contains "*"`},
-		"CORS over http":               {func(c *Configuration) { c.Server.CORS.AllowedOrigins = []string{"http://app.example.com"} }, `contains "http://app.example.com"; release mode allows only https origins`},
-		"WebSocket wildcard":           {func(c *Configuration) { c.WebSocket.AllowedOrigins = []string{" * "} }, `websocket.allowed_origins (WS_ALLOWED_ORIGINS) contains "*"`},
-		"WebSocket over http":          {func(c *Configuration) { c.WebSocket.AllowedOrigins = []string{"http://localhost:3000"} }, `websocket.allowed_origins (WS_ALLOWED_ORIGINS) contains "http://localhost:3000"`},
+		"Redis without TLS":            {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
+		"RabbitMQ without TLS":         {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
+		"Redis CA file missing":        {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
+		"RabbitMQ half a client pair": {func(c *Configuration) {
+			c.RabbitMQ.TLS.Enabled, c.RabbitMQ.TLS.CertFile = true, "/run/secrets/client.pem"
+		}, "rabbitmq.tls cannot be used: cert_file and key_file must be set together"},
+		"CORS wildcard":       {func(c *Configuration) { c.Server.CORS.AllowedOrigins = []string{"*"} }, `server.cors.allowed_origins (SERVER_CORS_ALLOWED_ORIGINS) contains "*"`},
+		"CORS over http":      {func(c *Configuration) { c.Server.CORS.AllowedOrigins = []string{"http://app.example.com"} }, `contains "http://app.example.com"; release mode allows only https origins`},
+		"WebSocket wildcard":  {func(c *Configuration) { c.WebSocket.AllowedOrigins = []string{" * "} }, `websocket.allowed_origins (WS_ALLOWED_ORIGINS) contains "*"`},
+		"WebSocket over http": {func(c *Configuration) { c.WebSocket.AllowedOrigins = []string{"http://localhost:3000"} }, `websocket.allowed_origins (WS_ALLOWED_ORIGINS) contains "http://localhost:3000"`},
 
 		// Ranges, in every mode.
 		"port zero":                        {func(c *Configuration) { c.Server.Port = "0" }, `server.port (SERVER_PORT) is "0"; it must be a port number from 1 to 65535`},

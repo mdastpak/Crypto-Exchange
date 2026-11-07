@@ -30,6 +30,7 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `postgres.password` | Not empty, and not the default `postgres` |
 | `redis.password` | Not empty |
 | `rabbitmq.username`, `rabbitmq.password` | Not the default `guest` account |
+| `redis.tls.enabled`, `rabbitmq.tls.enabled` | TLS to Redis and to RabbitMQ, or `tls.private_network: true`, which states that only a trusted private network, such as a service mesh that encrypts every hop, carries the connection. Sign-in codes and raw contacts cross RabbitMQ on their way to the delivery worker, and the Redis password and the token blacklist cross Redis, so neither may travel in the clear between hosts. |
 | `server.cors.allowed_origins`, `websocket.allowed_origins` | No `"*"`, and only `https://` origins |
 | `jwt.ssl.user.private_key`, `jwt.ssl.admin.private_key`, `server.tls.key_file` | Files that only their owner may write to (not checked on Windows). Read access is not checked, because container platforms mount secrets readable by every user of the container. |
 | `otp.auth.secret` | Set, at least 32 bytes |
@@ -96,6 +97,7 @@ Replace `10` with the version before the failed migration.
 | Key | Default | Description |
 | --- | --- | --- |
 | `host`, `port` | **required** | Connection settings |
+| `username` | none | Redis ACL user (`REDIS_USERNAME`). Empty is the `default` user. Give the server a user of its own, limited to the commands and keys it needs. |
 | `password` | none | Redis password. Set it with `REDIS_PASSWORD`. |
 | `db` | `0` | Database index |
 | `pool_size` | `10` | Connection pool size |
@@ -109,6 +111,20 @@ Replace `10` with the version before the failed migration.
 | `currency_cache_ttl_seconds` | `300` | How long the cached list of public currencies is fresh. A change through the admin routes drops it at once, and the next read loads it from PostgreSQL. After this time, one instance refreshes the list while every instance keeps serving it, so this time bounds how long the list can stay out of date when a drop fails or a currency is changed directly in the database. The key expires after twice the time if nothing reads it. See [The shared currency list](architecture.md#the-shared-currency-list). |
 
 Redis is on the path of most requests, so these timeouts are short: while Redis cannot be reached, a request that needs it fails within a few seconds instead of waiting for the much longer defaults of the client library. The rate limiters give up even sooner, after `rate_limits.timeout_ms`.
+
+#### `tls` of `redis` and `rabbitmq`
+
+TLS for the connection to Redis (`redis.tls`, variables `REDIS_TLS_*`) and to RabbitMQ (`rabbitmq.tls`, variables `RABBITMQ_TLS_*`, which makes the server dial `amqps://`). The certificate of the server is always verified; there is no setting that skips it. A setting that cannot be used, such as a CA file that does not exist, stops the server at startup.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Connect with TLS 1.2 or later (`REDIS_TLS_ENABLED`, `RABBITMQ_TLS_ENABLED`) |
+| `ca_file` | none | PEM file with the certificate authorities of a private CA (`*_TLS_CA_FILE`). Without it, the system's authorities are used. |
+| `server_name` | the host | The name the certificate must hold, when it differs from `host`, for example when `host` is an IP address (`*_TLS_SERVER_NAME`) |
+| `cert_file`, `key_file` | none | A client certificate for mutual TLS (`*_TLS_CERT_FILE`, `*_TLS_KEY_FILE`). Set both or neither. |
+| `private_network` | `false` | In release mode, accept a connection without TLS, because only a trusted private network carries it (`*_TLS_PRIVATE_NETWORK`) |
+
+Every server instance connects with its own TLS session, so several instances behind a load balancer need nothing more than the same files. Redis Cluster and Sentinel are not supported yet.
 
 ### `rabbitmq`
 
@@ -300,7 +316,14 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `POSTGRES_CONN_MAX_IDLE_TIME_MINUTES` | `postgres.conn_max_idle_time_minutes` |
 | `REDIS_HOST` | `redis.host` |
 | `REDIS_PORT` | `redis.port` |
+| `REDIS_USERNAME` | `redis.username` |
 | `REDIS_PASSWORD` | `redis.password` |
+| `REDIS_TLS_ENABLED` | `redis.tls.enabled` |
+| `REDIS_TLS_CA_FILE` | `redis.tls.ca_file` |
+| `REDIS_TLS_SERVER_NAME` | `redis.tls.server_name` |
+| `REDIS_TLS_CERT_FILE` | `redis.tls.cert_file` |
+| `REDIS_TLS_KEY_FILE` | `redis.tls.key_file` |
+| `REDIS_TLS_PRIVATE_NETWORK` | `redis.tls.private_network` |
 | `REDIS_DB` | `redis.db` |
 | `REDIS_POOL_SIZE` | `redis.pool_size` |
 | `REDIS_MIN_IDLE_CONNS` | `redis.min_idle_conns` |
@@ -315,6 +338,12 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `RABBITMQ_USER` | `rabbitmq.username` |
 | `RABBITMQ_PASSWORD` | `rabbitmq.password` |
 | `RABBITMQ_VHOST` | `rabbitmq.vhost` |
+| `RABBITMQ_TLS_ENABLED` | `rabbitmq.tls.enabled` |
+| `RABBITMQ_TLS_CA_FILE` | `rabbitmq.tls.ca_file` |
+| `RABBITMQ_TLS_SERVER_NAME` | `rabbitmq.tls.server_name` |
+| `RABBITMQ_TLS_CERT_FILE` | `rabbitmq.tls.cert_file` |
+| `RABBITMQ_TLS_KEY_FILE` | `rabbitmq.tls.key_file` |
+| `RABBITMQ_TLS_PRIVATE_NETWORK` | `rabbitmq.tls.private_network` |
 | `JWT_SSL_USER_PRIVATE_KEY` | `jwt.ssl.user.private_key` |
 | `JWT_SSL_USER_PUBLIC_KEY` | `jwt.ssl.user.public_key` |
 | `JWT_SSL_ADMIN_PRIVATE_KEY` | `jwt.ssl.admin.private_key` |

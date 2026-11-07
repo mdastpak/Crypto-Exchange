@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -25,9 +26,15 @@ func NewRedisService() (*RedisService, error) {
 	if maxRetries == 0 {
 		maxRetries = config.DefaultRedisMaxRetries
 	}
+	tlsConfig, err := cfg.TLS.TLSConfig(cfg.Host)
+	if err != nil {
+		return nil, fmt.Errorf("redis.tls: %w", err)
+	}
 	opts := &redis.Options{
-		Addr:         fmt.Sprintf("%s:%s", cfg.Host, cfg.Port),
+		Addr:         net.JoinHostPort(cfg.Host, cfg.Port),
+		Username:     cfg.Username,
 		Password:     cfg.Password,
+		TLSConfig:    tlsConfig,
 		DB:           cfg.DB,
 		PoolSize:     cfg.PoolSize,
 		MinIdleConns: cfg.MinIdleConns,
