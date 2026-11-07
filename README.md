@@ -3,7 +3,7 @@
 A backend for a cryptocurrency exchange, written in Go. It provides OTP-based sign-in, JWT sessions, administrative currency management with a Redis cache, RabbitMQ events, and a WebSocket gateway. A domain model and database schema for assets, markets, orders, trades, balances, accounts, KYC/AML, and custody are also included and will back the roadmap features.
 
 > [!WARNING]
-> **Pre-alpha: not production-ready.** Known defects that affect core flows are tracked in the [M0 stabilization epic](https://github.com/mdastpak/Crypto-Exchange/issues/83). Do not deploy this code with real funds or real personal data.
+> **Pre-alpha: not production-ready.** The hardening work is tracked in the [M1 foundation and hardening epic](https://github.com/mdastpak/Crypto-Exchange/issues/84) and in the [open security issues](https://github.com/mdastpak/Crypto-Exchange/issues?q=is%3Aopen+label%3A%22type%3A+security%22). Do not deploy this code with real funds or real personal data.
 
 ## Contents
 
@@ -25,12 +25,16 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Capability | Status | Notes |
 | --- | --- | --- |
 | OTP sign-in (email, mobile) | Implemented | Codes are delivered by email (SMTP) and SMS (Kavenegar) through a RabbitMQ queue with retries. Codes are stored hashed, and attempts are limited per code and per contact. |
-| JWT access and refresh tokens, sessions, logout | Implemented | Typed tokens with issuer, audience, and `kid` checks, separate signing keys for users and admins, key rotation, `Bearer` authentication, refresh token rotation with reuse detection, and session revocation on logout. Every user request checks that its session is active and its user can still sign in ([#120](https://github.com/mdastpak/Crypto-Exchange/issues/120)). |
-| Admin currency management (CRUD, Redis cache, RabbitMQ events) | Implemented | Administrators are created with the `cmd/admin` command and sign in with an emailed code and an authenticator app (TOTP). |
-| Public currency listing | Implemented | Served from the Redis cache. |
-| WebSocket gateway | Partial | Ping and pong, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
+| JWT access and refresh tokens, sessions, logout | Implemented | Typed tokens with issuer, audience, and `kid` checks, separate signing keys for users and admins, key rotation, `Bearer` authentication, refresh token rotation with reuse detection and a short grace period for concurrent refreshes, and session revocation on logout. Every user request checks that its session is active and its user can still sign in ([#120](https://github.com/mdastpak/Crypto-Exchange/issues/120)). Users list their sessions and end any of them ([#193](https://github.com/mdastpak/Crypto-Exchange/issues/193)). |
+| User contacts | Implemented | A user holds one verified email address and one mobile number and signs in with either. Adding, replacing, or removing one needs a code to a verified contact of the account and to the new contact ([#199](https://github.com/mdastpak/Crypto-Exchange/issues/199)). |
+| Admin currency management | Implemented | Create, list with filters and pages, read, update with optimistic versions, delete, and restore. Administrators are created with the `cmd/admin` command and sign in with an emailed code and an authenticator app (TOTP). |
+| Public currency listing | Implemented | Served from the Redis cache, and from PostgreSQL while the cache is empty or unavailable ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)). |
+| Audit log | Implemented | Append-only `audit_events`, written in the transaction of each change, for sign-ins, sessions, currency changes, contact changes, and the `cmd/admin` commands. Administrators query it at `GET /admin/audit`. |
+| Transactional outbox | Implemented | Events are written with their change and relayed to RabbitMQ by one instance at a time, with retries and dead letters that `cmd/admin outbox` lists, retries, or discards ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)). |
+| Data-protection keys | Implemented | Keys for row seals and field encryption, wrapped by a key-encryption key in Vault or OpenBao Transit, with rotation ([#138](https://github.com/mdastpak/Crypto-Exchange/issues/138)). No table uses them yet. |
+| WebSocket gateway | Partial | Ping and pong, token authentication with reauth, connections closed when their session ends, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
-| Health check | Implemented | Always returns HTTP 200 ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)). |
+| Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL, Redis, or RabbitMQ is unavailable ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
 | Price engine, OTC trading, ledger, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
@@ -210,12 +214,20 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | `POST` | `/admin/auth/{uuid}` | None | Verify the emailed code and the authenticator code, and receive an admin token |
 | `POST` | `/admin/logout` | Admin token | Revoke the admin token |
 | `POST` | `/admin/currencies` | Admin token | Create a currency |
+| `GET` | `/admin/currencies` | Admin token | List currencies of every status, with filters and pages |
 | `GET` | `/admin/currencies/{hk}` | Admin token | Get a currency, whatever its status, with its version |
-| `GET` | `/admin/audit` | Admin token | Query the audit log |
 | `PUT` | `/admin/currencies/{hk}` | Admin token | Update a currency |
 | `DELETE` | `/admin/currencies/{hk}` | Admin token | Soft-delete a currency |
+| `POST` | `/admin/currencies/{hk}/restore` | Admin token | Restore a deleted currency as pending |
+| `GET` | `/admin/audit` | Admin token | Query the audit log |
 | `GET` | `/user/profile` | User token | Get the signed-in user's profile |
 | `PATCH` | `/user/profile` | User token | Change the names in the signed-in user's profile |
+| `GET` | `/user/sessions` | User token | List the active sessions |
+| `DELETE` | `/user/sessions/{id}` | User token | End one session |
+| `DELETE` | `/user/sessions` | User token | End every other session |
+| `GET` | `/user/contacts` | User token | List the verified contacts |
+| `POST` | `/user/contacts/changes` | User token | Start adding, replacing, or removing a contact |
+| `POST` | `/user/contacts/changes/{id}` | User token | Confirm a contact change with its codes |
 | `POST` | `/user/logout` | User token | End the session |
 | `GET` | `/ws/` | None | WebSocket gateway |
 
@@ -226,7 +238,9 @@ Request and response details, the authentication flow, and the WebSocket protoco
 Run the unit tests, which need no infrastructure:
 
 ```bash
-go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./pkg/... ./internal/config/...
+go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./internal/config/... \
+  ./internal/assetregistry/... ./internal/clientip/... ./internal/contact/... ./internal/pagination/... ./internal/totp/... \
+  ./internal/testutil/openapitest/... ./internal/testutil/tcpproxy/... ./pkg/...
 ```
 
 Integration tests need PostgreSQL, Redis, RabbitMQ, and an OpenBao dev server on the default ports:
@@ -262,27 +276,39 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 ## Project layout
 
 ```text
-cmd/admin/             Command for managing administrators
-cmd/server/            Application entry point, routing, and lifecycle
-config/                Configuration files: the example and Compose configurations,
-                       the local config.yaml (ignored), and the asset registry and
-                       AML rules (not loaded yet)
-docs/                  Generated Swagger files and project documentation
-internal/adminauth/    Administrator accounts and authenticator (TOTP) enrollment
-internal/auth/         JWT issuing and verification, key rotation, blacklist, middleware
-internal/config/       Configuration loading, environment variables, defaults, validation
-internal/db/           PostgreSQL and Redis clients, SQL migrations
-internal/domain/       Exchange domain model: asset, market, order, trade, balance,
-                       account, kyc, custody, shared types
-internal/handlers/     HTTP and WebSocket handlers (admin, public, socket, system, user)
-internal/helpers/      Response helpers
-internal/middleware/   Security headers, CORS, rate limiting, validation, recovery
-internal/models/       API models for currencies and users
-internal/notify/       Delivery of sign-in codes by email and SMS through RabbitMQ
-internal/otp/          Sign-in codes: generation, hashed storage in Redis, attempt limits
-internal/rabbitmq/     RabbitMQ connection, publishing with confirms, reconnect
-internal/totp/         Time-based one-time passwords (RFC 6238)
-pkg/utils/             Shared utilities
+cmd/admin/              Operator command: administrators, data keys, outbox dead letters
+cmd/server/             Application entry point, routing, and lifecycle
+config/                 Configuration files: the example and Compose configurations,
+                        the local config.yaml (ignored), and the asset registry and
+                        AML rules (not loaded yet)
+docs/                   Generated Swagger files and project documentation
+internal/adminauth/     Administrator accounts and authenticator (TOTP) enrollment
+internal/assetregistry/ Loading and checking the asset registry file
+internal/audit/         The append-only audit log: recording and querying events
+internal/auth/          JWT issuing and verification, key rotation, sessions, blacklist,
+                        middleware
+internal/clientip/      Client identity for per-client limits, with IPv6 prefixes
+internal/config/        Configuration loading, environment variables, defaults, validation
+internal/contact/       Normalizing and identifying the contacts and codes users type
+internal/currencies/    The public currency catalog: Redis cache with a PostgreSQL fallback
+internal/db/            PostgreSQL and Redis clients, SQL migrations
+internal/domain/        Exchange domain model: asset, market, order, trade, balance,
+                        account, kyc, custody, shared types
+internal/handlers/      HTTP and WebSocket handlers (admin, public, socket, system, user)
+internal/helpers/       Response helpers
+internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit
+internal/middleware/    Security headers, CORS, rate limiting, validation, recovery
+internal/models/        API models for currencies and users
+internal/notify/        Delivery of sign-in codes by email and SMS through RabbitMQ
+internal/otp/           One-time codes: generation, hashed storage in Redis, attempt limits
+internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
+internal/pagination/    Keyset pagination with opaque cursors for list endpoints
+internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
+internal/ssl/           Where local signing keys go; the key files are ignored
+internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
+                        checks, users, and network proxies
+internal/totp/          Time-based one-time passwords (RFC 6238)
+pkg/utils/              Shared utilities
 ```
 
 ## Roadmap
