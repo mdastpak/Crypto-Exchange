@@ -239,7 +239,7 @@ go test ./...
 ```
 
 > [!CAUTION]
-> The integration tests create databases whose names start with `testdb_`, empty them and build their schemas with the migrations, and they flush Redis databases 1 to 6, which [`internal/testutil/redistest`](internal/testutil/redistest/redistest.go) assigns, one per package. Never point them at an instance that holds real data. The shared test helper (`internal/testutil/pgtest`) refuses to empty any other database. Stop the Docker Compose PostgreSQL and Redis services first (`docker compose stop postgres redis`): the test containers use the same ports (5432 and 6379), and the tests expect Redis without a password.
+> The integration tests create databases whose names start with `testdb_`, empty them and build their schemas with the migrations, and they flush Redis databases 1 to 7, which [`internal/testutil/redistest`](internal/testutil/redistest/redistest.go) assigns, one per package. Never point them at an instance that holds real data. The shared test helper (`internal/testutil/pgtest`) refuses to empty any other database. Stop the Docker Compose PostgreSQL and Redis services first (`docker compose stop postgres redis`): the test containers use the same ports (5432 and 6379), and the tests expect Redis without a password.
 
 CI runs the same suite with the race detector on every pull request, against these images, and fails when a test skips itself because a service is unreachable. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
