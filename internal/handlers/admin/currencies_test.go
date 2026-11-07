@@ -155,6 +155,7 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	s.router.GET("/currencies/:hk", s.handler.GetCurrency)
 	s.router.PUT("/currencies/:hk", s.handler.UpdateCurrency)
 	s.router.DELETE("/currencies/:hk", s.handler.DeleteCurrency)
+	s.router.POST("/currencies/:hk/restore", s.handler.RestoreCurrency)
 }
 
 func (s *AdminCurrenciesTestSuite) TearDownTest() {
@@ -365,6 +366,118 @@ func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_AlreadyDeleted() {
 	var resp models.APIResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(s.T(), "Currency not found or already deleted", resp.Message)
+}
+
+// TestRestoreCurrency_UndoesADelete deletes a public currency by mistake and
+// restores it (#196): it keeps its hk and symbol, comes back as pending, so
+// not public, and the restore is audited.
+func (s *AdminCurrenciesTestSuite) TestRestoreCurrency_UndoesADelete() {
+	hk := s.createCurrency("USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7")
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+
+	again := s.makeRequest(http.MethodPost, "/currencies", sampleCurrencyPayload("USDT", "other"))
+	s.assertConflict(again, "duplicate_symbol", "info.symbol")
+	assert.Contains(s.T(), s.decodeResponse(again).Message, "restore it")
+
+	s.takeEvents()
+	w := s.makeRequest(http.MethodPost, "/currencies/"+hk+"/restore?version=3", nil)
+	require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Info models.VersionInfo `json:"info"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(s.T(), int64(4), resp.Info.Version)
+
+	var status string
+	var deletedAt sql.NullTime
+	require.NoError(s.T(), s.postgresSvc.DB.QueryRow(
+		"SELECT status, deleted_at FROM currencies WHERE hk = $1", hk).Scan(&status, &deletedAt))
+	assert.Equal(s.T(), models.CurrencyStatusPending, status)
+	assert.False(s.T(), deletedAt.Valid)
+	assert.False(s.T(), s.isPublic(hk), "a restored currency waits for approval")
+	assert.Empty(s.T(), s.takeEvents(), "a pending currency is not announced")
+
+	trail := s.auditTrail(hk)
+	last := trail[len(trail)-1]
+	assert.Equal(s.T(), audit.ActionCurrencyRestore, last.Action)
+	assert.Equal(s.T(), s.adminID, last.ActorID)
+	assert.Equal(s.T(), map[string]interface{}{"status": "deleted"}, last.Changes.Before)
+	assert.Equal(s.T(), map[string]interface{}{"status": "pending"}, last.Changes.After)
+
+	// It can be updated and approved again, as any pending currency.
+	s.update(hk, map[string]interface{}{"status": "approved"})
+	assert.True(s.T(), s.isPublic(hk))
+}
+
+func (s *AdminCurrenciesTestSuite) TestRestoreCurrency_Refusals() {
+	hk := s.createCurrency("XMR", "")
+
+	w := s.makeRequest(http.MethodPost, "/currencies/"+hk+"/restore", nil)
+	assert.Equal(s.T(), http.StatusConflict, w.Code)
+	assert.Equal(s.T(), "not_deleted", s.decodeResponse(w).Code)
+	assert.Equal(s.T(), http.StatusBadRequest, s.makeRequest(http.MethodPost, "/currencies/not-a-uuid/restore", nil).Code)
+	assert.Equal(s.T(), http.StatusNotFound, s.makeRequest(http.MethodPost, "/currencies/"+uuid.NewString()+"/restore", nil).Code)
+
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+	w = s.makeRequest(http.MethodPost, "/currencies/"+hk+"/restore?version=1", nil)
+	assert.Equal(s.T(), http.StatusConflict, w.Code, "a stale version")
+	assert.Equal(s.T(), "version_conflict", s.decodeResponse(w).Code)
+	assert.Equal(s.T(), http.StatusBadRequest, s.makeRequest(http.MethodPost, "/currencies/"+hk+"/restore?version=x", nil).Code)
+}
+
+// TestRestoreCurrency_ConcurrentRestoresSucceedOnce restores one currency
+// from many requests at once, as several instances would: the row lock lets
+// one of them through.
+func (s *AdminCurrenciesTestSuite) TestRestoreCurrency_ConcurrentRestoresSucceedOnce() {
+	hk := s.createCurrency("ZEC", "")
+	require.Equal(s.T(), http.StatusOK, s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil).Code)
+
+	const n = 8
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- s.makeRequest(http.MethodPost, "/currencies/"+hk+"/restore", nil).Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	ok := 0
+	for code := range codes {
+		if code == http.StatusOK {
+			ok++
+		} else {
+			assert.Equal(s.T(), http.StatusConflict, code)
+		}
+	}
+	assert.Equal(s.T(), 1, ok)
+	restores := 0
+	for _, e := range s.auditTrail(hk) {
+		if e.Action == audit.ActionCurrencyRestore {
+			restores++
+		}
+	}
+	assert.Equal(s.T(), 1, restores)
+}
+
+// TestCurrencyTimestamps_HaveATimeZone checks migration 24: the timestamps
+// of currencies do not depend on the session time zone of the writer.
+func (s *AdminCurrenciesTestSuite) TestCurrencyTimestamps_HaveATimeZone() {
+	var types []string
+	rows, err := s.postgresSvc.DB.Query(`SELECT data_type FROM information_schema.columns
+		WHERE table_name = 'currencies' AND column_name IN ('created_at', 'updated_at', 'deleted_at')`)
+	require.NoError(s.T(), err)
+	defer rows.Close()
+	for rows.Next() {
+		var t string
+		require.NoError(s.T(), rows.Scan(&t))
+		types = append(types, t)
+	}
+	require.NoError(s.T(), rows.Err())
+	assert.Equal(s.T(), []string{"timestamp with time zone", "timestamp with time zone", "timestamp with time zone"}, types)
 }
 
 // insertApproved writes an approved currency to the database directly, as a

@@ -444,6 +444,94 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, "Currency deleted successfully.", gin.H{"version": newVersion})
 }
 
+// @Summary Restore a deleted currency
+// @Description Undoes a delete: the currency keeps its hk, symbol, and contract, and comes back as pending, so that it is public again only once an administrator approves it. With version, the restore is refused with 409 version_conflict when the currency has changed since. A currency that is not deleted answers 409 not_deleted.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Param version query int false "The version the restore is based on" minimum(1)
+// @Success 200 {object} models.APIResponse{info=models.VersionInfo}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk}/restore [post]
+func (h *AdminHandler) RestoreCurrency(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	hk := c.Param("hk")
+	if _, err := uuid.Parse(hk); err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for HK", nil)
+		return
+	}
+	expected, ok := versionQuery(c)
+	if !ok {
+		sendValidationErrors(c, fieldErrors{"version": "must be a number of at least 1"})
+		return
+	}
+
+	// As in a delete, the row is locked from the read to the write, so that
+	// concurrent restores, on any instance, succeed only once.
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("Error starting a currency restore: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to restore currency due to an unexpected error.", nil)
+		return
+	}
+	defer tx.Rollback()
+
+	var isDeleted bool
+	var currentVersion int64
+	err = tx.QueryRowContext(ctx,
+		"SELECT (deleted_at IS NOT NULL), version FROM currencies WHERE hk = $1 FOR UPDATE", hk,
+	).Scan(&isDeleted, &currentVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+		return
+	}
+	if err != nil {
+		log.Printf("Error checking currency in database: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to restore currency due to an unexpected error.", nil)
+		return
+	}
+	if expected != nil && *expected != currentVersion {
+		sendVersionConflict(c, currentVersion)
+		return
+	}
+	if !isDeleted {
+		helpers.SendError(c, http.StatusConflict, "not_deleted", "The currency is not deleted.", gin.H{"code": "not_deleted"})
+		return
+	}
+
+	// A pending currency is not public, so the restore publishes no event and
+	// leaves the cached public list as it is.
+	var newVersion int64
+	err = tx.QueryRowContext(ctx,
+		"UPDATE currencies SET deleted_at=NULL, status=$1, version=version+1, updated_at=NOW() WHERE hk=$2 RETURNING version",
+		models.CurrencyStatusPending, hk,
+	).Scan(&newVersion)
+	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyRestore, hk, &audit.Changes{
+		Before: map[string]interface{}{"status": models.CurrencyStatusDeleted},
+		After:  map[string]interface{}{"status": models.CurrencyStatusPending},
+	})) {
+		return
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		log.Printf("Error restoring currency in database: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to restore currency due to an unexpected error.", nil)
+		return
+	}
+
+	helpers.SendResponse(c, http.StatusOK, "Currency restored successfully.", gin.H{"version": newVersion})
+}
+
 // GetCurrency returns one currency, whatever its status, with its version:
 // what an update or a delete sends to be refused if the currency changed in
 // the meantime.

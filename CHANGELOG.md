@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `POST /admin/currencies/{hk}/restore` undoes the delete of a currency, which keeps its `hk`, symbol, and contract and comes back as `pending`. It is audited as `currency.restore`. Creating a currency with the symbol of a deleted one now says to restore it ([#196](https://github.com/mdastpak/Crypto-Exchange/issues/196)).
 - Project documentation: `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `docs/architecture.md`, `docs/configuration.md`, and `docs/api.md`.
 - Issue templates and a pull request template.
 - Test-scenario catalog with stable scenario IDs and a finding-status table, in [`docs/testing/test-scenarios.md`](docs/testing/test-scenarios.md) ([#90](https://github.com/mdastpak/Crypto-Exchange/pull/90)).
@@ -24,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Migration 24 changes the timestamps of `currencies` to `TIMESTAMPTZ`, so that they no longer depend on the session time zone of the writer ([#196](https://github.com/mdastpak/Crypto-Exchange/issues/196)).
 - Moved the technical audit notes of 2026-09-14 from this file to [`docs/audits/2026-09-14-technical-audit.md`](docs/audits/2026-09-14-technical-audit.md).
 - `config/config.local.yaml` is now ignored by Git.
 - **Breaking:** HTTP CORS is configured with the new `server.cors.allowed_origins` setting. `websocket.allowed_origins` now only applies to WebSocket connections ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)).
