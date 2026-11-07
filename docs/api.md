@@ -289,7 +289,7 @@ Ends the session of the access token sent in the `Authorization` header:
 - The access token is blacklisted until it expires.
 - The refresh token cookie is cleared.
 
-Every other access token of the session, such as one issued before the last refresh, is rejected from then on, because the user routes check the session on each request. Other sessions of the same user are not affected. Logout does not check the session or the account, so that a user whose account was disabled can still end the session.
+Every other access token of the session, such as one issued before the last refresh, is rejected from then on, because the user routes check the session on each request. Other sessions of the same user are not affected; the [session list](#sessions) ends them. Logout does not check the session or the account, so that a user whose account was disabled can still end the session.
 
 Both routes require a user access token as `Authorization: Bearer <token>`. `POST /public/auth/logout` exists because the refresh token cookie is only sent to `/public/auth/*`, so only this route can clear it in the browser.
 
@@ -582,6 +582,37 @@ The earlier name of `/system/ready`, with the same response.
 ```json
 { "message": "pong", "timestamp": "2026-11-02T10:00:00Z" }
 ```
+
+### Sessions
+
+A user sees and ends their own sessions, for example after a device was lost ([#193](https://github.com/mdastpak/Crypto-Exchange/issues/193)). The routes need a user access token of an active session, like the other `/user/*` routes, and never show or end the sessions of another user.
+
+`GET /user/sessions` lists the active sessions, newest first, with the [pagination](#pagination) convention (`limit`, `cursor`). The session of the request has `current: true`:
+
+```json
+{
+  "items": [
+    {
+      "id": "2f1c0b9e-3c55-4c5b-9a4e-2d7f9f1d6c11",
+      "auth_method": "OTP",
+      "user_agent": "Mozilla/5.0 ...",
+      "ip": "203.0.113.7",
+      "created_at": "2026-11-07T09:00:00Z",
+      "last_used_at": "2026-11-07T10:42:00Z",
+      "expires_at": "2026-11-14T09:00:00Z",
+      "current": true
+    }
+  ]
+}
+```
+
+`last_used_at` is updated by the requests of the session at most once a minute, and by every refresh. The list shows the address and the user agent of the sign-in, not a location.
+
+`DELETE /user/sessions/{id}` ends one session: its refresh token and every access token stop working on their next request, and a WebSocket connection of it is closed within `websocket.session_check_seconds`. Ending the current session also clears the refresh token cookie. An `id` that is not an active session of the user, including a session of another user, gets `404`.
+
+`DELETE /user/sessions` ends every session but the current one, and answers `{"revoked": <count>}`.
+
+Each ended session records a `user.session_revoke` event in the [audit log](architecture.md#the-audit-log).
 
 ## WebSocket
 

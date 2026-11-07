@@ -101,6 +101,9 @@ func HashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// sessionTouchInterval is how often the use of a session is recorded.
+const sessionTouchInterval = time.Minute
+
 // PostgresSessionStore keeps sessions in the sessions table.
 type PostgresSessionStore struct {
 	DB *sql.DB
@@ -165,8 +168,8 @@ func recordInTx(ctx context.Context, tx *sql.Tx, event audit.Event, revokes bool
 func (s *PostgresSessionStore) Create(ctx context.Context, session Session, event audit.Event) error {
 	return s.inTx(ctx, func(tx *sql.Tx) (*audit.Event, bool, error) {
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO sessions (id, user_id, auth_method, access_token_hash, refresh_token_hash, user_agent, ip, expires_at)
-			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, '')::inet, $8)`,
+			INSERT INTO sessions (id, user_id, auth_method, access_token_hash, refresh_token_hash, user_agent, ip, expires_at, last_used_at)
+			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, '')::inet, $8, NOW())`,
 			session.ID, session.UserID, session.AuthMethod, session.AccessTokenHash, session.RefreshTokenHash,
 			session.UserAgent, session.IP, session.ExpiresAt,
 		)
@@ -190,7 +193,7 @@ func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation, ev
 func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Event) (*audit.Event, bool, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE sessions
-		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = $3
+		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = $3, last_used_at = NOW()
 		WHERE id = $4 AND user_id = $5 AND refresh_token_hash = $6
 		  AND status = 'ACTIVE' AND expires_at > NOW()`,
 		r.NewRefreshHash, r.NewAccessHash, r.ExpiresAt, r.SessionID, r.UserID, r.PresentedRefreshHash,
@@ -233,11 +236,21 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID string) error {
 	var active, deleted bool
 	var status, role string
+	// The same statement records the use of an active session, at most
+	// once a minute, so that most requests write nothing (#193).
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT s.status = 'ACTIVE' AND s.expires_at > NOW(), u.status, u.role, u.deleted_at IS NOT NULL
-		FROM sessions s JOIN users u ON u.hk = s.user_id
-		WHERE s.id = $1 AND s.user_id = $2`,
-		sessionID, userID,
+		WITH found AS (
+			SELECT s.id, s.status = 'ACTIVE' AND s.expires_at > NOW() AS active, s.last_used_at,
+				u.status AS user_status, u.role, u.deleted_at IS NOT NULL AS deleted
+			FROM sessions s JOIN users u ON u.hk = s.user_id
+			WHERE s.id = $1 AND s.user_id = $2
+		), touched AS (
+			UPDATE sessions SET last_used_at = NOW() FROM found
+			WHERE sessions.id = found.id AND found.active
+			  AND (found.last_used_at IS NULL OR found.last_used_at < NOW() - make_interval(secs => $3))
+		)
+		SELECT active, user_status, role, deleted FROM found`,
+		sessionID, userID, sessionTouchInterval.Seconds(),
 	).Scan(&active, &status, &role, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrSessionInvalid

@@ -107,6 +107,40 @@ definitions:
           page.
         type: string
     type: object
+  auth.SessionInfo:
+    properties:
+      auth_method:
+        example: otp
+        type: string
+      created_at:
+        type: string
+      current:
+        description: Current marks the session of the request.
+        type: boolean
+      expires_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      ip:
+        example: 203.0.113.7
+        type: string
+      last_used_at:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  auth.SessionPageDoc:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/auth.SessionInfo'
+        type: array
+      next_cursor:
+        description: NextCursor asks for the next page. It is left out on the last
+          page.
+        type: string
+    type: object
   models.APIResponse:
     properties:
       code:
@@ -273,6 +307,12 @@ definitions:
         type: string
       uuid:
         type: string
+    type: object
+  user.RevokedSessions:
+    properties:
+      revoked:
+        example: 2
+        type: integer
     type: object
   user.profileUpdate:
     properties:
@@ -1037,6 +1077,125 @@ paths:
       summary: Change the names in the profile
       tags:
       - user
+  /api/v1/user/sessions:
+    delete:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.RevokedSessions'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: End every session of the signed-in user but the current one
+      tags:
+      - user sessions
+    get:
+      description: The active sessions, newest first, with the session of the request
+        marked current. Pages follow the pagination convention of docs/api.md.
+      parameters:
+      - description: The number of sessions, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/auth.SessionPageDoc'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the signed-in user's sessions
+      tags:
+      - user sessions
+  /api/v1/user/sessions/{id}:
+    delete:
+      parameters:
+      - description: The session, from the session list
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: End one of the signed-in user's sessions
+      tags:
+      - user sessions
   /api/v1/ws/:
     get:
       description: 'Upgrades to a WebSocket. An optional user access token comes as

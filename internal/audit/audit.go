@@ -52,6 +52,9 @@ const (
 	ActionUserSignIn      = "user.sign_in"
 	ActionUserRefresh     = "user.token_refresh"
 	ActionUserLogout      = "user.logout"
+	// ActionUserSessionRevoke is a user ending one of their sessions from
+	// the session list (#193); the target is the session.
+	ActionUserSessionRevoke = "user.session_revoke"
 )
 
 // Target types.
