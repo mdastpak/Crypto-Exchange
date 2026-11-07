@@ -579,11 +579,13 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	ws.VerifySession = sessions.Verify
 	userHandler := user.NewHandler(services)
 	userHandler.Sessions = sessions
+	publicHandler := public.NewHandler(services)
+	publicHandler.Blacklist = tb
 	return &InfraHandlers{
 		Socket:         ws,
 		System:         system.NewHandler(services),
 		Admin:          admin.NewHandler(services),
-		Public:         public.NewHandler(services),
+		Public:         publicHandler,
 		User:           userHandler,
 		Redis:          services.Redis,
 		TokenBlacklist: tb,
@@ -707,6 +709,12 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.DELETE("/sessions/:id", ih.User.RevokeSession)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
+		activeGroup.GET("/favorites", ih.User.ListFavorites)
+		activeGroup.PUT("/favorites/order", ih.User.ReorderFavorites)
+		activeGroup.PUT("/favorites/currencies/:hk", ih.User.AddFavoriteCurrency)
+		activeGroup.DELETE("/favorites/currencies/:hk", ih.User.RemoveFavoriteCurrency)
+		activeGroup.PUT("/favorites/pairs/:hk", ih.User.AddFavoritePair)
+		activeGroup.DELETE("/favorites/pairs/:hk", ih.User.RemoveFavoritePair)
 		// Starting a change sends codes, so it has the limit of a code
 		// request, on top of the limits of the codes themselves.
 		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), ih.User.StartContactChange)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -17,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
+	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -42,6 +44,9 @@ type PublicHandler struct {
 	OTPSender notify.OTPSender
 	// Currencies lists the public currencies.
 	Currencies *currencies.Catalog
+	// Blacklist holds the revoked access tokens, for the optional token of
+	// the favorites filter.
+	Blacklist *auth.TokenBlacklist
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
@@ -451,17 +456,31 @@ type CurrencyPage struct {
 // @Param created_since query string false "Created at or after this RFC 3339 time" format(date-time)
 // @Param created_until query string false "Created before this RFC 3339 time" format(date-time)
 // @Param updated_since query string false "Updated at or after this RFC 3339 time" format(date-time)
+// @Param favorites query bool false "true: only the favorites of the signed-in user, which needs their access token"
 // @Param sort query string false "The order, with - for descending; the hk breaks ties" Enums(symbol, -symbol, en_name, -en_name, created_at, -created_at, updated_at, -updated_at)
 // @Param limit query int false "The number of currencies, 50 by default" minimum(1) maximum(200)
 // @Param cursor query string false "The next_cursor of the previous page"
 // @Success 200 {object} models.APIResponse{info=CurrencyPage}
 // @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse "favorites=true without a valid user access token"
+// @Failure 403 {object} models.APIResponse
 // @Failure 503 {object} models.APIResponse
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/public/currencies [get]
 func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 	page, errs := pagination.Parse(c)
-	query, queryErrs := currencies.ParseQuery(c.Request.URL.Query())
+	query, queryErrs := currencies.ParseQuery(c.Request.URL.Query(), "favorites")
+	onlyFavorites := false
+	if raw := c.Query("favorites"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			if queryErrs == nil {
+				queryErrs = map[string]string{}
+			}
+			queryErrs["favorites"] = "must be true or false"
+		}
+		onlyFavorites = v
+	}
 	if errs == nil {
 		errs = map[string]string{}
 	}
@@ -475,6 +494,9 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), currencyReadTimeout)
 	defer cancel()
+	if onlyFavorites && !h.favoritesOf(c, ctx, &query) {
+		return
+	}
 	list, err := h.Currencies.List(ctx)
 	if err != nil {
 		log.Printf("Error listing the public currencies: %v", err)
@@ -493,6 +515,44 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 		return
 	}
 	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", result)
+}
+
+// favoritesOf keeps only the favorites of the user of the request's access
+// token in q (#217). The token gets the checks of the user routes. It
+// answers, and reports false, when there is no valid token.
+func (h *PublicHandler) favoritesOf(c *gin.Context, ctx context.Context, q *currencies.Query) bool {
+	token, ok := auth.BearerToken(c.GetHeader("Authorization"))
+	if !ok {
+		c.Header("WWW-Authenticate", "Bearer")
+		helpers.SendError(c, http.StatusUnauthorized, "token_missing", "favorites=true needs your access token.", nil)
+		return false
+	}
+	claims, err := auth.AuthenticateUserToken(ctx, token, h.Blacklist, h.Sessions)
+	switch {
+	case errors.Is(err, auth.ErrAccountUnavailable):
+		code, message := auth.AccountError(err)
+		helpers.SendError(c, http.StatusForbidden, code, message, nil)
+		return false
+	case errors.Is(err, auth.ErrSessionInvalid):
+		helpers.SendError(c, http.StatusUnauthorized, "session_inactive", "Unauthorized - Session is not active", nil)
+		return false
+	case err != nil && (errors.Is(err, auth.ErrInvalidToken) || errors.Is(err, auth.ErrWrongTokenType) || errors.Is(err, auth.ErrWrongRole) || claims == nil):
+		c.Header("WWW-Authenticate", "Bearer")
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
+		return false
+	case err != nil:
+		log.Printf("Failed to check the token of a favorites filter: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		return false
+	}
+	hks, err := favorites.CurrencyHKs(ctx, h.PostgresDB.DB, claims.UUID)
+	if err != nil {
+		log.Printf("Failed to read the favorites of a user: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		return false
+	}
+	q.HKs = hks
+	return true
 }
 
 // GetCurrencyByHK returns one public currency. A currency that is not public

@@ -35,6 +35,10 @@ func bearerToken(header string) (string, bool) {
 	return token, true
 }
 
+// BearerToken returns the token of an Authorization header of the Bearer
+// scheme, for a route that takes a token without requiring one.
+func BearerToken(header string) (string, bool) { return bearerToken(header) }
+
 func unauthorized(c *gin.Context, code, message string) {
 	c.Header("WWW-Authenticate", `Bearer`)
 	helpers.SendError(c, http.StatusUnauthorized, code, message, nil)

@@ -211,6 +211,12 @@ type Configuration struct {
 		SignInMinResponseMS int `yaml:"sign_in_min_response_ms"`
 	} `yaml:"admin"`
 
+	Favorites struct {
+		// MaxPerUser caps the favorite currencies and pairs of one user
+		// (#217), together.
+		MaxPerUser int `yaml:"max_per_user"`
+	} `yaml:"favorites"`
+
 	// Keys says where the key-encryption key (KEK) of the data-protection
 	// keys lives. See docs/data-protection.md.
 	Keys KeysConfig `yaml:"keys"`
@@ -783,6 +789,7 @@ func setDefaults() {
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
+		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -1003,6 +1010,10 @@ const (
 	// to show in a refusal.
 	DefaultMaxSessionsPerUser = 5
 	MaxSessionsPerUser        = 50
+	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
+	// favorites of a user, which are listed in one answer.
+	DefaultMaxFavoritesPerUser = 100
+	MaxFavoritesPerUser        = 1000
 )
 
 // DefaultAdminSignInMinResponseMS is longer than the work of a sign-in
