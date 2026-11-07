@@ -10,6 +10,7 @@
 package contact
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -99,4 +100,29 @@ func Code(input string, length int) (string, bool) {
 		}
 	}
 	return code, true
+}
+
+var (
+	emailPattern  = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	mobilePattern = regexp.MustCompile(`^09\d{9}$`)
+)
+
+// Identify returns the type of a normalized contact, "email" or "mobile",
+// and a masked form that is safe to log and show, or "" for anything else.
+func Identify(input string) (contactType, masked string) {
+	mask := func(visibleStart, visibleEnd int, str string) string {
+		if len(str) <= visibleStart+visibleEnd {
+			return str
+		}
+		return str[:visibleStart] + strings.Repeat("*", 5) + str[len(str)-visibleEnd:]
+	}
+	if emailPattern.MatchString(input) {
+		if at := strings.Index(input, "@"); at > 1 {
+			return "email", mask(3, len(input)-at, input)
+		}
+	}
+	if mobilePattern.MatchString(input) {
+		return "mobile", mask(3, 3, input)
+	}
+	return "", ""
 }

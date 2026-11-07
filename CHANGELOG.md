@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Users manage their contacts: `GET /user/contacts`, and `POST /user/contacts/changes` with `POST /user/contacts/changes/{id}` to add, replace, or remove an email address or a mobile number. Every change needs a code sent to a verified contact of the account and, for a new contact, a code sent to it. A user holds one email address and one mobile number and signs in with either to the same account. The last verified contact cannot be removed. Changes are audited, with the contacts masked ([#199](https://github.com/mdastpak/Crypto-Exchange/issues/199)).
 - `GET /admin/currencies` lists the currencies of every status, deleted ones included, newest first, with their versions, filters on `status`, `symbol`, `is_token`, and `if_fiat`, and cursor pagination. Migration 25 adds its index ([#198](https://github.com/mdastpak/Crypto-Exchange/issues/198)).
 - `POST /admin/currencies/{hk}/restore` undoes the delete of a currency, which keeps its `hk`, symbol, and contract and comes back as `pending`. It is audited as `currency.restore`. Creating a currency with the symbol of a deleted one now says to restore it ([#196](https://github.com/mdastpak/Crypto-Exchange/issues/196)).
 - Project documentation: `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `docs/architecture.md`, `docs/configuration.md`, and `docs/api.md`.

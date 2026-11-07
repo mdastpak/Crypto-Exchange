@@ -296,6 +296,89 @@ definitions:
       status:
         type: string
     type: object
+  user.Contact:
+    properties:
+      type:
+        example: mobile
+        type: string
+      value:
+        example: 091*****789
+        type: string
+      verified_at:
+        type: string
+    type: object
+  user.ContactChangeConfirmation:
+    properties:
+      account_code:
+        example: "123456"
+        type: string
+      new_code:
+        example: "654321"
+        type: string
+    type: object
+  user.ContactChangeRequest:
+    properties:
+      action:
+        description: Action is add, replace, or remove.
+        enum:
+        - add
+        - replace
+        - remove
+        example: add
+        type: string
+      type:
+        description: |-
+          Type is the contact to remove. For add and replace, it is taken from
+          Value and may be left out.
+        enum:
+        - email
+        - mobile
+        example: mobile
+        type: string
+      value:
+        description: Value is the new contact, for add and replace.
+        example: "09123456789"
+        type: string
+      verify_with:
+        description: |-
+          VerifyWith is the verified contact that receives the code that proves
+          the change is the account owner's. By default, the contact that is
+          replaced or removed, or for add, the other contact.
+        enum:
+        - email
+        - mobile
+        example: email
+        type: string
+    type: object
+  user.ContactChangeStarted:
+    properties:
+      account_code_sent_to:
+        description: |-
+          AccountCodeSentTo is the verified contact that received the code of
+          account_code.
+        example: ali*****@example.com
+        type: string
+      change_id:
+        format: uuid
+        type: string
+      expires_in:
+        description: ExpiresIn is the number of seconds the codes are valid.
+        example: 60
+        type: integer
+      new_code_sent_to:
+        description: |-
+          NewCodeSentTo is the new contact that received the code of new_code.
+          It is left out for a removal.
+        example: 091*****789
+        type: string
+    type: object
+  user.ContactList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/user.Contact'
+        type: array
+    type: object
   user.Profile:
     properties:
       contact:
@@ -1120,6 +1203,160 @@ paths:
       summary: Get a public currency
       tags:
       - currencies
+  /api/v1/user/contacts:
+    get:
+      description: The verified email address and mobile number of the signed-in user,
+        masked. Either one signs in.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.ContactList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List my contacts
+      tags:
+      - user contacts
+  /api/v1/user/contacts/changes:
+    post:
+      consumes:
+      - application/json
+      description: Sends a code to a verified contact of the account and, to add or
+        replace a contact, a code to the new one. Confirm the change with both codes
+        at POST /user/contacts/changes/{id}. A user holds at most one email address
+        and one mobile number; the last verified contact cannot be removed.
+      parameters:
+      - description: The change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ContactChangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.ContactChangeStarted'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Start a contact change
+      tags:
+      - user contacts
+  /api/v1/user/contacts/changes/{id}:
+    post:
+      consumes:
+      - application/json
+      description: Applies the change once both codes are right. A wrong code answers
+        401 code_invalid and names it in info.field; the codes already accepted stay
+        accepted, so a retry needs only the others. Codes expire with the change.
+      parameters:
+      - description: The change_id of the started change
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The codes
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ContactChangeConfirmation'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.ContactList'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Confirm a contact change
+      tags:
+      - user contacts
   /api/v1/user/logout:
     post:
       description: Both routes end the session. POST /api/v1/public/auth/logout exists
