@@ -396,3 +396,49 @@ func TestKeys_ReloadAndActivation(t *testing.T) {
 		assert.Contains(t, err.Error(), want)
 	}
 }
+
+// TestPostgres_AvailabilitySettings checks the defaults, environment
+// variables, and validation of the PostgreSQL availability settings (#230).
+func TestPostgres_AvailabilitySettings(t *testing.T) {
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
+	pg := Config.Postgres
+	assert.Equal(t, "read-write", pg.TargetSessionAttrs)
+	assert.Equal(t, []int{30000, 5000, 60000, 300},
+		[]int{pg.StatementTimeoutMs, pg.LockTimeoutMs, pg.IdleInTransactionTimeoutMs, pg.MigrationLockTimeoutSeconds})
+
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
+		"POSTGRES_HOSTS": "pg-1:5432, pg-2:5432,[2001:db8::1]:5433", "POSTGRES_TARGET_SESSION_ATTRS": "primary",
+		"POSTGRES_STATEMENT_TIMEOUT_MS": "-1", "POSTGRES_LOCK_TIMEOUT_MS": "1000", "POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS": "2000",
+		"POSTGRES_MIGRATION_LOCK_TIMEOUT_SECONDS": "60",
+	}))
+	pg = Config.Postgres
+	assert.Equal(t, []string{"pg-1:5432", "pg-2:5432", "[2001:db8::1]:5433"}, pg.Hosts)
+	assert.Equal(t, "primary", pg.TargetSessionAttrs)
+	assert.Equal(t, []int{-1, 1000, 2000, 60},
+		[]int{pg.StatementTimeoutMs, pg.LockTimeoutMs, pg.IdleInTransactionTimeoutMs, pg.MigrationLockTimeoutSeconds})
+
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"host and hosts":      {map[string]string{"POSTGRES_HOSTS": "pg-1:5432"}, "postgres.host (POSTGRES_HOST) is set together with postgres.hosts"},
+		"a host without port": {map[string]string{"POSTGRES_HOSTS": "pg-1"}, `entry 1 is "pg-1"`},
+		"a bad port":          {map[string]string{"POSTGRES_HOSTS": "pg-1:5432,pg-2:99999"}, `entry 2 is "pg-2:99999"`},
+		"unknown attrs":       {map[string]string{"POSTGRES_TARGET_SESSION_ATTRS": "writable"}, `postgres.target_session_attrs (POSTGRES_TARGET_SESSION_ATTRS) is "writable"`},
+		"negative timeout":    {map[string]string{"POSTGRES_LOCK_TIMEOUT_MS": "-2"}, "postgres.lock_timeout_ms (POSTGRES_LOCK_TIMEOUT_MS) is -2"},
+		"lock wait below 1":   {map[string]string{"POSTGRES_MIGRATION_LOCK_TIMEOUT_SECONDS": "-1"}, "postgres.migration_lock_timeout_seconds"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, loadFile(t, configFile("config.compose.yaml"), tc.env))
+			err := ValidateServer()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{"POSTGRES_HOSTS": "pg-1:5432"}))
+	Config.Postgres.Host, Config.Postgres.Port = "", "" // as in a file that sets only hosts
+	err := ValidateServer()
+	if err != nil {
+		assert.NotContains(t, err.Error(), "postgres.", "hosts replaces host and port")
+	}
+}

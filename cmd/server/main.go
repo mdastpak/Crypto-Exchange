@@ -129,6 +129,8 @@ func run() error {
 		return fmt.Errorf("invalid admin sign-in configuration: %w", err)
 	}
 
+	// pg_stat_activity tells the sessions of each instance apart (#230).
+	db.ApplicationName = db.ServerApplicationName()
 	services, cleanup, err := initializeServices()
 	if err != nil {
 		return fmt.Errorf("failed to initialize services: %w", err)

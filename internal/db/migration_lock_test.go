@@ -35,7 +35,7 @@ func TestWithMigrationLock_ReportsAFailedUnlock(t *testing.T) {
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	err = withMigrationLock(context.Background(), proxied, func() error {
+	err = withMigrationLock(context.Background(), proxied, time.Minute, func() error {
 		proxy.SetDown(true)
 		proxy.Cut()
 		return nil
@@ -45,5 +45,5 @@ func TestWithMigrationLock_ReportsAFailedUnlock(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	assert.NoError(t, withMigrationLock(ctx, direct, func() error { return nil }), "the lock ended with the lost session")
+	assert.NoError(t, withMigrationLock(ctx, direct, time.Minute, func() error { return nil }), "the lock ended with the lost session")
 }

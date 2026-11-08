@@ -57,6 +57,14 @@ postgres:
   max_idle_conns: 5             # At most max_open_conns
   conn_max_lifetime_minutes: 5
   conn_max_idle_time_minutes: 5
+  # High availability (#230): list every node instead of host and port;
+  # connections take the first node that writes.
+  # hosts: ["pg-1.internal:5432", "pg-2.internal:5432"]
+  target_session_attrs: "read-write"
+  statement_timeout_ms: 30000            # -1 turns a timeout off
+  lock_timeout_ms: 5000                  # A request past it gets 503 database_busy
+  idle_in_transaction_timeout_ms: 60000
+  migration_lock_timeout_seconds: 300    # Startup stops, naming the holder, after this
 
 redis:
   host: "localhost"

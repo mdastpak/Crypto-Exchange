@@ -1,14 +1,18 @@
 package helpers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,4 +116,33 @@ func TestSendResponse_WithInfoIncludedInJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
 	require.Contains(t, raw, "info")
 	assert.Equal(t, []interface{}{"a", "b"}, raw["info"])
+}
+
+// TestSendResponse_AnswersABusyDatabaseWith503 sends a 500 for a request
+// whose query PostgreSQL refused for a moment: the client gets 503
+// database_busy with Retry-After, which it may retry (#230). A 500 of any
+// other request stays a 500.
+func TestSendResponse_AnswersABusyDatabaseWith503(t *testing.T) {
+	send := func(busy error) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		ctx := dberr.Track(context.Background())
+		dberr.Record(ctx, busy)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+		SendResponse(c, http.StatusInternalServerError, "Failed to update profile", map[string]string{"x": "y"})
+		return w
+	}
+
+	w := send(&pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"})
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "1", w.Header().Get("Retry-After"))
+	var resp models.APIResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, dberr.Code, resp.Code)
+	assert.Nil(t, resp.Info)
+
+	w = send(&pgconn.PgError{Code: "23505"})
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "a unique violation is not a busy database")
+	w = send(errors.New("plain error"))
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

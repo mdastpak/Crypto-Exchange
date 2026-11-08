@@ -100,6 +100,26 @@ type Configuration struct {
 		ConnMaxIdleTime     int    `yaml:"conn_max_idle_time_minutes"`
 		ConnectRetries      int    `yaml:"connect_retries"`
 		ConnectRetryDelayMs int    `yaml:"connect_retry_delay_ms"`
+		// Hosts lists the nodes of a high-availability cluster as
+		// host:port, in place of host and port (#230). The driver tries
+		// them in order and takes the first that TargetSessionAttrs
+		// accepts, so after a failover new connections find the new
+		// primary.
+		Hosts []string `yaml:"hosts"`
+		// TargetSessionAttrs is the libpq target_session_attrs: which
+		// node a connection accepts. read-write, the default, refuses a
+		// node that only reads, such as a demoted primary.
+		TargetSessionAttrs string `yaml:"target_session_attrs"`
+		// The server-side timeouts of every connection of the server
+		// (#230), so that a slow query or a lock wait cannot hold a pool
+		// connection for long. 0 keeps the default; -1 turns one off.
+		StatementTimeoutMs         int `yaml:"statement_timeout_ms"`
+		LockTimeoutMs              int `yaml:"lock_timeout_ms"`
+		IdleInTransactionTimeoutMs int `yaml:"idle_in_transaction_timeout_ms"`
+		// MigrationLockTimeoutSeconds bounds the wait for the migration
+		// lock at startup; an instance that cannot get it stops, naming
+		// the session that holds it.
+		MigrationLockTimeoutSeconds int `yaml:"migration_lock_timeout_seconds"`
 	} `yaml:"postgres"`
 
 	Redis struct {
@@ -458,6 +478,18 @@ const (
 	KeysProviderLocal   = "local"
 )
 
+// Defaults of the PostgreSQL availability settings (#230).
+const (
+	DefaultPostgresTargetSessionAttrs          = "read-write"
+	DefaultPostgresStatementTimeoutMs          = 30000
+	DefaultPostgresLockTimeoutMs               = 5000
+	DefaultPostgresIdleInTransactionTimeoutMs  = 60000
+	DefaultPostgresMigrationLockTimeoutSeconds = 300
+)
+
+// PostgresTargetSessionAttrs are the values of postgres.target_session_attrs.
+var PostgresTargetSessionAttrs = []string{"any", "read-write", "read-only", "primary", "standby", "prefer-standby"}
+
 // DefaultJWTIssuer is the "iss" claim when jwt.issuer is not set.
 const DefaultJWTIssuer = "crypto-exchange"
 
@@ -771,6 +803,22 @@ func setDefaults() {
 	}
 	if Config.Postgres.SSLMode == "" {
 		Config.Postgres.SSLMode = "disable"
+	}
+	if Config.Postgres.TargetSessionAttrs == "" {
+		Config.Postgres.TargetSessionAttrs = DefaultPostgresTargetSessionAttrs
+	}
+	for _, d := range []struct {
+		field *int
+		def   int
+	}{
+		{&Config.Postgres.StatementTimeoutMs, DefaultPostgresStatementTimeoutMs},
+		{&Config.Postgres.LockTimeoutMs, DefaultPostgresLockTimeoutMs},
+		{&Config.Postgres.IdleInTransactionTimeoutMs, DefaultPostgresIdleInTransactionTimeoutMs},
+		{&Config.Postgres.MigrationLockTimeoutSeconds, DefaultPostgresMigrationLockTimeoutSeconds},
+	} {
+		if *d.field == 0 {
+			*d.field = d.def
+		}
 	}
 	if Config.Postgres.ConnectRetries == 0 {
 		Config.Postgres.ConnectRetries = 3

@@ -73,7 +73,7 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port`, `user`, `dbname` | **required** | Connection settings |
+| `host`, `port`, `user`, `dbname` | **required** | Connection settings. `hosts` can replace `host` and `port`. |
 | `password` | none | Database password. Set it with `POSTGRES_PASSWORD`. Any character works, spaces, quotes, backslashes, and `=` included, and so in `user` and `dbname`: the values are escaped, never formatted into a connection string ([#229](https://github.com/mdastpak/Crypto-Exchange/issues/229)). |
 | `sslmode` | `disable` | libpq SSL mode. Release mode needs `require`, `verify-ca`, or `verify-full`; use `verify-full` where possible. |
 | `max_open_conns` | `25` | Maximum open connections |
@@ -82,8 +82,28 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `conn_max_idle_time_minutes` | `5` | Maximum idle time per connection |
 | `connect_retries` | `3` | Startup connection attempts |
 | `connect_retry_delay_ms` | `500` | Delay between startup attempts |
+| `hosts` | `[]` | The nodes of a high-availability cluster, as `host:port`, in place of `host` and `port` ([#230](https://github.com/mdastpak/Crypto-Exchange/issues/230)). Each new connection tries them in order and takes the first that `target_session_attrs` accepts. `POSTGRES_HOSTS` takes them comma-separated. Set `host` or `hosts`, not both. |
+| `target_session_attrs` | `read-write` | Which node a connection accepts: `any`, `read-write`, `read-only`, `primary`, `standby`, or `prefer-standby`, as in libpq. With `read-write` or `primary`, the pool also drops a connection whose node turns read-only, such as a demoted primary, before its next use, so it reconnects to the new primary without a restart. |
+| `statement_timeout_ms` | `30000` | The longest a statement of the server may run. `-1` turns it off. |
+| `lock_timeout_ms` | `5000` | The longest a statement waits for a lock. `-1` turns it off. A request whose statement hits this or `statement_timeout_ms` gets `503 database_busy` with `Retry-After: 1`, not a request that hangs. |
+| `idle_in_transaction_timeout_ms` | `60000` | Ends a session that leaves a transaction open and idle this long, which would hold its locks. `-1` turns it off. |
+| `migration_lock_timeout_seconds` | `300` | The longest an instance waits at startup for the migration lock, which another instance holds while it migrates. It logs the holder every 10 seconds, and then stops with an error that names it (process ID, `application_name`, client, and for how long). |
 
-Migrations are applied automatically at startup while a PostgreSQL advisory lock is held.
+Migrations are applied automatically at startup while a PostgreSQL advisory lock is held. They run on connections of their own, without the statement and lock timeouts, which would stop a long migration.
+
+Every connection names itself in `pg_stat_activity` with `application_name`: `crypto-exchange-server/<host>` for a server instance, `crypto-exchange-admin` for `cmd/admin`, and `crypto-exchange-migrate` for the migrations.
+
+#### High availability
+
+Run PostgreSQL as a primary with at least one synchronous standby, managed by Patroni, repmgr, or a managed service, and list every node in `hosts`:
+
+```yaml
+postgres:
+  hosts: ["pg-1.internal:5432", "pg-2.internal:5432", "pg-3.internal:5432"]
+  target_session_attrs: "read-write"
+```
+
+After a failover, new connections skip the nodes that only read and find the new primary. Connections to the old primary end when it stops, or are dropped before their next use when it stays up read-only. A request that meets the change gets `503 database_busy` and may retry. A floating address or a DNS name that follows the primary works too, with the same settings. Read replicas and PgBouncer for scale are [#169](https://github.com/mdastpak/Crypto-Exchange/issues/169).
 
 If a migration fails, golang-migrate marks its version as dirty and the server refuses to start until the flag is cleared. Fix the cause named in the error message, then reset the version to the last successful migration with the [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate) and start the server again:
 
@@ -353,6 +373,12 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `POSTGRES_PASSWORD` | `postgres.password` |
 | `POSTGRES_DB` | `postgres.dbname` |
 | `POSTGRES_SSLMODE` | `postgres.sslmode` |
+| `POSTGRES_HOSTS` | `postgres.hosts`, as a comma-separated list |
+| `POSTGRES_TARGET_SESSION_ATTRS` | `postgres.target_session_attrs` |
+| `POSTGRES_STATEMENT_TIMEOUT_MS` | `postgres.statement_timeout_ms` |
+| `POSTGRES_LOCK_TIMEOUT_MS` | `postgres.lock_timeout_ms` |
+| `POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS` | `postgres.idle_in_transaction_timeout_ms` |
+| `POSTGRES_MIGRATION_LOCK_TIMEOUT_SECONDS` | `postgres.migration_lock_timeout_seconds` |
 | `POSTGRES_MAX_OPEN_CONNS` | `postgres.max_open_conns` |
 | `POSTGRES_MAX_IDLE_CONNS` | `postgres.max_idle_conns` |
 | `POSTGRES_CONN_MAX_LIFETIME_MINUTES` | `postgres.conn_max_lifetime_minutes` |

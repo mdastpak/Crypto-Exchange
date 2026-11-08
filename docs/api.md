@@ -88,6 +88,7 @@ An error response contains only a fixed message for each error. Internal details
 | `internal_error` | `500` | An unexpected failure, described in the server log |
 | `not_implemented` | `501` | Not implemented yet |
 | `unavailable` | `503` | A dependency is unavailable; try again later |
+| `database_busy` | `503` | The database refused the request for a moment: a lock wait or a statement past its timeout, a deadlock, or a failover in progress ([#230](https://github.com/mdastpak/Crypto-Exchange/issues/230)). `Retry-After` is `1`; the request changed nothing and may be retried. Any route can answer it. |
 | `maintenance` | `503` | The exchange is under [maintenance](#maintenance-and-lockdowns); `info` has the message and the end, and `Retry-After` the wait when the end is known |
 | `feature_locked` | `503` | A [lockdown](#maintenance-and-lockdowns) closes the feature; `info.feature` names it |
 | `error` | other | A status without a code of its own |
