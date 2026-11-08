@@ -10,7 +10,8 @@
 // noted request into 503. A durable Redis write that its replicas did not
 // acknowledge is noted the same way, through MarkBusy (#231), and a
 // dependency that is away, such as RabbitMQ, through MarkUnavailable, with
-// an answer of its own (#232).
+// an answer of its own (#232); every command of the Redis clients that
+// cannot reach Redis notes StoreUnavailable (#130).
 package dberr
 
 import (
@@ -115,6 +116,23 @@ var DeliveryUnavailable = Unavailable{
 	Code:              CodeDeliveryUnavailable,
 	Message:           "Codes cannot be sent right now. Please try again in a moment.",
 	RetryAfterSeconds: 5,
+}
+
+// CodeServiceUnavailable answers a request that failed because Redis could
+// not be reached (#130): a token whose revocation cannot be checked, a
+// sign-in code that cannot be stored or checked, or a cache that cannot be
+// read. The request is still refused, as before, but with 503 and
+// Retry-After instead of 500, so that clients and load balancers retry,
+// and the server's own error rate stays meaningful.
+const CodeServiceUnavailable = "service_unavailable"
+
+// StoreUnavailable is the answer of CodeServiceUnavailable. A Redis
+// failover takes seconds; a client that retries every second meets the
+// new primary soon after it is promoted.
+var StoreUnavailable = Unavailable{
+	Code:              CodeServiceUnavailable,
+	Message:           "The service is temporarily unavailable. Please try again in a moment.",
+	RetryAfterSeconds: 1,
 }
 
 // MarkUnavailable notes on the request of ctx, if it is tracked, that a

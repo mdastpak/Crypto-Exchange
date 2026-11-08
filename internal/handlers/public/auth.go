@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -518,7 +519,10 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 	list, err := h.Currencies.List(ctx)
 	if err != nil {
 		log.Printf("Error listing the public currencies: %v", err)
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Currencies are temporarily unavailable.", nil)
+		// The store of the currencies could not be read, as while Redis is
+		// away: the client may retry (#130).
+		c.Header("Retry-After", strconv.Itoa(dberr.StoreUnavailable.RetryAfterSeconds))
+		helpers.SendError(c, http.StatusServiceUnavailable, dberr.CodeServiceUnavailable, "Currencies are temporarily unavailable.", nil)
 		return
 	}
 	// A delisted currency leaves the list, but can still be read by its hk.
@@ -600,7 +604,10 @@ func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
 	currency, found, err := h.Currencies.Get(ctx, id.String())
 	if err != nil {
 		log.Printf("Error reading the public currency %s: %v", id, err)
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Currencies are temporarily unavailable.", nil)
+		// The store of the currencies could not be read, as while Redis is
+		// away: the client may retry (#130).
+		c.Header("Retry-After", strconv.Itoa(dberr.StoreUnavailable.RetryAfterSeconds))
+		helpers.SendError(c, http.StatusServiceUnavailable, dberr.CodeServiceUnavailable, "Currencies are temporarily unavailable.", nil)
 		return
 	}
 	if !found {
