@@ -183,6 +183,7 @@ func run() error {
 		return fmt.Errorf("failed to start the WebSocket event consumer: %w", err)
 	}
 	handlers.Socket.StartSessionWatcher(context.Background())
+	handlers.Socket.StartConnectionHeartbeat(context.Background())
 	if otpWorker != nil {
 		if err := otpWorker.Start(); err != nil {
 			return fmt.Errorf("failed to start the OTP delivery worker: %w", err)
@@ -677,6 +678,9 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// An open connection keeps those checks: it is closed once its session
 	// ends or its user can no longer sign in (#189).
 	ws.VerifySession = sessions.Verify
+	// The connection limits per address and per user hold across the
+	// instances, counted in Redis (#234).
+	ws.Counter = socket.NewRedisConnectionCounter(services.Redis.Client)
 	userHandler := user.NewHandler(services)
 	userHandler.Sessions = sessions
 	publicHandler := public.NewHandler(services)

@@ -227,6 +227,7 @@ Administrators read the log with `GET /api/v1/admin/audit`: newest first, filter
 | `otp:contact:{<contact-id>}:client:<client-id>:known` | The client signed in with the contact, and is exempt from its total code limit | 30 days |
 | `blacklist:token:<sha256>` | Revoked access tokens | Until the token expires |
 | `ratelimit:<scope>:<key>` | Rate-limit buckets and counters | Window-dependent |
+| `ws:connections:ip:<address>`, `ws:connections:user:<user-uuid>` | The open WebSocket connections of a client address and of a user, over all instances: a sorted set of `<instance>:<connection>` members scored by when they expire, in Redis's clock ([#234](https://github.com/mdastpak/Crypto-Exchange/issues/234)) | A minute after the last refresh of each connection |
 
 Redis runs as one node, behind Sentinel, or as a cluster (`redis.mode`). Every script and transaction stays in one hash slot, and the security counters, the OTP attempts and code requests and the blacklist, can be written durably, with `WAIT`, so that a failover cannot give attempts back. [Redis high availability](redis-high-availability.md) describes the deployment and decides, for each kind of key, what a failover may lose ([#231](https://github.com/mdastpak/Crypto-Exchange/issues/231)).
 

@@ -34,4 +34,6 @@ const (
 	Auth
 	// Notify is the database of internal/notify.
 	Notify
+	// Socket is the database of internal/handlers/socket.
+	Socket
 )

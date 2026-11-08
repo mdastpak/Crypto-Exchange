@@ -310,8 +310,11 @@ The key service is contacted at startup, when `data_keys` changed, and by the `a
 | `max_message_size_bytes` | `4096` | The largest message accepted from a client, at most 1 MiB. A larger one closes the connection. Clients only send small control messages. |
 | `write_timeout_seconds` | `10` | How long a write to a client may take |
 | `client_messages_per_second`, `client_message_burst` | `10`, `20` | The messages each connection may send, as a token bucket. A client that sends faster is disconnected. `rate_limits.ws` limits the upgrade requests per address instead. |
-| `max_connections` | `10000` | Open connections per server instance. Further upgrades get `503`. |
-| `max_connections_per_ip` | `20` | Open connections per client address, at most `max_connections`. Further upgrades get `429`. The client address honors `server.trusted_proxies`, and IPv6 clients count by `rate_limits.ipv6_prefix_length`. |
+| `max_connections` | `10000` | Open connections **per server instance**. Further upgrades get `503`. |
+| `max_connections_per_ip` | `20` | Open connections per client address **over all instances**, at most `max_connections`. Further upgrades get `429` (`rate_limited`). The client address honors `server.trusted_proxies`, and IPv6 clients count by `rate_limits.ipv6_prefix_length`. |
+| `max_connections_per_user` | `10` | Open connections per signed-in user **over all instances and addresses** ([#234](https://github.com/mdastpak/Crypto-Exchange/issues/234)). Further upgrades get `429` (`too_many_connections`), and a `reauth` that signs in an anonymous connection closes it with `4429`. Anonymous connections count only against their address. |
+
+`max_connections_per_ip` and `max_connections_per_user` are counted in Redis, so they hold however many instances serve the gateway. Each connection holds a place under its address and its user, which its instance refreshes every 20 seconds and which expires a minute after the last refresh, so the places of an instance that was killed without shutting down are freed within a minute. While Redis cannot be reached, each instance counts only its own connections against the same limits, as the rate limiters fall back to a local decision.
 | `session_check_seconds` | `60` | How often each instance checks the sessions of its authenticated connections, and closes those whose session ended or whose user can no longer sign in. A revoked session can stay connected for up to this long. Each check reads the database once per session, so a shorter interval costs more queries. |
 
 A connection may bring a user access token, which gets the checks of the `/user/*` routes; see [WebSocket](api.md#websocket).
@@ -475,6 +478,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `WS_CLIENT_MESSAGE_BURST` | `websocket.client_message_burst` |
 | `WS_MAX_CONNECTIONS` | `websocket.max_connections` |
 | `WS_MAX_CONNECTIONS_PER_IP` | `websocket.max_connections_per_ip` |
+| `WS_MAX_CONNECTIONS_PER_USER` | `websocket.max_connections_per_user` |
 | `WS_SESSION_CHECK_SECONDS` | `websocket.session_check_seconds` |
 | `RATE_LIMITS_TIMEOUT_MS` | `rate_limits.timeout_ms` |
 | `RATE_LIMITS_IPV6_PREFIX_LENGTH` | `rate_limits.ipv6_prefix_length` |

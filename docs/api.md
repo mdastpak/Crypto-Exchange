@@ -85,6 +85,7 @@ An error response contains only a fixed message for each error. Internal details
 | `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
+| `too_many_connections` | `429` | A WebSocket upgrade of a user who already has `websocket.max_connections_per_user` connections, over all server instances ([#234](https://github.com/mdastpak/Crypto-Exchange/issues/234)) |
 | `internal_error` | `500` | An unexpected failure, described in the server log |
 | `not_implemented` | `501` | Not implemented yet |
 | `unavailable` | `503` | A dependency is unavailable; try again later |
@@ -1105,6 +1106,7 @@ The close frame says why, with the codes of the REST routes in its reason:
 | `4401` | `token_invalid` | A `reauth` brought a token that is invalid, that names another user, or no token |
 | `4403` | `account_unavailable` | The user can no longer sign in |
 | `4403` | `account_frozen` | The account is frozen; the connection closes at the next session check |
+| `4429` | `too_many_connections` | A `reauth` signed in an anonymous connection of a user who already has `websocket.max_connections_per_user` connections |
 | `1013` | `maintenance`, `feature_locked` | A [maintenance or a WebSocket lockdown](#maintenance-and-lockdowns) started. The `platform.status` event comes about a second before; reconnect once it ends. |
 
 After `4401`, refresh the access token and reconnect with the new one; after `4403`, do not reconnect. An anonymous connection is never closed for these reasons.
@@ -1120,7 +1122,7 @@ A request that is not a WebSocket handshake gets `400` (`invalid_request`) in th
 | Server ping interval | `websocket.ping_interval_seconds`, 30 seconds by default |
 | Read deadline | Two ping intervals, extended on every pong |
 | Write timeout | `websocket.write_timeout_seconds`, 10 seconds by default |
-| Connections | At most `websocket.max_connections` per server instance (10000), and `websocket.max_connections_per_ip` per client address (20). Further upgrades get `503` (`unavailable`) and `429` (`rate_limited`). The client address honors `server.trusted_proxies`. |
+| Connections | At most `websocket.max_connections` per server instance (10000), `websocket.max_connections_per_ip` per client address (20), and `websocket.max_connections_per_user` per signed-in user (10). The last two hold over all server instances ([#234](https://github.com/mdastpak/Crypto-Exchange/issues/234)). Further upgrades get `503` (`unavailable`), `429` (`rate_limited`), and `429` (`too_many_connections`). The client address honors `server.trusted_proxies`. A connection's place is freed when it closes, or within a minute when its server instance stops without closing it. |
 | Per-client outbound buffer | 256 messages. Messages are dropped when the buffer is full. |
 | Instance shutdown | When an instance stops, for example during a rolling deploy, its clients get a close frame with `1001` (going away) and the reason `server is shutting down`. The other instances keep serving. Reconnect after a short random delay, so that the clients of one instance do not all reconnect at the same moment, and send the time zone again, since it belongs to the connection. |
 

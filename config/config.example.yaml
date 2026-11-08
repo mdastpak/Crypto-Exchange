@@ -249,7 +249,8 @@ websocket:
   client_messages_per_second: 10   # Messages per connection; a faster client is disconnected
   client_message_burst: 20
   max_connections: 10000           # Per server instance
-  max_connections_per_ip: 20       # Per client address
+  max_connections_per_ip: 20       # Per client address, over all instances
+  max_connections_per_user: 10     # Per signed-in user, over all instances
   session_check_seconds: 60        # How often ended sessions are disconnected
 
 # Maintenance and lockdown controls (#235). The controls are created with the

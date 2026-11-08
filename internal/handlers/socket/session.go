@@ -185,10 +185,17 @@ func (h *WebSocketHandler) handleReauth(client *Client, event map[string]interfa
 		}
 		return
 	}
-	if _, user := client.principal(); user != "" && user != claims.UUID {
+	_, user := client.principal()
+	if user != "" && user != claims.UUID {
 		// A connection keeps its user; another user opens a connection of
 		// its own.
 		h.closeClient(client, CloseUnauthorized, reasonTokenInvalid)
+		return
+	}
+	if user == "" && !h.countUser(client, claims.UUID) {
+		// An anonymous connection that signs in counts against its user
+		// from now on, as a connection that brought the token would (#234).
+		h.closeClient(client, CloseTooManyConnections, CodeTooManyConnections)
 		return
 	}
 	h.authorize(client, claims)
