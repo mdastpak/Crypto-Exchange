@@ -207,6 +207,9 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.JWT.RefreshToken.ReuseGraceSeconds; v < 1 || v > MaxRefreshReuseGraceSeconds {
 		p.add("jwt.refresh_token.reuse_grace_seconds", "is %d; it must be from 1 to %d", v, MaxRefreshReuseGraceSeconds)
 	}
+	if v := c.Contacts.NewContactCooldownHours; v < 1 || v > MaxNewContactCooldownHours {
+		p.add("contacts.new_contact_cooldown_hours", "is %d; it must be from 1 to %d", v, MaxNewContactCooldownHours)
+	}
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)
 	}

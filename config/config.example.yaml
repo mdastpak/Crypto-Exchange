@@ -220,6 +220,10 @@ admin:
   # not tell administrators' addresses from unknown ones.
   sign_in_min_response_ms: 400
 
+# Email and mobile changes of users.
+contacts:
+  new_contact_cooldown_hours: 72  # A new contact cannot replace or remove another one for this long
+
 # Personal favorites of currencies and trading pairs.
 favorites:
   max_per_user: 100            # Favorite currencies and pairs per user, together

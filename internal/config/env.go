@@ -204,6 +204,7 @@ var envVars = []EnvVar{
 	stringVar("OTP_SECRET", "otp.auth.secret", func(c *Configuration) *string { return &c.OTP.Auth.Secret }),
 	stringVar("ADMIN_TOTP_KEY", "admin.totp_key", func(c *Configuration) *string { return &c.Admin.TOTPKey }),
 	intVar("ADMIN_SIGN_IN_MIN_RESPONSE_MS", "admin.sign_in_min_response_ms", func(c *Configuration) *int { return &c.Admin.SignInMinResponseMS }),
+	intVar("CONTACTS_NEW_CONTACT_COOLDOWN_HOURS", "contacts.new_contact_cooldown_hours", func(c *Configuration) *int { return &c.Contacts.NewContactCooldownHours }),
 	intVar("FAVORITES_MAX_PER_USER", "favorites.max_per_user", func(c *Configuration) *int { return &c.Favorites.MaxPerUser }),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
 	intVar("PLATFORM_POLL_INTERVAL_MS", "platform.poll_interval_ms", func(c *Configuration) *int { return &c.Platform.PollIntervalMs }),

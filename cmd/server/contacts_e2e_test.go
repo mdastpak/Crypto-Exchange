@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -197,4 +199,58 @@ func TestUserContacts_ConcurrentChangesApplyOneAtATime(t *testing.T) {
 	assert.ElementsMatch(t, []int{http.StatusOK, http.StatusConflict}, statuses)
 	assert.Contains(t, codes, "contact_exists")
 	assert.Equal(t, []string{"email", "mobile"}, env.contactTypes(t, token))
+}
+
+// TestUserContacts_NewContactCooldown checks #250: a contact verified less
+// than contacts.new_contact_cooldown_hours ago cannot replace or remove
+// another contact, on start or on confirm, while a contact can always be
+// changed with its own code.
+func TestUserContacts_NewContactCooldown(t *testing.T) {
+	env := newE2EEnv(t, func(c *config.Configuration) { c.Contacts.NewContactCooldownHours = 72 })
+	const email, mobile = "cooldown@example.com", "09121110007"
+	token, _ := env.signedIn(t, email)
+	userID := userOf(t, token)
+
+	// Adding is never held back, even by a contact verified a moment ago.
+	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": mobile}, email, mobile)
+	status, resp := env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+
+	// The new mobile number cannot take the email address away.
+	for _, body := range []map[string]string{
+		{"action": "replace", "value": "attacker@example.com", "verify_with": "mobile"},
+		{"action": "remove", "type": "email", "verify_with": "mobile"},
+	} {
+		status, resp = env.post(t, "/api/v1/user/contacts/changes", body, token)
+		assert.Equal(t, http.StatusForbidden, status, body["action"])
+		assert.Equal(t, "contact_too_new", resp.Code, body["action"])
+		availableAt, err := time.Parse(time.RFC3339, resp.Info["available_at"].(string))
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now().Add(72*time.Hour), availableAt, time.Minute)
+	}
+
+	// Once the mobile number is older than the cooldown, it may. The time
+	// is the database's: verified_at is moved back, not the clock.
+	_, err := env.db.Exec(`UPDATE user_contacts SET verified_at = NOW() - interval '73 hours' WHERE user_hk = $1 AND type = 'mobile'`, userID)
+	require.NoError(t, err)
+	id, accountCode, newCode = env.startChange(t, token,
+		map[string]string{"action": "replace", "value": "moved@example.com", "verify_with": "mobile"}, mobile, "moved@example.com")
+
+	// The confirmation checks again: here the mobile number counts as new
+	// again before the change is confirmed, as after a replacement.
+	_, err = env.db.Exec(`UPDATE user_contacts SET verified_at = NOW() WHERE user_hk = $1 AND type = 'mobile'`, userID)
+	require.NoError(t, err)
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Equal(t, "contact_too_new", resp.Code)
+
+	// The original contact can always undo the new one, and the new one can
+	// be changed with its own code.
+	id, accountCode, _ = env.startChange(t, token, map[string]string{"action": "remove", "type": "mobile", "verify_with": "email"}, email, "")
+	status, resp = env.confirmChange(t, token, id, accountCode, "")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	assert.Equal(t, []string{"email"}, env.contactTypes(t, token))
+	id, accountCode, newCode = env.startChange(t, token, map[string]string{"action": "replace", "value": "fresh@example.com"}, email, "fresh@example.com")
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
 }

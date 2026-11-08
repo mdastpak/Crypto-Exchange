@@ -119,6 +119,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		"negative worker count":            {func(c *Configuration) { c.Notifications.Worker.Concurrency = -1 }, "notifications.worker.concurrency is -1"},
 		"unknown migrations mode":          {func(c *Configuration) { c.Postgres.Migrations.Mode = "later" }, `postgres.migrations.mode (POSTGRES_MIGRATIONS_MODE) is "later"; it must be one of startup, external`},
 		"migration password without user":  {func(c *Configuration) { c.Server.Mode, c.Postgres.Migrations.Password = "debug", "secret" }, "postgres.migrations.password (POSTGRES_MIGRATIONS_PASSWORD) is set without postgres.migrations.user"},
+		"no contact cooldown":              {func(c *Configuration) { c.Contacts.NewContactCooldownHours = -1 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is -1; it must be from 1 to 720"},
+		"contact cooldown over 30 days":    {func(c *Configuration) { c.Contacts.NewContactCooldownHours = 721 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is 721"},
 		"negative rate limit":              {func(c *Configuration) { c.RateLimits.Auth.OTPRequestsPerHour = -1 }, "rate_limits.auth.otp_requests_per_hour (RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR) is -1"},
 
 		// TLS files, in every mode.
