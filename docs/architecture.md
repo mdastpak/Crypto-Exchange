@@ -40,7 +40,8 @@ flowchart TB
 | `internal/keys` | Data-protection keys: a `Provider` interface for the key-encryption key, with Transit (Vault or OpenBao) and a local development provider, the wrapped keys in `data_keys`, and a keyring whose keys only offer the operation of their purpose (see [data-protection.md](data-protection.md)) |
 | `internal/config` | YAML loading, defaults, environment overrides, validation (see [configuration.md](configuration.md)). The YAML files are in `config/`, whose only Go code embeds `config.example.yaml` as the fallback. |
 | `internal/auth` | RS256 JWT issuing and verification with separate keys per role, `kid`-based key selection and retired keys for rotation, Redis-backed token blacklist, admin and user middleware |
-| `internal/db` | PostgreSQL connection with startup retries, several hosts with `target_session_attrs`, server-side timeouts, and `application_name`; migrations under an advisory lock with a bounded wait; Redis client |
+| `internal/db` | PostgreSQL connection with startup retries, several hosts with `target_session_attrs`, server-side timeouts, and `application_name`; migrations under an advisory lock with a bounded wait; Redis client of the standalone, sentinel, or cluster mode |
+| `internal/redisutil` | Durable Redis writes (`WAIT` on the primary of the key), hash slots, and a cluster client that follows failovers |
 | `internal/dberr` | Notes on each request when PostgreSQL refused one of its queries for a moment (a lock or statement timeout, a deadlock, a failover), so that the response helpers answer `503 database_busy` instead of `500` ([#230](https://github.com/mdastpak/Crypto-Exchange/issues/230)) |
 | `internal/rabbitmq` | Connection and publishing with confirms. One supervisor goroutine owns the connection and the publishing channel: it reconnects after a broker restart and restores the channel after a channel-level error, while publishes wait up to five seconds for it. |
 | `internal/notify` | Sign-in code delivery: the queue sender used by OTP sign-in, the worker that consumes the queue with retries and a dead-letter queue, and the SMTP and Kavenegar SMS channels |
@@ -220,11 +221,14 @@ Administrators read the log with `GET /api/v1/admin/audit`: newest first, filter
 | `{currencies}:public:v1:loading` | Held by the one instance that loads and writes the list (`SET NX` with a random token, released only by its holder) | 10 seconds, if its holder stops |
 | `{currencies}:public:v1:generation` | Counts the drops of the list. A load writes the list only if no drop happened since it began, so that a slow load cannot write what a change replaced. The hash tag keeps the three keys in one slot of a Redis cluster. | No expiry |
 | `base_definitions:currency:<hk>` | The cache before [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), one key per currency. Nothing reads it any more; instances of the previous version still do during a rolling deploy, so it is left to expire. | 24 hours |
-| `otp:session:<session-uuid>` | Sign-in session: HMAC of the code, encrypted contact, contact ID, and attempt count. The code and the contact are erased when its attempts are used up. | `otp.auth.ttl_seconds` |
-| `otp:contact:<contact-id>:requests` | Codes issued to a contact in the current hour. The contact ID is an HMAC of the normalized contact. | 1 hour from the first code |
-| `otp:contact:<contact-id>:attempts` | Verification attempts for a contact in the current hour, across all of its codes | 1 hour from the first attempt, removed by a successful sign-in |
+| `otp:session:<session-uuid>` | Sign-in session: HMAC of the code, encrypted contact, contact ID, client ID, and attempt count. The code and the contact are erased when its attempts are used up. | `otp.auth.ttl_seconds` |
+| `otp:contact:{<contact-id>}:requests` | Codes issued to a contact in the current hour, from every client. The contact ID is an HMAC of the normalized contact; as the hash tag, it keeps every key of the contact in one slot of a Redis cluster. | 1 hour from the first code |
+| `otp:contact:{<contact-id>}:client:<client-id>:requests`, `...:attempts` | Codes requested and verification attempts for a contact from one client in the current hour, across all of its codes | 1 hour from the first; the attempts are removed by a successful sign-in |
+| `otp:contact:{<contact-id>}:client:<client-id>:known` | The client signed in with the contact, and is exempt from its total code limit | 30 days |
 | `blacklist:token:<sha256>` | Revoked access tokens | Until the token expires |
 | `ratelimit:<scope>:<key>` | Rate-limit buckets and counters | Window-dependent |
+
+Redis runs as one node, behind Sentinel, or as a cluster (`redis.mode`). Every script and transaction stays in one hash slot, and the security counters, the OTP attempts and code requests and the blacklist, can be written durably, with `WAIT`, so that a failover cannot give attempts back. [Redis high availability](redis-high-availability.md) describes the deployment and decides, for each kind of key, what a failover may lose ([#231](https://github.com/mdastpak/Crypto-Exchange/issues/231)).
 
 ### RabbitMQ
 

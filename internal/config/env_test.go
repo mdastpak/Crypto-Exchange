@@ -442,3 +442,33 @@ func TestPostgres_AvailabilitySettings(t *testing.T) {
 		assert.NotContains(t, err.Error(), "postgres.", "hosts replaces host and port")
 	}
 }
+
+// TestRedis_ModeSettings checks the defaults and the environment variables
+// of the Redis modes and durable writes (#231).
+func TestRedis_ModeSettings(t *testing.T) {
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
+	assert.Equal(t, RedisModeStandalone, Config.Redis.Mode)
+	assert.Equal(t, 0, Config.Redis.DurableWrites.Replicas, "durable writes are off by default")
+	assert.Equal(t, DefaultRedisDurableWritesTimeoutMs, Config.Redis.DurableWrites.TimeoutMs)
+
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
+		"REDIS_MODE": "sentinel", "REDIS_SENTINEL_MASTER_NAME": "primary-1",
+		"REDIS_SENTINEL_ADDRESSES": "s-1:26379, s-2:26379,,s-3:26379", "REDIS_SENTINEL_USERNAME": "watcher",
+		"REDIS_SENTINEL_PASSWORD": "sentinel-secret", "REDIS_DURABLE_WRITES_REPLICAS": "1", "REDIS_DURABLE_WRITES_TIMEOUT_MS": "100",
+	}))
+	r := Config.Redis
+	assert.Equal(t, RedisModeSentinel, r.Mode)
+	assert.Equal(t, "primary-1", r.Sentinel.MasterName)
+	assert.Equal(t, []string{"s-1:26379", "s-2:26379", "s-3:26379"}, r.Sentinel.Addresses)
+	assert.Equal(t, []string{"watcher", "sentinel-secret"}, []string{r.Sentinel.Username, r.Sentinel.Password})
+	assert.Equal(t, []int{1, 100}, []int{r.DurableWrites.Replicas, r.DurableWrites.TimeoutMs})
+
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
+		"REDIS_MODE": "cluster", "REDIS_CLUSTER_ADDRESSES": "r-1:6379,r-2:6379",
+	}))
+	assert.Equal(t, []string{"r-1:6379", "r-2:6379"}, Config.Redis.Cluster.Addresses)
+	Config.Redis.Host, Config.Redis.Port = "", "" // as in a file that lists only the cluster
+	if err := ValidateServer(); err != nil {
+		assert.NotContains(t, err.Error(), "redis.", "the cluster mode needs no host or port")
+	}
+}

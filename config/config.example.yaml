@@ -67,8 +67,19 @@ postgres:
   migration_lock_timeout_seconds: 300    # Startup stops, naming the holder, after this
 
 redis:
+  # standalone (host and port), sentinel, or cluster; see
+  # docs/redis-high-availability.md
+  mode: "standalone"
   host: "localhost"
   port: "6379"
+  # sentinel:
+  #   master_name: "crypto-exchange"
+  #   addresses: ["sentinel-1:26379", "sentinel-2:26379", "sentinel-3:26379"]
+  # cluster:
+  #   addresses: ["redis-1:6379", "redis-2:6379", "redis-3:6379"]
+  durable_writes:
+    replicas: 0        # 1 with a primary and two replicas: a failover keeps the OTP attempts
+    timeout_ms: 250
   username: ""  # Redis ACL user; set with REDIS_USERNAME. Empty is the default user.
   password: ""  # Set with REDIS_PASSWORD
   db: 0

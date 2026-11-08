@@ -1,0 +1,45 @@
+name: Redis failover drill
+
+# The failover drill of #231: scripts/redis-ha/failover-drill.sh runs the
+# stores against Redis Sentinel and Redis Cluster, kills a primary in each,
+# and checks that sign-in keeps working and that the attempt counters and
+# the blacklist survive. It runs every month, by hand, and on the pull
+# requests that change the Redis code, so that docs/redis-high-availability.md
+# stays true.
+
+on:
+  schedule:
+    - cron: "41 3 1 * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/redis-ha/**"
+      - "internal/redisutil/**"
+      - "internal/otp/**"
+      - "internal/auth/blacklist.go"
+      - "internal/db/redis.go"
+      - "go.mod"
+      - ".github/workflows/redis-ha.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    name: Redis failover drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run the failover drill
+        run: scripts/redis-ha/failover-drill.sh

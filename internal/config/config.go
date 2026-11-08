@@ -123,8 +123,41 @@ type Configuration struct {
 	} `yaml:"postgres"`
 
 	Redis struct {
+		// Mode is how the server reaches Redis (#231): "standalone" (the
+		// default) connects to host and port; "sentinel" asks the
+		// sentinels for the current primary and follows its failover;
+		// "cluster" connects to a Redis Cluster. Every mode uses the
+		// username, password, timeouts, pool, and TLS settings below.
+		Mode string `yaml:"mode"`
+		// Host and Port are the one node of the standalone mode.
 		Host string `yaml:"host"`
 		Port string `yaml:"port"`
+		// Sentinel names the primary and lists the sentinels, as host:port,
+		// of the sentinel mode. Username and Password are the sentinels' own
+		// credentials, when they require any; the data nodes use
+		// redis.username and redis.password.
+		Sentinel struct {
+			MasterName string   `yaml:"master_name"`
+			Addresses  []string `yaml:"addresses"`
+			Username   string   `yaml:"username"`
+			Password   string   `yaml:"password"`
+		} `yaml:"sentinel"`
+		// Cluster lists some nodes of the cluster mode, as host:port; the
+		// client learns the others from them.
+		Cluster struct {
+			Addresses []string `yaml:"addresses"`
+		} `yaml:"cluster"`
+		// DurableWrites bounds what a failover can lose of the security
+		// counters (#231): the OTP attempts and code requests and the
+		// blacklist of logged-out tokens. With Replicas above 0, each such
+		// write waits, with WAIT, until that many replicas hold it, for at
+		// most TimeoutMs; a write that fewer replicas acknowledge fails the
+		// request, so that a promoted replica can never hand back attempts
+		// that were already made. 0 does not wait.
+		DurableWrites struct {
+			Replicas  int `yaml:"replicas"`
+			TimeoutMs int `yaml:"timeout_ms"`
+		} `yaml:"durable_writes"`
 		// Username selects a Redis ACL user. Empty is the default user.
 		Username            string `yaml:"username"`
 		Password            string `yaml:"password"`
@@ -827,6 +860,12 @@ func setDefaults() {
 		Config.Postgres.ConnectRetryDelayMs = 500
 	}
 
+	if Config.Redis.Mode == "" {
+		Config.Redis.Mode = RedisModeStandalone
+	}
+	if Config.Redis.DurableWrites.TimeoutMs == 0 {
+		Config.Redis.DurableWrites.TimeoutMs = DefaultRedisDurableWritesTimeoutMs
+	}
 	if Config.Redis.PoolSize == 0 {
 		Config.Redis.PoolSize = 10
 	}
@@ -1181,7 +1220,11 @@ const (
 	DefaultRedisWriteTimeoutMs = 1000
 	DefaultRedisPoolTimeoutMs  = 2000
 	DefaultRedisMaxRetries     = 1
-	DefaultRateLimitTimeoutMs  = 250
+	// DefaultRedisDurableWritesTimeoutMs is how long a durable write waits
+	// for its replicas. Replication within a data center takes about a
+	// millisecond; the wait is on the path of a sign-in.
+	DefaultRedisDurableWritesTimeoutMs = 250
+	DefaultRateLimitTimeoutMs          = 250
 )
 
 // Milliseconds returns ms milliseconds, or fallback milliseconds when ms is
@@ -1222,3 +1265,13 @@ func GetServerTimeouts() (readTimeout, writeTimeout, idleTimeout time.Duration) 
 		time.Duration(Config.Server.WriteTimeout) * time.Second,
 		time.Duration(Config.Server.IdleTimeout) * time.Second
 }
+
+// The modes of redis.mode.
+const (
+	RedisModeStandalone = "standalone"
+	RedisModeSentinel   = "sentinel"
+	RedisModeCluster    = "cluster"
+)
+
+// RedisModes lists the values of redis.mode.
+var RedisModes = []string{RedisModeStandalone, RedisModeSentinel, RedisModeCluster}

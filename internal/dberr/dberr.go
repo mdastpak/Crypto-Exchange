@@ -7,7 +7,8 @@
 // The handlers do not inspect every error. Track gives a request's context
 // a note; the database tracer of internal/db records each busy error of a
 // query run with that context; and the response helpers turn a 500 of a
-// noted request into 503.
+// noted request into 503. A durable Redis write that its replicas did not
+// acknowledge is noted the same way, through MarkBusy (#231).
 package dberr
 
 import (
@@ -68,6 +69,15 @@ func Record(ctx context.Context, err error) {
 	if err == nil || !IsBusy(err) {
 		return
 	}
+	if n, ok := ctx.Value(noteKey{}).(*note); ok {
+		n.busy.Store(true)
+	}
+}
+
+// MarkBusy notes on the request of ctx, if it is tracked, that a data store
+// refused it for a moment for a reason that is not a PostgreSQL error: a
+// durable Redis write that its replicas did not acknowledge in time (#231).
+func MarkBusy(ctx context.Context) {
 	if n, ok := ctx.Value(noteKey{}).(*note); ok {
 		n.busy.Store(true)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/redisutil"
 )
 
 // Defaults used for settings left at zero.
@@ -49,6 +50,10 @@ type Settings struct {
 	// for every client together, except the clients that signed in with
 	// the contact before.
 	ContactRequestsTotalPerHour int
+	// Durability is how many replicas must hold a counted request or
+	// attempt before the store relies on it (redis.durable_writes, #231),
+	// so that a failover cannot give attempts back.
+	Durability redisutil.Durability
 }
 
 // SettingsFromConfig returns the settings in config.Config.OTP.Auth.
@@ -63,6 +68,7 @@ func SettingsFromConfig() Settings {
 		ContactAttemptsPerHour: cfg.ContactAttemptsPerHour,
 
 		ContactRequestsTotalPerHour: cfg.ContactRequestsTotalPerHour,
+		Durability:                  redisutil.DurabilityFromConfig(),
 	}
 }
 
