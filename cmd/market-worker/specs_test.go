@@ -65,3 +65,30 @@ func TestJobSpecs_OnlyTheCatalogSourcesThisNodeReaches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"tiers", "candles:partitions"}, names(specs), "no source is enabled")
 }
+
+func TestStreamSpecs_TheVenuesWithAStreamThisNodeReaches(t *testing.T) {
+	saved := config.Config
+	defer func() { config.Config = saved }()
+
+	enabled := true
+	config.Config.MarketData = config.MarketDataConfig{
+		Egress: config.MarketDataEgress{Default: config.EgressProxy, ProxyURL: "socks5://gw.example:1080"},
+		Sources: map[string]config.MarketDataSource{
+			"binance": {Enabled: true, TimeoutSeconds: 20},
+			"kraken":  {Enabled: true, TimeoutSeconds: 20, Egress: config.EgressNone},
+			"nobitex": {Enabled: true, TimeoutSeconds: 20, Egress: config.EgressDirect},
+		},
+		Streams: config.MarketDataStreams{Enabled: &enabled, Tiers: []string{config.TierHot}, MaxPairs: 200, MaxPerWorker: 2,
+			RunMinutes: 60, FlushMillis: 1000, QuietSeconds: 60},
+	}
+	specs, err := streamSpecs(nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"stream:binance"}, names(specs), "not Kraken, which this node does not reach, nor Nobitex, which has no stream")
+	assert.Equal(t, "1s", specs[0].Interval.String(), "due again at once")
+	assert.Equal(t, "1h1m0s", specs[0].Timeout.String())
+
+	enabled = false
+	specs, err = streamSpecs(nil)
+	require.NoError(t, err)
+	assert.Empty(t, specs)
+}

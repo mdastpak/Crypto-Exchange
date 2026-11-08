@@ -399,4 +399,8 @@ func TestSetDefaults_CandleTiers(t *testing.T) {
 	assert.False(t, *Config.MarketData.Tiers.HotListed, "an explicit false stays")
 	assert.Equal(t, 200, Config.MarketData.Tiers.ActiveTop)
 	assert.Equal(t, 20, Config.MarketData.Tiers.HysteresisPercent)
+	assert.True(t, *Config.MarketData.Streams.Enabled)
+	assert.Equal(t, []string{TierHot}, Config.MarketData.Streams.Tiers)
+	assert.Equal(t, 1000, Config.MarketData.Streams.FlushMillis)
+	assert.Equal(t, 2, Config.MarketData.Streams.MaxPerWorker)
 }

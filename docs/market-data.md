@@ -18,7 +18,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Done |
 | Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Done |
 | Collection tiers: finer candles for the pairs that matter | [#279](https://github.com/mdastpak/Crypto-Exchange/issues/279) | Done |
-| Live prices of hot pairs from WebSocket streams | [#281](https://github.com/mdastpak/Crypto-Exchange/issues/281) | Planned |
+| Live prices of hot pairs from WebSocket streams | [#281](https://github.com/mdastpak/Crypto-Exchange/issues/281) | Done |
 | Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Planned |
 | Feed for the blog | [#271](https://github.com/mdastpak/Crypto-Exchange/issues/271) | Planned |
 
@@ -253,9 +253,31 @@ The pairs are in collection tiers ([#279](https://github.com/mdastpak/Crypto-Exc
 - **Volume in USD.** The quote volume of the latest ticker, or the base volume at the last price, times the price of the quote in USD: one for `USD`, `USDT`, `USDC`, and other dollar coins; for `IRT`, from the USDT/IRT price at the same venue; for a coin such as `BTC`, from its dollar pair at the same venue. Without such a pair at the venue, the median over the venues is used.
 - **Hysteresis.** A pair enters `active` within the top `active_top`, and leaves only when its rank passes `active_top` by `hysteresis_percent` (20 %): with the defaults, it stays until rank 240. So a pair near the boundary does not move between tiers every day, and the tier can hold up to 20 % more pairs than `active_top`.
 - **Overrides.** An administrator's tier on a pair, or on its base asset for all its pairs, overrides the automatic one (`tier_override`; the routes come with [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)). The pair's own override wins over its asset's. The job still records the automatic tier, which applies again once the override is cleared.
-- **Tickers.** The REST ticker endpoints of the venues give every pair in one request, so the tiers change nothing in what tickers cost. The hot pairs get second-level prices from the venues' WebSocket streams in [#281](https://github.com/mdastpak/Crypto-Exchange/issues/281).
+- **Tickers.** The REST ticker endpoints of the venues give every pair in one request, so the tiers change nothing in what tickers cost. The hot pairs get second-level prices from the venues' [WebSocket streams](#live-tickers).
 
 A pair that moves to a finer tier starts its finer candles from the latest ones, then backfills, as a new pair does. A pair that leaves a tier keeps the candles it has until their retention.
+
+## Live tickers
+
+The hot pairs get their tickers seconds old from the venues' public WebSocket streams ([#281](https://github.com/mdastpak/Crypto-Exchange/issues/281)), where the REST ticker job gives them every two minutes.
+
+| Venue | Stream | Channel |
+| --- | --- | --- |
+| `binance` | `wss://stream.binance.com:9443/ws` | `<symbol>@ticker`, every second |
+| `okx` | `wss://ws.okx.com:8443/ws/v5/public` | `tickers`, with a `ping` every 20 seconds |
+| `kraken` | `wss://ws.kraken.com/v2` | `ticker`, by `BTC/USD` |
+| `coinbase` | `wss://advanced-trade-ws.coinbase.com` | `ticker`, with `heartbeats` |
+
+Nobitex and Wallex have no public ticker stream that this follows; their pairs keep their REST tickers. The protocols are written from the venues' documentation and tested against recorded messages only, so try a stream in `dry_run` first.
+
+- **One worker per stream.** Each venue's stream is a job, `stream:binance`, so its lease lets one worker at a time hold it, and another worker takes it over once that worker dies or loses the database: the old holder's next write fails its fence, and it stops. A run holds the connection for `streams.run_minutes` (60), then ends, and the stream is due again at once on whichever worker claims it, so that the workers share the streams.
+- **Own slots.** The streams run in a runner of their own, at most `streams.max_per_worker` (2) on a worker, so that they never take the slots of `max_concurrent_jobs`.
+- **Reconnects.** A dropped connection, or one quiet for `streams.quiet_seconds` (60), reconnects after a backoff that doubles from a second up to a minute, with jitter, and subscribes again. After 5 connections in a row that failed before any ticker, the run fails and the runner backs off, so that another worker, perhaps with another route, may try.
+- **Tiers.** A stream follows the pairs of `streams.tiers` (`hot`), at most `streams.max_pairs` (200). It reads them every 5 minutes, and reconnects with the new subscription when they changed.
+- **Throttled writes.** The tickers received are kept per pair, the latest only, and written together every `streams.flush_millis` (1000), so a pair is written at most once a second, however often the venue sends, after a check of the lease.
+- **Fallback.** The REST ticker job keeps running for every pair, the hot ones too, so while a stream is down its pairs still get a ticker every `tickers.interval_seconds`. A ticker replaces only an older one, so the stream and the REST job never put an older price back.
+- **Egress.** A stream goes the route of its venue's source: direct, or through `egress.proxy_url` (`http`, `https` with CONNECT, or `socks5`). A failure through a proxy is logged without its address.
+- **Candles.** The `1m` candles of the hot pairs stay the venue's closed candles over REST, a minute behind, so that the charts hold the venue's own figures.
 
 ## Public API
 
