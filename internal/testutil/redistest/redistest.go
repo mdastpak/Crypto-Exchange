@@ -32,4 +32,6 @@ const (
 	RedisUtil
 	// Auth is the database of internal/auth.
 	Auth
+	// Notify is the database of internal/notify.
+	Notify
 )

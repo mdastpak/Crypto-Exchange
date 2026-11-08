@@ -154,17 +154,18 @@ TLS for the connection to Redis (`redis.tls`, variables `REDIS_TLS_*`) and to Ra
 | `cert_file`, `key_file` | none | A client certificate for mutual TLS (`*_TLS_CERT_FILE`, `*_TLS_KEY_FILE`). Set both or neither. |
 | `private_network` | `false` | In release mode, accept a connection without TLS, because only a trusted private network carries it (`*_TLS_PRIVATE_NETWORK`) |
 
-Every server instance connects with its own TLS session, so several instances behind a load balancer need nothing more than the same files. Redis Cluster and Sentinel are not supported yet.
+Every server instance connects with its own TLS session, so several instances behind a load balancer need nothing more than the same files.
 
 ### `rabbitmq`
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port`, `username`, `password` | **required** | Connection settings. The server connects to `amqp://username:password@host:port/vhost`, with the user, the password, and the virtual host percent-encoded, so a password may hold any character, such as `@`, `/`, or `%`. Set the credentials with `RABBITMQ_USER` and `RABBITMQ_PASSWORD`. The URI holds the password and is never logged. |
+| `host`, `port`, `username`, `password` | **required** | Connection settings. `hosts` replaces `host` and `port`. The server connects to `amqp://username:password@host:port/vhost`, with the user, the password, and the virtual host percent-encoded, so a password may hold any character, such as `@`, `/`, or `%`. Set the credentials with `RABBITMQ_USER` and `RABBITMQ_PASSWORD`. The URI holds the password and is never logged. |
+| `hosts` | none | The nodes of a RabbitMQ cluster, as `host:port` entries (`RABBITMQ_HOSTS`, comma-separated), instead of `host` and `port`. The server dials them in random order, so that the instances spread over the cluster, and moves to another node when its node goes away. Every node uses the same credentials, virtual host, and `tls` settings; with TLS, each connection checks the name of the node it dials unless `tls.server_name` is set. See [RabbitMQ high availability](rabbitmq-high-availability.md). |
 | `vhost` | `/` | Virtual host (`RABBITMQ_VHOST`). On a broker shared by several services, give each service a virtual host of its own. |
 | `exchanges.price_updates` | none | Fan-out exchange used for currency change events |
 | `exchanges.trade_events` | none | Declared at startup. Not used yet. |
-| `exchanges.notifications` | none | Fan-out exchange for sign-in code jobs. The delivery worker consumes it through the `notifications.otp` queue (see [`notifications`](#notifications)). |
+| `exchanges.notifications` | none | Fan-out exchange for sign-in code jobs. The delivery worker consumes it through the `notifications.otp.quorum` queue (see [`notifications`](#notifications)). |
 | `exchanges.order_events`, `exchanges.settlement` | none | Parsed, but not declared or used yet |
 
 ### `jwt`
@@ -238,9 +239,11 @@ The worker declares this RabbitMQ topology at startup:
 
 | Name | Type | Purpose |
 | --- | --- | --- |
-| `notifications.otp` | Durable queue bound to the notifications exchange | Pending sign-in code jobs. Jobs are not persisted to disk and expire with the code (`otp.auth.ttl_seconds`), so a code that waits too long is dropped by the broker. Several server instances share the queue. |
+| `notifications.otp.quorum` | Quorum queue bound to the notifications exchange | Pending sign-in code jobs. The queue is replicated to a majority of the nodes of a cluster, so it keeps working, and keeps its jobs, while any one of three nodes is down. Jobs expire with the code (`otp.auth.ttl_seconds`), so a code that waits too long is dropped by the broker. The queue hands out a job at most ten times, so that a job that crashes its worker cannot circle forever. Several server instances share the queue; a job that the broker hands out again, because its worker stopped before acknowledging it, is not sent twice (the worker records delivered jobs in Redis until shortly after they expire). |
 | `notifications.dead-letter` | Durable fan-out exchange | Receives a record of every code that could not be delivered |
-| `notifications.otp.dead-letter` | Durable queue bound to `notifications.dead-letter` | Keeps those records for seven days. A record holds the contact type, the masked contact, the reason, the number of attempts, and the last error, but never the code or the raw contact. Its depth is a direct measure of delivery failures. |
+| `notifications.otp.dead-letter.quorum` | Quorum queue bound to `notifications.dead-letter` | Keeps those records for seven days. A record holds the contact type, the masked contact, the reason, the number of attempts, and the last error, but never the code or the raw contact. Its depth is a direct measure of delivery failures. |
+
+Versions before [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232) used the classic queues `notifications.otp` and `notifications.otp.dead-letter`. A queue cannot change its type in place, so the quorum queues have new names. The worker unbinds `notifications.otp` from the exchange, delivers the jobs left in it, and deletes it once no worker of an earlier version consumes it; it looks again every 30 seconds until then. Delete `notifications.otp.dead-letter` by hand once its records have expired, seven days after the upgrade.
 
 Failed attempts and abandoned codes are also logged with the masked contact. Delivery metrics are part of [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50).
 
@@ -419,6 +422,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `REDIS_CURRENCY_CACHE_TTL_SECONDS` | `redis.currency_cache_ttl_seconds` |
 | `RABBITMQ_HOST` | `rabbitmq.host` |
 | `RABBITMQ_PORT` | `rabbitmq.port` |
+| `RABBITMQ_HOSTS` | `rabbitmq.hosts` (comma-separated) |
 | `RABBITMQ_USER` | `rabbitmq.username` |
 | `RABBITMQ_PASSWORD` | `rabbitmq.password` |
 | `RABBITMQ_VHOST` | `rabbitmq.vhost` |

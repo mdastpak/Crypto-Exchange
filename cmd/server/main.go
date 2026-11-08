@@ -38,6 +38,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -143,7 +144,7 @@ func run() error {
 	if handlers.DataKeys, err = loadDataKeys(services, keyProvider); err != nil {
 		return fmt.Errorf("failed to load the data-protection keys: %w", err)
 	}
-	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
+	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ, services.Redis.Client)
 	watcher, err := startPlatform(services, handlers)
 	if err != nil {
 		return fmt.Errorf("invalid platform configuration: %w", err)
@@ -517,7 +518,11 @@ func otpTTL() time.Duration {
 // development when otp.auth.dev_log_codes is set, and otherwise through the
 // notifications exchange to a worker that sends them over the configured
 // channels. The worker is nil when it is not needed.
-func newOTPDelivery(channels notify.Channels, broker *rabbitmq.RabbitMQService) (notify.OTPSender, *notify.Worker) {
+//
+// The worker drains the classic queue of earlier versions (#232), and
+// remembers the delivered jobs in Redis, so that a job that the broker
+// hands out again is not sent twice.
+func newOTPDelivery(channels notify.Channels, broker *rabbitmq.RabbitMQService, redisClient redis.UniversalClient) (notify.OTPSender, *notify.Worker) {
 	if config.Config.OTP.Auth.DevLogCodes {
 		log.Println("WARNING: otp.auth.dev_log_codes is enabled: sign-in codes are written to the log instead of being delivered")
 		return notify.DevLogSender{Logger: log.Default()}, nil
@@ -535,10 +540,16 @@ func newOTPDelivery(channels notify.Channels, broker *rabbitmq.RabbitMQService) 
 	if channels.SMS == nil {
 		log.Println("WARNING: notifications.sms is not configured: sign-in by mobile is unavailable")
 	}
+	var delivered notify.DeliveryLog
+	if redisClient != nil {
+		delivered = notify.NewRedisDeliveryLog(redisClient)
+	}
 	worker := notify.NewWorker(broker, channels, notify.WorkerOptions{
 		Exchange:    exchange,
 		Concurrency: config.Config.Notifications.Worker.Concurrency,
 		MaxAttempts: config.Config.Notifications.Worker.MaxAttempts,
+		LegacyQueue: notify.LegacyOTPQueue,
+		Delivered:   delivered,
 	})
 	return sender, worker
 }

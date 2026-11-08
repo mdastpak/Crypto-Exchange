@@ -161,12 +161,24 @@ func TestQuoted_ShortensAndEscapesValues(t *testing.T) {
 	assert.True(t, strings.HasSuffix(long, `"...`))
 }
 
-func TestStartConsumer_FailsWithoutBroker(t *testing.T) {
-	// A zero RabbitMQService has no connection, so subscribing fails at once.
+// TestStartConsumer_StartsWithoutBroker starts the consumer while the
+// broker cannot be reached (#232): the server starts, and the consumer
+// keeps trying in the background until the handler shuts down. Without a
+// RabbitMQ service at all, it refuses to start.
+func TestStartConsumer_StartsWithoutBroker(t *testing.T) {
+	// A zero RabbitMQService has no connection, so subscribing fails.
 	h := newTestHandler()
-	assert.Error(t, h.StartConsumer(context.Background()), "startup must fail rather than run without events")
+	require.NoError(t, h.StartConsumer(context.Background()), "the server starts without events")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	assert.NoError(t, h.Shutdown(ctx), "Shutdown stops the background subscription")
 
 	assert.Error(t, (&WebSocketHandler{}).StartConsumer(context.Background()))
+}
+
+func TestResyncEvent(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.FixedZone("IRST", 12600))
+	assert.JSONEq(t, `{"event":"currencies.resync","server_time":"2026-11-08T06:30:00Z"}`, string(resyncEvent(now)))
 }
 
 // The tests below need a real broker and are skipped when none is reachable.
@@ -279,6 +291,10 @@ func TestConsumer_Broker_ShutdownStopsTheConsumer(t *testing.T) {
 	assert.NoError(t, h.Shutdown(ctx), "Shutdown must stop the consumer promptly")
 }
 
+// TestConsumer_Broker_ResumesAfterABrokerRestart cuts the connection of an
+// instance: once it subscribes again, its clients receive a resync event,
+// since the events published in between are lost for it (#232), and then
+// the events again.
 func TestConsumer_Broker_ResumesAfterABrokerRestart(t *testing.T) {
 	exchange := withTestBroker(t)
 	proxy, err := tcpproxy.New("localhost:5672")
@@ -288,8 +304,19 @@ func TestConsumer_Broker_ResumesAfterABrokerRestart(t *testing.T) {
 
 	h, client := newBrokerHandler(t)
 	require.NoError(t, h.StartConsumer(context.Background()))
+	select {
+	case extra := <-client.Send:
+		t.Fatalf("the first subscription sends no resync: %s", extra)
+	case <-time.After(200 * time.Millisecond):
+	}
 
 	proxy.Cut()
+
+	msg := receive(t, client)
+	for msg == nil || msg["event"] != EventCurrenciesResync {
+		msg = receive(t, client)
+	}
+	assert.NotEmpty(t, msg["server_time"])
 
 	// Events published while the consumer subscribes again are lost with its
 	// old queue, so publish until one arrives.
@@ -298,12 +325,33 @@ func TestConsumer_Broker_ResumesAfterABrokerRestart(t *testing.T) {
 		defer cancel()
 		_ = h.RabbitMQService.Publish(ctx, exchange, testEvent("update"))
 		select {
-		case <-client.Send:
-			return true
+		case data := <-client.Send:
+			return strings.Contains(string(data), `"action":"update"`)
 		case <-time.After(200 * time.Millisecond):
 			return false
 		}
 	}, 30*time.Second, 10*time.Millisecond, "the consumer must receive events again after a broker restart")
+}
+
+// TestConsumer_Broker_SubscribesWhenTheBrokerComesBack starts an instance
+// while the broker is away (#232): once it is back, the consumer
+// subscribes, its clients receive a resync event, and then the events.
+func TestConsumer_Broker_SubscribesWhenTheBrokerComesBack(t *testing.T) {
+	exchange := withTestBroker(t)
+	proxy, err := tcpproxy.New("localhost:5672")
+	require.NoError(t, err)
+	t.Cleanup(proxy.Close)
+	config.Config.RabbitMQ.Host, config.Config.RabbitMQ.Port = proxy.Host(), proxy.Port()
+	proxy.SetDown(true)
+
+	h, client := newBrokerHandler(t)
+	require.NoError(t, h.StartConsumer(context.Background()))
+	proxy.SetDown(false)
+
+	msg := receive(t, client)
+	assert.Equal(t, EventCurrenciesResync, msg["event"], "the clients that connected meanwhile reload")
+	require.NoError(t, h.RabbitMQService.Publish(context.Background(), exchange, testEvent("create")))
+	assert.Equal(t, "create", receive(t, client)["action"])
 }
 
 func TestConsumer_Broker_DropsInvalidEventsAndKeepsConsuming(t *testing.T) {

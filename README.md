@@ -36,7 +36,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
 | Backups and disaster recovery | Partial | The checks, the monthly restore drill, and the runbook are in the repository ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)); WAL archiving and base backups are set up per environment with the backup tool, as [docs/disaster-recovery.md](docs/disaster-recovery.md) describes. |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
-| Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL, Redis, or RabbitMQ is unavailable ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)). |
+| Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL or Redis is unavailable, and `200` with the status `degraded` while RabbitMQ is ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33), [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
 | Price engine, OTC trading, ledger, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
@@ -188,7 +188,7 @@ Configuration is loaded from a YAML file, missing values are filled with default
 
 The data-protection keys, which future row seals and field encryption build on, are wrapped by a key-encryption key in HashiCorp Vault or OpenBao (Transit). [docs/data-protection.md](docs/data-protection.md) describes the key hierarchy, the setup, and how to rotate the keys.
 
-Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-availability.md](docs/redis-high-availability.md) describes the deployment and what a failover may lose.
+Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-availability.md](docs/redis-high-availability.md) describes the deployment and what a failover may lose. RabbitMQ runs as a cluster of three nodes with quorum queues, and the server keeps working without it, except for sending sign-in codes; see [docs/rabbitmq-high-availability.md](docs/rabbitmq-high-availability.md).
 
 Backups, point-in-time recovery, the restore drill, and the disaster-recovery runbook are in [docs/disaster-recovery.md](docs/disaster-recovery.md). `admin backup status` alerts when WAL archiving falls behind the RPO, and `admin restore verify` checks a restored database before it is put in service.
 
@@ -207,7 +207,7 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | Method | Path | Authentication | Description |
 | --- | --- | --- | --- |
 | `GET` | `/system/live` | None | Liveness: the process serves requests |
-| `GET` | `/system/ready` | None | Readiness: `503` while PostgreSQL, Redis, or RabbitMQ is unavailable |
+| `GET` | `/system/ready` | None | Readiness: `503` while PostgreSQL or Redis is unavailable; `degraded` without RabbitMQ |
 | `GET` | `/system/healthcheck` | None | Earlier name of `/system/ready` |
 | `GET` | `/system/ping` | None | Ping |
 | `GET` | `/public/currencies` | None | List cached currencies |
@@ -327,6 +327,7 @@ internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI co
 internal/totp/          Time-based one-time passwords (RFC 6238)
 pkg/utils/              Shared utilities
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
+scripts/rabbitmq-ha/    The RabbitMQ failover drill: a three-node cluster on Docker
 scripts/redis-ha/       The Redis failover drill: Sentinel and Cluster on Docker
 ```
 

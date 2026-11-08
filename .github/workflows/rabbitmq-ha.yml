@@ -1,0 +1,43 @@
+name: RabbitMQ failover drill
+
+# The failover drill of #232: scripts/rabbitmq-ha/failover-drill.sh runs the
+# delivery of sign-in codes against a three-node RabbitMQ cluster, kills each
+# node in turn, and checks that every code is still queued and delivered
+# exactly once. It runs every month, by hand, and on the pull requests that
+# change the RabbitMQ or delivery code, so that
+# docs/rabbitmq-high-availability.md stays true.
+
+on:
+  schedule:
+    - cron: "17 4 1 * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/rabbitmq-ha/**"
+      - "internal/rabbitmq/**"
+      - "internal/notify/**"
+      - "go.mod"
+      - ".github/workflows/rabbitmq-ha.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    name: RabbitMQ failover drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run the failover drill
+        run: scripts/rabbitmq-ha/failover-drill.sh

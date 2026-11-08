@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -329,9 +328,16 @@ type subscription struct {
 }
 
 // StartConsumer forwards the events of the price updates exchange to the
-// connected clients. It subscribes before it returns, so no event published
-// afterwards is missed, and keeps consuming in the background until ctx ends
-// or the handler shuts down, subscribing again whenever the channel closes.
+// connected clients. When the broker can be reached, it subscribes before
+// it returns, so no event published afterwards is missed. It keeps
+// consuming in the background until ctx ends or the handler shuts down,
+// subscribing again whenever the channel closes, and also when the broker
+// could not be reached at startup (#232): the server then serves the
+// WebSocket without events until the broker is back.
+//
+// Each subscription after the first sends the clients a resync event,
+// since the events published while there was none are lost for this
+// instance.
 func (h *WebSocketHandler) StartConsumer(ctx context.Context) error {
 	if h.RabbitMQService == nil {
 		return errors.New("the WebSocket consumer needs RabbitMQ")
@@ -339,7 +345,7 @@ func (h *WebSocketHandler) StartConsumer(ctx context.Context) error {
 	exchange := config.Config.RabbitMQ.Exchanges.PriceUpdates
 	sub, err := h.subscribe(exchange)
 	if err != nil {
-		return fmt.Errorf("subscribe to %s: %w", exchange, err)
+		log.Printf("WebSocket consumer: subscribe to %s: %v; subscribing in the background", exchange, err)
 	}
 
 	h.Wg.Add(1)
@@ -375,8 +381,30 @@ func (h *WebSocketHandler) consumeRabbitMQ(ctx context.Context, exchange string,
 		sub, err = h.subscribe(exchange)
 		if err != nil {
 			log.Printf("WebSocket consumer: subscribe to %s: %v; retrying in %v", exchange, err, backoff)
+			continue
 		}
+		// The queue of this instance was gone between the subscriptions,
+		// and with it the events published meanwhile: the clients reload
+		// what they show (#232).
+		h.Broadcast(resyncEvent(time.Now()))
 	}
+}
+
+// ResyncEvent tells the clients of an instance that it may have missed
+// currency events, because its subscription to the broker was lost for a
+// while (#232). A client reloads the currencies over REST. The sequence
+// numbers of the channel protocol (#66) will replace it.
+type ResyncEvent struct {
+	Event      string `json:"event" example:"currencies.resync"`
+	ServerTime string `json:"server_time" example:"2026-11-08T10:00:00Z"`
+}
+
+// EventCurrenciesResync is the event of ResyncEvent.
+const EventCurrenciesResync = "currencies.resync"
+
+func resyncEvent(now time.Time) []byte {
+	data, _ := json.Marshal(ResyncEvent{Event: EventCurrenciesResync, ServerTime: now.UTC().Format(time.RFC3339)})
+	return data
 }
 
 // subscribe opens a channel of its own and binds a queue for this instance to

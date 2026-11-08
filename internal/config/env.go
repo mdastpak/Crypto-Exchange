@@ -172,6 +172,7 @@ var envVars = []EnvVar{
 
 	stringVar("RABBITMQ_HOST", "rabbitmq.host", func(c *Configuration) *string { return &c.RabbitMQ.Host }),
 	stringVar("RABBITMQ_PORT", "rabbitmq.port", func(c *Configuration) *string { return &c.RabbitMQ.Port }),
+	listVar("RABBITMQ_HOSTS", "rabbitmq.hosts", func(c *Configuration) *[]string { return &c.RabbitMQ.Hosts }),
 	stringVar("RABBITMQ_USER", "rabbitmq.username", func(c *Configuration) *string { return &c.RabbitMQ.Username }),
 	stringVar("RABBITMQ_PASSWORD", "rabbitmq.password", func(c *Configuration) *string { return &c.RabbitMQ.Password }),
 	stringVar("RABBITMQ_VHOST", "rabbitmq.vhost", func(c *Configuration) *string { return &c.RabbitMQ.VHost }),

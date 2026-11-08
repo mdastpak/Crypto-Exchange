@@ -137,7 +137,10 @@ func pemKeyPair(t *testing.T) auth.KeyPair {
 }
 
 // newE2EEnv configures the server like main does, against test services.
-func newE2EEnv(t *testing.T) *e2eEnv {
+// newE2EEnv starts the services and handlers as main does, against the
+// test servers. options change the configuration before the services
+// connect.
+func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	t.Helper()
 	skipUnlessReachable(t)
 	resetE2EDatabase(t)
@@ -181,6 +184,9 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		auth.RoleAdmin: pemKeyPair(t),
 	}))
 
+	for _, option := range options {
+		option(c)
+	}
 	services, cleanup, err := initializeServices()
 	require.NoError(t, err)
 	t.Cleanup(func() {

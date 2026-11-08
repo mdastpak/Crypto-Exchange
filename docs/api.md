@@ -88,7 +88,8 @@ An error response contains only a fixed message for each error. Internal details
 | `internal_error` | `500` | An unexpected failure, described in the server log |
 | `not_implemented` | `501` | Not implemented yet |
 | `unavailable` | `503` | A dependency is unavailable; try again later |
-| `database_busy` | `503` | The database refused the request for a moment: a lock wait or a statement past its timeout, a deadlock, or a failover in progress ([#230](https://github.com/mdastpak/Crypto-Exchange/issues/230)). `Retry-After` is `1`; the request changed nothing and may be retried. Any route can answer it. |
+| `database_busy` | `503` | The database refused the request for a moment: a lock wait or a statement past its timeout, a deadlock, or a failover in progress ([#230](https://github.com/mdastpak/Crypto-Exchange/issues/230)), or a Redis write of a sign-in counter or a logout that its replicas did not acknowledge in time ([#231](https://github.com/mdastpak/Crypto-Exchange/issues/231)). `Retry-After` is `1`; the request changed nothing and may be retried. Any route can answer it. |
+| `delivery_unavailable` | `503` | A code could not be queued for delivery because RabbitMQ is away ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). `Retry-After` is `5`. The sign-in, admin sign-in, and contact-change code requests answer it; the code that was issued is never sent, so request a new one. |
 | `maintenance` | `503` | The exchange is under [maintenance](#maintenance-and-lockdowns); `info` has the message and the end, and `Retry-After` the wait when the end is known |
 | `feature_locked` | `503` | A [lockdown](#maintenance-and-lockdowns) closes the feature; `info.feature` names it |
 | `error` | other | A status without a code of its own |
@@ -1011,7 +1012,7 @@ Liveness: `200` with `{"status": "ok"}` while the process serves requests. It ch
 
 ### `GET /system/ready`
 
-Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two seconds, and answers `200` when all of them are available and `503` otherwise, so that load balancers and orchestrators send no traffic to an instance that cannot serve it. The Docker image's `HEALTHCHECK` uses it.
+Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two seconds. It answers `503` while PostgreSQL or Redis is unavailable, so that load balancers and orchestrators send no traffic to an instance that cannot serve it, and `200` otherwise. Without RabbitMQ the instance stays ready, with the status `degraded` ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)): every instance shares the broker, and only the delivery of sign-in codes needs it at once, so a sign-in code request answers `503 delivery_unavailable` while it is away, and everything else keeps working. The Docker image's `HEALTHCHECK` uses it.
 
 ```json
 {
@@ -1024,7 +1025,7 @@ Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two secon
 }
 ```
 
-`status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored. In release mode, the response has only `status`, without `details`, because the details describe the internals.
+`status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored, also while the server moves to another node of a cluster. In release mode, the response has only `status`, without `details`, because the details describe the internals.
 
 Once the instance is shutting down, it answers `503` with `{"status": "draining"}` and checks no dependency, while it keeps serving the other routes for `server.drain_seconds`. See [Startup and shutdown](architecture.md#startup-and-shutdown).
 
@@ -1192,3 +1193,11 @@ Clients receive exactly these fields. For `create` and `update`, `info` holds th
 - an event larger than 16 KiB.
 
 Every server instance consumes the events through a queue of its own, so a client receives every event whichever instance it is connected to. Each message is a separate frame that holds exactly one JSON document.
+
+When an instance loses its subscription to the broker, because the broker restarted or the node it used went down, the events published until it subscribes again are lost for its clients. Once it has subscribed again, it tells every client so ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)):
+
+```json
+{ "event": "currencies.resync", "server_time": "2026-11-08T06:30:00Z" }
+```
+
+A client that receives it reloads the currencies with `GET /public/currencies`. An instance that started without the broker sends it too, once it subscribes.

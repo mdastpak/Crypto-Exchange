@@ -30,7 +30,7 @@ func handlerFailing(failing ...string) *SystemHandler {
 				err = errors.New(name + " is down")
 			}
 		}
-		h.checks = append(h.checks, dependency{name, func(context.Context) error { return err }})
+		h.checks = append(h.checks, dependency{name, func(context.Context) error { return err }, name == "rabbitmq"})
 	}
 	return h
 }
@@ -64,10 +64,18 @@ func TestReadiness_AllDependenciesAvailable(t *testing.T) {
 	}
 }
 
-func TestReadiness_EachDependencyFailureMakesTheInstanceUnavailable(t *testing.T) {
+// TestReadiness_EachDependencyFailureIsReported fails one dependency at a
+// time: PostgreSQL and Redis make the instance unavailable, and RabbitMQ
+// only degrades it, since a broker outage must not take every instance out
+// of service (#232).
+func TestReadiness_EachDependencyFailureIsReported(t *testing.T) {
 	for _, failing := range dependencyNames {
 		w := get(handlerFailing(failing), "/system/ready")
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code, failing)
+		want := http.StatusServiceUnavailable
+		if failing == "rabbitmq" {
+			want = http.StatusOK
+		}
+		assert.Equal(t, want, w.Code, failing)
 		status := healthOf(t, w)
 		assert.Equal(t, "degraded", status.Status, failing)
 		for _, name := range dependencyNames {
@@ -94,7 +102,7 @@ func TestReadiness_ASlowDependencyIsReportedWithinTheTimeout(t *testing.T) {
 	h.checks[0] = dependency{"postgres", func(ctx context.Context) error {
 		<-ctx.Done()
 		return ctx.Err()
-	}}
+	}, false}
 	h.checkTimeout = 100 * time.Millisecond
 
 	start := time.Now()

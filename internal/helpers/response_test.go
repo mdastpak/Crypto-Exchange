@@ -146,3 +146,36 @@ func TestSendResponse_AnswersABusyDatabaseWith503(t *testing.T) {
 	w = send(errors.New("plain error"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+// TestSendResponse_AnswersAnUnavailableDependencyWith503 sends a 500 for a
+// request that a dependency it needs could not serve, such as RabbitMQ for a
+// sign-in code (#232): the client gets 503 with the dependency's code,
+// message, and Retry-After. It wins over a busy database, whose answer would
+// say less.
+func TestSendResponse_AnswersAnUnavailableDependencyWith503(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	ctx := dberr.Track(context.Background())
+	dberr.MarkBusy(ctx)
+	dberr.MarkUnavailable(ctx, dberr.DeliveryUnavailable)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+	SendResponse(c, http.StatusInternalServerError, "Failed to send OTP", map[string]string{"x": "y"})
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	var resp models.APIResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, dberr.CodeDeliveryUnavailable, resp.Code)
+	assert.Equal(t, dberr.DeliveryUnavailable.Message, resp.Message)
+	assert.Nil(t, resp.Info)
+
+	// Only a 500 is turned into the answer.
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+	SendResponse(c, http.StatusBadRequest, "bad", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	_, ok := dberr.UnavailableOf(context.Background())
+	assert.False(t, ok, "an untracked request has no note")
+}

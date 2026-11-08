@@ -74,8 +74,9 @@ func (c *Configuration) requiredProblems(p *problems) {
 	standalone := c.Redis.Mode == "" || c.Redis.Mode == RedisModeStandalone
 	require(c.Redis.Host != "" || !standalone, "redis.host")
 	require(c.Redis.Port != "" || !standalone, "redis.port")
-	require(c.RabbitMQ.Host != "", "rabbitmq.host")
-	require(c.RabbitMQ.Port != "", "rabbitmq.port")
+	// rabbitmq.hosts replaces host and port.
+	require(c.RabbitMQ.Host != "" || len(c.RabbitMQ.Hosts) > 0, "rabbitmq.host")
+	require(c.RabbitMQ.Port != "" || len(c.RabbitMQ.Hosts) > 0, "rabbitmq.port")
 	require(c.RabbitMQ.Username != "", "rabbitmq.username")
 	require(c.RabbitMQ.Password != "", "rabbitmq.password")
 	require(c.JWT.SSL.User.PrivateKey != "", "jwt.ssl.user.private_key")
@@ -133,6 +134,14 @@ func (c *Configuration) rangeProblems(p *problems) {
 		if !validHostPort(hostPort) {
 			p.add("postgres.hosts", "entry %d is %q; each entry must be host:port, such as pg-1.internal:5432 or [2001:db8::1]:5432", i+1, hostPort)
 		}
+	}
+	for i, hostPort := range c.RabbitMQ.Hosts {
+		if !validHostPort(hostPort) {
+			p.add("rabbitmq.hosts", "entry %d is %q; each entry must be host:port, such as rmq-1.internal:5671", i+1, hostPort)
+		}
+	}
+	if len(c.RabbitMQ.Hosts) > 0 && c.RabbitMQ.Host != "" {
+		p.add("rabbitmq.host", "is set together with rabbitmq.hosts; set one of them")
 	}
 	if len(c.Postgres.Hosts) > 0 && c.Postgres.Host != "" {
 		p.add("postgres.host", "is set together with postgres.hosts; set one of them")

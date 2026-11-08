@@ -37,14 +37,20 @@ func TestNewRabbitMQService_TLS(t *testing.T) {
 		svc.Close()
 		withBrokerChannel(t, func(ch *amqp.Channel) { _ = ch.ExchangeDelete(exchange, false, false) })
 	}()
-	assert.True(t, strings.HasPrefix(svc.url, "amqps://"))
+	assert.True(t, strings.HasPrefix(svc.nodes[0].url, "amqps://"))
 	require.NoError(t, publishWithTimeout(svc, exchange, `{"over":"tls"}`), "a publish is confirmed over TLS")
 }
 
+// TestNewRabbitMQService_TLS_RefusesAnUntrustedCertificate checks that a
+// certificate that is not trusted never connects: the service starts
+// without the broker (#232) and reports the certificate as the reason.
 func TestNewRabbitMQService_TLS_RefusesAnUntrustedCertificate(t *testing.T) {
 	rabbitMQThroughTLS(t)
 	config.Config.RabbitMQ.TLS.CAFile = ""
-	_, err := NewRabbitMQService()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "certificate")
+	svc, err := NewRabbitMQService()
+	require.NoError(t, err)
+	defer svc.Close()
+	assert.False(t, svc.IsHealthy())
+	require.Error(t, svc.LastError())
+	assert.Contains(t, svc.LastError().Error(), "certificate")
 }
