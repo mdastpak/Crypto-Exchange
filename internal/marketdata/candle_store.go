@@ -12,20 +12,26 @@ import (
 
 // The resolutions of candles.
 const (
-	Resolution5m = "5m"
-	Resolution1h = "1h"
-	Resolution1d = "1d"
+	Resolution1m  = "1m"
+	Resolution5m  = "5m"
+	Resolution15m = "15m"
+	Resolution1h  = "1h"
+	Resolution1d  = "1d"
 )
 
-// Resolutions lists the resolutions of candles.
-var Resolutions = []string{Resolution5m, Resolution1h, Resolution1d}
+// Resolutions lists the resolutions of candles, finest first.
+var Resolutions = []string{Resolution1m, Resolution5m, Resolution15m, Resolution1h, Resolution1d}
 
 // ResolutionStep returns the length of a candle of the resolution, and 0
 // for an unknown one.
 func ResolutionStep(resolution string) time.Duration {
 	switch resolution {
+	case Resolution1m:
+		return time.Minute
 	case Resolution5m:
 		return 5 * time.Minute
+	case Resolution15m:
+		return 15 * time.Minute
 	case Resolution1h:
 		return time.Hour
 	case Resolution1d:
@@ -52,13 +58,16 @@ type CandlePair struct {
 }
 
 // CandlePairs returns at most limit active pairs of an enabled venue whose
-// base is mapped to the catalog and whose quote is one of quotes, with
-// their cursors at the resolution: the pairs never asked first, then those
-// whose candles are the oldest, the better-ranked base first.
-func (s *Store) CandlePairs(ctx context.Context, venueID, resolution string, quotes []string, limit int) ([]CandlePair, error) {
+// base is mapped to the catalog, whose quote is one of quotes, and whose
+// tier (#279) is one of tiers, or any tier when tiers is empty, with their
+// cursors at the resolution, the better-ranked base first.
+func (s *Store) CandlePairs(ctx context.Context, venueID, resolution string, quotes, tiers []string, limit int) ([]CandlePair, error) {
 	normalized := make([]string, len(quotes))
 	for i, q := range quotes {
 		normalized[i] = NormalizeSymbol(q)
+	}
+	if tiers == nil {
+		tiers = []string{}
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.venue_symbol, c.from_time, c.until_time
@@ -68,8 +77,9 @@ func (s *Store) CandlePairs(ctx context.Context, venueID, resolution string, quo
 		LEFT JOIN market_candle_cursors c ON c.pair_id = p.id AND c.resolution = $2
 		WHERE p.venue_id = $1 AND p.active AND v.enabled AND a.status <> 'hidden'
 			AND p.quote_symbol = ANY($3::text[])
+			AND (cardinality($5::text[]) = 0 OR `+effectiveTier+` = ANY($5::text[]))
 		ORDER BY a.market_cap_rank NULLS LAST, p.id
-		LIMIT $4`, venueID, resolution, normalized, limit)
+		LIMIT $4`, venueID, resolution, normalized, limit, tiers)
 	if err != nil {
 		return nil, err
 	}
@@ -158,13 +168,28 @@ func (s *Store) WriteCandles(ctx context.Context, pairID int64, resolution strin
 }
 
 // partitionStart is the start of the partition of a resolution that holds
-// t: its year for 1d, its month otherwise.
+// t: its year for 1d, its day for 1m, its month otherwise.
 func partitionStart(resolution string, t time.Time) time.Time {
 	t = t.UTC()
-	if resolution == Resolution1d {
+	switch resolution {
+	case Resolution1d:
 		return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	case Resolution1m:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 	}
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// nextPartition is the start of the partition after the one that starts
+// at start.
+func nextPartition(resolution string, start time.Time) time.Time {
+	switch resolution {
+	case Resolution1d:
+		return start.AddDate(1, 0, 0)
+	case Resolution1m:
+		return start.AddDate(0, 0, 1)
+	}
+	return start.AddDate(0, 1, 0)
 }
 
 // Candles returns the stored candles of a pair that open in [from, to),
@@ -197,11 +222,7 @@ func (s *Store) EnsureCandlePartitions(ctx context.Context, resolution string, n
 		return fmt.Errorf("marketdata: unknown resolution %q", resolution)
 	}
 	current := partitionStart(resolution, now)
-	next := current.AddDate(0, 1, 0)
-	if resolution == Resolution1d {
-		next = current.AddDate(1, 0, 0)
-	}
-	for _, at := range []time.Time{current, next} {
+	for _, at := range []time.Time{current, nextPartition(resolution, current)} {
 		if _, err := s.db.ExecContext(ctx, `SELECT market_candles_ensure_partition($1, $2)`, resolution, at); err != nil {
 			return fmt.Errorf("marketdata: candle partition: %w", err)
 		}

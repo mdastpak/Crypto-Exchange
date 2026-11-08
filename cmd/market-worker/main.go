@@ -34,6 +34,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coinmarketcap"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/exchange"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tickers"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/tiers"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 )
 
@@ -188,6 +189,18 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 		}
 		specs = append(specs, candleSpecs...)
 	}
+	// The tiers of the pairs, on any worker (#279).
+	tierJob, err := tiers.New(store, tiers.Options{
+		HotAssets:         cfg.Tiers.HotAssets,
+		HotListed:         cfg.Tiers.HotListed == nil || *cfg.Tiers.HotListed,
+		Quotes:            cfg.Candles.Quotes,
+		ActiveTop:         cfg.Tiers.ActiveTop,
+		HysteresisPercent: cfg.Tiers.HysteresisPercent,
+	})
+	if err != nil {
+		return nil, err
+	}
+	specs = append(specs, jobs.Spec{Job: tierJob, Interval: time.Duration(cfg.Tiers.IntervalHours) * time.Hour, Timeout: 5 * time.Minute})
 	// The partitions of the candles, on any worker.
 	var retentions []candles.Retention
 	for _, name := range marketdata.Resolutions {
@@ -227,6 +240,7 @@ func candleJobs(store *marketdata.Store, src source.VenueSource) ([]jobs.Spec, e
 		job, err := candles.New(cs, store, candles.Options{
 			Resolution:     name,
 			Quotes:         cfg.Quotes,
+			Tiers:          r.Tiers,
 			MaxPairs:       cfg.MaxPairsPerVenue,
 			RequestsPerRun: cfg.RequestsPerRun,
 			Backfill:       time.Duration(r.BackfillDays) * 24 * time.Hour,

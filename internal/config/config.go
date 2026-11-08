@@ -832,6 +832,8 @@ type MarketDataConfig struct {
 	Tickers MarketDataTickers `yaml:"tickers"`
 	// Candles configures the candles of the venues (#268).
 	Candles MarketDataCandles `yaml:"candles"`
+	// Tiers configures the collection tiers of the pairs (#279).
+	Tiers MarketDataTiers `yaml:"tiers"`
 	// API configures the public read API of the server (#269), which
 	// also applies Tickers' rules of quality.
 	API MarketDataAPI `yaml:"api"`
@@ -865,9 +867,51 @@ type MarketDataCandles struct {
 	// RequestsPerRun bounds the requests of one run of a venue and
 	// resolution.
 	RequestsPerRun int `yaml:"requests_per_run"`
-	// Resolutions configures 5m, 1h, and 1d.
+	// Resolutions configures 1m, 5m, 15m, 1h, and 1d.
 	Resolutions map[string]MarketDataResolution `yaml:"resolutions"`
 }
+
+// The collection tiers of the pairs (#279).
+const (
+	TierHot    = "hot"
+	TierActive = "active"
+	TierOther  = "other"
+)
+
+// Tiers lists the collection tiers, the most watched first.
+var Tiers = []string{TierHot, TierActive, TierOther}
+
+// MarketDataTiers configures how the pairs are put in tiers. A pair is hot
+// when its base is one of HotAssets, or is listed on this exchange with
+// HotListed, and its quote is one of the candle quotes; active when it is
+// among the ActiveTop pairs by 24-hour volume in USD; other otherwise.
+type MarketDataTiers struct {
+	// IntervalHours is the time between two computations of the tiers.
+	IntervalHours int `yaml:"interval_hours"`
+	// HotAssets are the slugs of the catalog's assets whose pairs are hot,
+	// such as bitcoin.
+	HotAssets []string `yaml:"hot_assets"`
+	// HotListed makes hot the pairs whose base is linked to a currency
+	// listed on this exchange.
+	HotListed *bool `yaml:"hot_listed"`
+	// ActiveTop is the number of pairs, over every venue, that are active.
+	ActiveTop int `yaml:"active_top"`
+	// HysteresisPercent keeps an active pair active until its rank passes
+	// ActiveTop by this share, so that a pair near the boundary does not
+	// move every day.
+	HysteresisPercent int `yaml:"hysteresis_percent"`
+}
+
+// The defaults and bounds of market_data.tiers.
+const (
+	DefaultTiersIntervalHours     = 24
+	DefaultTiersActiveTop         = 200
+	MaxTiersActiveTop             = 10000
+	DefaultTiersHysteresisPercent = 20
+)
+
+// DefaultHotAssets are the hot assets when the configuration sets none.
+func DefaultHotAssets() []string { return []string{"bitcoin", "ethereum", "tether"} }
 
 // MarketDataResolution configures the candles of one resolution.
 type MarketDataResolution struct {
@@ -878,6 +922,8 @@ type MarketDataResolution struct {
 	BackfillDays int `yaml:"backfill_days"`
 	// RetentionDays is how long candles are kept; 0 keeps them.
 	RetentionDays int `yaml:"retention_days"`
+	// Tiers are the tiers whose pairs are collected at this resolution.
+	Tiers []string `yaml:"tiers"`
 }
 
 // The defaults and bounds of market_data.candles.
@@ -890,12 +936,17 @@ const (
 )
 
 // DefaultCandleResolutions are the resolutions when the configuration sets
-// none: the full daily history, 180 days of hours, and no 5-minute candles.
+// none: every pair has the full daily history and 180 days of hours; the
+// hot and active pairs have 30 days of 5 minutes and 90 of 15 minutes; the
+// hot pairs have 7 days of minutes (#279).
 func DefaultCandleResolutions() map[string]MarketDataResolution {
+	all := []string{TierHot, TierActive, TierOther}
 	return map[string]MarketDataResolution{
-		"1d": {Enabled: true, IntervalMinutes: 360, BackfillDays: 3650},
-		"1h": {Enabled: true, IntervalMinutes: 60, BackfillDays: 180, RetentionDays: 180},
-		"5m": {Enabled: false, IntervalMinutes: 5, BackfillDays: 2, RetentionDays: 7},
+		"1d":  {Enabled: true, IntervalMinutes: 360, BackfillDays: 3650, Tiers: all},
+		"1h":  {Enabled: true, IntervalMinutes: 60, BackfillDays: 180, RetentionDays: 180, Tiers: all},
+		"15m": {Enabled: true, IntervalMinutes: 15, BackfillDays: 90, RetentionDays: 90, Tiers: []string{TierHot, TierActive}},
+		"5m":  {Enabled: true, IntervalMinutes: 5, BackfillDays: 30, RetentionDays: 30, Tiers: []string{TierHot, TierActive}},
+		"1m":  {Enabled: true, IntervalMinutes: 1, BackfillDays: 1, RetentionDays: 7, Tiers: []string{TierHot}},
 	}
 }
 
@@ -1425,10 +1476,21 @@ func setDefaults() {
 			if r.BackfillDays == 0 {
 				r.BackfillDays = d.BackfillDays
 			}
+			if len(r.Tiers) == 0 {
+				r.Tiers = d.Tiers
+			}
 		}
 		resolutions[name] = r
 	}
 	candles.Resolutions = resolutions
+	tiers := &Config.MarketData.Tiers
+	if tiers.HotAssets == nil {
+		tiers.HotAssets = DefaultHotAssets()
+	}
+	if tiers.HotListed == nil {
+		hotListed := true
+		tiers.HotListed = &hotListed
+	}
 	catalog := &Config.MarketData.Catalog
 	if len(catalog.Priority) == 0 {
 		catalog.Priority = slices.Clone(CatalogSources)
@@ -1454,6 +1516,9 @@ func setDefaults() {
 		{&Config.MarketData.Candles.MaxPairsPerVenue, DefaultCandlesMaxPairsPerVenue},
 		{&Config.MarketData.Candles.RequestsPerRun, DefaultCandlesRequestsPerRun},
 		{&Config.MarketData.API.CacheSeconds, DefaultMarketDataAPICacheSeconds},
+		{&Config.MarketData.Tiers.IntervalHours, DefaultTiersIntervalHours},
+		{&Config.MarketData.Tiers.ActiveTop, DefaultTiersActiveTop},
+		{&Config.MarketData.Tiers.HysteresisPercent, DefaultTiersHysteresisPercent},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback

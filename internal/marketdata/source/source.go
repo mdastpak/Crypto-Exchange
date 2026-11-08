@@ -95,16 +95,22 @@ type Interval string
 
 // The intervals of candles.
 const (
-	Interval5m Interval = "5m"
-	Interval1h Interval = "1h"
-	Interval1d Interval = "1d"
+	Interval1m  Interval = "1m"
+	Interval5m  Interval = "5m"
+	Interval15m Interval = "15m"
+	Interval1h  Interval = "1h"
+	Interval1d  Interval = "1d"
 )
 
 // Duration is the length of the interval.
 func (i Interval) Duration() time.Duration {
 	switch i {
+	case Interval1m:
+		return time.Minute
 	case Interval5m:
 		return 5 * time.Minute
+	case Interval15m:
+		return 15 * time.Minute
 	case Interval1h:
 		return time.Hour
 	case Interval1d:

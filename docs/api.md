@@ -653,7 +653,7 @@ The closed candles of the asset's pair at a venue, oldest first: `{"t": open tim
 | --- | --- |
 | `venue` | Required, such as `binance` or `nobitex`. |
 | `quote` | Required, such as `USDT` or `IRT`. |
-| `interval` | Required: `5m`, `1h`, or `1d`. |
+| `interval` | Required: `1m`, `5m`, `15m`, `1h`, or `1d`. Each [collection tier](market-data.md#collection-tiers) is kept at some only: `1m` for the hot pairs, `5m` and `15m` for the hot and active ones, so the chart of another pair at those is empty. |
 | `from`, `to` | Optional, RFC 3339: the candles that open in `[from, to)`, at most 1000. Without `to`, up to now; without `from`, the 500 candles before `to`. |
 
 `400 validation_failed` for a missing or invalid parameter, or a range of more than 1000 candles; `404 market_pair_not_found` when the venue has no such pair, or is not shown in this release.

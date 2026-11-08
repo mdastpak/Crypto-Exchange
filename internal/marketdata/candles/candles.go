@@ -29,6 +29,9 @@ type Options struct {
 	// Quotes are the quote symbols of the pairs whose candles are kept,
 	// such as USDT and IRT.
 	Quotes []string
+	// Tiers are the collection tiers of the pairs whose candles are kept
+	// at this resolution (#279); none is every tier.
+	Tiers []string
 	// MaxPairs bounds the pairs of the venue, the best-ranked bases first.
 	MaxPairs int
 	// RequestsPerRun bounds the requests of one run.
@@ -127,7 +130,7 @@ func (j *Job) Run(ctx context.Context, run *jobs.Run) error {
 	}
 	start := end.Add(-depth).Truncate(j.step)
 
-	pairs, err := j.store.CandlePairs(ctx, j.src.Name(), j.opts.Resolution, j.opts.Quotes, j.opts.MaxPairs)
+	pairs, err := j.store.CandlePairs(ctx, j.src.Name(), j.opts.Resolution, j.opts.Quotes, j.opts.Tiers, j.opts.MaxPairs)
 	if err != nil {
 		return err
 	}

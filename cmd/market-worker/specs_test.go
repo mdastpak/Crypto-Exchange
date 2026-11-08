@@ -34,10 +34,11 @@ func TestJobSpecs_OnlyTheCatalogSourcesThisNodeReaches(t *testing.T) {
 			MapRankLimit: 1000, DeactivatePairsAfterHours: 24},
 		Candles: config.MarketDataCandles{Quotes: []string{"USDT"}, MaxPairsPerVenue: 200, RequestsPerRun: 300,
 			Resolutions: config.DefaultCandleResolutions()},
+		Tiers: config.MarketDataTiers{IntervalHours: 24, HotAssets: config.DefaultHotAssets(), ActiveTop: 200, HysteresisPercent: 20},
 	}
 	specs, err := jobSpecs(nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"catalog:coingecko", "candles:partitions"}, names(specs), "this node does not reach CoinMarketCap")
+	assert.Equal(t, []string{"catalog:coingecko", "tiers", "candles:partitions"}, names(specs), "this node does not reach CoinMarketCap")
 	assert.Equal(t, "24h0m0s", specs[0].Interval.String())
 
 	s := config.Config.MarketData.Sources["coinmarketcap"]
@@ -45,20 +46,22 @@ func TestJobSpecs_OnlyTheCatalogSourcesThisNodeReaches(t *testing.T) {
 	config.Config.MarketData.Sources["coinmarketcap"] = s
 	specs, err = jobSpecs(nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"catalog:coingecko", "catalog:coinmarketcap", "candles:partitions"}, names(specs))
+	assert.Equal(t, []string{"catalog:coingecko", "catalog:coinmarketcap", "tiers", "candles:partitions"}, names(specs))
 
 	config.Config.MarketData.Sources["binance"] = config.MarketDataSource{Enabled: true, TimeoutSeconds: 20}
 	config.Config.MarketData.Sources["nobitex"] = config.MarketDataSource{Enabled: true, TimeoutSeconds: 20, Egress: config.EgressDirect}
 	config.Config.MarketData.Egress.Default = config.EgressNone
 	specs, err = jobSpecs(nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"tickers:nobitex", "candles:nobitex:1h", "candles:partitions"}, names(specs),
-		"a node in Iran without a route abroad collects the Iranian venues")
+	assert.Equal(t, []string{"tickers:nobitex", "candles:nobitex:1m", "candles:nobitex:5m", "candles:nobitex:15m", "candles:nobitex:1h",
+		"tiers", "candles:partitions"}, names(specs),
+		"a node in Iran without a route abroad collects the Iranian venues, without the daily candles of Tehran's days")
 	assert.Equal(t, "2m0s", specs[0].Interval.String())
-	assert.Equal(t, "1h0m0s", specs[1].Interval.String(), "no daily candles of Tehran's days")
+	assert.Equal(t, "1m0s", specs[1].Interval.String())
+	assert.Equal(t, "1h0m0s", specs[4].Interval.String())
 
 	config.Config.MarketData.Sources = nil
 	specs, err = jobSpecs(nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"candles:partitions"}, names(specs), "no source is enabled")
+	assert.Equal(t, []string{"tiers", "candles:partitions"}, names(specs), "no source is enabled")
 }

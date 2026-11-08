@@ -300,10 +300,20 @@ market_data:
     quotes: [USDT, USD, IRT]   # Pairs with these quotes
     max_pairs_per_venue: 200   # The best-ranked bases first
     requests_per_run: 300      # Per venue and resolution
+    # Each resolution keeps the pairs of some collection tiers only.
     resolutions:
-      1d: {enabled: true, interval_minutes: 360, backfill_days: 3650, retention_days: 0}
-      1h: {enabled: true, interval_minutes: 60, backfill_days: 180, retention_days: 180}
-      5m: {enabled: false, interval_minutes: 5, backfill_days: 2, retention_days: 7}
+      1d: {enabled: true, interval_minutes: 360, backfill_days: 3650, retention_days: 0, tiers: [hot, active, other]}
+      1h: {enabled: true, interval_minutes: 60, backfill_days: 180, retention_days: 180, tiers: [hot, active, other]}
+      15m: {enabled: true, interval_minutes: 15, backfill_days: 90, retention_days: 90, tiers: [hot, active]}
+      5m: {enabled: true, interval_minutes: 5, backfill_days: 30, retention_days: 30, tiers: [hot, active]}
+      1m: {enabled: true, interval_minutes: 1, backfill_days: 1, retention_days: 7, tiers: [hot]}
+  # The collection tiers of the pairs (docs/market-data.md#collection-tiers).
+  tiers:
+    interval_hours: 24
+    hot_assets: [bitcoin, ethereum, tether]  # Catalog slugs whose pairs are hot
+    hot_listed: true           # Pairs of currencies listed on this exchange are hot
+    active_top: 200            # Next pairs by 24-hour volume in USD, over every venue
+    hysteresis_percent: 20     # An active pair leaves only past rank active_top + 20 %
   # The public routes of the server (docs/market-data.md#public-api). The
   # server reads this and the quality rules of tickers above.
   api:

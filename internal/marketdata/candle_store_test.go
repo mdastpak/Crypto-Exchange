@@ -50,12 +50,12 @@ func TestWriteCandles_CreatesPartitionsAndWidensTheCursor(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.UpsertVenuePairs(ctx, "binance", []VenuePair{{VenueSymbol: "BTCUSDT", BaseSymbol: "BTC", QuoteSymbol: "USDT", BaseAssetID: &btc}})
 	require.NoError(t, err)
-	pairs, err := store.CandlePairs(ctx, "binance", Resolution1h, []string{"usdt"}, 10)
+	pairs, err := store.CandlePairs(ctx, "binance", Resolution1h, []string{"usdt"}, nil, 10)
 	require.NoError(t, err)
 	require.Len(t, pairs, 1)
 	assert.Equal(t, from.Add(-2*time.Hour), pairs[0].From.UTC())
 	assert.Equal(t, until, pairs[0].Until.UTC())
-	none, err := store.CandlePairs(ctx, "binance", Resolution1h, []string{"EUR"}, 10)
+	none, err := store.CandlePairs(ctx, "binance", Resolution1h, []string{"EUR"}, nil, 10)
 	require.NoError(t, err)
 	assert.Empty(t, none, "only the configured quotes")
 
@@ -97,4 +97,36 @@ func TestCandlePartitions_EnsureAndRetention(t *testing.T) {
 	dropped, err = store.DropCandlePartitions(ctx, Resolution1d, time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	assert.Equal(t, 0, dropped, "2026 ends after the limit")
+}
+
+func TestCandlePartitions_MinutesByDayQuartersByMonth(t *testing.T) {
+	store, _ := newStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 12, 31, 23, 59, 0, 0, time.UTC)
+
+	require.NoError(t, store.EnsureCandlePartitions(ctx, Resolution1m, now))
+	require.NoError(t, store.EnsureCandlePartitions(ctx, Resolution15m, now))
+	minutes, err := store.CandlePartitions(ctx, Resolution1m)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"market_candles_1m_2026_12_31", "market_candles_1m_2027_01_01"}, minutes, "this day and the next")
+	quarters, err := store.CandlePartitions(ctx, Resolution15m)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"market_candles_15m_2026_12", "market_candles_15m_2027_01"}, quarters)
+
+	pair := newPair(t, store)
+	from := time.Date(2026, 12, 20, 23, 58, 0, 0, time.UTC)
+	n, err := store.WriteCandles(ctx, pair, Resolution1m, from, from.Add(4*time.Minute),
+		[]Candle{candle(from, "1"), candle(from.Add(time.Minute), "2"), candle(from.Add(2*time.Minute), "3")})
+	require.NoError(t, err)
+	assert.Equal(t, 3, n, "across two days")
+	got, err := store.Candles(ctx, pair, Resolution1m, from, from.Add(4*time.Minute))
+	require.NoError(t, err)
+	assert.Len(t, got, 3)
+
+	dropped, err := store.DropCandlePartitions(ctx, Resolution1m, time.Date(2026, 12, 24, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.Equal(t, 2, dropped, "the 20th and the 21st, a day at a time")
+	minutes, err = store.CandlePartitions(ctx, Resolution1m)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"market_candles_1m_2026_12_31", "market_candles_1m_2027_01_01"}, minutes)
 }

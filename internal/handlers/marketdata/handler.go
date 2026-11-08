@@ -328,7 +328,7 @@ type Chart struct {
 // @Param slug path string true "The slug of the asset, such as bitcoin"
 // @Param venue query string true "The venue, such as binance or nobitex"
 // @Param quote query string true "The quote symbol, such as USDT or IRT"
-// @Param interval query string true "The candle interval" Enums(5m, 1h, 1d)
+// @Param interval query string true "The candle interval. The pairs of each collection tier are kept at some of them only: 1m for the hot pairs, 5m and 15m for the hot and active pairs." Enums(1m, 5m, 15m, 1h, 1d)
 // @Param from query string false "The first open time, RFC 3339" format(date-time)
 // @Param to query string false "The end, exclusive, RFC 3339" format(date-time)
 // @Success 200 {object} models.APIResponse{info=Chart}
@@ -348,7 +348,7 @@ func (h *Handler) GetCandles(c *gin.Context) {
 	}
 	step := marketdata.ResolutionStep(interval)
 	if step == 0 {
-		errs["interval"] = "must be 5m, 1h, or 1d"
+		errs["interval"] = "must be 1m, 5m, 15m, 1h, or 1d"
 	}
 	parse := func(name string) (time.Time, bool) {
 		raw := c.Query(name)

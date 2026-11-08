@@ -96,3 +96,31 @@ func TestWallexCandles(t *testing.T) {
 	_, err = empty.(source.CandleSource).Candles(context.Background(), "BTCTMN", source.Interval1d, hour(0), hour(20))
 	assert.ErrorIs(t, err, source.ErrNotFound)
 }
+
+// TestCandleIntervals_EveryVenueGivesTheFineResolutions checks the 1m and
+// 15m candles of the collection tiers (#279), as each venue names them.
+func TestCandleIntervals_EveryVenueGivesTheFineResolutions(t *testing.T) {
+	for _, tc := range []struct {
+		venue, path, file, symbol, minute, quarter string
+	}{
+		{Binance, "/api/v3/klines", "binance_klines.json", "BTCUSDT", "interval=1m", "interval=15m"},
+		{OKX, "/api/v5/market/history-candles", "okx_candles.json", "BTC-USDT", "bar=1m", "bar=15m"},
+		{Kraken, "/0/public/OHLC", "kraken_ohlc.json", "XXBTZUSD", "interval=1&", "interval=15&"},
+		{Coinbase, "/api/v3/brokerage/market/products/BTC-USD/candles", "coinbase_candles.json", "BTC-USD", "granularity=ONE_MINUTE", "granularity=FIFTEEN_MINUTE"},
+		{Nobitex, "/market/udf/history", "nobitex_udf.json", "btc-rls", "resolution=1&", "resolution=15&"},
+		{Wallex, "/v1/udf/history", "wallex_udf.json", "BTCTMN", "resolution=1&", "resolution=15&"},
+	} {
+		t.Run(tc.venue, func(t *testing.T) {
+			src, asked := venue(t, tc.venue, map[string]string{tc.path: tc.file})
+			cs := src.(source.CandleSource)
+			for _, interval := range []source.Interval{source.Interval1m, source.Interval15m} {
+				assert.True(t, src.(interface{ Supports(source.Interval) bool }).Supports(interval), interval)
+				_, err := cs.Candles(context.Background(), tc.symbol, interval, hour(15), hour(16))
+				require.NoError(t, err)
+			}
+			require.Len(t, *asked, 2)
+			assert.Contains(t, (*asked)[0]+"&", tc.minute)
+			assert.Contains(t, (*asked)[1]+"&", tc.quarter)
+		})
+	}
+}
