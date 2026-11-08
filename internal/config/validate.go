@@ -530,7 +530,30 @@ func (c *Configuration) marketDataProblems(p *problems) {
 		}
 	}
 	c.candleProblems(p)
+	tiers := c.MarketData.Tiers
+	for _, r := range []struct {
+		key           string
+		value, lo, hi int
+	}{
+		{"market_data.tiers.interval_hours", tiers.IntervalHours, 1, 24 * 7},
+		{"market_data.tiers.active_top", tiers.ActiveTop, 1, MaxTiersActiveTop},
+		{"market_data.tiers.hysteresis_percent", tiers.HysteresisPercent, 1, 100},
+		{"market_data.streams.max_pairs", c.MarketData.Streams.MaxPairs, 1, MaxStreamsMaxPairs},
+		{"market_data.streams.max_per_worker", c.MarketData.Streams.MaxPerWorker, 1, 16},
+		{"market_data.streams.run_minutes", c.MarketData.Streams.RunMinutes, 1, 24 * 60},
+		{"market_data.streams.flush_millis", c.MarketData.Streams.FlushMillis, 250, 60000},
+		{"market_data.streams.quiet_seconds", c.MarketData.Streams.QuietSeconds, 10, 600},
+	} {
+		if r.value < r.lo || r.value > r.hi {
+			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
+		}
+	}
 	c.marketDataAPIProblems(p)
+	for _, tier := range c.MarketData.Streams.Tiers {
+		if !slices.Contains(Tiers, tier) {
+			p.add("market_data.streams.tiers", "has %q; the tiers are hot, active, and other", tier)
+		}
+	}
 	if tk.StaleAfterSeconds > 0 && tk.StaleAfterSeconds < tk.IntervalSeconds {
 		p.add("market_data.tickers.stale_after_seconds", "is %d; it must be at least interval_seconds (%d), or every ticker turns stale between two runs",
 			tk.StaleAfterSeconds, tk.IntervalSeconds)
@@ -589,9 +612,17 @@ func (c *Configuration) candleProblems(p *problems) {
 	for _, name := range slices.Sorted(maps.Keys(cd.Resolutions)) {
 		r := cd.Resolutions[name]
 		key := "market_data.candles.resolutions." + name
-		if name != "5m" && name != "1h" && name != "1d" {
-			p.add(key, "is not a resolution; they are 5m, 1h, and 1d")
+		if !slices.Contains([]string{"1m", "5m", "15m", "1h", "1d"}, name) {
+			p.add(key, "is not a resolution; they are 1m, 5m, 15m, 1h, and 1d")
 			continue
+		}
+		if r.Enabled && len(r.Tiers) == 0 {
+			p.add(key+".tiers", "is empty; list the tiers collected at this resolution: hot, active, other")
+		}
+		for _, tier := range r.Tiers {
+			if !slices.Contains(Tiers, tier) {
+				p.add(key+".tiers", "has %q; the tiers are hot, active, and other", tier)
+			}
 		}
 		if r.IntervalMinutes < 1 || r.IntervalMinutes > 1440 {
 			p.add(key+".interval_minutes", "is %d; it must be from 1 to 1440", r.IntervalMinutes)

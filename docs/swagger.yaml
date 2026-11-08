@@ -3430,9 +3430,13 @@ paths:
         name: quote
         required: true
         type: string
-      - description: The candle interval
+      - description: 'The candle interval. The pairs of each collection tier are kept
+          at some of them only: 1m for the hot pairs, 5m and 15m for the hot and active
+          pairs.'
         enum:
+        - 1m
         - 5m
+        - 15m
         - 1h
         - 1d
         in: query

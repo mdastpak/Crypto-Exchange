@@ -40,7 +40,7 @@ func TestStartJobs_RunsTheJobsUntilALockdownPausesThem(t *testing.T) {
 	require.NoError(t, err)
 
 	job := &countingJob{}
-	stop, err := startJobs(conn, "market-worker/test", []jobs.Spec{{Job: job, Interval: time.Hour, Timeout: time.Minute}})
+	stop, err := startJobs(conn, "market-worker/test", []jobs.Spec{{Job: job, Interval: time.Hour, Timeout: time.Minute}}, nil)
 	require.NoError(t, err)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

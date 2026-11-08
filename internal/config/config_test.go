@@ -373,3 +373,34 @@ func TestComposeConfig(t *testing.T) {
 	assert.Empty(t, Config.OTP.Auth.Secret)
 	assert.Empty(t, Config.Admin.TOTPKey)
 }
+
+func TestSetDefaults_CandleTiers(t *testing.T) {
+	defer resetConfig()
+	Config = Configuration{}
+	// A configuration written before the tiers names its resolutions
+	// without them: they take the default tiers, and the new resolutions
+	// their defaults.
+	Config.MarketData.Candles.Resolutions = map[string]MarketDataResolution{
+		"5m": {Enabled: false, IntervalMinutes: 5, BackfillDays: 2, RetentionDays: 7},
+		"1h": {Enabled: true, IntervalMinutes: 60, BackfillDays: 30, RetentionDays: 30, Tiers: []string{TierHot}},
+	}
+	hotListed := false
+	Config.MarketData.Tiers.HotListed = &hotListed
+
+	setDefaults()
+
+	r := Config.MarketData.Candles.Resolutions
+	assert.False(t, r["5m"].Enabled, "an explicit setting stays")
+	assert.Equal(t, []string{TierHot, TierActive}, r["5m"].Tiers)
+	assert.Equal(t, []string{TierHot}, r["1h"].Tiers)
+	assert.Equal(t, []string{TierHot}, r["1m"].Tiers)
+	assert.True(t, r["15m"].Enabled)
+	assert.Equal(t, []string{"bitcoin", "ethereum", "tether"}, Config.MarketData.Tiers.HotAssets)
+	assert.False(t, *Config.MarketData.Tiers.HotListed, "an explicit false stays")
+	assert.Equal(t, 200, Config.MarketData.Tiers.ActiveTop)
+	assert.Equal(t, 20, Config.MarketData.Tiers.HysteresisPercent)
+	assert.True(t, *Config.MarketData.Streams.Enabled)
+	assert.Equal(t, []string{TierHot}, Config.MarketData.Streams.Tiers)
+	assert.Equal(t, 1000, Config.MarketData.Streams.FlushMillis)
+	assert.Equal(t, 2, Config.MarketData.Streams.MaxPerWorker)
+}

@@ -376,10 +376,23 @@ The languages of the product ([#283](https://github.com/mdastpak/Crypto-Exchange
 | `candles.quotes` | `[USDT, USD, IRT]` | The quote symbols of the pairs whose candles are kept. See [Candles](market-data.md#candles). |
 | `candles.max_pairs_per_venue` | `200` | From 1 to 10000. The pairs of a venue whose candles are kept, the best-ranked bases first. |
 | `candles.requests_per_run` | `300` | From 1 to 10000. The requests of one run of a venue and resolution. |
-| `candles.resolutions.<5m\|1h\|1d>.enabled` | `1d`, `1h` | Whether the candles of the resolution are collected. `5m` is off by default. |
-| `candles.resolutions.<…>.interval_minutes` | `5`, `60`, `360` | From 1 to 1440. The time between two runs of a venue at the resolution. |
-| `candles.resolutions.<…>.backfill_days` | `2`, `180`, `3650` | From 1 to 36500. How far back the history goes. |
-| `candles.resolutions.<…>.retention_days` | `7`, `180`, `0` | From 0 to 36500. How long candles are kept, in whole months (years for `1d`); `0` keeps them. The backfill never goes past it. |
+| `candles.resolutions.<1m\|5m\|15m\|1h\|1d>.enabled` | `true` | Whether the candles of the resolution are collected. |
+| `candles.resolutions.<…>.interval_minutes` | `1`, `5`, `15`, `60`, `360` | From 1 to 1440. The time between two runs of a venue at the resolution. |
+| `candles.resolutions.<…>.backfill_days` | `1`, `30`, `90`, `180`, `3650` | From 1 to 36500. How far back the history goes. |
+| `candles.resolutions.<…>.retention_days` | `7`, `30`, `90`, `180`, `0` | From 0 to 36500. How long candles are kept, in whole days (`1m`), months, or years (`1d`); `0` keeps them. The backfill never goes past it. |
+| `candles.resolutions.<…>.tiers` | `[hot]`, `[hot, active]`, `[hot, active]`, all, all | The [collection tiers](market-data.md#collection-tiers) whose pairs are kept at the resolution: `hot`, `active`, `other`. |
+| `tiers.interval_hours` | `24` | From 1 to 168. The time between two computations of the tiers. |
+| `tiers.hot_assets` | `[bitcoin, ethereum, tether]` | The slugs of the catalog's assets whose pairs are hot. |
+| `tiers.hot_listed` | `true` | Makes hot the pairs whose base is linked to a currency listed on this exchange. |
+| `tiers.active_top` | `200` | From 1 to 10000. The pairs, over every venue, that are active by 24-hour volume in USD. |
+| `tiers.hysteresis_percent` | `20` | From 1 to 100. An active pair stays active until its rank passes `active_top` by this share. |
+| `streams.enabled` | `true` | Runs the [WebSocket streams](market-data.md#live-tickers) of the venues that have one (Binance, OKX, Kraken, Coinbase) and that this node reaches. |
+| `streams.tiers` | `[hot]` | The tiers of the pairs that the streams follow. |
+| `streams.max_pairs` | `200` | From 1 to 1000. The pairs of one venue's stream, the best-ranked bases first. |
+| `streams.max_per_worker` | `2` | From 1 to 16. The streams that one worker holds at once, apart from `max_concurrent_jobs`. |
+| `streams.run_minutes` | `60` | From 1 to 1440. How long a worker holds a stream before the workers may share it again. |
+| `streams.flush_millis` | `1000` | From 250 to 60000. How often the tickers received are written: a pair is written at most once in this time. |
+| `streams.quiet_seconds` | `60` | From 10 to 600. How long a stream may stay quiet before it reconnects. |
 | `api.regions` | `[]` (every region) | The regions of the venues that the public routes show: `global`, `ir`. An international release sets `[global]`. |
 | `api.cache_seconds` | `30` | From 1 to 3600. How long an answer of the public routes is cached in Redis, shared by every instance, and by clients (`Cache-Control: max-age`). |
 
