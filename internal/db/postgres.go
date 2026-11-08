@@ -98,6 +98,9 @@ func migrationLockHolder(ctx context.Context, conn *sql.Conn) string {
 		       COALESCE(a.state, '-'), COALESCE(a.xact_start, a.backend_start)
 		FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
 		WHERE l.locktype = 'advisory' AND l.granted
+		  -- An advisory lock belongs to one database; the server may hold the
+		  -- same key in others, such as the databases of other services.
+		  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
 		  AND l.classid = ($1::bigint >> 32)::oid AND l.objid = ($1::bigint & 4294967295)::oid AND l.objsubid = 1
 		LIMIT 1`, migrationLockID).Scan(&pid, &app, &addr, &state, &since)
 	if err != nil {
