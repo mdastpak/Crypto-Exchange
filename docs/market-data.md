@@ -13,7 +13,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Tables, store, and `cmd/market-worker` with its probes | [#263](https://github.com/mdastpak/Crypto-Exchange/issues/263) | Done |
 | Job runner: each run once across workers, pause, dry run, jobs by reachable source | [#264](https://github.com/mdastpak/Crypto-Exchange/issues/264) | Done |
 | Source interfaces, rate-limited HTTP client with egress per node, stub source | [#265](https://github.com/mdastpak/Crypto-Exchange/issues/265) | Done |
-| Catalog from CoinGecko and CoinMarketCap | [#266](https://github.com/mdastpak/Crypto-Exchange/issues/266) | Planned |
+| Catalog from CoinGecko and CoinMarketCap | [#266](https://github.com/mdastpak/Crypto-Exchange/issues/266) | Done |
 | Tickers of global and Iranian exchanges | [#267](https://github.com/mdastpak/Crypto-Exchange/issues/267) | Planned |
 | Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Planned |
 | Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Planned |
@@ -108,6 +108,47 @@ market_data:
       egress: direct
 ```
 
+## Catalog
+
+The catalog sync ([#266](https://github.com/mdastpak/Crypto-Exchange/issues/266)) is one job per catalog source, `catalog:coingecko` and `catalog:coinmarketcap`, every `market_data.catalog.interval_hours` (24). A run:
+
+1. reads the listing of the source, which gives the symbol, name, logo, rank, and supply of many assets per request;
+2. matches each asset to the catalog, and writes what changed, in batches of 50 between two checks of its lease;
+3. reads at most `details_per_run` full records (description, links, contracts, coin or token), first those never read, then those older than `details_max_age_days`, the better-ranked first, so that a catalog of every asset fills over several runs within the plan;
+4. in the runs of the primary source with the `all` coverage, marks inactive the assets that no source listed for `deactivate_after_days`. An inactive asset stays, and a later listing makes it active again.
+
+### Coverage
+
+| `coverage` | Assets | For |
+| --- | --- | --- |
+| `list` (default) | A built-in set of 16 assets that give useful cases with few requests: BTC, ETH, USDT and USDC on several networks, BNB, SOL, XRP, TRX, TON, DOGE, the MATIC to POL rebrand, the LUNA and LUNC split, UNI (a symbol that other assets share), and WBTC | Development and tests |
+| `top` | The first `top` (500) assets by market cap | Staging, or a small plan |
+| `all` | Every asset of the sources | Production, with a paid plan |
+
+With the free plans, `all` fills the listing in one run (about 70 requests at CoinGecko, a few credits at CoinMarketCap), and the records over many runs, `details_per_run` at a time.
+
+### Matching assets
+
+A symbol alone never merges two assets, since symbols collide (`UNI` is several tokens). An asset of a source is matched, in this order:
+
+1. by its identity at the source (`market_asset_sources`);
+2. by the contract of a token on a network (`market_asset_contracts`). Contracts that point at two different assets are an `identity` conflict;
+3. a coin with the same symbol and the same name (`Bitcoin`) as an asset that has no identity at this source yet is the same coin;
+4. otherwise it is a new asset; but a secondary source that lists a symbol the catalog already has records a `symbol` conflict and creates nothing, since it may be the same asset under another name.
+
+`market_data.catalog.priority` orders the sources, primary first (`coingecko`, then `coinmarketcap`). The primary source writes the fields of the assets it knows; a secondary source links its identities to them, and writes the fields of the assets that only it knows. When the primary source is not enabled on any node, put the other first.
+
+A full record that gives a token's contract that the catalog has under another asset records a `contract` conflict, and the contract stays with its first asset. Conflicts are kept in `market_identity_conflicts`, once while they are open, for an administrator to resolve ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)).
+
+### Sources of the catalog
+
+| Source | Plan | Requests |
+| --- | --- | --- |
+| CoinGecko | The free public API or the demo plan at `api.coingecko.com`, with the key (optional) in `x-cg-demo-api-key`; a paid plan sets `base_url` to `https://pro-api.coingecko.com/api/v3` and its key goes in `x-cg-pro-api-key` | `/coins/markets` (250 per page), `/coins/{id}` (one per record) |
+| CoinMarketCap | Every plan, the free Basic plan too, needs a key in `X-CMC_PRO_API_KEY`; set `MARKET_DATA_COINMARKETCAP_API_KEY` | `/v1/cryptocurrency/listings/latest` (one credit per 200 assets), `/v2/cryptocurrency/info` (100 records per request) |
+
+Descriptions are stored as plain text, without HTML; only `https` links and logos are kept. Each asset carries the attribution that the source's terms ask for. The tests read recorded answers in the documented format of each API, since CI has no network; run a new source in `dry_run` first and check its runs.
+
 ## Data model
 
 The tables have the `market_` prefix, and no other table refers to them, so that the catalog can move to a database of its own. Amounts are `NUMERIC`, never floating point. Nothing is deleted: an asset or a pair that a source drops is marked inactive.
@@ -115,11 +156,12 @@ The tables have the `market_` prefix, and no other table refers to them, so that
 | Table | Contents |
 | --- | --- |
 | `market_assets` | One row per asset, not per symbol, since symbols collide between assets. The slug names it in URLs (`bitcoin`; a second asset with the same name gets `-2`). The status is `unverified` (served with a label), `hidden` (never served), or `linked` (to a listed currency, `currency_hk`, which a constraint requires). Plain-text description, `https` links and logo, rank, supply, and the attribution that the source's license asks for. |
-| `market_asset_sources` | The identity of an asset at each source, such as its CoinGecko id; one asset per identity. |
+| `market_asset_sources` | The identity of an asset at each source, such as its CoinGecko id; one asset per identity. `details_fetched_at` is when its full record was last read. |
 | `market_asset_contracts` | The contract of a token on each network, which matches the same token across sources. EVM addresses are stored in lower case, since their case is only a checksum; other networks keep their case. |
 | `market_venues` | The exchanges: kind (`cex`, `dex`), region (`global`, or `ir` for the Iranian exchanges, which an international release leaves out, [#272](https://github.com/mdastpak/Crypto-Exchange/issues/272)), country, website, attribution, and whether the jobs collect it. The jobs refresh the description of a venue, never its `enabled` setting, which belongs to the administrators. |
 | `market_venue_pairs` | A pair at a venue (`BTCUSDT` at `binance`), mapped to the base and quote assets of the catalog once known. |
 | `market_tickers_latest` | The latest ticker of each pair: last price, bid, ask, and the 24-hour volume, high, low, and open, with the time of the venue and the time received. |
+| `market_identity_conflicts` | What the catalog sync could not decide alone: the source and its id, the kind (`contract`, `identity`, `symbol`), the subject, the assets involved, and when an administrator resolved it. |
 | `market_sync_runs` | One row per job run: job, worker, mode, status, items read and written, and the error. |
 
 ### Writes from several workers

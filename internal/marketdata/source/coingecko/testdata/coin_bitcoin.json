@@ -1,0 +1,9 @@
+{
+  "id": "bitcoin", "symbol": "btc", "name": "Bitcoin", "asset_platform_id": null, "platforms": {"": ""},
+  "description": {"en": "Bitcoin is the first decentralized digital currency."},
+  "image": {"large": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png"},
+  "market_cap_rank": 1,
+  "links": {"homepage": ["http://www.bitcoin.org"], "whitepaper": "https://bitcoin.org/bitcoin.pdf",
+    "blockchain_site": ["https://mempool.space/"], "subreddit_url": "https://www.reddit.com/r/Bitcoin/",
+    "twitter_screen_name": "bad name!", "repos_url": {"github": ["https://github.com/bitcoin/bitcoin"]}}
+}

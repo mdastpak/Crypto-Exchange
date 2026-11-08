@@ -267,6 +267,19 @@ market_data:
       enabled: false
       requests_per_minute: 25  # Free (demo) plan: 30 per minute, 10,000 per month
       monthly_requests: 9000
+    coinmarketcap:
+      enabled: false           # Needs MARKET_DATA_COINMARKETCAP_API_KEY, on every plan
+      requests_per_minute: 25  # Free (Basic) plan: 30 per minute, 10,000 credits per month
+      monthly_requests: 9000
+  # The catalog of assets (docs/market-data.md#catalog).
+  catalog:
+    priority: [coingecko, coinmarketcap]  # Primary source first
+    coverage: list             # list (16 assets, development), top, or all (production)
+    top: 500                   # Assets of the top coverage
+    interval_hours: 24
+    details_per_run: 200       # Full records read per run
+    details_max_age_days: 30   # When a record is read again
+    deactivate_after_days: 14  # Unlisted this long: inactive (all coverage only)
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.

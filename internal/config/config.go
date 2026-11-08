@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -825,7 +826,57 @@ type MarketDataConfig struct {
 	// nobitex. A source that is not listed, or not enabled, is not used by
 	// this node.
 	Sources map[string]MarketDataSource `yaml:"sources"`
+	// Catalog configures the catalog sync (#266).
+	Catalog MarketDataCatalog `yaml:"catalog"`
 }
+
+// MarketDataCatalog configures the catalog sync of cmd/market-worker: which
+// assets it keeps, and how often it reads them.
+type MarketDataCatalog struct {
+	// Priority lists the catalog sources, primary first. The primary
+	// source writes the fields of the assets it knows; the others link to
+	// its assets, and create only the assets it does not list.
+	Priority []string `yaml:"priority"`
+	// Coverage is "list" (a built-in set of important assets, for
+	// development and tests), "top" (the first Top assets by market cap),
+	// or "all" (every asset of the sources, for production).
+	Coverage string `yaml:"coverage"`
+	Top      int    `yaml:"top"`
+	// IntervalHours is the time between two runs of a source.
+	IntervalHours int `yaml:"interval_hours"`
+	// DetailsPerRun bounds the full records (description, links,
+	// contracts) read in one run, so that a large catalog fills over
+	// several runs within the limits of the plan.
+	DetailsPerRun int `yaml:"details_per_run"`
+	// DetailsMaxAgeDays is when a full record is read again.
+	DetailsMaxAgeDays int `yaml:"details_max_age_days"`
+	// DeactivateAfterDays marks inactive the assets that no source listed
+	// for this long; only the "all" coverage does it.
+	DeactivateAfterDays int `yaml:"deactivate_after_days"`
+}
+
+// The coverages of market_data.catalog.coverage.
+const (
+	CatalogCoverageList = "list"
+	CatalogCoverageTop  = "top"
+	CatalogCoverageAll  = "all"
+)
+
+// CatalogSources are the sources that the catalog sync can read.
+var CatalogSources = []string{"coingecko", "coinmarketcap"}
+
+// The defaults and bounds of market_data.catalog.
+const (
+	DefaultCatalogTop                 = 500
+	MaxCatalogTop                     = 50000
+	DefaultCatalogIntervalHours       = 24
+	MaxCatalogIntervalHours           = 24 * 7
+	DefaultCatalogDetailsPerRun       = 200
+	MaxCatalogDetailsPerRun           = 10000
+	DefaultCatalogDetailsMaxAgeDays   = 30
+	DefaultCatalogDeactivateAfterDays = 14
+	MaxCatalogDays                    = 365
+)
 
 // MarketDataEgress is how a node of cmd/market-worker reaches the sources.
 type MarketDataEgress struct {
@@ -1254,6 +1305,27 @@ func setDefaults() {
 	}
 	if Config.MarketData.HealthAddr == "" {
 		Config.MarketData.HealthAddr = DefaultMarketDataHealthAddr
+	}
+	catalog := &Config.MarketData.Catalog
+	if len(catalog.Priority) == 0 {
+		catalog.Priority = slices.Clone(CatalogSources)
+	}
+	if catalog.Coverage == "" {
+		catalog.Coverage = CatalogCoverageList
+	}
+	for _, setting := range []struct {
+		value    *int
+		fallback int
+	}{
+		{&catalog.Top, DefaultCatalogTop},
+		{&catalog.IntervalHours, DefaultCatalogIntervalHours},
+		{&catalog.DetailsPerRun, DefaultCatalogDetailsPerRun},
+		{&catalog.DetailsMaxAgeDays, DefaultCatalogDetailsMaxAgeDays},
+		{&catalog.DeactivateAfterDays, DefaultCatalogDeactivateAfterDays},
+	} {
+		if *setting.value == 0 {
+			*setting.value = setting.fallback
+		}
 	}
 
 	if Config.Exchange.Timezone == "" {

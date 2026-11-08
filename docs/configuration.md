@@ -348,9 +348,16 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `sources.<name>.enabled` | `false` | Whether this node calls the source. A source that is not listed is not called. |
 | `sources.<name>.egress` | | Overrides `egress.default` for the source: `direct`, `proxy`, or `none`. |
 | `sources.<name>.base_url` | | Overrides the API address of the source, such as the address of a paid plan; `https://` only. |
-| `sources.<name>.api_key` | | The key of the source's plan. Set it in the environment (`MARKET_DATA_COINGECKO_API_KEY`, `MARKET_DATA_COINMARKETCAP_API_KEY`). |
+| `sources.<name>.api_key` | | The key of the source's plan. Set it in the environment (`MARKET_DATA_COINGECKO_API_KEY`, `MARKET_DATA_COINMARKETCAP_API_KEY`). Required for CoinMarketCap, on every plan. |
 | `sources.<name>.requests_per_minute`, `monthly_requests` | `0` | The limits of the source's plan, counted across every node in PostgreSQL; `0` is no limit of that kind. |
 | `sources.<name>.timeout_seconds` | `20` | From 1 to 120. Bounds one request to the source. |
+| `catalog.priority` | `[coingecko, coinmarketcap]` | The catalog sources, primary first: the primary writes the fields of the assets it knows, the others link to them. Put CoinMarketCap first when CoinGecko is not enabled on any node. See [Catalog](market-data.md#catalog). |
+| `catalog.coverage` | `list` | `list` (a built-in set of 16 assets for development and tests), `top` (the first `catalog.top` by market cap), or `all` (every asset, for production). |
+| `catalog.top` | `500` | From 1 to 50000. The assets of the `top` coverage. |
+| `catalog.interval_hours` | `24` | From 1 to 168. The time between two runs of the catalog of a source. |
+| `catalog.details_per_run` | `200` | From 1 to 10000. The full records (description, links, contracts) read in one run. |
+| `catalog.details_max_age_days` | `30` | From 1 to 365. When a full record is read again. |
+| `catalog.deactivate_after_days` | `14` | From 1 to 365. Assets that no source listed for this long are marked inactive; only with the `all` coverage. |
 
 ### `platform`
 

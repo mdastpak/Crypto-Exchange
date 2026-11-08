@@ -1,0 +1,12 @@
+{
+  "status": {"error_code": 0, "error_message": null, "credit_count": 1},
+  "data": [
+    {"id": 1, "name": "Bitcoin", "symbol": "BTC", "slug": "bitcoin", "cmc_rank": 1,
+     "circulating_supply": 19750000, "total_supply": 19750000, "max_supply": 21000000, "platform": null},
+    {"id": 825, "name": "Tether USDt", "symbol": "USDT", "slug": "tether", "cmc_rank": 3,
+     "circulating_supply": 120000000000.5, "total_supply": 121000000000, "max_supply": null,
+     "platform": {"id": 1027, "name": "Ethereum", "symbol": "ETH", "slug": "ethereum", "token_address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"}},
+    {"id": 99999, "name": "Unicorn Token", "symbol": "UNI", "slug": "unicorn-token", "cmc_rank": 4000,
+     "circulating_supply": 1000, "total_supply": 1000, "max_supply": null, "platform": null}
+  ]
+}

@@ -276,7 +276,7 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
 	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
-		Egress: MarketDataEgress{Default: EgressDirect}}
+		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog()}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
@@ -291,12 +291,18 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	assert.Contains(t, err.Error(), "market_data.lease_seconds")
 }
 
+func validCatalog() MarketDataCatalog {
+	return MarketDataCatalog{Priority: []string{"coingecko", "coinmarketcap"}, Coverage: CatalogCoverageList,
+		Top: 500, IntervalHours: 24, DetailsPerRun: 200, DetailsMaxAgeDays: 30, DeactivateAfterDays: 14}
+}
+
 func validMarketWorker() Configuration {
 	var c Configuration
 	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.DBName = "db", "5432", "app", "exchange"
 	c.MarketData = MarketDataConfig{Mode: MarketDataModeLive, HealthAddr: ":8081",
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
-		Egress: MarketDataEgress{Default: EgressProxy, ProxyURL: "socks5://user:secret@gw.example:1080"},
+		Egress:  MarketDataEgress{Default: EgressProxy, ProxyURL: "socks5://user:secret@gw.example:1080"},
+		Catalog: validCatalog(),
 		Sources: map[string]MarketDataSource{
 			"coingecko": {Enabled: true, RequestsPerMinute: 30, MonthlyRequests: 10000, TimeoutSeconds: 20},
 			"nobitex":   {Enabled: true, Egress: EgressDirect, TimeoutSeconds: 20},
@@ -346,6 +352,28 @@ func TestValidateMarketWorker_ChecksTheEgressAndTheSources(t *testing.T) {
 		assert.Contains(t, err.Error(), want)
 	}
 	assert.NotContains(t, err.Error(), "secret", "the proxy credentials are never repeated")
+}
+
+func TestValidateMarketWorker_ChecksTheCatalog(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+
+	Config = validMarketWorker()
+	Config.MarketData.Catalog = MarketDataCatalog{Priority: []string{"coingecko", "nomics", "coingecko"},
+		Coverage: "most", Top: -1, IntervalHours: 1000, DetailsPerRun: 0, DetailsMaxAgeDays: 400, DeactivateAfterDays: 0}
+	Config.MarketData.Sources["coinmarketcap"] = MarketDataSource{Enabled: true, TimeoutSeconds: 20}
+	err := ValidateMarketWorker()
+	require.Error(t, err)
+	for _, want := range []string{`has "nomics"`, `has "coingecko" twice`, "market_data.catalog.coverage",
+		"market_data.catalog.top", "market_data.catalog.interval_hours", "market_data.catalog.details_per_run",
+		"market_data.catalog.details_max_age_days", "market_data.catalog.deactivate_after_days",
+		"market_data.sources.coinmarketcap.api_key"} {
+		assert.Contains(t, err.Error(), want)
+	}
+
+	Config = validMarketWorker()
+	Config.MarketData.Sources["coinmarketcap"] = MarketDataSource{Enabled: true, APIKey: "key", TimeoutSeconds: 20, Egress: EgressDirect}
+	assert.NoError(t, ValidateMarketWorker())
 }
 
 func TestSourceKeyVar_AddsTheKeyWithoutEnablingTheSource(t *testing.T) {
