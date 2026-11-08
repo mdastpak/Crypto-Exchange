@@ -203,7 +203,7 @@ func (w *Watcher) Locked(use Feature, subject Subject) *Locked {
 }
 
 // Paused reports whether a lockdown pauses the background work feature,
-// FeatureScheduler or FeatureOutbox. Unknown controls pause nothing, so
+// FeatureScheduler, FeatureOutbox, or FeatureMarketData. Unknown controls pause nothing, so
 // that an outage of the database does not also stop the work that
 // recovers from it.
 func (w *Watcher) Paused(feature Feature) bool {

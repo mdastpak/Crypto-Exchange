@@ -19,6 +19,8 @@ const probeTimeout = 2 * time.Second
 type probes struct {
 	ping     func(ctx context.Context) error
 	draining atomic.Bool
+	// stopJobs stops the jobs at shutdown; nil when they do not run.
+	stopJobs func(ctx context.Context) error
 }
 
 func (p *probes) handler() http.Handler {

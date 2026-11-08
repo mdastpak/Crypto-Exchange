@@ -274,15 +274,18 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 
 	Config = Configuration{}
 	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
-	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081"}
+	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
+		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
 	Config.MarketData.Mode = "shadow"
 	Config.MarketData.HealthAddr = "8081"
+	Config.MarketData.LeaseSeconds = 5
 	err := ValidateMarketWorker()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "postgres.user")
 	assert.Contains(t, err.Error(), "market_data.mode")
 	assert.Contains(t, err.Error(), "market_data.health_addr")
+	assert.Contains(t, err.Error(), "market_data.lease_seconds")
 }

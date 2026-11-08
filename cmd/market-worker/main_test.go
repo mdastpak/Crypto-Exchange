@@ -92,3 +92,25 @@ func TestServe_ReportsAFailedListen(t *testing.T) {
 func TestApplicationName_NamesTheHost(t *testing.T) {
 	assert.True(t, strings.HasPrefix(applicationName(), "crypto-exchange-market-worker/"))
 }
+
+func TestServe_StopsTheJobsAtShutdown(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	stopped := false
+	p := &probes{ping: func(context.Context) error { return nil },
+		stopJobs: func(ctx context.Context) error {
+			_, ok := ctx.Deadline()
+			assert.True(t, ok, "the jobs stop within the shutdown deadline")
+			stopped = true
+			return errors.New("runs cancelled at shutdown")
+		}}
+	srv := &http.Server{Addr: addr, Handler: p.handler(), ReadHeaderTimeout: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = serve(ctx, srv, p)
+	assert.True(t, stopped)
+	assert.ErrorContains(t, err, "runs cancelled at shutdown")
+}

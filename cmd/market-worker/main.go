@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,6 +25,8 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/jobs"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 )
 
 var (
@@ -67,13 +70,17 @@ func run() error {
 	defer postgres.Close()
 
 	cfg := config.Config.MarketData
+	var stopJobs func(ctx context.Context) error
 	if cfg.Enabled {
+		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, jobSpecs()); err != nil {
+			return err
+		}
 		log.Printf("Market worker started in %s mode", cfg.Mode)
 	} else {
 		log.Println("market_data.enabled is false: the worker runs no job and only answers its probes")
 	}
 
-	probes := &probes{ping: postgres.Ping}
+	probes := &probes{ping: postgres.Ping, stopJobs: stopJobs}
 	srv := &http.Server{
 		Addr:              cfg.HealthAddr,
 		Handler:           probes.handler(),
@@ -100,10 +107,52 @@ func serve(ctx context.Context, srv *http.Server, p *probes) error {
 	p.draining.Store(true)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	// The runs in progress finish, or are cancelled at the deadline and are
+	// due at once for another worker.
+	if p.stopJobs != nil {
+		if err := p.stopJobs(shutdownCtx); err != nil {
+			failure = errors.Join(failure, err)
+		}
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		failure = errors.Join(failure, err)
 	}
 	return failure
+}
+
+// jobSpecs are the jobs of the worker. The sources and their jobs come
+// with #265 to #268.
+func jobSpecs() []jobs.Spec { return nil }
+
+// startJobs starts the platform watcher, whose lockdown of market_data
+// pauses the jobs on every worker, and the runner of the jobs. It returns
+// the function that stops both.
+func startJobs(conn *sql.DB, node string, specs []jobs.Spec) (func(ctx context.Context) error, error) {
+	settings, err := platform.SettingsFromConfig()
+	if err != nil {
+		return nil, fmt.Errorf("invalid platform configuration: %w", err)
+	}
+	watcher := platform.NewWatcher(conn, settings.Options)
+	cfg := config.Config.MarketData
+	runner, err := jobs.NewRunner(conn, jobs.Options{
+		Node:          node,
+		Mode:          cfg.Mode,
+		Poll:          time.Duration(cfg.PollSeconds) * time.Second,
+		Lease:         time.Duration(cfg.LeaseSeconds) * time.Second,
+		MaxConcurrent: cfg.MaxConcurrentJobs,
+		RetryBase:     time.Duration(cfg.RetryBaseSeconds) * time.Second,
+		Paused:        func() bool { return watcher.Paused(platform.FeatureMarketData) },
+	}, specs...)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	watcher.Start(ctx)
+	runner.Start()
+	return func(ctx context.Context) error {
+		return errors.Join(runner.Stop(ctx), watcher.Stop(ctx))
+	}, nil
 }
 
 // applicationName is the application_name of a worker:

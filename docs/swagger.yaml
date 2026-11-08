@@ -70,6 +70,7 @@ definitions:
         - read_only
         - scheduler
         - outbox
+        - market_data
       kind:
         allOf:
         - $ref: '#/definitions/platform.Kind'
@@ -873,6 +874,7 @@ definitions:
         - read_only
         - scheduler
         - outbox
+        - market_data
       id:
         format: uuid
         type: string
@@ -921,6 +923,7 @@ definitions:
     - read_only
     - scheduler
     - outbox
+    - market_data
     - service
     - writes
     type: string
@@ -936,6 +939,7 @@ definitions:
     - FeatureReadOnly
     - FeatureScheduler
     - FeatureOutbox
+    - FeatureMarketData
     - UseService
     - UseWrites
   platform.Kind:

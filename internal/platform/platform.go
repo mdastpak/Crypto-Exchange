@@ -58,12 +58,16 @@ const (
 	// maintenance that needs a quiet database. Users never see them.
 	FeatureScheduler Feature = "scheduler"
 	FeatureOutbox    Feature = "outbox"
+	// FeatureMarketData pauses the jobs of cmd/market-worker (#264), which
+	// collect the global market data catalog. Users never see it.
+	FeatureMarketData Feature = "market_data"
 )
 
 // Features are the features that a lockdown can close.
 var Features = []Feature{
 	FeatureSignUp, FeatureSignIn, FeatureProfileChanges, FeatureDeposits, FeatureWithdrawals,
 	FeatureTrading, FeatureAPIKeys, FeatureWebSocket, FeatureReadOnly, FeatureScheduler, FeatureOutbox,
+	FeatureMarketData,
 }
 
 // Uses of the service that no lockdown names, which the gates check.
@@ -80,7 +84,9 @@ const (
 func (f Feature) Valid() bool { return slices.Contains(Features, f) }
 
 // internal reports whether users never see a lockdown of f.
-func (f Feature) internal() bool { return f == FeatureScheduler || f == FeatureOutbox }
+func (f Feature) internal() bool {
+	return f == FeatureScheduler || f == FeatureOutbox || f == FeatureMarketData
+}
 
 // covers reports whether a control of kind and feature closes use. A full
 // maintenance closes every use of users, but not the background work. A
@@ -111,7 +117,7 @@ type Message struct {
 type Control struct {
 	HK      string   `json:"id" format:"uuid"`
 	Kind    Kind     `json:"kind" enums:"maintenance,lockdown"`
-	Feature *Feature `json:"feature,omitempty" enums:"sign_up,sign_in,profile_changes,deposits,withdrawals,trading,api_keys,websocket,read_only,scheduler,outbox"`
+	Feature *Feature `json:"feature,omitempty" enums:"sign_up,sign_in,profile_changes,deposits,withdrawals,trading,api_keys,websocket,read_only,scheduler,outbox,market_data"`
 	// StartsAt is when the control applies; EndsAt, when set, when it
 	// stops.
 	StartsAt time.Time  `json:"starts_at"`

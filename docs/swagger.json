@@ -4411,7 +4411,8 @@
                         "websocket",
                         "read_only",
                         "scheduler",
-                        "outbox"
+                        "outbox",
+                        "market_data"
                     ],
                     "allOf": [
                         {
@@ -5522,7 +5523,8 @@
                         "websocket",
                         "read_only",
                         "scheduler",
-                        "outbox"
+                        "outbox",
+                        "market_data"
                     ],
                     "allOf": [
                         {
@@ -5593,6 +5595,7 @@
                 "read_only",
                 "scheduler",
                 "outbox",
+                "market_data",
                 "service",
                 "writes"
             ],
@@ -5608,6 +5611,7 @@
                 "FeatureReadOnly",
                 "FeatureScheduler",
                 "FeatureOutbox",
+                "FeatureMarketData",
                 "UseService",
                 "UseWrites"
             ]

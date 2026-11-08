@@ -339,6 +339,10 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `enabled` | `false` | Runs the jobs of the worker. A worker that is not enabled only answers its health probes, so that it can be deployed before it is switched on. |
 | `mode` | `dry_run` | `dry_run` or `live`. In `dry_run`, the jobs collect and check what they would write, and record only their runs; in `live`, they write. Try a new source or job in `dry_run` first. |
 | `health_addr` | `:8081` | The address of the worker's `/system/live` and `/system/ready`. |
+| `poll_seconds` | `5` | From 1 to 300. How often each worker looks for due jobs. |
+| `lease_seconds` | `60` | From 10 to 3600. How long a worker holds a job without renewing it, which it does every third of this time: how soon another worker takes over the job of a worker that died. |
+| `max_concurrent_jobs` | `4` | From 1 to 64. The runs of one worker at once. |
+| `retry_base_seconds` | `30` | From 1 to 3600. The wait after a failed run. It doubles with each further failure in a row, up to the interval of the job, with a jitter of ±20 %. |
 
 ### `platform`
 

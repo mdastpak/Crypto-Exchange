@@ -253,6 +253,10 @@ market_data:
   enabled: false               # Run the jobs; off answers only the probes
   mode: dry_run                # dry_run (collect and check, write nothing) or live
   health_addr: ":8081"         # /system/live and /system/ready
+  poll_seconds: 5              # How often each worker looks for due jobs
+  lease_seconds: 60            # How soon another worker takes over a dead worker's job
+  max_concurrent_jobs: 4       # Runs of one worker at once
+  retry_base_seconds: 30       # Wait after a failed run, doubled per failure up to the job's interval
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.
