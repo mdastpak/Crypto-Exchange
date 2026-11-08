@@ -246,6 +246,14 @@ favorites:
 delisting:
   interval_seconds: 30         # How often; a step applies at most this late
 
+# cmd/market-worker: collects the global market data catalog (unverified
+# assets, and the markets of global and Iranian exchanges); see
+# docs/market-data.md. The server does not read this section.
+market_data:
+  enabled: false               # Run the jobs; off answers only the probes
+  mode: dry_run                # dry_run (collect and check, write nothing) or live
+  health_addr: ":8081"         # /system/live and /system/ready
+
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.
 keys:

@@ -34,7 +34,7 @@ jobs:
       - name: Check that the image holds only the binaries and migrations
         run: |
           unexpected=$(docker run --rm --entrypoint /bin/sh crypto-exchange:ci -c \
-            'find /app -type f ! -path "/app/internal/db/migrations/*.sql" ! -path /app/server ! -path /app/admin')
+            'find /app -type f ! -path "/app/internal/db/migrations/*.sql" ! -path /app/server ! -path /app/admin ! -path /app/market-worker')
           if [ -n "$unexpected" ]; then
             echo "Unexpected files in /app:"
             echo "$unexpected"

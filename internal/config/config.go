@@ -318,6 +318,10 @@ type Configuration struct {
 		IntervalSeconds int `yaml:"interval_seconds"`
 	} `yaml:"delisting"`
 
+	// MarketData configures cmd/market-worker, which collects the global
+	// market data catalog (#262).
+	MarketData MarketDataConfig `yaml:"market_data"`
+
 	// Platform configures the maintenance and lockdown controls (#235).
 	Platform struct {
 		// PollIntervalMs is how often each instance reads the version of
@@ -790,6 +794,32 @@ func (m MobileOwnershipConfig) Recheck() time.Duration {
 	return time.Duration(m.RecheckDays) * 24 * time.Hour
 }
 
+// MarketDataConfig configures cmd/market-worker (#262), which collects
+// asset metadata and the markets of exchanges into the unverified catalog.
+// The server does not read it.
+type MarketDataConfig struct {
+	// Enabled runs the jobs of the worker. A worker that is not enabled
+	// only answers its health probes, so that it can be deployed first and
+	// switched on later.
+	Enabled bool `yaml:"enabled"`
+	// Mode is "dry_run", where the jobs collect and check what they would
+	// write and record only their runs, or "live", where they write.
+	Mode string `yaml:"mode"`
+	// HealthAddr is the address of the worker's health probes,
+	// /system/live and /system/ready.
+	HealthAddr string `yaml:"health_addr"`
+}
+
+// The modes of market_data.mode.
+const (
+	MarketDataModeDryRun = "dry_run"
+	MarketDataModeLive   = "live"
+)
+
+// DefaultMarketDataHealthAddr is the default address of the probes of
+// cmd/market-worker.
+const DefaultMarketDataHealthAddr = ":8081"
+
 // DefaultJibitEndpoint is the base URL of the Jibit identity API.
 const DefaultJibitEndpoint = "https://napi.jibit.ir/ide"
 
@@ -1110,6 +1140,13 @@ func setDefaults() {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
 		}
+	}
+
+	if Config.MarketData.Mode == "" {
+		Config.MarketData.Mode = MarketDataModeDryRun
+	}
+	if Config.MarketData.HealthAddr == "" {
+		Config.MarketData.HealthAddr = DefaultMarketDataHealthAddr
 	}
 
 	if Config.Exchange.Timezone == "" {

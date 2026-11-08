@@ -218,6 +218,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)
 	}
+	c.marketDataProblems(p)
 	if v := c.Delisting.IntervalSeconds; v < 1 || v > MaxDelistingIntervalSeconds {
 		p.add("delisting.interval_seconds", "is %d; it must be from 1 to %d", v, MaxDelistingIntervalSeconds)
 	}
@@ -419,6 +420,51 @@ func (c *Configuration) redisModeProblems(p *problems) {
 	if r.DurableWrites.TimeoutMs < 1 {
 		p.add("redis.durable_writes.timeout_ms", "is %d; it must be at least 1", r.DurableWrites.TimeoutMs)
 	}
+}
+
+// ValidateMarketWorker checks the settings that cmd/market-worker uses
+// (#263), and reports every problem at once. The worker needs PostgreSQL
+// and its own section, not the settings of the server.
+func ValidateMarketWorker() error {
+	var p problems
+	c := &Config
+	var missing []string
+	for _, r := range []struct {
+		ok  bool
+		key string
+	}{
+		{c.Postgres.Host != "" || len(c.Postgres.Hosts) > 0, "postgres.host"},
+		{c.Postgres.Port != "" || len(c.Postgres.Hosts) > 0, "postgres.port"},
+		{c.Postgres.User != "", "postgres.user"},
+		{c.Postgres.DBName != "", "postgres.dbname"},
+	} {
+		if !r.ok {
+			missing = append(missing, setting(r.key))
+		}
+	}
+	if len(missing) > 0 {
+		p = append(p, "required settings are not set: "+strings.Join(missing, ", "))
+	}
+	c.marketDataProblems(&p)
+	return p.err()
+}
+
+// marketDataProblems checks the market_data section.
+func (c *Configuration) marketDataProblems(p *problems) {
+	if m := c.MarketData.Mode; m != MarketDataModeDryRun && m != MarketDataModeLive {
+		p.add("market_data.mode", "is %q; it must be %q or %q", m, MarketDataModeDryRun, MarketDataModeLive)
+	}
+	if !validListenAddr(c.MarketData.HealthAddr) {
+		p.add("market_data.health_addr", "is %q; it must be a port with an optional host, such as :8081", c.MarketData.HealthAddr)
+	}
+}
+
+// validListenAddr reports whether addr is [host]:port with a port from 1 to
+// 65535; an empty host listens on every interface.
+func validListenAddr(addr string) bool {
+	_, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	n, portErr := strconv.Atoi(port)
+	return err == nil && portErr == nil && n >= 1 && n <= 65535
 }
 
 // validHostPort reports whether hostPort is host:port with a port from 1

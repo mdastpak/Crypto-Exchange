@@ -267,3 +267,22 @@ func TestValidateServer_RedisModes(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+
+	Config = Configuration{}
+	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
+	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081"}
+	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
+
+	Config.Postgres.User = ""
+	Config.MarketData.Mode = "shadow"
+	Config.MarketData.HealthAddr = "8081"
+	err := ValidateMarketWorker()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "postgres.user")
+	assert.Contains(t, err.Error(), "market_data.mode")
+	assert.Contains(t, err.Error(), "market_data.health_addr")
+}

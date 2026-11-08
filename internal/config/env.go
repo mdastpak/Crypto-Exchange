@@ -213,6 +213,8 @@ var envVars = []EnvVar{
 	intVar("IDENTITY_MOBILE_OWNERSHIP_TIMEOUT_SECONDS", "identity.mobile_ownership.timeout_seconds", func(c *Configuration) *int { return &c.Identity.MobileOwnership.TimeoutSeconds }),
 	intVar("IDENTITY_MOBILE_OWNERSHIP_RECHECK_DAYS", "identity.mobile_ownership.recheck_days", func(c *Configuration) *int { return &c.Identity.MobileOwnership.RecheckDays }),
 	intVar("FAVORITES_MAX_PER_USER", "favorites.max_per_user", func(c *Configuration) *int { return &c.Favorites.MaxPerUser }),
+	boolVar("MARKET_DATA_ENABLED", "market_data.enabled", func(c *Configuration) *bool { return &c.MarketData.Enabled }),
+	stringVar("MARKET_DATA_MODE", "market_data.mode", func(c *Configuration) *string { return &c.MarketData.Mode }),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
 	intVar("PLATFORM_POLL_INTERVAL_MS", "platform.poll_interval_ms", func(c *Configuration) *int { return &c.Platform.PollIntervalMs }),
 	intVar("PLATFORM_STALE_AFTER_SECONDS", "platform.stale_after_seconds", func(c *Configuration) *int { return &c.Platform.StaleAfterSeconds }),
