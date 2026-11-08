@@ -20,6 +20,7 @@
 //	admin [-config path] [-migrations url] platform lift -id <uuid> -note <text>
 //	admin [-config path] backup status [-rpo 5m]
 //	admin [-config path] [-migrations url] restore verify [-not-before t] [-not-after t] [-keys]
+//	admin [-config path] [-migrations url] migrate [up|status]
 //
 // create and reset-totp print the authenticator secret once. The server
 // needs admin.totp_key (or ADMIN_TOTP_KEY) set to the same value. The keys
@@ -31,7 +32,9 @@
 // server instance applies a change within platform.poll_interval_ms.
 // backup status and restore verify check WAL archiving and a restored
 // database (#236); they only read, never migrate, and exit with 1 when a
-// check fails, for monitoring and restore drills.
+// check fails, for monitoring and restore drills. migrate applies the
+// migrations with the migration role and grants the runtime role (#180),
+// as the release step of postgres.migrations.mode "external".
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -95,6 +98,13 @@ Backups and restores (read only; exit status 1 when a check fails; see docs/disa
   backup status [-rpo 5m]                  Check WAL archiving on the primary against the RPO.
   restore verify [-not-before t] [-not-after t] [-keys]
                                            Check a restored database before it is put in service.
+
+Schema (see docs/configuration.md#database-roles):
+  migrate [up]       Apply the migrations with postgres.migrations.user, and grant postgres.user
+                     its privileges. Run it once per release, before the new instances start.
+  migrate status     Show the schema version and what postgres.user could change; exit status 1
+                     when the database is behind or dirty, or, in release mode, the role could
+                     change the schema.
 `
 
 func main() {
@@ -150,6 +160,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseBackupArgs(cmd, global.Args()[1:], stderr)
 	case "restore":
 		return parseRestoreArgs(cmd, global.Args()[1:], stderr)
+	case "migrate":
+		return parseMigrateArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -270,6 +282,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "backup ") || strings.HasPrefix(cmd.name, "restore ") {
 		return runRecovery(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "migrate ") {
+		return runMigrate(cmd, stdout, stderr)
 	}
 	if config.Config.Admin.TOTPKey == "" {
 		fmt.Fprintln(stderr, "Error: admin.totp_key (or ADMIN_TOTP_KEY) is required; generate one with: openssl rand -base64 32")

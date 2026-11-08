@@ -120,6 +120,9 @@ type Configuration struct {
 		// lock at startup; an instance that cannot get it stops, naming
 		// the session that holds it.
 		MigrationLockTimeoutSeconds int `yaml:"migration_lock_timeout_seconds"`
+		// Migrations separates the role that changes the schema from the
+		// role that the server runs with (#180).
+		Migrations PostgresMigrations `yaml:"migrations"`
 	} `yaml:"postgres"`
 
 	Redis struct {
@@ -528,6 +531,38 @@ const (
 	DefaultPostgresMigrationLockTimeoutSeconds = 300
 )
 
+// PostgresMigrations configures who migrates the schema, and when (#180).
+//
+// The server runs with postgres.user, the runtime role, which reads and
+// writes rows but owns nothing and cannot change the schema. The
+// migrations run with User, the migration role, which owns the schema.
+// After every migration, the migration role grants the runtime role what
+// it needs: SELECT, INSERT, UPDATE, and DELETE on the tables, only SELECT
+// and INSERT on the append-only ones, and USAGE on the sequences.
+type PostgresMigrations struct {
+	// Mode is when the migrations run. "startup", the default, migrates
+	// at the start of every instance, under an advisory lock; that suits
+	// development and a single instance. "external" never migrates in the
+	// server: a release step runs "admin migrate" before the new instances
+	// start, and an instance refuses to start while the database is behind
+	// its migrations. Release mode needs "external".
+	Mode string `yaml:"mode"`
+	// User and Password are the migration role. Empty, the migrations use
+	// postgres.user and postgres.password, as one role that owns
+	// everything, which release mode refuses.
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+}
+
+// The values of postgres.migrations.mode.
+const (
+	MigrationsModeStartup  = "startup"
+	MigrationsModeExternal = "external"
+)
+
+// MigrationsModes lists the values of postgres.migrations.mode.
+var MigrationsModes = []string{MigrationsModeStartup, MigrationsModeExternal}
+
 // PostgresTargetSessionAttrs are the values of postgres.target_session_attrs.
 var PostgresTargetSessionAttrs = []string{"any", "read-write", "read-only", "primary", "standby", "prefer-standby"}
 
@@ -847,6 +882,9 @@ func setDefaults() {
 	}
 	if Config.Postgres.TargetSessionAttrs == "" {
 		Config.Postgres.TargetSessionAttrs = DefaultPostgresTargetSessionAttrs
+	}
+	if Config.Postgres.Migrations.Mode == "" {
+		Config.Postgres.Migrations.Mode = MigrationsModeStartup
 	}
 	for _, d := range []struct {
 		field *int

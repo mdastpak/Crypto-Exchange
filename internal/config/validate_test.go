@@ -34,6 +34,7 @@ func secureRelease(t *testing.T) Configuration {
 	c.WebSocket.AllowedOrigins = []string{"https://app.example.com"}
 	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.DBName = "db", "5432", "exchange", "exchange"
 	c.Postgres.Password, c.Postgres.SSLMode = "a-password-of-its-own", "verify-full"
+	c.Postgres.Migrations.Mode = MigrationsModeExternal
 	c.Redis.Host, c.Redis.Port, c.Redis.Password = "redis", "6379", "a-redis-password"
 	c.RabbitMQ.Host, c.RabbitMQ.Port, c.RabbitMQ.Username, c.RabbitMQ.Password = "mq", "5672", "exchange", "an-mq-password"
 	// One dependency with TLS, the other on an acknowledged private network.
@@ -74,14 +75,18 @@ func TestValidateServer_Rules(t *testing.T) {
 		"sslmode allow":                {func(c *Configuration) { c.Postgres.SSLMode = "allow" }, `postgres.sslmode (POSTGRES_SSLMODE) is "allow"`},
 		"empty database password":      {func(c *Configuration) { c.Postgres.Password = "" }, "postgres.password (POSTGRES_PASSWORD) is empty or the default"},
 		"default database password":    {func(c *Configuration) { c.Postgres.Password = "postgres" }, "postgres.password (POSTGRES_PASSWORD) is empty or the default"},
-		"no Redis password":            {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
-		"RabbitMQ guest user":          {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
-		"RabbitMQ guest password":      {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
-		"Redis without TLS":            {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
-		"RabbitMQ without TLS":         {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
-		"Redis CA file missing":        {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
-		"IPv6 prefix too short":        {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
-		"IPv6 prefix too long":         {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
+		"migrations at startup":        {func(c *Configuration) { c.Postgres.Migrations.Mode = MigrationsModeStartup }, `postgres.migrations.mode (POSTGRES_MIGRATIONS_MODE) is "startup"; release mode needs "external"`},
+		"migration password in server": {func(c *Configuration) {
+			c.Postgres.Migrations.User, c.Postgres.Migrations.Password = "exchange_owner", "secret"
+		}, "postgres.migrations.password (POSTGRES_MIGRATIONS_PASSWORD) is set; in release mode only the release step"},
+		"no Redis password":       {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
+		"RabbitMQ guest user":     {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
+		"RabbitMQ guest password": {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
+		"Redis without TLS":       {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
+		"RabbitMQ without TLS":    {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
+		"Redis CA file missing":   {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
+		"IPv6 prefix too short":   {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
+		"IPv6 prefix too long":    {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
 		"RabbitMQ half a client pair": {func(c *Configuration) {
 			c.RabbitMQ.TLS.Enabled, c.RabbitMQ.TLS.CertFile = true, "/run/secrets/client.pem"
 		}, "rabbitmq.tls cannot be used: cert_file and key_file must be set together"},
@@ -110,6 +115,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		"negative client message rate":     {func(c *Configuration) { c.WebSocket.ClientMessagesPerSecond = -1 }, "websocket.client_messages_per_second (WS_CLIENT_MESSAGES_PER_SECOND) is -1"},
 		"more per address than in total":   {func(c *Configuration) { c.WebSocket.MaxConnectionsPerIP = 20000 }, "websocket.max_connections_per_ip (WS_MAX_CONNECTIONS_PER_IP) is 20000; it must not exceed websocket.max_connections (10000)"},
 		"negative worker count":            {func(c *Configuration) { c.Notifications.Worker.Concurrency = -1 }, "notifications.worker.concurrency is -1"},
+		"unknown migrations mode":          {func(c *Configuration) { c.Postgres.Migrations.Mode = "later" }, `postgres.migrations.mode (POSTGRES_MIGRATIONS_MODE) is "later"; it must be one of startup, external`},
+		"migration password without user":  {func(c *Configuration) { c.Server.Mode, c.Postgres.Migrations.Password = "debug", "secret" }, "postgres.migrations.password (POSTGRES_MIGRATIONS_PASSWORD) is set without postgres.migrations.user"},
 		"negative rate limit":              {func(c *Configuration) { c.RateLimits.Auth.OTPRequestsPerHour = -1 }, "rate_limits.auth.otp_requests_per_hour (RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR) is -1"},
 
 		// TLS files, in every mode.
@@ -133,10 +140,11 @@ func TestValidateServer_ReleaseRulesOnlyApplyInReleaseMode(t *testing.T) {
 	c.RabbitMQ.Username, c.RabbitMQ.Password = "guest", "guest"
 	c.Server.CORS.AllowedOrigins = []string{"http://localhost:3000"}
 	c.WebSocket.AllowedOrigins = []string{"*"}
+	c.Postgres.Migrations.Mode = MigrationsModeStartup
 	assert.Empty(t, problemsOf(c), "development settings are fine outside release mode")
 
 	c.Server.Mode = "release"
-	assert.Len(t, problemsOf(c), 7, "release mode lists every problem at once")
+	assert.Len(t, problemsOf(c), 8, "release mode lists every problem at once")
 }
 
 // writeKeyPair writes a self-signed certificate and its key, and returns

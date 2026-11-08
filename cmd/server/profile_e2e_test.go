@@ -214,9 +214,11 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		// value. The profile must still report the same instant.
 		_, err := env.db.Exec(`UPDATE users SET created_at = (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Tehran' WHERE hk = $1`, id)
 		require.NoError(t, err)
-		_, err = env.db.Exec(`ALTER DATABASE ` + e2eDBName + ` SET timezone TO 'Asia/Tehran'`)
+		// The server's runtime role cannot change the database (#180).
+		owner := e2eOwnerDB(t)
+		_, err = owner.Exec(`ALTER DATABASE ` + e2eDBName + ` SET timezone TO 'Asia/Tehran'`)
 		require.NoError(t, err)
-		t.Cleanup(func() { _, _ = env.db.Exec(`ALTER DATABASE ` + e2eDBName + ` RESET timezone`) })
+		t.Cleanup(func() { _, _ = owner.Exec(`ALTER DATABASE ` + e2eDBName + ` RESET timezone`) })
 		// env.db is the server's pool: new connections pick up the setting.
 		env.db.SetMaxIdleConns(0)
 		env.db.SetMaxIdleConns(2)
