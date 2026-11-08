@@ -125,9 +125,25 @@ const uniqueViolation = "23505"
 // keys. Load fails when a key cannot be unwrapped: data protected with it
 // could not be verified or read.
 func (s *Store) Load(ctx context.Context) (*Keyring, error) {
-	for _, purpose := range Purposes {
-		if err := s.createFirst(ctx, purpose); err != nil {
-			return nil, err
+	return s.load(ctx, true)
+}
+
+// LoadExisting unwraps every data key that is not retired, as Load does,
+// but creates none: a purpose without any key stays without one. cmd/admin
+// uses it, since the server creates the first keys on its first start, and
+// the keys of a purpose that a newer release added appear only once an
+// instance of that release has started. It returns ErrNoKey when there are
+// no keys at all.
+func (s *Store) LoadExisting(ctx context.Context) (*Keyring, error) {
+	return s.load(ctx, false)
+}
+
+func (s *Store) load(ctx context.Context, create bool) (*Keyring, error) {
+	if create {
+		for _, purpose := range Purposes {
+			if err := s.createFirst(ctx, purpose); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -165,7 +181,13 @@ func (s *Store) Load(ctx context.Context) (*Keyring, error) {
 	if err := s.scanLatest(ctx, latest); err != nil {
 		return nil, err
 	}
+	if !create && len(latest) == 0 {
+		return nil, fmt.Errorf("%w: there are no data keys yet; the server creates them on its first start", ErrNoKey)
+	}
 	for _, purpose := range Purposes {
+		if !create && latest[purpose] == 0 {
+			continue
+		}
 		newest, ok := ring.newest(purpose)
 		if !ok {
 			return nil, fmt.Errorf("every data key of purpose %s is retired; check the data_keys table", purpose)

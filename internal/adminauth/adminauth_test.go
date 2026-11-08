@@ -83,7 +83,7 @@ func newKey(t *testing.T) []byte {
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
 	conn := migratedTestDB(t)
-	service, err := NewService(conn, newKey(t), "Crypto Exchange")
+	service, err := NewService(conn, Secrets{LegacyKey: newKey(t)}, "Crypto Exchange")
 	require.NoError(t, err)
 	return service, conn
 }
@@ -189,7 +189,7 @@ func TestVerifyTOTP_NeedsTheKeyAndTheRightAdministrator(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Unix(1_900_000_000, 0)
 
-	otherKey, err := NewService(conn, newKey(t), "Crypto Exchange")
+	otherKey, err := NewService(conn, Secrets{LegacyKey: newKey(t)}, "Crypto Exchange")
 	require.NoError(t, err)
 	otherKey.now = func() time.Time { return now }
 	err = otherKey.VerifyTOTP(ctx, first.AdminID, at(t, service, now, first))
@@ -251,8 +251,10 @@ func TestDecodeKey(t *testing.T) {
 		_, err := DecodeKey(encoded)
 		assert.ErrorIs(t, err, ErrInvalidKey, "%q", encoded)
 	}
-	_, err = NewService(nil, key[:16], "")
+	_, err = NewService(nil, Secrets{LegacyKey: key[:16]}, "")
 	assert.ErrorIs(t, err, ErrInvalidKey)
+	_, err = NewService(nil, Secrets{}, "")
+	assert.ErrorIs(t, err, ErrNoKeys)
 }
 
 func TestMaskEmail(t *testing.T) {

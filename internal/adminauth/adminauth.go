@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -36,13 +35,15 @@ var (
 // KeySize is the size of the key that encrypts TOTP secrets.
 const KeySize = 32
 
-// sealedPrefix marks the format of encrypted secrets, so that it can change.
-const sealedPrefix = "v1:"
-
 // Service manages administrator accounts.
 type Service struct {
-	db      *sql.DB
-	secrets cipher.AEAD
+	db *sql.DB
+	// legacy is the AEAD of admin.totp_key, or nil when it is not set;
+	// dataKeys seals with the field-enc data keys, or is nil without
+	// keys.provider (#146). writes is the format of new secrets.
+	legacy   cipher.AEAD
+	dataKeys FieldSealer
+	writes   Format
 	// issuer names the exchange in authenticator apps.
 	issuer string
 	now    func() time.Time
@@ -61,24 +62,31 @@ func DecodeKey(encoded string) ([]byte, error) {
 	return key, nil
 }
 
-// NewService returns a service that stores TOTP secrets encrypted with key.
-// issuer names the exchange in authenticator apps.
-func NewService(db *sql.DB, key []byte, issuer string) (*Service, error) {
-	if len(key) != KeySize {
-		return nil, ErrInvalidKey
+// NewService returns a service that stores TOTP secrets sealed with the keys
+// of secrets, at least one of which must be set. issuer names the exchange in
+// authenticator apps.
+func NewService(db *sql.DB, secrets Secrets, issuer string) (*Service, error) {
+	s := &Service{db: db, dataKeys: secrets.DataKeys, writes: secrets.WriteFormat(), now: time.Now}
+	if secrets.LegacyKey != nil {
+		if len(secrets.LegacyKey) != KeySize {
+			return nil, ErrInvalidKey
+		}
+		block, err := aes.NewCipher(secrets.LegacyKey)
+		if err != nil {
+			return nil, err
+		}
+		if s.legacy, err = cipher.NewGCM(block); err != nil {
+			return nil, err
+		}
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	secrets, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
+	if s.legacy == nil && s.dataKeys == nil {
+		return nil, ErrNoKeys
 	}
 	if issuer == "" {
 		issuer = "Exchange"
 	}
-	return &Service{db: db, secrets: secrets, issuer: issuer, now: time.Now}, nil
+	s.issuer = issuer
+	return s, nil
 }
 
 // NormalizeEmail returns address in lower case, or ErrInvalidEmail when it is
@@ -371,34 +379,4 @@ func (s *Service) newSecret(adminID string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	return secret, sealed, nil
-}
-
-// seal encrypts secret with AES-GCM. The administrator's ID is authenticated
-// data, so a secret cannot be copied to another administrator.
-func (s *Service) seal(adminID string, secret []byte) (string, error) {
-	nonce := make([]byte, s.secrets.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	sealed := s.secrets.Seal(nonce, nonce, secret, []byte(adminID))
-	return sealedPrefix + base64.StdEncoding.EncodeToString(sealed), nil
-}
-
-func (s *Service) open(adminID, stored string) ([]byte, error) {
-	encoded, ok := strings.CutPrefix(stored, sealedPrefix)
-	if !ok {
-		return nil, errors.New("the stored authenticator secret has an unknown format")
-	}
-	sealed, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil || len(sealed) < s.secrets.NonceSize() {
-		return nil, errors.New("the stored authenticator secret is malformed")
-	}
-	nonce, ciphertext := sealed[:s.secrets.NonceSize()], sealed[s.secrets.NonceSize():]
-	secret, err := s.secrets.Open(nil, nonce, ciphertext, []byte(adminID))
-	if err != nil {
-		// Usually a changed admin.totp_key: the administrator must be
-		// enrolled again with ResetTOTP.
-		return nil, fmt.Errorf("decrypt the authenticator secret: %w", err)
-	}
-	return secret, nil
 }

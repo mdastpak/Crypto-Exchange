@@ -74,7 +74,7 @@ func TestWebSocket_AnotherInstanceRelaysTheEvent(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	handlers := initializeHandlers(services)
-	key, err := adminSignInKey()
+	key, err := legacyTOTPKey()
 	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, key, env.sender))
 	second, err := newEngine()

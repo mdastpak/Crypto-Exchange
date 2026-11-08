@@ -8,7 +8,7 @@ A crypto exchange holds identity documents and money, so access to its database 
 | Row seals: a keyed MAC over each protected row, so that a change made outside the backend is detected | Planned ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) |
 | Field encryption: personal, identity, and financial fields stored as ciphertext, with blind indexes for lookups | Planned ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
 
-The first use is the secret of HMAC API keys, which is stored sealed with a `field-enc` key ([#45](https://github.com/mdastpak/Crypto-Exchange/issues/45)). The API does not issue API keys yet ([#63](https://github.com/mdastpak/Crypto-Exchange/issues/63)). Until it does, and until row seals and field encryption land, the server loads the keys when a provider is configured, and only logs a warning when none is.
+The data keys also protect the authenticator secrets of administrators (`users.totp_secret`, sealed with `field-enc`) and the sign-in codes in Redis (`otp-mac`), which `admin.totp_key` and `otp.auth.secret` protected before ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)); see [moving off the legacy secrets](#moving-off-the-legacy-secrets). The first use was the secret of HMAC API keys, which is stored sealed with a `field-enc` key ([#45](https://github.com/mdastpak/Crypto-Exchange/issues/45)). The API does not issue API keys yet ([#63](https://github.com/mdastpak/Crypto-Exchange/issues/63)). Until it does, and until row seals and field encryption land, the server loads the keys when a provider is configured, and only logs a warning when none is.
 
 ## Key hierarchy
 
@@ -29,6 +29,7 @@ flowchart LR
 | `row-mac` | HMAC-SHA-256 | Row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) |
 | `field-enc` | AES-256-GCM | Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)), the secrets of HMAC API keys (`api_keys.secret_sealed`), and verified national IDs (`user_national_ids.national_id_sealed`, [#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) |
 | `blind-index` | HMAC-SHA-256 | Equality lookups of encrypted values ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
+| `otp-mac` | HMAC-SHA-256 | Sign-in codes in Redis ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)): the root from which the HMAC key of codes, contacts, and clients and the AES-256-GCM key of contacts are derived, each with a label of its own. Each session stores the version that protects it. |
 
 Every key has one purpose and only offers the operation of that purpose. A MAC key cannot encrypt, and an encryption key cannot seal.
 
@@ -46,7 +47,7 @@ The wrapped plaintext contains the purpose and the version besides the key. Afte
 
 ### Sealed values
 
-`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`, and for national IDs `user_national_ids.national_id_sealed:<user hk>`. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
+`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`, for national IDs `user_national_ids.national_id_sealed:<user hk>`, and for authenticator secrets `users.totp_secret:<admin hk>`. An authenticator secret is stored as `v2:` and the sealed value in base64; `v1:` marks one sealed with `admin.totp_key`. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
 
 ### Versions
 
@@ -148,6 +149,19 @@ If an instance cannot load the new version, because it cannot reach the key mana
 
 Rotating a `blind-index` key also needs a second index during the change ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)).
 
+Rotating `otp-mac` needs no re-encryption: the sessions it protects live for `otp.auth.ttl_seconds`, and each names its version, so the codes pending at the activation still verify. The per-contact limits of sign-in are counted under an ID that the key computes, so they start again at the activation, once per rotation. Retire the older version after `otp.auth.ttl_seconds`.
+
+### Moving off the legacy secrets
+
+Releases before [#146](https://github.com/mdastpak/Crypto-Exchange/issues/146) protect two things with secrets that live in the configuration, outside the key management service and its access log: the authenticator secrets of administrators with `admin.totp_key` (`ADMIN_TOTP_KEY`), and the sign-in codes and contacts in Redis with `otp.auth.secret` (`OTP_SECRET`). Since #146 the data keys protect both. A deployment moves in steps, so that every instance always reads what every other instance writes:
+
+1. **Roll out the release, with `keys.provider` set, and keep both secrets** and `keys.legacy_secrets: write` (the default). New instances read both kinds and still write with the secrets, which the instances of the previous release read. The first new instance creates `otp-mac/v1`; the previous release loads it without using it.
+2. **Once every instance runs the release, set `keys.legacy_secrets: read`** (`KEYS_LEGACY_SECRETS=read`) and roll it out. New sign-in codes and authenticator secrets are sealed with the data keys; the instances that still have `write` read them, and those with `read` still read what the secrets sealed. During this rollout the per-contact sign-in limits of a contact may be counted under two IDs, for at most an hour.
+3. **Move the authenticator secrets:** `admin totp-secrets reseal -to data-keys`, with the same configuration as the servers, both keys included. It seals every secret again, one administrator per transaction, and records `admin.totp_resealed`; the secrets themselves do not change, so authenticator apps keep working. `admin totp-secrets status` shows how many secrets each key seals.
+4. **Remove `admin.totp_key` and `otp.auth.secret`** from the configuration and the secret manager once `totp-secrets status` shows no secret sealed with `admin.totp_key` and `otp.auth.ttl_seconds` has passed since step 2. An instance without `admin.totp_key` logs how many administrators it cannot read, if any.
+
+**Going back.** Before a rollback to a release without #146, set `keys.legacy_secrets: write` with both secrets, and run `admin totp-secrets reseal -to legacy`. Sign-in codes need nothing: those sealed with a data key expire within `otp.auth.ttl_seconds`. Migration 37 is reversed with the release; it deletes the `otp-mac` keys.
+
 ### Rotating the KEK
 
 Rotating the KEK needs no restart, because the data keys do not change. The instances load the re-wrapped keys at their next reload.
@@ -183,6 +197,6 @@ If the Transit key is deleted, or the storage of Vault or OpenBao is lost withou
 
   Allow only the application's database role to write to `data_keys`, and watch `admin keys list`. The audit log ([#51](https://github.com/mdastpak/Crypto-Exchange/issues/51)) will record key changes.
 - **Process memory.** The unwrapped keys live in process memory. Disable core dumps in production (`ulimit -c 0`; containers have none by default), and do not attach debuggers to production processes.
-- **Other secrets.** `otp.auth.secret` and `admin.totp_key` are still secrets of their own, configured directly. Moving them onto these keys is [#146](https://github.com/mdastpak/Crypto-Exchange/issues/146).
+- **Legacy secrets.** `otp.auth.secret` and `admin.totp_key` stay secrets of their own while a deployment still sets them, during the [move off them](#moving-off-the-legacy-secrets). Release mode does not refuse them yet, so that the move can be made in steps; a later release will, once deployments have moved.
 - **Other key services.** Only Transit is implemented. AWS KMS, Google Cloud KMS, and Azure Key Vault fit the same `keys.Provider` interface.
 - **Reloading.** Instances pick up a change of `data_keys` within `keys.reload_interval_seconds`. A change of the `keys` settings themselves, such as a new KEK provider, still needs a restart.

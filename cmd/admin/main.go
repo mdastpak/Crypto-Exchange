@@ -7,6 +7,8 @@
 //	admin [-config path] [-migrations url] create -email <address>
 //	admin [-config path] [-migrations url] reset-totp -email <address>
 //	admin [-config path] [-migrations url] disable -email <address>
+//	admin [-config path] [-migrations url] totp-secrets status
+//	admin [-config path] [-migrations url] totp-secrets reseal -to <data-keys|legacy>
 //	admin [-config path] [-migrations url] keys list
 //	admin [-config path] [-migrations url] keys rotate -purpose <purpose>
 //	admin [-config path] [-migrations url] keys retire -purpose <purpose> -version <n>
@@ -22,8 +24,11 @@
 //	admin [-config path] [-migrations url] restore verify [-not-before t] [-not-after t] [-keys]
 //	admin [-config path] [-migrations url] migrate [up|status]
 //
-// create and reset-totp print the authenticator secret once. The server
-// needs admin.totp_key (or ADMIN_TOTP_KEY) set to the same value. The keys
+// create and reset-totp print the authenticator secret once. They seal it
+// as the server does (#146): with a field-enc data key when keys.provider is
+// set, or with admin.totp_key (ADMIN_TOTP_KEY) while it is set and
+// keys.legacy_secrets is "write". totp-secrets reseal moves every stored
+// secret to one of the two, unchanged, so enrolled apps keep working. The keys
 // commands need the keys section of the server's configuration and never
 // print a key; docs/data-protection.md describes when to run them. The outbox
 // commands handle the messages that the server could not publish (#192).
@@ -72,6 +77,10 @@ Administrators:
   create -email <address>      Create an administrator and print its authenticator secret.
   reset-totp -email <address>  Replace the authenticator secret of an administrator.
   disable -email <address>     Stop an administrator from signing in.
+  totp-secrets status          Count the authenticator secrets sealed with admin.totp_key and with the data keys.
+  totp-secrets reseal -to <data-keys|legacy>
+                               Seal every authenticator secret again with the data keys, once every instance
+                               runs a release that reads them, or with admin.totp_key, before a rollback.
 
 Data-protection keys (purposes row-mac, field-enc, blind-index):
   keys list                                    List the keys, never their values.
@@ -129,6 +138,8 @@ type command struct {
 	note      string
 	// recovery holds the flags of backup status and restore verify.
 	recovery recoveryArgs
+	// format is the -to of totp-secrets reseal.
+	format adminauth.Format
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -162,6 +173,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseRestoreArgs(cmd, global.Args()[1:], stderr)
 	case "migrate":
 		return parseMigrateArgs(cmd, global.Args()[1:], stderr)
+	case "totp-secrets":
+		return parseTOTPSecretsArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -217,6 +230,39 @@ func parseKeysArgs(cmd command, args []string, stderr io.Writer) (command, error
 	}
 	if needVersion && cmd.version <= 0 {
 		return command{}, errors.New("-version must be a positive number")
+	}
+	return cmd, nil
+}
+
+// parseTOTPSecretsArgs parses the arguments after "totp-secrets".
+func parseTOTPSecretsArgs(cmd command, args []string, stderr io.Writer) (command, error) {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return command{}, errors.New("a totp-secrets command is required: status or reseal")
+	}
+	sub := flag.NewFlagSet("totp-secrets "+args[0], flag.ContinueOnError)
+	sub.SetOutput(stderr)
+	var to string
+	switch args[0] {
+	case "status":
+	case "reseal":
+		sub.StringVar(&to, "to", "", "Keys to seal with: data-keys or legacy (admin.totp_key)")
+	default:
+		fmt.Fprint(stderr, usage)
+		return command{}, fmt.Errorf("unknown totp-secrets command %q", args[0])
+	}
+	if err := sub.Parse(args[1:]); err != nil {
+		return command{}, err
+	}
+	if sub.NArg() > 0 {
+		return command{}, fmt.Errorf("unexpected argument %q", sub.Arg(0))
+	}
+	cmd.name = "totp-secrets " + args[0]
+	if args[0] == "reseal" {
+		cmd.format = adminauth.Format(to)
+		if cmd.format != adminauth.FormatDataKeys && cmd.format != adminauth.FormatLegacy {
+			return command{}, fmt.Errorf("-to must be %s or %s", adminauth.FormatDataKeys, adminauth.FormatLegacy)
+		}
 	}
 	return cmd, nil
 }
@@ -286,13 +332,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if strings.HasPrefix(cmd.name, "migrate ") {
 		return runMigrate(cmd, stdout, stderr)
 	}
-	if config.Config.Admin.TOTPKey == "" {
-		fmt.Fprintln(stderr, "Error: admin.totp_key (or ADMIN_TOTP_KEY) is required; generate one with: openssl rand -base64 32")
-		return 1
-	}
-	key, err := adminauth.DecodeKey(config.Config.Admin.TOTPKey)
-	if err != nil {
-		fmt.Fprintln(stderr, "Error:", err)
+	if config.Config.Admin.TOTPKey == "" && config.Config.Keys.Provider == "" {
+		fmt.Fprintln(stderr, "Error: authenticator secrets need keys.provider (KEYS_PROVIDER, see docs/data-protection.md) or admin.totp_key (ADMIN_TOTP_KEY)")
 		return 1
 	}
 
@@ -302,16 +343,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer postgres.Close()
-	accounts, err := adminauth.NewService(postgres.DB, key, config.Config.Exchange.Name)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	secrets, err := totpSecrets(ctx, postgres.DB, cmd)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	accounts, err := adminauth.NewService(postgres.DB, secrets, config.Config.Exchange.Name)
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
 	accounts.Origin = operator(cmd)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := execute(ctx, accounts, cmd, stdout); err != nil {
+	if cmd.name == "totp-secrets status" {
+		err = printTOTPSecrets(ctx, accounts, secrets, stdout)
+	} else {
+		err = execute(ctx, accounts, cmd, stdout)
+	}
+	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
@@ -340,10 +391,75 @@ func execute(ctx context.Context, accounts *adminauth.Service, cmd command, stdo
 			return err
 		}
 		fmt.Fprintf(stdout, "Disabled administrator %s. Admin tokens issued earlier are rejected from their next request on.\n", cmd.email)
+	case "totp-secrets reseal":
+		changed, err := accounts.Reseal(ctx, cmd.format)
+		fmt.Fprintf(stdout, "Sealed %d authenticator secret(s) again with %s.\n", changed, formatName(cmd.format))
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown command %q", cmd.name)
 	}
 	return nil
+}
+
+// totpSecrets returns the keys that seal authenticator secrets, as the
+// server configures them: admin.totp_key when it is set, and the data keys,
+// loaded once, when keys.provider is set and the server has created them.
+func totpSecrets(ctx context.Context, conn *sql.DB, cmd command) (adminauth.Secrets, error) {
+	secrets := adminauth.Secrets{LegacyWrites: config.Config.Keys.WritesWithLegacySecrets()}
+	if config.Config.Admin.TOTPKey != "" {
+		key, err := adminauth.DecodeKey(config.Config.Admin.TOTPKey)
+		if err != nil {
+			return secrets, err
+		}
+		secrets.LegacyKey = key
+	}
+	provider, err := keys.FromConfig(config.Config.Keys)
+	if err != nil || provider == nil {
+		return secrets, err
+	}
+	if err := keys.CheckRelease(provider, config.Config.Server.Mode == "release"); err != nil {
+		return secrets, err
+	}
+	// Like the keys commands, it creates no keys: the server does on its
+	// first start. Until then, admin.totp_key seals alone.
+	store := &keys.Store{DB: conn, Provider: provider, Origin: operator(cmd)}
+	ring, err := store.LoadExisting(ctx)
+	if errors.Is(err, keys.ErrNoKey) && secrets.LegacyKey != nil {
+		return secrets, nil
+	}
+	if err != nil {
+		return secrets, fmt.Errorf("load the data keys: %w", err)
+	}
+	secrets.DataKeys = ring
+	return secrets, nil
+}
+
+// printTOTPSecrets prints how the authenticator secrets are sealed, and with
+// what new ones will be.
+func printTOTPSecrets(ctx context.Context, accounts *adminauth.Service, secrets adminauth.Secrets, stdout io.Writer) error {
+	counts, err := accounts.CountSecrets(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Sealed with admin.totp_key: %d\n", counts.Legacy)
+	fmt.Fprintf(stdout, "Sealed with the data keys:  %d\n", counts.DataKeys)
+	if counts.Unknown > 0 {
+		fmt.Fprintf(stdout, "In an unknown format:       %d (enroll them again with reset-totp)\n", counts.Unknown)
+	}
+	fmt.Fprintf(stdout, "New secrets are sealed with %s.\n", formatName(secrets.WriteFormat()))
+	if counts.Legacy == 0 && secrets.LegacyKey != nil && secrets.WriteFormat() == adminauth.FormatDataKeys {
+		fmt.Fprintln(stdout, "No secret uses admin.totp_key anymore: it can be removed from the configuration.")
+	}
+	return nil
+}
+
+func formatName(format adminauth.Format) string {
+	if format == adminauth.FormatLegacy {
+		return "admin.totp_key"
+	}
+	return "the data keys"
 }
 
 // runKeys runs a keys command with the provider of the configuration.

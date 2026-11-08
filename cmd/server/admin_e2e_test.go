@@ -23,6 +23,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
@@ -240,10 +241,16 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	})
 
 	handlers := initializeHandlers(services)
+	// The data keys, when an option sets keys.provider, as main loads them.
+	provider, err := keys.FromConfig(c.Keys)
+	require.NoError(t, err)
+	handlers.DataKeys, err = loadDataKeys(services, provider)
+	require.NoError(t, err)
+	useDataKeysForOTP(handlers)
 	sender := &capturingSender{}
 	handlers.Public.OTPSender = sender
 	handlers.User.OTPSender = sender
-	key, err := adminSignInKey()
+	key, err := legacyTOTPKey()
 	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, key, sender))
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
@@ -535,4 +542,39 @@ func TestAdminSignIn_UnavailableWithoutAdminKeys(t *testing.T) {
 
 	status, _ = env.post(t, "/api/v1/admin/auth/"+uuid.NewString(), map[string]string{"otp": "123456", "totp": "123456"}, "")
 	assert.Equal(t, http.StatusServiceUnavailable, status)
+}
+
+// withDataKeysOnly configures the end state of #146: neither
+// admin.totp_key nor otp.auth.secret, only the data keys.
+func withDataKeysOnly(c *config.Configuration) {
+	kek := make([]byte, 32)
+	_, _ = rand.Read(kek)
+	c.Keys.Provider = config.KeysProviderLocal
+	c.Keys.Local.KEK = base64.StdEncoding.EncodeToString(kek)
+	c.Keys.LegacySecrets = config.LegacySecretsRead
+	c.Admin.TOTPKey = ""
+	c.OTP.Auth.Secret = ""
+}
+
+// TestSignIn_WithDataKeysOnly signs a user and an administrator in with the
+// data keys protecting the sign-in codes and the authenticator secret
+// (#146).
+func TestSignIn_WithDataKeysOnly(t *testing.T) {
+	env := newE2EEnv(t, withDataKeysOnly)
+	require.NotNil(t, env.accounts, "admin sign-in works without admin.totp_key")
+
+	status, resp := env.signInUser(t, "user@example.com")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+
+	enrollment, err := env.accounts.Create(context.Background(), "admin@example.com")
+	require.NoError(t, err)
+	var stored string
+	require.NoError(t, env.db.QueryRow(`SELECT totp_secret FROM users WHERE hk = $1`, enrollment.AdminID).Scan(&stored))
+	assert.True(t, strings.HasPrefix(stored, "v2:"), "sealed with a data key")
+	token := env.signInAdmin(t, enrollment)
+	assert.NotEmpty(t, token)
+
+	var otpKeys int
+	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM data_keys WHERE purpose = 'otp-mac'`).Scan(&otpKeys))
+	assert.Equal(t, 1, otpKeys, "the server creates the otp-mac key on its first start")
 }
