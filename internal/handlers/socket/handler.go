@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -40,11 +41,21 @@ type WebSocketHandler struct {
 	// Without it, nothing is refused.
 	Platform *platform.Gate
 
+	// Counter counts the connections of every instance, so that
+	// websocket.max_connections_per_ip and max_connections_per_user hold
+	// across the fleet (#234). Without it, each instance counts its own;
+	// StartConnectionHeartbeat keeps its slots alive.
+	Counter ConnectionCounter
+
 	limits limits
-	// open and openPerIP count the connections, guarded by Mu, including
-	// upgrades that are still in progress.
+	// open, openPerIP, and openPerUser count the connections of this
+	// instance, guarded by Mu, including upgrades that are still in
+	// progress. They bound the connections when Redis cannot be reached.
 	open         int
 	openPerIP    map[string]int
+	openPerUser  map[string]int
+	instanceID   string
+	refreshEvery time.Duration
 	shutdownOnce sync.Once
 }
 
@@ -59,10 +70,15 @@ type Client struct {
 	UserID    string
 	SessionID string
 
-	// mu guards UserID, SessionID, and the expiry of the token.
+	// mu guards UserID, SessionID, the expiry of the token, countedUser,
+	// and slots.
 	mu        sync.Mutex
 	expiresAt time.Time
 	expiry    *time.Timer
+	// countedUser is the user that the connection counts against in
+	// openPerUser, and slots are its places in the shared counts (#234).
+	countedUser string
+	slots       []Slot
 
 	ip string
 	// addr is the client address itself; ip may be the prefix of an IPv6
@@ -107,6 +123,8 @@ func NewWebSocketHandler(is *models.InfraServices) *WebSocketHandler {
 		ShutdownCh:      make(chan struct{}),
 		limits:          limitsFromConfig(),
 		openPerIP:       make(map[string]int),
+		openPerUser:     make(map[string]int),
+		instanceID:      uuid.NewString(),
 	}
 	return h
 }
@@ -136,8 +154,9 @@ func (h *WebSocketHandler) unregisterClient(client *Client) {
 	// that no one sees the client gone while its place is still taken.
 	h.Mu.Lock()
 	delete(h.Clients, client)
-	h.releaseLocked(client.ip)
+	h.releaseLocked(client.ip, client.counted())
 	h.Mu.Unlock()
+	h.releaseShared(client.takeSlots())
 	client.forget()
 	close(client.Send)
 	client.Conn.Close()

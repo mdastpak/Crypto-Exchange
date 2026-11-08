@@ -76,7 +76,7 @@ func TestLimitsFromConfig(t *testing.T) {
 	config.Config.WebSocket.PingInterval, config.Config.WebSocket.MaxMessageSize = 0, 0
 	config.Config.WebSocket.WriteTimeout, config.Config.WebSocket.ClientMessagesPerSecond = 0, 0
 	config.Config.WebSocket.ClientMessageBurst, config.Config.WebSocket.MaxConnections, config.Config.WebSocket.MaxConnectionsPerIP = 0, 0, 0
-	config.Config.WebSocket.SessionCheckSeconds = 0
+	config.Config.WebSocket.SessionCheckSeconds, config.Config.WebSocket.MaxConnectionsPerUser = 0, 0
 	l := limitsFromConfig()
 	assert.Equal(t, int64(4096), l.maxMessageBytes, "the defaults apply to settings that are not set")
 	assert.Equal(t, 30*time.Second, l.pingInterval)
@@ -86,15 +86,16 @@ func TestLimitsFromConfig(t *testing.T) {
 	assert.Equal(t, 20, l.messageBurst)
 	assert.Equal(t, 10000, l.maxConnections)
 	assert.Equal(t, 20, l.maxPerIP)
+	assert.Equal(t, 10, l.maxPerUser)
 	assert.Equal(t, 60*time.Second, l.sessionCheck)
 
 	config.Config.WebSocket.PingInterval, config.Config.WebSocket.MaxMessageSize = 5, 1024
 	config.Config.WebSocket.WriteTimeout, config.Config.WebSocket.ClientMessagesPerSecond = 3, 2
 	config.Config.WebSocket.ClientMessageBurst, config.Config.WebSocket.MaxConnections, config.Config.WebSocket.MaxConnectionsPerIP = 4, 100, 7
-	config.Config.WebSocket.SessionCheckSeconds = 15
+	config.Config.WebSocket.SessionCheckSeconds, config.Config.WebSocket.MaxConnectionsPerUser = 15, 3
 	l = limitsFromConfig()
 	assert.Equal(t, limits{maxMessageBytes: 1024, pingInterval: 5 * time.Second, pongWait: 10 * time.Second, writeTimeout: 3 * time.Second,
-		messagesPerSecond: 2, messageBurst: 4, maxConnections: 100, maxPerIP: 7, sessionCheck: 15 * time.Second,
+		messagesPerSecond: 2, messageBurst: 4, maxConnections: 100, maxPerIP: 7, maxPerUser: 3, sessionCheck: 15 * time.Second,
 		ipv6Prefix: config.Config.RateLimits.IPv6PrefixLength}, l)
 }
 
@@ -369,17 +370,17 @@ func TestReserve_GroupsIPv6ClientsByPrefix(t *testing.T) {
 	h := newTestHandler()
 	h.limits.maxPerIP, h.limits.maxConnections, h.limits.ipv6Prefix = 2, 100, 64
 
-	status, _ := h.reserve(h.addressKey("2001:db8:1:2::1"))
+	status, _, _ := h.reserve(h.addressKey("2001:db8:1:2::1"), "")
 	require.Zero(t, status)
-	status, _ = h.reserve(h.addressKey("2001:db8:1:2::2"))
+	status, _, _ = h.reserve(h.addressKey("2001:db8:1:2::2"), "")
 	require.Zero(t, status)
-	status, _ = h.reserve(h.addressKey("2001:db8:1:2:ffff::3"))
+	status, _, _ = h.reserve(h.addressKey("2001:db8:1:2:ffff::3"), "")
 	assert.Equal(t, http.StatusTooManyRequests, status, "a third address of the same /64")
 
-	status, _ = h.reserve(h.addressKey("2001:db8:1:3::1"))
+	status, _, _ = h.reserve(h.addressKey("2001:db8:1:3::1"), "")
 	assert.Zero(t, status, "another /64 has a budget of its own")
 
-	h.release(h.addressKey("2001:db8:1:2::1"))
-	status, _ = h.reserve(h.addressKey("2001:db8:1:2::9"))
+	h.release(h.addressKey("2001:db8:1:2::1"), "")
+	status, _, _ = h.reserve(h.addressKey("2001:db8:1:2::9"), "")
 	assert.Zero(t, status, "releasing any address of the /64 frees its place")
 }

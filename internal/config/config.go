@@ -319,10 +319,13 @@ type Configuration struct {
 		// rate_limits.ws limits the upgrade requests instead.
 		ClientMessagesPerSecond int `yaml:"client_messages_per_second"`
 		ClientMessageBurst      int `yaml:"client_message_burst"`
-		// MaxConnections and MaxConnectionsPerIP cap the open connections of
-		// this instance.
-		MaxConnections      int `yaml:"max_connections"`
-		MaxConnectionsPerIP int `yaml:"max_connections_per_ip"`
+		// MaxConnections caps the open connections of this instance.
+		// MaxConnectionsPerIP and MaxConnectionsPerUser cap those of one
+		// client address and of one user over all instances, counted in
+		// Redis (#234).
+		MaxConnections        int `yaml:"max_connections"`
+		MaxConnectionsPerIP   int `yaml:"max_connections_per_ip"`
+		MaxConnectionsPerUser int `yaml:"max_connections_per_user"`
 		// SessionCheckSeconds is how often each instance checks the
 		// sessions of its authenticated connections, and closes those whose
 		// session has ended or whose user can no longer sign in (#189).
@@ -931,6 +934,7 @@ func setDefaults() {
 		{&Config.WebSocket.ClientMessageBurst, DefaultWSClientMessageBurst},
 		{&Config.WebSocket.MaxConnections, DefaultWSMaxConnections},
 		{&Config.WebSocket.MaxConnectionsPerIP, DefaultWSMaxConnectionsPerIP},
+		{&Config.WebSocket.MaxConnectionsPerUser, DefaultWSMaxConnectionsPerUser},
 		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
@@ -1226,6 +1230,9 @@ const (
 	DefaultWSSessionCheckSeconds = 60
 	DefaultWSMaxConnections      = 10000
 	DefaultWSMaxConnectionsPerIP = 20
+	// DefaultWSMaxConnectionsPerUser is enough for a user with a few
+	// devices and browser tabs.
+	DefaultWSMaxConnectionsPerUser = 10
 )
 
 // DefaultCurrencyCacheTTLSeconds is redis.currency_cache_ttl_seconds when

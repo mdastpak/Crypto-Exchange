@@ -191,6 +191,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	atLeast("websocket.client_message_burst", ws.ClientMessageBurst, 1)
 	atLeast("websocket.max_connections", ws.MaxConnections, 1)
 	atLeast("websocket.max_connections_per_ip", ws.MaxConnectionsPerIP, 1)
+	atLeast("websocket.max_connections_per_user", ws.MaxConnectionsPerUser, 1)
 	atLeast("websocket.session_check_seconds", ws.SessionCheckSeconds, 1)
 	if v := c.JWT.RefreshToken.ReuseGraceSeconds; v < 1 || v > MaxRefreshReuseGraceSeconds {
 		p.add("jwt.refresh_token.reuse_grace_seconds", "is %d; it must be from 1 to %d", v, MaxRefreshReuseGraceSeconds)

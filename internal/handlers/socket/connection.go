@@ -31,6 +31,9 @@ type limits struct {
 	messageBurst      int
 	maxConnections    int
 	maxPerIP          int
+	// maxPerUser bounds the connections of one user, over all of its
+	// addresses (#234).
+	maxPerUser int
 	// ipv6Prefix groups IPv6 clients for maxPerIP, as the rate limits do.
 	ipv6Prefix int
 	// sessionCheck is how often the sessions of the authenticated
@@ -60,6 +63,7 @@ func limitsFromConfig() limits {
 		messageBurst:      or(ws.ClientMessageBurst, config.DefaultWSClientMessageBurst),
 		maxConnections:    or(ws.MaxConnections, config.DefaultWSMaxConnections),
 		maxPerIP:          or(ws.MaxConnectionsPerIP, config.DefaultWSMaxConnectionsPerIP),
+		maxPerUser:        or(ws.MaxConnectionsPerUser, config.DefaultWSMaxConnectionsPerUser),
 		ipv6Prefix:        config.Config.RateLimits.IPv6PrefixLength,
 		sessionCheck:      time.Duration(or(ws.SessionCheckSeconds, config.DefaultWSSessionCheckSeconds)) * time.Second,
 	}
@@ -128,14 +132,22 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		rejectLocked(w, locked)
 		return
 	}
-	if status, message := h.reserve(ip); status != 0 {
-		reject(w, status, helpers.StatusCode(status), message)
+	if status, code, message := h.reserve(ip, subject.UserHK); status != 0 {
+		reject(w, status, code, message)
+		return
+	}
+	// The connections of the other instances count too (#234).
+	slots, status, code, message := h.reserveShared(r.Context(), ip, subject.UserHK)
+	if status != 0 {
+		h.release(ip, subject.UserHK)
+		reject(w, status, code, message)
 		return
 	}
 
 	conn, err := h.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.release(ip)
+		h.release(ip, subject.UserHK)
+		h.releaseShared(slots)
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
@@ -147,6 +159,9 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		ip:       ip,
 		addr:     addr,
 		limiter:  newTokenBucket(h.limits.messagesPerSecond, h.limits.messageBurst),
+		// The connection counts against its user from the start.
+		countedUser: subject.UserHK,
+		slots:       slots,
 	}
 	if claims != nil {
 		h.authorize(client, claims)
@@ -158,7 +173,8 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 			websocket.FormatCloseMessage(websocket.CloseGoingAway, "server is shutting down"),
 			time.Now().Add(h.limits.writeTimeout))
 		conn.Close()
-		h.release(ip)
+		h.release(ip, subject.UserHK)
+		h.releaseShared(slots)
 		return
 	}
 	// Note: readPump's own defer unregisters the client on exit; unregistering
@@ -228,42 +244,69 @@ func (h *WebSocketHandler) addressKey(ip string) string {
 	return clientip.Key(ip, h.limits.ipv6Prefix)
 }
 
-// reserve counts a new connection from ip, unless this instance already has
-// websocket.max_connections, or ip has websocket.max_connections_per_ip.
-func (h *WebSocketHandler) reserve(ip string) (int, string) {
+// reserve counts a new connection from ip, of userID when it is not
+// empty, unless this instance already has websocket.max_connections, ip
+// has websocket.max_connections_per_ip, or the user has
+// websocket.max_connections_per_user here. It returns the status, error
+// code, and message to refuse the connection with, or a zero status.
+func (h *WebSocketHandler) reserve(ip, userID string) (int, string, string) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 	if h.openPerIP == nil {
 		h.openPerIP = make(map[string]int)
 	}
+	if h.openPerUser == nil {
+		h.openPerUser = make(map[string]int)
+	}
 	if h.open >= h.limits.maxConnections {
-		return http.StatusServiceUnavailable, "Too many connections, try again later"
+		return http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), "Too many connections, try again later"
 	}
 	if h.openPerIP[ip] >= h.limits.maxPerIP {
-		return http.StatusTooManyRequests, "Too many connections from this address"
+		return http.StatusTooManyRequests, helpers.StatusCode(http.StatusTooManyRequests), "Too many connections from this address"
+	}
+	if userID != "" && h.openPerUser[userID] >= h.limits.maxPerUser {
+		return http.StatusTooManyRequests, CodeTooManyConnections, "Too many connections for this user"
 	}
 	h.open++
 	h.openPerIP[ip]++
-	return 0, ""
+	if userID != "" {
+		h.openPerUser[userID]++
+	}
+	return 0, "", ""
 }
 
 // release forgets a connection that reserve counted.
-func (h *WebSocketHandler) release(ip string) {
+func (h *WebSocketHandler) release(ip, userID string) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
-	h.releaseLocked(ip)
+	h.releaseLocked(ip, userID)
 }
 
 // releaseLocked is release for a caller that holds Mu.
-func (h *WebSocketHandler) releaseLocked(ip string) {
+func (h *WebSocketHandler) releaseLocked(ip, userID string) {
 	if h.open > 0 {
 		h.open--
 	}
-	if h.openPerIP[ip] <= 1 {
-		delete(h.openPerIP, ip)
-	} else {
-		h.openPerIP[ip]--
+	decrement(h.openPerIP, ip)
+	if userID != "" {
+		decrement(h.openPerUser, userID)
 	}
+}
+
+// decrement lowers the count of key, and forgets it at zero.
+func decrement(counts map[string]int, key string) {
+	if counts[key] <= 1 {
+		delete(counts, key)
+	} else {
+		counts[key]--
+	}
+}
+
+// counted returns the user that c counts against, or "".
+func (c *Client) counted() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.countedUser
 }
 
 // reject answers an upgrade request that is refused, in the error envelope
