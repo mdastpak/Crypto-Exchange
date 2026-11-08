@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,15 @@ const schemaName = "public"
 // the privileges stops the server even before the triggers run, and keeps
 // the protection should a trigger ever be dropped.
 var AppendOnlyTables = []string{"audit_events"}
+
+// DeletableTables are the only tables whose rows the runtime role may
+// delete (#248): outbox events, which are transport and are deleted once
+// published or discarded, and favorites, a preference with no value as a
+// record. Every other table keeps its rows; a removal is a mark, such as
+// user_contacts.removed_at, so a compromised instance or an injected
+// statement can change rows, which the audit log and the ledger checks
+// record, but not erase them.
+var DeletableTables = []string{"outbox_events", "user_favorites"}
 
 // migrationRole returns the user and password that the migrations connect
 // with: postgres.migrations.user and password, or, when no migration role is
@@ -94,8 +104,9 @@ func Migrate(ctx context.Context) error {
 // undoes a privilege that was granted by hand:
 //
 //   - USAGE on the schema, and no CREATE;
-//   - SELECT, INSERT, UPDATE, and DELETE on every table, and no TRUNCATE,
+//   - SELECT, INSERT, and UPDATE on every table, and no TRUNCATE,
 //     REFERENCES, or TRIGGER;
+//   - DELETE as well on the DeletableTables only;
 //   - only SELECT and INSERT on the AppendOnlyTables;
 //   - only SELECT on schema_migrations, for the version check of the
 //     "external" mode;
@@ -113,13 +124,16 @@ func grantRuntimeRole(ctx context.Context, conn *sql.DB, role string) error {
 		"GRANT USAGE ON SCHEMA " + s + " TO " + r,
 		"REVOKE CREATE ON SCHEMA " + s + " FROM " + r,
 		"REVOKE ALL ON ALL TABLES IN SCHEMA " + s + " FROM " + r,
-		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + s + " TO " + r,
+		"GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA " + s + " TO " + r,
 		"REVOKE ALL ON ALL SEQUENCES IN SCHEMA " + s + " FROM " + r,
 		"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA " + s + " TO " + r,
 	}
 	restricted := map[string]string{"schema_migrations": "SELECT"}
 	for _, table := range AppendOnlyTables {
 		restricted[table] = "SELECT, INSERT"
+	}
+	for _, table := range DeletableTables {
+		restricted[table] = "SELECT, INSERT, UPDATE, DELETE"
 	}
 
 	tx, err := conn.BeginTx(ctx, nil)
@@ -157,7 +171,8 @@ func grantRuntimeRole(ctx context.Context, conn *sql.DB, role string) error {
 }
 
 // RoleProblems lists why the role of conn could change the schema or the
-// append-only tables, one problem per entry; none means that it is a proper
+// append-only tables, or delete rows outside the DeletableTables, one
+// problem per entry; none means that it is a proper
 // runtime role. Release mode refuses to start with any (#180). It checks
 // the privileges that the role has, whether granted to it, to a role it
 // belongs to, or to PUBLIC.
@@ -239,6 +254,20 @@ func RoleProblems(ctx context.Context, conn *sql.DB) ([]string, error) {
 		if changes {
 			problems = append(problems, "it can UPDATE or DELETE rows of the append-only table "+table)
 		}
+	}
+
+	// The append-only tables are reported above.
+	deletes, err := names(ctx, conn, `
+		SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relkind IN ('r', 'p') AND NOT c.relname = ANY($2)
+		  AND has_table_privilege(current_user, c.oid, 'DELETE')
+		ORDER BY c.relname LIMIT 5`, schemaName, append(slices.Clone(DeletableTables), AppendOnlyTables...))
+	if err != nil {
+		return nil, err
+	}
+	if len(deletes) > 0 {
+		problems = append(problems, "it can DELETE rows of tables other than "+strings.Join(DeletableTables, " and ")+
+			", such as "+strings.Join(deletes, ", "))
 	}
 
 	for i := range problems {

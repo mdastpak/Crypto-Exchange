@@ -84,9 +84,9 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 		helpers.SendError(c, http.StatusConflict, "symbol_current", "This is the current symbol of the currency; change it first.", nil)
 		return
 	}
-	// The instances of the release before #248 do not know released_at, so
-	// this release still deletes; the next one marks the row.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM currency_symbols WHERE symbol = $1 AND currency_hk = $2 AND NOT current AND released_at IS NULL`, symbol, hk); err != nil {
+	// The row stays, marked, for the record (#248).
+	if _, err := tx.ExecContext(ctx, `UPDATE currency_symbols SET released_at = NOW(), released_by = $3
+		WHERE symbol = $1 AND currency_hk = $2 AND NOT current AND released_at IS NULL`, symbol, hk, origin.ActorID); err != nil {
 		log.Printf("Error releasing the symbol %s of %s: %v", symbol, hk, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to release the symbol.", nil)
 		return

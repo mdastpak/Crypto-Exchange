@@ -110,11 +110,21 @@ func TestRuntimeRole_CannotChangeTheSchema(t *testing.T) {
 	var version int
 	require.NoError(t, runtime.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version), "the version check reads schema_migrations")
 
-	var canRead, canWrite bool
+	var canRead, canWrite, canDelete bool
 	require.NoError(t, runtime.QueryRow(`SELECT has_table_privilege('users', 'SELECT'),
-		has_table_privilege('users', 'INSERT') AND has_table_privilege('users', 'UPDATE') AND has_table_privilege('users', 'DELETE')`).Scan(&canRead, &canWrite))
+		has_table_privilege('users', 'INSERT') AND has_table_privilege('users', 'UPDATE'),
+		has_table_privilege('users', 'DELETE')`).Scan(&canRead, &canWrite, &canDelete))
 	assert.True(t, canRead)
 	assert.True(t, canWrite, "the other tables are read and written as before")
+	assert.False(t, canDelete, "but their rows are never deleted (#248)")
+	for _, table := range DeletableTables {
+		require.NoError(t, runtime.QueryRow(`SELECT has_table_privilege($1, 'DELETE')`, table).Scan(&canDelete))
+		assert.True(t, canDelete, "%s keeps DELETE", table)
+	}
+	_, err = runtime.Exec(`DELETE FROM user_favorites`)
+	require.NoError(t, err)
+	_, err = runtime.Exec(`DELETE FROM outbox_events WHERE published_at IS NOT NULL`)
+	require.NoError(t, err)
 
 	for _, statement := range []string{
 		`ALTER TABLE audit_events ADD COLUMN note TEXT`,
@@ -125,6 +135,12 @@ func TestRuntimeRole_CannotChangeTheSchema(t *testing.T) {
 		`TRUNCATE users`,
 		`UPDATE audit_events SET outcome = 'failure'`,
 		`DELETE FROM audit_events`,
+		`DELETE FROM users`,
+		`DELETE FROM user_contacts`,
+		`DELETE FROM balances`,
+		`DELETE FROM sessions`,
+		`DELETE FROM currency_symbols`,
+		`DELETE FROM currency_capability_overrides`,
 		`UPDATE schema_migrations SET dirty = true`,
 		`CREATE TABLE intruder (id INT)`,
 		`CREATE FUNCTION intruder() RETURNS INT LANGUAGE sql AS 'SELECT 1'`,
@@ -159,6 +175,7 @@ func TestRoleProblems_NamesWhatTheRoleCouldChange(t *testing.T) {
 		`GRANT TRUNCATE ON users TO ` + rolesTestRole,
 		`GRANT UPDATE ON audit_events TO ` + rolesTestRole,
 		`GRANT CREATE ON SCHEMA public TO ` + rolesTestRole,
+		`GRANT DELETE ON users, user_contacts TO ` + rolesTestRole,
 	} {
 		_, err := owner.Exec(grant)
 		require.NoError(t, err)
@@ -170,6 +187,7 @@ func TestRoleProblems_NamesWhatTheRoleCouldChange(t *testing.T) {
 		"the role " + rolesTestRole + ": it can create objects in the schema public",
 		"the role " + rolesTestRole + ": it has TRUNCATE, REFERENCES, or TRIGGER on tables, such as users",
 		"the role " + rolesTestRole + ": it can UPDATE or DELETE rows of the append-only table audit_events",
+		"the role " + rolesTestRole + ": it can DELETE rows of tables other than outbox_events and user_favorites, such as user_contacts, users",
 	}, problems)
 
 	require.NoError(t, Migrate(ctx), "migrating again, with nothing to apply, grants again")
