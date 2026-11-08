@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"runtime"
 	"strconv"
@@ -62,8 +63,9 @@ func (c *Configuration) requiredProblems(p *problems) {
 		}
 	}
 	require(c.Server.Port != "", "server.port")
-	require(c.Postgres.Host != "", "postgres.host")
-	require(c.Postgres.Port != "", "postgres.port")
+	// postgres.hosts replaces host and port.
+	require(c.Postgres.Host != "" || len(c.Postgres.Hosts) > 0, "postgres.host")
+	require(c.Postgres.Port != "" || len(c.Postgres.Hosts) > 0, "postgres.port")
 	require(c.Postgres.User != "", "postgres.user")
 	require(c.Postgres.DBName != "", "postgres.dbname")
 	require(c.Redis.Host != "", "redis.host")
@@ -123,6 +125,32 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if c.Postgres.MaxIdleConns > c.Postgres.MaxOpenConns && c.Postgres.MaxOpenConns >= 1 {
 		p.add("postgres.max_idle_conns", "is %d; it must not exceed postgres.max_open_conns (%d)", c.Postgres.MaxIdleConns, c.Postgres.MaxOpenConns)
 	}
+	for i, hostPort := range c.Postgres.Hosts {
+		host, port, err := net.SplitHostPort(strings.TrimSpace(hostPort))
+		n, portErr := strconv.Atoi(port)
+		if err != nil || host == "" || portErr != nil || n < 1 || n > 65535 {
+			p.add("postgres.hosts", "entry %d is %q; each entry must be host:port, such as pg-1.internal:5432 or [2001:db8::1]:5432", i+1, hostPort)
+		}
+	}
+	if len(c.Postgres.Hosts) > 0 && c.Postgres.Host != "" {
+		p.add("postgres.host", "is set together with postgres.hosts; set one of them")
+	}
+	if !contains(PostgresTargetSessionAttrs, c.Postgres.TargetSessionAttrs) {
+		p.add("postgres.target_session_attrs", "is %q; it must be one of %s", c.Postgres.TargetSessionAttrs, strings.Join(PostgresTargetSessionAttrs, ", "))
+	}
+	for _, timeout := range []struct {
+		key   string
+		value int
+	}{
+		{"postgres.statement_timeout_ms", c.Postgres.StatementTimeoutMs},
+		{"postgres.lock_timeout_ms", c.Postgres.LockTimeoutMs},
+		{"postgres.idle_in_transaction_timeout_ms", c.Postgres.IdleInTransactionTimeoutMs},
+	} {
+		if timeout.value < -1 {
+			p.add(timeout.key, "is %d; it must be a number of milliseconds, or -1 to turn it off", timeout.value)
+		}
+	}
+	atLeast("postgres.migration_lock_timeout_seconds", c.Postgres.MigrationLockTimeoutSeconds, 1)
 	atLeast("postgres.conn_max_lifetime_minutes", c.Postgres.ConnMaxLifetime, 0)
 	atLeast("postgres.conn_max_idle_time_minutes", c.Postgres.ConnMaxIdleTime, 0)
 	atLeast("redis.db", c.Redis.DB, 0)

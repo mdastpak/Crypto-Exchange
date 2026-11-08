@@ -258,6 +258,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	config.SetConfigPath(cmd.configPath)
 	config.SetMigrationsPath(cmd.migrationsPath)
 	config.LoadConfig()
+	db.ApplicationName = "crypto-exchange-admin"
 	if strings.HasPrefix(cmd.name, "keys ") {
 		return runKeys(cmd, stdout, stderr)
 	}

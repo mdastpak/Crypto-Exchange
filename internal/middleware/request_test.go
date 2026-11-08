@@ -7,8 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/helpers"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,4 +99,21 @@ func TestBodyLimit_RejectsLargerBodiesWith413(t *testing.T) {
 		assert.False(t, called, "%s: the handler must not run", name)
 		assert.Contains(t, w.Body.String(), "Request body too large", name)
 	}
+}
+
+// TestRequestID_TracksDatabaseRefusals checks that every request carries
+// the note of internal/dberr, so that a handler's 500 after a busy
+// database becomes 503 (#230).
+func TestRequestID_TracksDatabaseRefusals(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(RequestID())
+	engine.GET("/", func(c *gin.Context) {
+		dberr.Record(c.Request.Context(), &pgconn.PgError{Code: "40P01"})
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed", nil)
+	})
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), dberr.Code)
 }

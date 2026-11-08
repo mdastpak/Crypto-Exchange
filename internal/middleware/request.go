@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
+
 	"bytes"
 	"io"
 	"net/http"
@@ -23,9 +25,12 @@ var validRequestID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 // RequestID gives every request an ID, stored as "request_id" in the context
 // and returned in the X-Request-ID header. A valid ID from the client is kept,
 // so that a request can be traced across services; any other is replaced by
-// a new UUIDv7.
+// a new UUIDv7. It also gives the request's context the note of
+// internal/dberr, so that a 500 caused by a busy database is answered as
+// 503 database_busy (#230).
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Request = c.Request.WithContext(dberr.Track(c.Request.Context()))
 		id := c.GetHeader(RequestIDHeader)
 		if !validRequestID.MatchString(id) {
 			id = newRequestID()

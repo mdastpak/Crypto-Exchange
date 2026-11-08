@@ -3,7 +3,9 @@ package helpers
 
 import (
 	"net/http"
+	"strconv"
 
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +58,14 @@ func SendError(c *gin.Context, status int, code, message string, info interface{
 }
 
 func send(c *gin.Context, status int, code, message string, info interface{}) {
+	// A 500 of a request whose query PostgreSQL refused for a moment, such
+	// as a lock wait past lock_timeout, is not a bug: the client may retry
+	// (#230).
+	if status == http.StatusInternalServerError && c.Request != nil && dberr.Busy(c.Request.Context()) {
+		status, code, info = http.StatusServiceUnavailable, dberr.Code, nil
+		message = "The service is busy. Please try again."
+		c.Header("Retry-After", strconv.Itoa(dberr.RetryAfterSeconds))
+	}
 	response := models.APIResponse{Status: status, Message: message, Info: info}
 	if status >= http.StatusBadRequest {
 		if code == "" {
