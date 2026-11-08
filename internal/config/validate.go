@@ -4,10 +4,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -471,7 +474,43 @@ func (c *Configuration) marketDataProblems(p *problems) {
 			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
 		}
 	}
+	validRoute := func(r string) bool { return r == EgressDirect || r == EgressProxy || r == EgressNone }
+	if !validRoute(m.Egress.Default) {
+		p.add("market_data.egress.default", "is %q; it must be direct, proxy, or none", m.Egress.Default)
+	}
+	if m.Egress.ProxyURL != "" {
+		u, err := url.Parse(m.Egress.ProxyURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") {
+			// The value may hold credentials, so it is not repeated.
+			p.add("market_data.egress.proxy_url", "is not an http://, https://, or socks5:// address with a host")
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(m.Sources)) {
+		s := m.Sources[name]
+		key := "market_data.sources." + name
+		if !sourceName.MatchString(name) {
+			p.add(key, "is not a valid source name: lower-case letters, digits, and underscores")
+		}
+		if s.Egress != "" && !validRoute(s.Egress) {
+			p.add(key+".egress", "is %q; it must be direct, proxy, or none", s.Egress)
+		}
+		if s.Enabled && m.Route(name) == EgressProxy && m.Egress.ProxyURL == "" {
+			p.add(key, "goes through the proxy, but market_data.egress.proxy_url (MARKET_DATA_PROXY_URL) is not set")
+		}
+		if s.BaseURL != "" && !strings.HasPrefix(s.BaseURL, "https://") {
+			p.add(key+".base_url", "is %q; it must be an https:// address", s.BaseURL)
+		}
+		if s.RequestsPerMinute < 0 || s.MonthlyRequests < 0 {
+			p.add(key, "has a negative request limit")
+		}
+		if s.TimeoutSeconds < 1 || s.TimeoutSeconds > MaxMarketDataSourceTimeoutSeconds {
+			p.add(key+".timeout_seconds", "is %d; it must be from 1 to %d", s.TimeoutSeconds, MaxMarketDataSourceTimeoutSeconds)
+		}
+	}
 }
+
+// sourceName is the name of a market data source.
+var sourceName = regexp.MustCompile(`^[a-z0-9_]{1,40}$`)
 
 // validListenAddr reports whether addr is [host]:port with a port from 1 to
 // 65535; an empty host listens on every interface.

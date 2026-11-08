@@ -99,6 +99,21 @@ func providerVar(name, key string, set func(c *Configuration, value string)) Env
 	}}
 }
 
+// sourceKeyVar sets the API key of a market data source, adding the source
+// to the map if the file does not list it; it stays disabled until the file
+// enables it.
+func sourceKeyVar(name, source string) EnvVar {
+	return EnvVar{name, "market_data.sources." + source + ".api_key", func(c *Configuration, value string) error {
+		if c.MarketData.Sources == nil {
+			c.MarketData.Sources = map[string]MarketDataSource{}
+		}
+		s := c.MarketData.Sources[source]
+		s.APIKey = value
+		c.MarketData.Sources[source] = s
+		return nil
+	}}
+}
+
 // envVars lists every environment variable that the configuration reads, in
 // the order they are applied. docs/configuration.md documents each one, and
 // the tests check that every variable in .env.example is listed here.
@@ -215,6 +230,10 @@ var envVars = []EnvVar{
 	intVar("FAVORITES_MAX_PER_USER", "favorites.max_per_user", func(c *Configuration) *int { return &c.Favorites.MaxPerUser }),
 	boolVar("MARKET_DATA_ENABLED", "market_data.enabled", func(c *Configuration) *bool { return &c.MarketData.Enabled }),
 	stringVar("MARKET_DATA_MODE", "market_data.mode", func(c *Configuration) *string { return &c.MarketData.Mode }),
+	stringVar("MARKET_DATA_EGRESS", "market_data.egress.default", func(c *Configuration) *string { return &c.MarketData.Egress.Default }),
+	stringVar("MARKET_DATA_PROXY_URL", "market_data.egress.proxy_url", func(c *Configuration) *string { return &c.MarketData.Egress.ProxyURL }),
+	sourceKeyVar("MARKET_DATA_COINGECKO_API_KEY", "coingecko"),
+	sourceKeyVar("MARKET_DATA_COINMARKETCAP_API_KEY", "coinmarketcap"),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
 	intVar("PLATFORM_POLL_INTERVAL_MS", "platform.poll_interval_ms", func(c *Configuration) *int { return &c.Platform.PollIntervalMs }),
 	intVar("PLATFORM_STALE_AFTER_SECONDS", "platform.stale_after_seconds", func(c *Configuration) *int { return &c.Platform.StaleAfterSeconds }),

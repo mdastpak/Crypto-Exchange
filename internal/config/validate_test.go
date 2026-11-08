@@ -275,7 +275,8 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	Config = Configuration{}
 	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
 	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
-		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30}
+		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
+		Egress: MarketDataEgress{Default: EgressDirect}}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
@@ -288,4 +289,69 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	assert.Contains(t, err.Error(), "market_data.mode")
 	assert.Contains(t, err.Error(), "market_data.health_addr")
 	assert.Contains(t, err.Error(), "market_data.lease_seconds")
+}
+
+func validMarketWorker() Configuration {
+	var c Configuration
+	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.DBName = "db", "5432", "app", "exchange"
+	c.MarketData = MarketDataConfig{Mode: MarketDataModeLive, HealthAddr: ":8081",
+		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
+		Egress: MarketDataEgress{Default: EgressProxy, ProxyURL: "socks5://user:secret@gw.example:1080"},
+		Sources: map[string]MarketDataSource{
+			"coingecko": {Enabled: true, RequestsPerMinute: 30, MonthlyRequests: 10000, TimeoutSeconds: 20},
+			"nobitex":   {Enabled: true, Egress: EgressDirect, TimeoutSeconds: 20},
+			"binance":   {Enabled: false, TimeoutSeconds: 20},
+		}}
+	return c
+}
+
+func TestMarketData_RouteOfEachSource(t *testing.T) {
+	m := validMarketWorker().MarketData
+	assert.Equal(t, EgressProxy, m.Route("coingecko"), "the node's default")
+	assert.Equal(t, EgressDirect, m.Route("nobitex"), "a source's own route wins")
+	assert.Equal(t, EgressNone, m.Route("binance"), "a disabled source is not called")
+	assert.Equal(t, EgressNone, m.Route("kraken"), "an unlisted source is not called")
+	assert.True(t, m.Reachable("nobitex"))
+	assert.False(t, m.Reachable("binance"))
+
+	m.Egress.Default = EgressNone
+	assert.False(t, m.Reachable("coingecko"))
+	assert.True(t, m.Reachable("nobitex"))
+}
+
+func TestValidateMarketWorker_ChecksTheEgressAndTheSources(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+
+	Config = validMarketWorker()
+	require.NoError(t, ValidateMarketWorker())
+
+	Config.MarketData.Egress.ProxyURL = ""
+	err := ValidateMarketWorker()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "market_data.sources.coingecko goes through the proxy")
+
+	Config = validMarketWorker()
+	Config.MarketData.Egress.ProxyURL = "ftp://user:secret@gw.example"
+	Config.MarketData.Egress.Default = "vpn"
+	Config.MarketData.Sources["Bad Name"] = MarketDataSource{TimeoutSeconds: 20}
+	s := Config.MarketData.Sources["nobitex"]
+	s.Egress, s.BaseURL, s.TimeoutSeconds, s.RequestsPerMinute = "tor", "http://api.nobitex.ir", 0, -1
+	Config.MarketData.Sources["nobitex"] = s
+	err = ValidateMarketWorker()
+	require.Error(t, err)
+	for _, want := range []string{"market_data.egress.proxy_url", "market_data.egress.default",
+		"market_data.sources.Bad Name", "market_data.sources.nobitex.egress", "market_data.sources.nobitex.base_url",
+		"market_data.sources.nobitex.timeout_seconds", "negative request limit"} {
+		assert.Contains(t, err.Error(), want)
+	}
+	assert.NotContains(t, err.Error(), "secret", "the proxy credentials are never repeated")
+}
+
+func TestSourceKeyVar_AddsTheKeyWithoutEnablingTheSource(t *testing.T) {
+	var c Configuration
+	v := sourceKeyVar("MARKET_DATA_COINGECKO_API_KEY", "coingecko")
+	require.NoError(t, v.set(&c, "cg-key"))
+	assert.Equal(t, "cg-key", c.MarketData.Sources["coingecko"].APIKey)
+	assert.False(t, c.MarketData.Sources["coingecko"].Enabled)
 }
