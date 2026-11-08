@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
@@ -213,6 +214,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Security.ChangeHoldHours; v < 1 || v > MaxSecurityChangeHoldHours {
 		p.add("security.change_hold_hours", "is %d; it must be from 1 to %d", v, MaxSecurityChangeHoldHours)
 	}
+	mobileOwnershipProblems(p, c.Identity.MobileOwnership)
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)
 	}
@@ -282,6 +284,9 @@ var postgresTLSModes = []string{"require", "verify-ca", "verify-full"}
 // releaseProblems refuses settings that are acceptable for development but
 // not in production.
 func (c *Configuration) releaseProblems(p *problems) {
+	if c.Identity.MobileOwnership.Provider == MobileOwnershipStub {
+		p.add("identity.mobile_ownership.provider", "is \"stub\", which matches every mobile number; release mode needs a real provider, or none")
+	}
 	t := c.Server.TLS
 	if !t.Enabled && !t.BehindProxy {
 		p.add("server.tls.enabled", "is false; release mode needs TLS: enable it, or set server.tls.behind_proxy (%s) when a reverse proxy terminates TLS in front of the server",
@@ -422,4 +427,27 @@ func validHostPort(hostPort string) bool {
 	host, port, err := net.SplitHostPort(strings.TrimSpace(hostPort))
 	n, portErr := strconv.Atoi(port)
 	return err == nil && host != "" && portErr == nil && n >= 1 && n <= 65535
+}
+
+// mobileOwnershipProblems checks identity.mobile_ownership (#253) in every
+// mode.
+func mobileOwnershipProblems(p *problems, m MobileOwnershipConfig) {
+	switch m.Provider {
+	case MobileOwnershipNone, MobileOwnershipStub:
+	case MobileOwnershipJibit:
+		if u, err := url.Parse(m.Endpoint); err != nil || u.Scheme != "https" || u.Host == "" {
+			p.add("identity.mobile_ownership.endpoint", "is %q; it must be an https URL", m.Endpoint)
+		}
+		if m.APIKey == "" || m.SecretKey == "" {
+			p.add("identity.mobile_ownership.api_key", "and identity.mobile_ownership.secret_key (IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY) must both be set for the jibit provider")
+		}
+	default:
+		p.add("identity.mobile_ownership.provider", "is %q; it must be one of none, stub, jibit", m.Provider)
+	}
+	if v := m.TimeoutSeconds; v < 1 || v > 60 {
+		p.add("identity.mobile_ownership.timeout_seconds", "is %d; it must be from 1 to 60", v)
+	}
+	if v := m.RecheckDays; v < 1 || v > 365 {
+		p.add("identity.mobile_ownership.recheck_days", "is %d; it must be from 1 to 365", v)
+	}
 }

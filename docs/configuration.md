@@ -39,6 +39,7 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `otp.auth.secret` | Set, at least 32 bytes |
 | `otp.auth.dev_log_codes` | `false` |
 | `keys.provider` | Not `local`, and a Transit address with `https` |
+| `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
 
 ## Command-line flags and process environment
 
@@ -305,6 +306,18 @@ Writing to the database is not enough to create an administrator: changing `user
 | --- | --- | --- |
 | `change_hold_hours` | `24` | From 1 to 720. How long the operations that a second factor protects are held after a security change of a user: adding, replacing, or removing an email address or mobile number, and later a change of the second factor ([#251](https://github.com/mdastpak/Crypto-Exchange/issues/251)). Withdrawals then answer `403 security_hold` with `info.until`. A change extends the hold and never shortens it. Contact changes are not held. The hold is stored in the user's row, so it applies on every instance at once; a new value applies to holds that start after it. See [Security hold](api.md#security-hold). |
 
+### `identity`
+
+The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) asks a KYC provider whether an Iranian mobile number belongs to a national ID, as the Shahkar service of the Communications Regulatory Authority answers it. See [Mobile ownership](api.md#mobile-ownership).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `mobile_ownership.provider` | `none` | `none`, `stub`, or `jibit`. With `none`, a user who has a verified national ID cannot add or replace a mobile number (`503 identity_unavailable`), since it cannot be checked; users without one are not affected. `stub` matches every number, for development; release mode refuses it. |
+| `mobile_ownership.endpoint` | `https://napi.jibit.ir/ide` for `jibit` | The base URL of the provider's API, `https` only. |
+| `mobile_ownership.api_key`, `mobile_ownership.secret_key` | none | The provider's credentials, required for `jibit`. Set them with `IDENTITY_MOBILE_OWNERSHIP_API_KEY` and `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`. |
+| `mobile_ownership.timeout_seconds` | `10` | From 1 to 60. How long one check may take, with its retries. A check that does not finish changes nothing and answers `503 identity_unavailable`. |
+| `mobile_ownership.recheck_days` | `30` | From 1 to 365. How long a successful check of a number counts before a sign-in with it checks it again ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)). |
+
 ### `favorites`
 
 | Key | Default | Description |
@@ -504,6 +517,12 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `CONTACTS_NEW_CONTACT_COOLDOWN_HOURS` | `contacts.new_contact_cooldown_hours` |
 | `SECURITY_CHANGE_HOLD_HOURS` | `security.change_hold_hours` |
+| `IDENTITY_MOBILE_OWNERSHIP_PROVIDER` | `identity.mobile_ownership.provider` |
+| `IDENTITY_MOBILE_OWNERSHIP_ENDPOINT` | `identity.mobile_ownership.endpoint` |
+| `IDENTITY_MOBILE_OWNERSHIP_API_KEY` | `identity.mobile_ownership.api_key` |
+| `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY` | `identity.mobile_ownership.secret_key` |
+| `IDENTITY_MOBILE_OWNERSHIP_TIMEOUT_SECONDS` | `identity.mobile_ownership.timeout_seconds` |
+| `IDENTITY_MOBILE_OWNERSHIP_RECHECK_DAYS` | `identity.mobile_ownership.recheck_days` |
 | `FAVORITES_MAX_PER_USER` | `favorites.max_per_user` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |
@@ -564,4 +583,5 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 - Prefer environment variables, or files mounted from a secret manager, for passwords and keys.
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
 - Use a separate `OTP_SECRET` for every environment, and rotate it if it is ever exposed.
+- Keep the KYC provider's credentials (`IDENTITY_MOBILE_OWNERSHIP_API_KEY`, `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`) in the secret manager, with a pair of their own for every environment.
 - Give every environment its own KEK, and the server a Transit token that can only `encrypt` and `decrypt` with it, never read or delete it. See [`docs/data-protection.md`](data-protection.md).

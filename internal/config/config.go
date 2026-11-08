@@ -297,6 +297,15 @@ type Configuration struct {
 		ChangeHoldHours int `yaml:"change_hold_hours"`
 	} `yaml:"security"`
 
+	// Identity configures the checks of a user's identity with a KYC
+	// provider.
+	Identity struct {
+		// MobileOwnership checks that an Iranian mobile number belongs to
+		// the national ID of its user (#253), as the Shahkar service of the
+		// Communications Regulatory Authority answers it.
+		MobileOwnership MobileOwnershipConfig `yaml:"mobile_ownership"`
+	} `yaml:"identity"`
+
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
 		// (#217), together.
@@ -719,6 +728,37 @@ type SanctionsProviderConfig struct {
 	Timeout   int    `yaml:"timeout_seconds"`
 }
 
+// Providers of identity.mobile_ownership.provider.
+const (
+	MobileOwnershipNone  = "none"
+	MobileOwnershipStub  = "stub"
+	MobileOwnershipJibit = "jibit"
+)
+
+// MobileOwnershipConfig configures the provider of the mobile ownership
+// check (#253).
+type MobileOwnershipConfig struct {
+	// Provider is none, stub, or jibit. With none, a user who has a
+	// verified national ID cannot add or replace a mobile number, since
+	// it cannot be checked. stub matches every number, for development,
+	// and is refused in release mode.
+	Provider string `yaml:"provider"`
+	// Endpoint is the base URL of the provider's API.
+	Endpoint string `yaml:"endpoint"`
+	// APIKey and SecretKey are the provider's credentials. Set them in
+	// the environment.
+	APIKey    string `yaml:"api_key"`
+	SecretKey string `yaml:"secret_key"`
+	// TimeoutSeconds bounds one check, with its retries.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+	// RecheckDays is how long a successful check of a number counts
+	// before a sign-in with it checks it again (#252).
+	RecheckDays int `yaml:"recheck_days"`
+}
+
+// DefaultJibitEndpoint is the base URL of the Jibit identity API.
+const DefaultJibitEndpoint = "https://napi.jibit.ir/ide"
+
 // KYCProviderConfig holds configuration for a KYC provider
 type KYCProviderConfig struct {
 	Name          string `yaml:"name"`
@@ -969,6 +1009,13 @@ func setDefaults() {
 
 	setNotificationDefaults(&Config.Notifications)
 
+	if Config.Identity.MobileOwnership.Provider == "" {
+		Config.Identity.MobileOwnership.Provider = MobileOwnershipNone
+	}
+	if Config.Identity.MobileOwnership.Provider == MobileOwnershipJibit && Config.Identity.MobileOwnership.Endpoint == "" {
+		Config.Identity.MobileOwnership.Endpoint = DefaultJibitEndpoint
+	}
+
 	if Config.Keys.Transit.Mount == "" {
 		Config.Keys.Transit.Mount = "transit"
 	}
@@ -1006,6 +1053,8 @@ func setDefaults() {
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 		{&Config.Contacts.NewContactCooldownHours, DefaultNewContactCooldownHours},
 		{&Config.Security.ChangeHoldHours, DefaultSecurityChangeHoldHours},
+		{&Config.Identity.MobileOwnership.TimeoutSeconds, 10},
+		{&Config.Identity.MobileOwnership.RecheckDays, 30},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
 		{&Config.Platform.PollIntervalMs, DefaultPlatformPollIntervalMs},
 		{&Config.Platform.StaleAfterSeconds, DefaultPlatformStaleAfterSeconds},

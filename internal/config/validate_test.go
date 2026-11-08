@@ -122,7 +122,17 @@ func TestValidateServer_Rules(t *testing.T) {
 		"no contact cooldown":              {func(c *Configuration) { c.Contacts.NewContactCooldownHours = -1 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is -1; it must be from 1 to 720"},
 		"contact cooldown over 30 days":    {func(c *Configuration) { c.Contacts.NewContactCooldownHours = 721 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is 721"},
 		"no security hold":                 {func(c *Configuration) { c.Security.ChangeHoldHours = -1 }, "security.change_hold_hours (SECURITY_CHANGE_HOLD_HOURS) is -1; it must be from 1 to 720"},
-		"negative rate limit":              {func(c *Configuration) { c.RateLimits.Auth.OTPRequestsPerHour = -1 }, "rate_limits.auth.otp_requests_per_hour (RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR) is -1"},
+		"stub ownership in release":        {func(c *Configuration) { c.Identity.MobileOwnership.Provider = MobileOwnershipStub }, "identity.mobile_ownership.provider (IDENTITY_MOBILE_OWNERSHIP_PROVIDER) is \"stub\""},
+		"unknown ownership provider":       {func(c *Configuration) { c.Identity.MobileOwnership.Provider = "shahkar" }, `identity.mobile_ownership.provider (IDENTITY_MOBILE_OWNERSHIP_PROVIDER) is "shahkar"; it must be one of none, stub, jibit`},
+		"jibit without credentials": {func(c *Configuration) {
+			c.Identity.MobileOwnership.Provider, c.Identity.MobileOwnership.Endpoint = MobileOwnershipJibit, DefaultJibitEndpoint
+		}, "must both be set for the jibit provider"},
+		"jibit over http": {func(c *Configuration) {
+			m := &c.Identity.MobileOwnership
+			m.Provider, m.Endpoint, m.APIKey, m.SecretKey = MobileOwnershipJibit, "http://napi.jibit.ir/ide", "k", "s"
+		}, `identity.mobile_ownership.endpoint (IDENTITY_MOBILE_OWNERSHIP_ENDPOINT) is "http://napi.jibit.ir/ide"; it must be an https URL`},
+		"ownership timeout over a minute": {func(c *Configuration) { c.Identity.MobileOwnership.TimeoutSeconds = 61 }, "identity.mobile_ownership.timeout_seconds (IDENTITY_MOBILE_OWNERSHIP_TIMEOUT_SECONDS) is 61"},
+		"negative rate limit":             {func(c *Configuration) { c.RateLimits.Auth.OTPRequestsPerHour = -1 }, "rate_limits.auth.otp_requests_per_hour (RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR) is -1"},
 
 		// TLS files, in every mode.
 		"TLS without files": {func(c *Configuration) { c.Server.TLS.Enabled = true }, "server.tls.enabled (SERVER_TLS_ENABLED) is true, but server.tls.cert_file (SERVER_TLS_CERT_FILE) and server.tls.key_file (SERVER_TLS_KEY_FILE) must both be set"},

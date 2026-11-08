@@ -207,6 +207,7 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	c.OTP.Auth.Secret = "an-e2e-otp-secret-of-at-least-32-bytes"
 	c.Exchange.Name = "E2E Exchange"
 	c.Security.ChangeHoldHours = 24
+	c.Identity.MobileOwnership.TimeoutSeconds = 5
 	totpKey := make([]byte, adminauth.KeySize)
 	_, err := rand.Read(totpKey)
 	require.NoError(t, err)

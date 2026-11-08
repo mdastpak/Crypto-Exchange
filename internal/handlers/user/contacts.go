@@ -16,6 +16,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
@@ -64,6 +65,11 @@ const (
 	codeRateLimited     = "rate_limited"
 	codeChannelMissing  = "channel_unavailable"
 	codeContactTooNew   = "contact_too_new"
+	// The mobile ownership check (#253).
+	codeMobileOwnerMismatch = "mobile_owner_mismatch"
+	codeMobileRequired      = "mobile_required"
+	codeIdentityUnavailable = "identity_unavailable"
+	codeIdentityChanged     = "identity_changed"
 )
 
 // changeKeyPrefix is the Redis key prefix of pending changes.
@@ -358,6 +364,7 @@ func (h *UserHandler) contactsReady(c *gin.Context) bool {
 // @Failure 403 {object} models.APIResponse
 // @Failure 409 {object} models.APIResponse
 // @Failure 429 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse "identity_unavailable: the mobile number cannot be checked against the national ID now"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/contacts/changes [post]
 func (h *UserHandler) StartContactChange(c *gin.Context) {
@@ -390,6 +397,24 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	plan, err := planChange(req, contacts, now)
 	if sendRefusal(c, err) {
 		return
+	}
+	// A user with a verified national ID keeps a mobile number (#253):
+	// the removal is refused before any code is sent. The confirmation
+	// checks it again.
+	if plan.action == contactRemove && plan.typ == notify.ContactMobile {
+		_, has, err := h.nationalID(ctx, h.PostgresDB.DB, userID.String())
+		if sendRefusal(c, err) {
+			return
+		}
+		if err != nil {
+			log.Printf("Failed to read the national ID of a user: %v", err)
+			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the change.", nil)
+			return
+		}
+		if has {
+			sendRefusal(c, errMobileRequired)
+			return
+		}
 	}
 	for _, typ := range []string{plan.account.typ, plan.newType()} {
 		if typ != "" && !h.OTPSender.Supports(typ) {
@@ -518,7 +543,7 @@ func (h *UserHandler) loadChange(ctx context.Context, id, userID string) (pendin
 // ConfirmContactChange confirms a change with its codes and applies it.
 //
 // @Summary Confirm a contact change
-// @Description Applies the change once both codes are right. A wrong code answers 401 code_invalid and names it in info.field; the codes already accepted stay accepted, so a retry needs only the others. Codes expire with the change.
+// @Description Applies the change once both codes are right. For a user with a verified national ID, a new mobile number must be registered to it (403 mobile_owner_mismatch), and the mobile number cannot be removed (409 mobile_required). A wrong code answers 401 code_invalid and names it in info.field; the codes already accepted stay accepted, so a retry needs only the others. Codes expire with the change.
 // @Tags user contacts
 // @Accept json
 // @Produce json
@@ -532,6 +557,7 @@ func (h *UserHandler) loadChange(ctx context.Context, id, userID string) (pendin
 // @Failure 404 {object} models.APIResponse
 // @Failure 409 {object} models.APIResponse
 // @Failure 429 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse "identity_unavailable: the mobile number cannot be checked against the national ID now; the change stays, so confirm it again later"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/contacts/changes/{id} [post]
 func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
@@ -616,8 +642,27 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 		return
 	}
 
-	// Both proofs are in. Exactly one confirmation applies the change: the
-	// one that deletes the change from Redis.
+	// Both proofs are in. The mobile number must belong to the national ID
+	// of the user, when the user has one (#253). The provider is asked
+	// before the change is claimed, so that an outage leaves the change to
+	// be confirmed again, and outside the transaction, so that no row lock
+	// waits for it.
+	owned, err := h.checkOwnership(ctx, c, change)
+	var refusal *errChange
+	if errors.As(err, &refusal) && refusal.code == codeMobileOwnerMismatch {
+		h.RedisClient.Client.Del(ctx, h.changeKey(id))
+	}
+	if sendRefusal(c, err) {
+		return
+	}
+	if err != nil {
+		log.Printf("Failed to check the ownership of a mobile number: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+		return
+	}
+
+	// Exactly one confirmation applies the change: the one that deletes the
+	// change from Redis.
 	deleted, err := h.RedisClient.Client.Del(ctx, h.changeKey(id)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Failed to claim a contact change: %v", err)
@@ -629,7 +674,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 		return
 	}
 
-	contacts, err := h.applyChange(ctx, c, change)
+	contacts, err := h.applyChange(ctx, c, change, owned)
 	if sendRefusal(c, err) {
 		return
 	}
@@ -643,6 +688,78 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 		list.Items = append(list.Items, Contact{Type: ct.typ, Value: maskContact(ct.typ, ct.value), VerifiedAt: ct.verifiedAt.UTC()})
 	}
 	helpers.SendResponse(c, http.StatusOK, "Contact changed successfully.", list)
+}
+
+// ownership is a successful check that a mobile number belongs to the
+// national ID of its user (#253).
+type ownership struct {
+	nationalID, provider, ref string
+}
+
+// errIdentityUnavailable is the refusal of a mobile change that cannot be
+// checked now.
+var errIdentityUnavailable = &errChange{status: http.StatusServiceUnavailable, code: codeIdentityUnavailable,
+	message: "Your mobile number cannot be checked against your national ID right now. Please try again later."}
+
+// errMobileRequired is the refusal of a removal of the mobile number of a
+// user who has a verified national ID.
+var errMobileRequired = &errChange{status: http.StatusConflict, code: codeMobileRequired,
+	message: "Your account needs a mobile number registered to your national ID. Replace it instead of removing it."}
+
+// nationalID returns the verified national ID of a user, and maps keys that
+// are not loaded to errIdentityUnavailable.
+func (h *UserHandler) nationalID(ctx context.Context, q identity.Querier, userHK string) (string, bool, error) {
+	id, has, err := identity.NationalID(ctx, q, h.Sealer, userHK)
+	if errors.Is(err, identity.ErrNoKeys) {
+		log.Printf("A user has a national ID, but the data-protection keys are not loaded")
+		return "", false, errIdentityUnavailable
+	}
+	return id, has, err
+}
+
+// checkOwnership checks a change of a mobile number of a user who has a
+// verified national ID (#253): the new number must belong to it, and the
+// number cannot be removed. It returns the check of the new number, or nil
+// when none was needed. Users without a national ID are not checked; their
+// number is checked when their national ID is verified (#158).
+func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pendingChange) (*ownership, error) {
+	if ch.Type != notify.ContactMobile {
+		return nil, nil
+	}
+	nationalID, has, err := h.nationalID(ctx, h.PostgresDB.DB, ch.UserID)
+	if err != nil || !has {
+		return nil, err
+	}
+	if ch.Action == contactRemove {
+		return nil, errMobileRequired
+	}
+	if h.Ownership == nil {
+		log.Printf("A mobile change of a user with a national ID cannot be checked: identity.mobile_ownership.provider is none")
+		return nil, errIdentityUnavailable
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, time.Duration(config.Config.Identity.MobileOwnership.TimeoutSeconds)*time.Second)
+	defer cancel()
+	match, err := h.Ownership.Match(checkCtx, nationalID, ch.Value)
+	if err != nil {
+		// The errors of the providers never hold the number or the ID.
+		log.Printf("The mobile ownership check with %s failed: %v", h.Ownership.Provider(), err)
+		return nil, errIdentityUnavailable
+	}
+	if !match.Matched {
+		e := contactEvent(c, ch.UserID, ch)
+		e.Outcome, e.Reason = audit.Failure, codeMobileOwnerMismatch
+		e.Changes = &audit.Changes{After: map[string]interface{}{
+			ch.Type: maskContact(ch.Type, ch.Value), "ownership_provider": h.Ownership.Provider(), "ownership_ref": match.Ref,
+		}}
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := audit.Record(recordCtx, h.PostgresDB.DB, e); err != nil {
+			log.Printf("Failed to record the audit event %s (failure): %v", e.Action, err)
+		}
+		return nil, &errChange{status: http.StatusForbidden, code: codeMobileOwnerMismatch,
+			message: "This mobile number is not registered to your national ID. Use a number in your own name."}
+	}
+	return &ownership{nationalID: nationalID, provider: h.Ownership.Provider(), ref: match.Ref}, nil
 }
 
 // recordContactAttempt records a confirmation with a wrong code. It is best
@@ -673,7 +790,7 @@ func contactEvent(c *gin.Context, userID string, ch pendingChange) audit.Event {
 // applyChange applies a proven change in one transaction, under the lock of
 // the user's row, after checking it again against the contacts as they are
 // now. It returns the contacts after the change.
-func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendingChange) ([]storedContact, error) {
+func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendingChange, owned *ownership) ([]storedContact, error) {
 	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -700,6 +817,26 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	if _, ok := findContactValue(contacts, ch.AccountContact); !ok {
 		return nil, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "The contact you verified with has changed; start the change again."}
 	}
+	// The national ID is read again under the lock: the check before must
+	// have been made with the one the user has now (#253).
+	if plan.typ == notify.ContactMobile {
+		nationalID, has, err := h.nationalID(ctx, tx, ch.UserID)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case has && plan.action == contactRemove:
+			return nil, errMobileRequired
+		case has && (owned == nil || owned.nationalID != nationalID):
+			return nil, &errChange{status: http.StatusConflict, code: codeIdentityChanged, message: "Your verified identity changed during the change; start it again."}
+		case !has:
+			owned = nil
+		}
+	}
+	var checkedProvider, checkedRef any
+	if owned != nil {
+		checkedProvider, checkedRef = owned.provider, owned.ref
+	}
 
 	e := contactEvent(c, ch.UserID, ch)
 	e.Outcome = audit.Success
@@ -707,10 +844,16 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	switch plan.action {
 	case contactAdd:
 		err = db.InsertContact(ctx, tx, ch.UserID, plan.typ, plan.value, true)
+		if err == nil && owned != nil {
+			_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $3, ownership_ref = $4
+				WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, checkedProvider, checkedRef)
+		}
 		e.Changes = &audit.Changes{After: map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)}}
 	case contactReplace:
-		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET value = $3, verified_at = NOW(), updated_at = NOW()
-			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, plan.value)
+		// A new number has not been checked, unless it was just now.
+		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET value = $3, verified_at = NOW(), updated_at = NOW(),
+				ownership_checked_at = CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() END, ownership_provider = $4, ownership_ref = $5
+			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, plan.value, checkedProvider, checkedRef)
 		e.Changes = &audit.Changes{
 			Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)},
 			After:  map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)},
@@ -742,6 +885,9 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 		e.Changes.After = map[string]interface{}{}
 	}
 	e.Changes.After["security_hold_until"] = until.UTC().Format(time.RFC3339)
+	if owned != nil {
+		e.Changes.After["ownership_provider"], e.Changes.After["ownership_ref"] = owned.provider, owned.ref
+	}
 	if err := audit.Record(ctx, tx, e); err != nil {
 		return nil, err
 	}

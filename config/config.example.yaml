@@ -228,6 +228,15 @@ contacts:
 security:
   change_hold_hours: 24  # Withdrawals and other second-factor operations are held this long
 
+# Identity checks with a KYC provider.
+identity:
+  mobile_ownership:
+    provider: none            # none, stub (development only), or jibit
+    # endpoint: https://napi.jibit.ir/ide
+    # api_key and secret_key: set IDENTITY_MOBILE_OWNERSHIP_API_KEY and _SECRET_KEY
+    timeout_seconds: 10
+    recheck_days: 30          # A sign-in checks a number again after this long
+
 # Personal favorites of currencies and trading pairs.
 favorites:
   max_per_user: 100            # Favorite currencies and pairs per user, together

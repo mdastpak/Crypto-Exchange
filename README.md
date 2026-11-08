@@ -307,6 +307,8 @@ internal/domain/        Exchange domain model: asset, market, order, trade, bala
 internal/favorites/     Personal favorites of currencies and trading pairs
 internal/handlers/      HTTP and WebSocket handlers (admin, public, socket, system, user)
 internal/helpers/       Response helpers
+internal/identity/      Identity checks with a KYC provider: mobile ownership against the
+                        national ID (Jibit client and a stub), sealed national IDs
 internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit
 internal/middleware/    Security headers, CORS, rate limiting, validation, recovery
 internal/models/        API models for currencies and users
@@ -321,10 +323,11 @@ internal/recovery/      Backup and restore checks: WAL archiving age, restored-d
 internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
 internal/rebrand/        Currency migrations: rebrands, redenominations, mergers, by phase
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and
-                        currency holds, and the check that operations call
+                        currency holds, the security hold after a security change, and
+                        the check that operations call
 internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
-                        checks, users, and network proxies
+                        checks, users, a field sealer, and network proxies
 internal/totp/          Time-based one-time passwords (RFC 6238)
 pkg/utils/              Shared utilities
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker

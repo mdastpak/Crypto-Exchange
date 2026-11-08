@@ -27,7 +27,7 @@ flowchart LR
 | Purpose | Algorithm | Used by |
 | --- | --- | --- |
 | `row-mac` | HMAC-SHA-256 | Row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) |
-| `field-enc` | AES-256-GCM | Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)), and the secrets of HMAC API keys (`api_keys.secret_sealed`) |
+| `field-enc` | AES-256-GCM | Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)), the secrets of HMAC API keys (`api_keys.secret_sealed`), and verified national IDs (`user_national_ids.national_id_sealed`, [#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) |
 | `blind-index` | HMAC-SHA-256 | Equality lookups of encrypted values ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
 
 Every key has one purpose and only offers the operation of that purpose. A MAC key cannot encrypt, and an encryption key cannot seal.
@@ -46,7 +46,7 @@ The wrapped plaintext contains the purpose and the version besides the key. Afte
 
 ### Sealed values
 
-`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
+`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`, and for national IDs `user_national_ids.national_id_sealed:<user hk>`. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
 
 ### Versions
 
