@@ -93,7 +93,8 @@ func (b *binance) Candles(ctx context.Context, venueSymbol string, interval sour
 // OKX: /api/v5/market/history-candles, 100 per request, newest first; the
 // daily bar of UTC days is 1Dutc.
 
-var okxBars = map[source.Interval]string{source.Interval5m: "5m", source.Interval1h: "1H", source.Interval1d: "1Dutc"}
+var okxBars = map[source.Interval]string{source.Interval1m: "1m", source.Interval5m: "5m", source.Interval15m: "15m",
+	source.Interval1h: "1H", source.Interval1d: "1Dutc"}
 
 func (o *okx) MaxCandles() int { return 100 }
 
@@ -135,7 +136,8 @@ func (o *okx) Candles(ctx context.Context, venueSymbol string, interval source.I
 // Kraken: /0/public/OHLC, which gives at most the last 720 candles of an
 // interval, so its history goes back 720 candles only.
 
-var krakenIntervals = map[source.Interval]string{source.Interval5m: "5", source.Interval1h: "60", source.Interval1d: "1440"}
+var krakenIntervals = map[source.Interval]string{source.Interval1m: "1", source.Interval5m: "5", source.Interval15m: "15",
+	source.Interval1h: "60", source.Interval1d: "1440"}
 
 func (k *kraken) MaxCandles() int { return 720 }
 
@@ -187,7 +189,8 @@ func (k *kraken) Candles(ctx context.Context, venueSymbol string, interval sourc
 // first.
 
 var coinbaseGranularities = map[source.Interval]string{
-	source.Interval5m: "FIVE_MINUTE", source.Interval1h: "ONE_HOUR", source.Interval1d: "ONE_DAY"}
+	source.Interval1m: "ONE_MINUTE", source.Interval5m: "FIVE_MINUTE", source.Interval15m: "FIFTEEN_MINUTE",
+	source.Interval1h: "ONE_HOUR", source.Interval1d: "ONE_DAY"}
 
 func (c *coinbase) MaxCandles() int { return 350 }
 
@@ -232,9 +235,9 @@ func (c *coinbase) Candles(ctx context.Context, venueSymbol string, interval sou
 
 // The Iranian venues answer the TradingView UDF history: arrays of times
 // and figures. Their daily candles follow Tehran's day, not UTC's, so only
-// 5m and 1h are collected.
+// the intraday resolutions are collected.
 
-var udfResolutions = map[source.Interval]string{source.Interval5m: "5", source.Interval1h: "60"}
+var udfResolutions = map[source.Interval]string{source.Interval1m: "1", source.Interval5m: "5", source.Interval15m: "15", source.Interval1h: "60"}
 
 type udfHistory struct {
 	S string `json:"s"`

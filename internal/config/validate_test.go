@@ -283,7 +283,7 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
 		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog(), Tickers: validTickers(), Candles: validCandles(),
-		API: MarketDataAPI{CacheSeconds: 30}}
+		Tiers: validTiers(), API: MarketDataAPI{CacheSeconds: 30}}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
@@ -313,6 +313,36 @@ func validCandles() MarketDataCandles {
 		Resolutions: DefaultCandleResolutions()}
 }
 
+func validTiers() MarketDataTiers {
+	hotListed := true
+	return MarketDataTiers{IntervalHours: 24, HotAssets: DefaultHotAssets(), HotListed: &hotListed, ActiveTop: 200, HysteresisPercent: 20}
+}
+
+func TestValidateMarketWorker_ChecksTheTiers(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+
+	Config = validMarketWorker()
+	Config.MarketData.Tiers.ActiveTop = 10001
+	Config.MarketData.Tiers.HysteresisPercent = 101
+	resolutions := DefaultCandleResolutions()
+	resolutions["1m"] = MarketDataResolution{Enabled: true, IntervalMinutes: 1, BackfillDays: 1}
+	resolutions["15m"] = MarketDataResolution{Enabled: true, IntervalMinutes: 15, BackfillDays: 1, Tiers: []string{"cold"}}
+	resolutions["4h"] = MarketDataResolution{Enabled: true, IntervalMinutes: 240, BackfillDays: 1, Tiers: []string{TierHot}}
+	Config.MarketData.Candles.Resolutions = resolutions
+	err := ValidateMarketWorker()
+	require.Error(t, err)
+	for _, want := range []string{
+		"market_data.tiers.active_top is 10001",
+		"market_data.tiers.hysteresis_percent is 101",
+		"market_data.candles.resolutions.1m.tiers is empty",
+		`market_data.candles.resolutions.15m.tiers has "cold"`,
+		"market_data.candles.resolutions.4h is not a resolution",
+	} {
+		assert.Contains(t, err.Error(), want)
+	}
+}
+
 func validMarketWorker() Configuration {
 	var c Configuration
 	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.DBName = "db", "5432", "app", "exchange"
@@ -322,6 +352,7 @@ func validMarketWorker() Configuration {
 		Catalog: validCatalog(),
 		Tickers: validTickers(),
 		Candles: validCandles(),
+		Tiers:   validTiers(),
 		API:     MarketDataAPI{CacheSeconds: 30},
 		Sources: map[string]MarketDataSource{
 			"coingecko": {Enabled: true, RequestsPerMinute: 30, MonthlyRequests: 10000, TimeoutSeconds: 20},
