@@ -498,12 +498,12 @@ func configureIdentity(h *InfraHandlers) error {
 	if err != nil {
 		return err
 	}
-	h.User.Ownership = ownership
+	h.User.Ownership, h.Public.Ownership = ownership, ownership
 	if ownership == nil {
 		log.Println("WARNING: identity.mobile_ownership.provider is none: users with a verified national ID cannot add or replace a mobile number")
 	}
 	if h.DataKeys != nil {
-		h.User.Sealer = h.DataKeys
+		h.User.Sealer, h.Public.Sealer = h.DataKeys, h.DataKeys
 	}
 	return nil
 }

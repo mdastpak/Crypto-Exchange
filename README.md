@@ -298,6 +298,8 @@ internal/auth/          JWT issuing and verification, key rotation, sessions, bl
 internal/clientip/      Client identity for per-client limits, with IPv6 prefixes
 internal/config/        Configuration loading, environment variables, defaults, validation
 internal/contact/       Normalizing and identifying the contacts and codes users type
+internal/contactclaim/  Moving a contact off an account that no longer owns it: claims and
+                        recycled mobile numbers
 internal/currencies/    The public currency catalog: Redis cache with a PostgreSQL fallback
 internal/db/            PostgreSQL and Redis clients, SQL migrations
 internal/dberr/         Busy-database refusals of a request, answered as 503 database_busy

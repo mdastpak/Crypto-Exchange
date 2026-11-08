@@ -16,12 +16,14 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
+	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -53,6 +55,10 @@ type PublicHandler struct {
 	// Platform serves the status of the platform controls (#235). Without
 	// it, the status is open.
 	Platform *platform.Gate
+	// Ownership and Sealer recheck, at sign-in, that a mobile number still
+	// belongs to the national ID of its account (#252, #253).
+	Ownership identity.MobileOwnership
+	Sealer    identity.Sealer
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
@@ -172,6 +178,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 // @Failure 403 {object} models.APIResponse
 // @Failure 409 {object} models.APIResponse{info=SessionLimitInfo} "session_limit_reached: the user has the most active sessions allowed"
 // @Failure 429 {object} models.APIResponse
+// @Failure 503 {object} models.APIResponse "identity_unavailable: the mobile number is due for a check against the national ID of its account, and the provider cannot answer now"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/public/auth/{uuid} [post]
 func (h *PublicHandler) VerifyOTP(c *gin.Context) {
@@ -242,6 +249,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	if errors.As(err, &locked) {
 		h.noteSignIn(ctx, attempt, audit.Denied, locked.Code())
 		platform.Send(c, locked)
+		return
+	}
+	if errors.Is(err, errIdentityUnavailable) {
+		h.noteSignIn(ctx, attempt, audit.Failure, codeIdentityUnavailable)
+		helpers.SendError(c, http.StatusServiceUnavailable, codeIdentityUnavailable,
+			"Your mobile number cannot be checked against your national ID right now. Please request a new code later, or sign in with your email address.", nil)
 		return
 	}
 	if errors.Is(err, errAdminAccount) {
@@ -319,6 +332,13 @@ var errAccountUnavailable = errors.New("account cannot sign in")
 // errAccountFrozen reports an account that a restriction froze (#220).
 var errAccountFrozen = fmt.Errorf("%w: frozen", errAccountUnavailable)
 
+// errIdentityUnavailable reports a mobile number whose ownership is due for
+// a recheck that the provider cannot answer now (#252).
+var errIdentityUnavailable = errors.New("the mobile ownership cannot be checked now")
+
+// codeIdentityUnavailable is the code of that refusal.
+const codeIdentityUnavailable = "identity_unavailable"
+
 // errAdminAccount reports an administrator account at user sign-in.
 var errAdminAccount = errors.New("administrators cannot use user sign-in")
 
@@ -328,6 +348,13 @@ const uniqueViolationCode = "23505"
 // when none does. origin holds the request's fields for the audit event of a
 // new user.
 func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
+	return h.signInUser(ctx, origin, contactType, contact, true)
+}
+
+// signInUser is checkOrCreateUser. recheck says whether the ownership of a
+// mobile number may still be checked: once the number was taken off an
+// account that no longer owns it, the sign-in continues without it.
+func (h *PublicHandler) signInUser(ctx context.Context, origin audit.Event, contactType, contact string, recheck bool) (uuid.UUID, error) {
 	log.Println("Checking if user exists or creating a new user")
 
 	if !signInContactTypes[contactType] {
@@ -369,8 +396,86 @@ func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Even
 		return uuid.Nil, errAdminAccount
 	}
 
+	if recheck && contactType == string(account.ContactMobile) {
+		moved, err := h.recheckOwnership(ctx, origin, userHK.String(), contact)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if moved {
+			// The number no longer reaches that account: whoever holds it
+			// now signs in as for an unknown number, to a new account.
+			return h.signInUser(ctx, origin, contactType, contact, false)
+		}
+	}
+
 	log.Printf("User already exists with ID: %s", userHK.String())
 	return userHK, nil
+}
+
+// recheckOwnership checks, at most once every
+// identity.mobile_ownership.recheck_days, that a mobile number still
+// belongs to the national ID of the account ownerHK that holds it (#252).
+// A number that no longer does is taken off the account, which keeps its
+// data, and recheckOwnership reports true. An account without a national
+// ID is at level 0 and holds no funds, so it is not checked. When the
+// provider cannot answer a check that is due, the sign-in is refused
+// rather than risk showing the account to a new subscriber of the number.
+func (h *PublicHandler) recheckOwnership(ctx context.Context, origin audit.Event, ownerHK, mobile string) (bool, error) {
+	if h.PostgresDB == nil {
+		return false, nil
+	}
+	owner, found, err := contactclaim.FindOwner(ctx, h.PostgresDB.DB, string(account.ContactMobile), mobile)
+	if err != nil || !found || owner.UserHK != ownerHK {
+		return false, err
+	}
+	recheck := config.Config.Identity.MobileOwnership.Recheck()
+	if owner.OwnershipCheckedAt != nil && time.Since(*owner.OwnershipCheckedAt) < recheck {
+		return false, nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
+	defer cancel()
+	verdict, ref, err := contactclaim.Check(checkCtx, h.Ownership, h.Sealer, h.PostgresDB.DB, ownerHK, mobile)
+	if errors.Is(err, identity.ErrUnavailable) {
+		log.Printf("A due ownership check of a mobile number at sign-in failed: %v", err)
+		return false, errIdentityUnavailable
+	}
+	if err != nil {
+		return false, err
+	}
+	switch verdict {
+	case contactclaim.NoNationalID:
+		return false, nil
+	case contactclaim.Owned:
+		if err := contactclaim.RecordCheck(ctx, h.PostgresDB.DB, ownerHK, mobile, h.Ownership.Provider(), ref); err != nil {
+			log.Printf("Failed to record an ownership check: %v", err)
+		}
+		return false, nil
+	}
+
+	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err := contactclaim.LockUsers(ctx, tx, ownerHK); err != nil {
+		return false, err
+	}
+	detachOrigin := origin
+	detachOrigin.ActorType, detachOrigin.ActorID = audit.ActorSystem, ""
+	_, detached, err := contactclaim.Detach(ctx, tx, ownerHK, string(account.ContactMobile), mobile, contactclaim.ReasonOwnershipMismatch,
+		detachOrigin, time.Duration(config.Config.Security.ChangeHoldHours)*time.Hour)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	// A concurrent sign-in may have taken it off first; either way, the
+	// account no longer holds it.
+	if !detached {
+		log.Printf("A mobile number was already taken off its account by a concurrent sign-in")
+	}
+	return true, nil
 }
 
 // createUser creates an active user with its first contact, and records its

@@ -14,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
+	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
@@ -660,6 +661,17 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
 		return
 	}
+	// A contact that another account holds moves to this user, who proved
+	// control of it, unless it still belongs to that account (#252).
+	claimFrom, err := h.claimable(ctx, change)
+	if sendRefusal(c, err) {
+		return
+	}
+	if err != nil {
+		log.Printf("Failed to check the account that holds a contact: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+		return
+	}
 
 	// Exactly one confirmation applies the change: the one that deletes the
 	// change from Redis.
@@ -674,7 +686,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 		return
 	}
 
-	contacts, err := h.applyChange(ctx, c, change, owned)
+	contacts, err := h.applyChange(ctx, c, change, owned, claimFrom)
 	if sendRefusal(c, err) {
 		return
 	}
@@ -737,7 +749,7 @@ func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pen
 		log.Printf("A mobile change of a user with a national ID cannot be checked: identity.mobile_ownership.provider is none")
 		return nil, errIdentityUnavailable
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, time.Duration(config.Config.Identity.MobileOwnership.TimeoutSeconds)*time.Second)
+	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
 	defer cancel()
 	match, err := h.Ownership.Match(checkCtx, nationalID, ch.Value)
 	if err != nil {
@@ -760,6 +772,44 @@ func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pen
 			message: "This mobile number is not registered to your national ID. Use a number in your own name."}
 	}
 	return &ownership{nationalID: nationalID, provider: h.Ownership.Provider(), ref: match.Ref}, nil
+}
+
+// errContactInUse is the refusal of a contact that another account holds
+// and still owns. The user proved control of it, so the answer may say so.
+var errContactInUse = &errChange{status: http.StatusConflict, code: codeContactInUse, message: "This contact belongs to another account."}
+
+// claimable returns the account that holds the new contact of a change
+// and that the contact may move away from (#252), or "" when no other
+// account holds it. The user proved control of the contact with a code. A
+// mobile number of an account with a verified national ID moves only when
+// the provider no longer matches it to that ID; one that still matches
+// stays and is refused. An email address moves, since whoever controls it
+// could sign in to that account anyway.
+func (h *UserHandler) claimable(ctx context.Context, ch pendingChange) (string, error) {
+	if ch.Action == contactRemove {
+		return "", nil
+	}
+	owner, found, err := contactclaim.FindOwner(ctx, h.PostgresDB.DB, ch.Type, ch.Value)
+	if err != nil || !found || owner.UserHK == ch.UserID {
+		return "", err
+	}
+	if ch.Type != notify.ContactMobile {
+		return owner.UserHK, nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
+	defer cancel()
+	verdict, _, err := contactclaim.Check(checkCtx, h.Ownership, h.Sealer, h.PostgresDB.DB, owner.UserHK, ch.Value)
+	if errors.Is(err, identity.ErrUnavailable) {
+		log.Printf("The ownership of a mobile number held by another account cannot be checked: %v", err)
+		return "", errIdentityUnavailable
+	}
+	if err != nil {
+		return "", err
+	}
+	if verdict == contactclaim.Owned {
+		return "", errContactInUse
+	}
+	return owner.UserHK, nil
 }
 
 // recordContactAttempt records a confirmation with a wrong code. It is best
@@ -790,12 +840,19 @@ func contactEvent(c *gin.Context, userID string, ch pendingChange) audit.Event {
 // applyChange applies a proven change in one transaction, under the lock of
 // the user's row, after checking it again against the contacts as they are
 // now. It returns the contacts after the change.
-func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendingChange, owned *ownership) ([]storedContact, error) {
+func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendingChange, owned *ownership, claimFrom string) ([]storedContact, error) {
 	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+
+	// A claim locks both accounts, in hk order, before anything else.
+	if claimFrom != "" {
+		if err := contactclaim.LockUsers(ctx, tx, ch.UserID, claimFrom); err != nil {
+			return nil, err
+		}
+	}
 
 	if _, err := loadProfile(ctx, tx, uuid.MustParse(ch.UserID), true); err != nil {
 		if errors.Is(err, errAccountUnavailable) || errors.Is(err, errProfileNotFound) {
@@ -840,6 +897,27 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 
 	e := contactEvent(c, ch.UserID, ch)
 	e.Outcome = audit.Success
+
+	// The account that holds the new contact is read again under the
+	// locks: only the one that was checked may lose it.
+	claimed := false
+	if plan.action != contactRemove {
+		holder, found, err := contactclaim.FindOwner(ctx, tx, plan.typ, plan.value)
+		if err != nil {
+			return nil, err
+		}
+		if found && holder.UserHK != ch.UserID {
+			if holder.UserHK != claimFrom {
+				return nil, errContactInUse
+			}
+			origin := audit.FromRequest(c)
+			origin.ActorType, origin.ActorID = audit.ActorUser, ch.UserID
+			if _, claimed, err = contactclaim.Detach(ctx, tx, claimFrom, plan.typ, plan.value, contactclaim.ReasonClaimed, origin,
+				time.Duration(config.Config.Security.ChangeHoldHours)*time.Hour); err != nil {
+				return nil, err
+			}
+		}
+	}
 	before, _ := findContact(contacts, plan.typ)
 	switch plan.action {
 	case contactAdd:
@@ -867,9 +945,9 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		// The user proved control of the contact, so the answer may say
-		// that another account holds it; that account signs in with it.
-		return nil, &errChange{status: http.StatusConflict, code: codeContactInUse, message: "This contact belongs to another account."}
+		// Another account took the contact after it was read; the user
+		// may confirm again.
+		return nil, errContactInUse
 	}
 	if err != nil {
 		return nil, err
@@ -885,6 +963,9 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 		e.Changes.After = map[string]interface{}{}
 	}
 	e.Changes.After["security_hold_until"] = until.UTC().Format(time.RFC3339)
+	if claimed {
+		e.Changes.After["claimed_from"] = claimFrom
+	}
 	if owned != nil {
 		e.Changes.After["ownership_provider"], e.Changes.After["ownership_ref"] = owned.provider, owned.ref
 	}

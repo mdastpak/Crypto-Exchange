@@ -80,6 +80,12 @@ const (
 	ActionUserContactAdd     = "user.contact_add"
 	ActionUserContactReplace = "user.contact_replace"
 	ActionUserContactRemove  = "user.contact_remove"
+	// ActionUserContactClaimed is a contact taken off an account because
+	// it no longer belongs to its owner (#252): another user proved control
+	// of it, or the provider no longer matches the mobile number to the
+	// national ID of the account. The target is the account that lost it,
+	// and the reason says which.
+	ActionUserContactClaimed = "user.contact_claimed"
 	// The restrictions of a user by an administrator (#220). The target is
 	// the user, the reason is the restriction's, and the event names the
 	// restriction.

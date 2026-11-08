@@ -2792,6 +2792,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.APIResponse"
                         }
                     },
+                    "503": {
+                        "description": "identity_unavailable: the mobile number is due for a check against the national ID of its account, and the provider cannot answer now",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
                     "default": {
                         "description": "Any other error, in the envelope with a code",
                         "schema": {
