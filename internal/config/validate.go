@@ -457,6 +457,20 @@ func (c *Configuration) marketDataProblems(p *problems) {
 	if !validListenAddr(c.MarketData.HealthAddr) {
 		p.add("market_data.health_addr", "is %q; it must be a port with an optional host, such as :8081", c.MarketData.HealthAddr)
 	}
+	m := c.MarketData
+	for _, r := range []struct {
+		key           string
+		value, lo, hi int
+	}{
+		{"market_data.poll_seconds", m.PollSeconds, 1, MaxMarketDataPollSeconds},
+		{"market_data.lease_seconds", m.LeaseSeconds, MinMarketDataLeaseSeconds, MaxMarketDataLeaseSeconds},
+		{"market_data.max_concurrent_jobs", m.MaxConcurrentJobs, 1, MaxMarketDataMaxConcurrentJobs},
+		{"market_data.retry_base_seconds", m.RetryBaseSeconds, 1, MaxMarketDataRetryBaseSeconds},
+	} {
+		if r.value < r.lo || r.value > r.hi {
+			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
+		}
+	}
 }
 
 // validListenAddr reports whether addr is [host]:port with a port from 1 to

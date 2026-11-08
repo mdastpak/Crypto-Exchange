@@ -4418,7 +4418,8 @@ const docTemplate = `{
                         "websocket",
                         "read_only",
                         "scheduler",
-                        "outbox"
+                        "outbox",
+                        "market_data"
                     ],
                     "allOf": [
                         {
@@ -5529,7 +5530,8 @@ const docTemplate = `{
                         "websocket",
                         "read_only",
                         "scheduler",
-                        "outbox"
+                        "outbox",
+                        "market_data"
                     ],
                     "allOf": [
                         {
@@ -5600,6 +5602,7 @@ const docTemplate = `{
                 "read_only",
                 "scheduler",
                 "outbox",
+                "market_data",
                 "service",
                 "writes"
             ],
@@ -5615,6 +5618,7 @@ const docTemplate = `{
                 "FeatureReadOnly",
                 "FeatureScheduler",
                 "FeatureOutbox",
+                "FeatureMarketData",
                 "UseService",
                 "UseWrites"
             ]

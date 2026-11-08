@@ -808,6 +808,16 @@ type MarketDataConfig struct {
 	// HealthAddr is the address of the worker's health probes,
 	// /system/live and /system/ready.
 	HealthAddr string `yaml:"health_addr"`
+	// PollSeconds is how often each worker looks for due jobs.
+	PollSeconds int `yaml:"poll_seconds"`
+	// LeaseSeconds is how long a worker holds a job without renewing it:
+	// how soon another worker takes over the job of a worker that died.
+	LeaseSeconds int `yaml:"lease_seconds"`
+	// MaxConcurrentJobs bounds the runs of one worker at once.
+	MaxConcurrentJobs int `yaml:"max_concurrent_jobs"`
+	// RetryBaseSeconds is the wait after a failed run; it doubles with
+	// each further failure in a row, up to the interval of the job.
+	RetryBaseSeconds int `yaml:"retry_base_seconds"`
 }
 
 // The modes of market_data.mode.
@@ -819,6 +829,19 @@ const (
 // DefaultMarketDataHealthAddr is the default address of the probes of
 // cmd/market-worker.
 const DefaultMarketDataHealthAddr = ":8081"
+
+// The defaults and bounds of the job runner of cmd/market-worker (#264).
+const (
+	DefaultMarketDataPollSeconds       = 5
+	MaxMarketDataPollSeconds           = 300
+	DefaultMarketDataLeaseSeconds      = 60
+	MinMarketDataLeaseSeconds          = 10
+	MaxMarketDataLeaseSeconds          = 3600
+	DefaultMarketDataMaxConcurrentJobs = 4
+	MaxMarketDataMaxConcurrentJobs     = 64
+	DefaultMarketDataRetryBaseSeconds  = 30
+	MaxMarketDataRetryBaseSeconds      = 3600
+)
 
 // DefaultJibitEndpoint is the base URL of the Jibit identity API.
 const DefaultJibitEndpoint = "https://napi.jibit.ir/ide"
@@ -1134,6 +1157,10 @@ func setDefaults() {
 		{&Config.Identity.MobileOwnership.TimeoutSeconds, 10},
 		{&Config.Identity.MobileOwnership.RecheckDays, 30},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
+		{&Config.MarketData.PollSeconds, DefaultMarketDataPollSeconds},
+		{&Config.MarketData.LeaseSeconds, DefaultMarketDataLeaseSeconds},
+		{&Config.MarketData.MaxConcurrentJobs, DefaultMarketDataMaxConcurrentJobs},
+		{&Config.MarketData.RetryBaseSeconds, DefaultMarketDataRetryBaseSeconds},
 		{&Config.Platform.PollIntervalMs, DefaultPlatformPollIntervalMs},
 		{&Config.Platform.StaleAfterSeconds, DefaultPlatformStaleAfterSeconds},
 	} {
