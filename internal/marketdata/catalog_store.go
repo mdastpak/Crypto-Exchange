@@ -176,7 +176,7 @@ func (s *Store) RecordConflict(ctx context.Context, c Conflict) (bool, error) {
 		INSERT INTO market_identity_conflicts (source, external_id, kind, subject, asset_id, claimed_by, detail)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (source, external_id, kind, subject) WHERE resolved_at IS NULL DO NOTHING`,
-		c.Source, c.ExternalID, c.Kind, c.Subject, c.AssetID, c.ClaimedBy, truncate(c.Detail, 1000))
+		c.Source, c.ExternalID, c.Kind, c.Subject, c.AssetID, c.ClaimedBy, clip(c.Detail, 1000))
 	if err != nil {
 		return false, err
 	}
@@ -258,7 +258,7 @@ func (s *Store) UpdateRecord(ctx context.Context, id int64, r Record) (bool, err
 			logo_url = CASE WHEN $5 = '' THEN logo_url ELSE $5 END, updated_at = NOW()
 		WHERE id = $1 AND (kind, description, links, logo_url)
 			IS DISTINCT FROM ($2, $3, $4::jsonb, CASE WHEN $5 = '' THEN logo_url ELSE $5 END)`,
-		id, r.Kind, truncate(r.Description, 20000), encoded, r.LogoURL)
+		id, r.Kind, clip(r.Description, 20000), encoded, r.LogoURL)
 	if err != nil {
 		return false, err
 	}

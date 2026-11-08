@@ -332,7 +332,7 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 
 ### `market_data`
 
-[`cmd/market-worker`](market-data.md), which collects the global market data catalog ([#262](https://github.com/mdastpak/Crypto-Exchange/issues/262)). The server does not read this section.
+[`cmd/market-worker`](market-data.md), which collects the global market data catalog ([#262](https://github.com/mdastpak/Crypto-Exchange/issues/262)). The server reads only `api` and the quality rules of `tickers` (`stale_after_seconds`, `outlier_percent`, `min_venues`), for the [public routes](market-data.md#public-api); give the server and the worker the same values.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -371,6 +371,8 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `candles.resolutions.<…>.interval_minutes` | `5`, `60`, `360` | From 1 to 1440. The time between two runs of a venue at the resolution. |
 | `candles.resolutions.<…>.backfill_days` | `2`, `180`, `3650` | From 1 to 36500. How far back the history goes. |
 | `candles.resolutions.<…>.retention_days` | `7`, `180`, `0` | From 0 to 36500. How long candles are kept, in whole months (years for `1d`); `0` keeps them. The backfill never goes past it. |
+| `api.regions` | `[]` (every region) | The regions of the venues that the public routes show: `global`, `ir`. An international release sets `[global]`. |
+| `api.cache_seconds` | `30` | From 1 to 3600. How long an answer of the public routes is cached in Redis, shared by every instance, and by clients (`Cache-Control: max-age`). |
 
 ### `platform`
 

@@ -23,6 +23,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
+	marketdataapi "github.com/mdastpak/crypto-exchange/internal/handlers/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/public"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/socket"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
@@ -30,6 +31,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -41,16 +43,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 type InfraHandlers struct {
-	Socket         *socket.WebSocketHandler
-	System         *system.SystemHandler
-	Admin          *admin.AdminHandler
-	Public         *public.PublicHandler
-	User           *user.UserHandler
+	Socket *socket.WebSocketHandler
+	System *system.SystemHandler
+	Admin  *admin.AdminHandler
+	Public *public.PublicHandler
+	User   *user.UserHandler
+	// MarketData serves the global market data catalog (#269).
+	MarketData     *marketdataapi.Handler
 	Redis          *db.RedisService
 	TokenBlacklist *auth.TokenBlacklist
 	Sessions       auth.SessionStore
@@ -759,10 +764,29 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		Admin:          admin.NewHandler(services),
 		Public:         publicHandler,
 		User:           userHandler,
+		MarketData:     newMarketDataAPI(services),
 		Redis:          services.Redis,
 		TokenBlacklist: tb,
 		Sessions:       sessions,
 	}
+}
+
+// newMarketDataAPI builds the public routes of the market data catalog,
+// which cmd/market-worker fills. Their answers are cached in Redis, shared
+// by every instance.
+func newMarketDataAPI(services *models.InfraServices) *marketdataapi.Handler {
+	md := config.Config.MarketData
+	return marketdataapi.New(marketdata.NewStore(services.Postgres.DB),
+		marketdataapi.RedisCache{Client: services.Redis.Client},
+		marketdataapi.Options{
+			Regions:  md.API.Regions,
+			CacheTTL: time.Duration(md.API.CacheSeconds) * time.Second,
+			Rules: marketdata.QualityRules{
+				StaleAfter:   time.Duration(md.Tickers.StaleAfterSeconds) * time.Second,
+				MaxDeviation: decimal.New(int64(md.Tickers.OutlierPercent), -2),
+				MinVenues:    md.Tickers.MinVenues,
+			},
+		})
 }
 
 // welcome answers the root path.
@@ -853,6 +877,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminAuthGroup.POST("", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.RequestSignIn)
 		adminAuthGroup.POST("/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Admin.VerifySignIn)
 	}
+
+	// The market data catalog (#269) is public and read only. Its answers
+	// are cached, so the REST limit is enough.
+	ih.MarketData.Register(g, service)
 
 	adminGroup := g.Group("/admin")
 	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))

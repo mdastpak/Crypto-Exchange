@@ -832,7 +832,28 @@ type MarketDataConfig struct {
 	Tickers MarketDataTickers `yaml:"tickers"`
 	// Candles configures the candles of the venues (#268).
 	Candles MarketDataCandles `yaml:"candles"`
+	// API configures the public read API of the server (#269), which
+	// also applies Tickers' rules of quality.
+	API MarketDataAPI `yaml:"api"`
 }
+
+// MarketDataAPI configures the public routes of the market data catalog,
+// which the server serves.
+type MarketDataAPI struct {
+	// Regions are the regions of the venues that the API shows: global,
+	// ir, or both when empty. A release for users outside Iran sets
+	// [global] (#272).
+	Regions []string `yaml:"regions"`
+	// CacheSeconds is how long an answer is cached in Redis, shared by
+	// every instance, and by clients.
+	CacheSeconds int `yaml:"cache_seconds"`
+}
+
+// The defaults and bounds of market_data.api.
+const (
+	DefaultMarketDataAPICacheSeconds = 30
+	MaxMarketDataAPICacheSeconds     = 3600
+)
 
 // MarketDataCandles configures the candle jobs of the venues.
 type MarketDataCandles struct {
@@ -1432,6 +1453,7 @@ func setDefaults() {
 		{&Config.MarketData.Tickers.DeactivatePairsAfterHours, DefaultTickersDeactivateAfterHrs},
 		{&Config.MarketData.Candles.MaxPairsPerVenue, DefaultCandlesMaxPairsPerVenue},
 		{&Config.MarketData.Candles.RequestsPerRun, DefaultCandlesRequestsPerRun},
+		{&Config.MarketData.API.CacheSeconds, DefaultMarketDataAPICacheSeconds},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback

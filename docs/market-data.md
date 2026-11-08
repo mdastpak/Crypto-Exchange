@@ -16,7 +16,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Catalog from CoinGecko and CoinMarketCap | [#266](https://github.com/mdastpak/Crypto-Exchange/issues/266) | Done |
 | Tickers of global and Iranian exchanges | [#267](https://github.com/mdastpak/Crypto-Exchange/issues/267) | Done |
 | Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Done |
-| Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Planned |
+| Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Done |
 | Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Planned |
 | Feed for the blog | [#271](https://github.com/mdastpak/Crypto-Exchange/issues/271) | Planned |
 
@@ -222,6 +222,23 @@ A day of `1h` candles for 1,000 pairs of one venue, with `max_pairs_per_venue: 1
 | Kraken | about 1 request per second | 50 | 20 minutes |
 
 Each run fits well within the hour, and the 30-minute timeout of a run, except Kraken at 1,000 pairs, which should keep `max_pairs_per_venue` at about 500 or run every two hours. The Iranian venues publish no limits; start them at 60 per minute (about 17 minutes per run). The first backfill of 180 days of `1h` is 4,320 candles per pair: 5 requests per pair at Binance, 44 at OKX, spread over the runs by `requests_per_run`.
+
+## Public API
+
+The server serves the catalog read only, without sign-in, under `/api/v1/market-data` ([#269](https://github.com/mdastpak/Crypto-Exchange/issues/269)); the [API reference](api.md#market-data) and the OpenAPI document describe each route.
+
+| Route | Answer |
+| --- | --- |
+| `GET /market-data/assets?q=&limit=&cursor=` | The assets by market cap rank, the unranked last, [paginated](api.md#pagination). `q` matches the exact symbol, or a part of the name or slug. |
+| `GET /market-data/assets/{slug}` | An asset with its description, links, supply, contracts, and attribution. |
+| `GET /market-data/assets/{slug}/venues` | The latest ticker at each venue, with `stale`, `outlier`, and the `median` of its quote ([Stale prices and outliers](#stale-prices-and-outliers)). |
+| `GET /market-data/assets/{slug}/candles?venue=&quote=&interval=&from=&to=` | The candles of the asset's pair at a venue, at most 1000; the last 500 by default. |
+
+- **Unverified by default.** Every asset carries `verified` and `label`: `unverified`, unless an administrator linked it to a listed currency. A hidden asset is not found, in the list, the search, or by its slug.
+- **Regions.** `market_data.api.regions` limits the venues shown, so that an international release leaves out the Iranian venues ([#272](https://github.com/mdastpak/Crypto-Exchange/issues/272)).
+- **Cache.** Each answer is cached in Redis for `market_data.api.cache_seconds` (30), shared by every instance, under a key that holds a generation number. `Invalidate` raises the generation (`INCR`), so that every instance stops serving the answers cached before at once; the administration ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)) calls it after hiding or linking an asset. Only successful answers are cached. Without Redis, the answers are built on every request.
+- **ETag.** Every answer has an `ETag`, the same on every instance for the same answer, and `Cache-Control: public, max-age=<cache_seconds>`; a request with a matching `If-None-Match` gets `304 Not Modified`.
+- **Limits.** The routes fall under the REST rate limit of the public routes, and close during a full maintenance, as the other public routes do.
 
 ## Data model
 

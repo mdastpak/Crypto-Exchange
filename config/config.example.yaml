@@ -304,6 +304,11 @@ market_data:
       1d: {enabled: true, interval_minutes: 360, backfill_days: 3650, retention_days: 0}
       1h: {enabled: true, interval_minutes: 60, backfill_days: 180, retention_days: 180}
       5m: {enabled: false, interval_minutes: 5, backfill_days: 2, retention_days: 7}
+  # The public routes of the server (docs/market-data.md#public-api). The
+  # server reads this and the quality rules of tickers above.
+  api:
+    regions: []                # Venue regions shown; [global] for an international release
+    cache_seconds: 30          # Redis and client cache of an answer
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.
