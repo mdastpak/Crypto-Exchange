@@ -15,7 +15,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Source interfaces, rate-limited HTTP client with egress per node, stub source | [#265](https://github.com/mdastpak/Crypto-Exchange/issues/265) | Done |
 | Catalog from CoinGecko and CoinMarketCap | [#266](https://github.com/mdastpak/Crypto-Exchange/issues/266) | Done |
 | Tickers of global and Iranian exchanges | [#267](https://github.com/mdastpak/Crypto-Exchange/issues/267) | Done |
-| Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Planned |
+| Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Done |
 | Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Planned |
 | Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Planned |
 | Feed for the blog | [#271](https://github.com/mdastpak/Crypto-Exchange/issues/271) | Planned |
@@ -179,9 +179,53 @@ Whether a ticker is stale or an outlier is decided when it is read (`marketdata.
 
 Prices in different quotes (`USDT`, `USD`, `IRT`) are never compared with each other.
 
+## Candles
+
+The candle jobs ([#268](https://github.com/mdastpak/Crypto-Exchange/issues/268)) keep the OHLCV history of the pairs for the price charts of each venue: one job per venue and resolution, `candles:binance:1h`, every `interval_minutes` of the resolution.
+
+| Resolution | Default | Runs every | History | Kept |
+| --- | --- | --- | --- | --- |
+| `1d` | on | 6 hours | 10 years | Always |
+| `1h` | on | hour | 180 days | 180 days |
+| `5m` | off | 5 minutes | 2 days | 7 days |
+
+The pairs are the active pairs of the venue whose base is in the catalog and whose quote is in `candles.quotes` (`USDT`, `USD`, `IRT`), at most `max_pairs_per_venue` (200), the best-ranked bases first. A run asks the venue for ranges of at most one request's candles per pair, within `requests_per_run` (300), round-robin over the pairs:
+
+1. A new pair gets its latest candles first, so that it charts at once.
+2. Forward: from what was last asked up to the last closed candle.
+3. Backward: down to the history depth, in later runs if the budget runs out.
+
+`market_candle_cursors` keeps, per pair and resolution, the range `[from_time, until_time)` that was asked, with the candles in the same transaction. So a restart resumes where the last run stopped, a repeated request does no harm (candles upsert on pair, resolution, and open time), and a range the venue had no candles for, such as before a pair was listed, is not asked again. A pair the venue no longer knows is skipped. Only closed candles are stored, aligned to UTC.
+
+| Venue | Endpoint | Candles per request | Notes |
+| --- | --- | --- | --- |
+| `binance` | `/api/v3/klines` | 1000 | |
+| `okx` | `/api/v5/market/history-candles` | 100 | UTC days (`1Dutc`) |
+| `kraken` | `/0/public/OHLC` | 720 | Only the last 720 candles, so no deeper history |
+| `coinbase` | `/api/v3/brokerage/market/products/{id}/candles` | 350 | |
+| `nobitex` | `/market/udf/history` | 500 | `5m` and `1h` only, since its days are Tehran's; rials in tomans |
+| `wallex` | `/v1/udf/history` | 500 | `5m` and `1h` only |
+
+### Partitions and retention
+
+`market_candles` is partitioned by resolution, then by month (`5m`, `1h`) or year (`1d`), such as `market_candles_1h_2026_11`. The job `candles:partitions`, every 6 hours on any worker, creates the partitions of the current and the next period, and drops those whose candles all fall outside `retention_days`, so old candles go without a `DELETE` and without bloat; a write also creates the partition it needs. The runtime role cannot create or drop tables: it calls `market_candles_ensure_partition` and `market_candles_drop_partitions`, which run as the migration role and touch only these partitions (`internal/db.RuntimeFunctions`). Retention is in whole partitions, so candles are kept up to a month (a year for `1d`) longer than `retention_days`.
+
+### Rate limits
+
+A day of `1h` candles for 1,000 pairs of one venue, with `max_pairs_per_venue: 1000` and `requests_per_run: 1000`: each hourly run asks one request per pair for the one new candle, so 1,000 requests per run and 24,000 per day. The client spreads them within the source's `requests_per_minute`:
+
+| Venue | Public limit | `requests_per_minute` | One run of 1,000 requests |
+| --- | --- | --- | --- |
+| Binance | 6,000 weight per minute; `klines` weighs 2 | 600 | under 2 minutes, 2,000 weight |
+| OKX | 20 requests per 2 seconds for `history-candles` | 300 | under 4 minutes |
+| Coinbase | 10 requests per second | 300 | under 4 minutes |
+| Kraken | about 1 request per second | 50 | 20 minutes |
+
+Each run fits well within the hour, and the 30-minute timeout of a run, except Kraken at 1,000 pairs, which should keep `max_pairs_per_venue` at about 500 or run every two hours. The Iranian venues publish no limits; start them at 60 per minute (about 17 minutes per run). The first backfill of 180 days of `1h` is 4,320 candles per pair: 5 requests per pair at Binance, 44 at OKX, spread over the runs by `requests_per_run`.
+
 ## Data model
 
-The tables have the `market_` prefix, and no other table refers to them, so that the catalog can move to a database of its own. Amounts are `NUMERIC`, never floating point. Nothing is deleted: an asset or a pair that a source drops is marked inactive.
+The tables have the `market_` prefix, and no other table refers to them, so that the catalog can move to a database of its own. Amounts are `NUMERIC`, never floating point. Nothing is deleted: an asset or a pair that a source drops is marked inactive. Only the candles leave, a whole partition at a time, past their retention.
 
 | Table | Contents |
 | --- | --- |
@@ -192,6 +236,8 @@ The tables have the `market_` prefix, and no other table refers to them, so that
 | `market_venue_pairs` | A pair at a venue (`BTCUSDT` at `binance`), mapped to the base and quote assets of the catalog once known. |
 | `market_tickers_latest` | The latest ticker of each pair: last price, bid, ask, and the 24-hour volume, high, low, and open, with the time of the venue and the time received. |
 | `market_identity_conflicts` | What the catalog sync could not decide alone: the source and its id, the kind (`contract`, `identity`, `symbol`), the subject, the assets involved, and when an administrator resolved it. |
+| `market_candles` | The OHLCV candles of a pair at a resolution (`5m`, `1h`, `1d`), partitioned by resolution and time. |
+| `market_candle_cursors` | Per pair and resolution, the range of candles that was asked of the venue. |
 | `market_sync_runs` | One row per job run: job, worker, mode, status, items read and written, and the error. |
 
 ### Writes from several workers

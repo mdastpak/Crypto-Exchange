@@ -295,6 +295,15 @@ market_data:
     min_venues: 3              # Venues with a fresh price that make a median
     map_rank_limit: 1000       # A shared symbol maps to the only asset ranked within this
     deactivate_pairs_after_hours: 24
+  # The candles of the venues (docs/market-data.md#candles).
+  candles:
+    quotes: [USDT, USD, IRT]   # Pairs with these quotes
+    max_pairs_per_venue: 200   # The best-ranked bases first
+    requests_per_run: 300      # Per venue and resolution
+    resolutions:
+      1d: {enabled: true, interval_minutes: 360, backfill_days: 3650, retention_days: 0}
+      1h: {enabled: true, interval_minutes: 60, backfill_days: 180, retention_days: 180}
+      5m: {enabled: false, interval_minutes: 5, backfill_days: 2, retention_days: 7}
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.

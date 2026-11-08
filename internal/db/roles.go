@@ -47,6 +47,16 @@ var AppendOnlyTables = []string{"audit_events"}
 // record, but not erase them.
 var DeletableTables = []string{"outbox_events", "user_favorites"}
 
+// RuntimeFunctions are the functions that the runtime role may call. They
+// run as their owner, the migration role, and each does one narrow change
+// of the schema that a job needs: creating and dropping the partitions of
+// market_candles (#268), which hold public market data that the jobs can
+// fetch again.
+var RuntimeFunctions = []string{
+	"market_candles_ensure_partition(text, timestamptz)",
+	"market_candles_drop_partitions(text, timestamptz)",
+}
+
 // migrationRole returns the user and password that the migrations connect
 // with: postgres.migrations.user and password, or, when no migration role is
 // configured, postgres.user and password.
@@ -162,6 +172,20 @@ func grantRuntimeRole(ctx context.Context, conn *sql.DB, role string) error {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("granting the runtime role %s: %s: %w", role, statement, err)
 			}
+		}
+	}
+	for _, function := range RuntimeFunctions {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT to_regprocedure($1) IS NOT NULL`, schemaName+"."+function).Scan(&exists); err != nil {
+			return fmt.Errorf("granting the runtime role %s: looking up %s: %w", role, function, err)
+		}
+		if !exists {
+			continue
+		}
+		// The function is one of RuntimeFunctions, a constant list.
+		statement := "GRANT EXECUTE ON FUNCTION " + s + "." + function + " TO " + r //nolint:gosec // G202: not user input
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("granting the runtime role %s: %s: %w", role, statement, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

@@ -276,7 +276,7 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
 	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
-		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog(), Tickers: validTickers()}
+		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog(), Tickers: validTickers(), Candles: validCandles()}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
@@ -301,6 +301,11 @@ func validTickers() MarketDataTickers {
 		MapRankLimit: 1000, DeactivatePairsAfterHours: 24}
 }
 
+func validCandles() MarketDataCandles {
+	return MarketDataCandles{Quotes: []string{"USDT"}, MaxPairsPerVenue: 200, RequestsPerRun: 300,
+		Resolutions: DefaultCandleResolutions()}
+}
+
 func validMarketWorker() Configuration {
 	var c Configuration
 	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.DBName = "db", "5432", "app", "exchange"
@@ -309,6 +314,7 @@ func validMarketWorker() Configuration {
 		Egress:  MarketDataEgress{Default: EgressProxy, ProxyURL: "socks5://user:secret@gw.example:1080"},
 		Catalog: validCatalog(),
 		Tickers: validTickers(),
+		Candles: validCandles(),
 		Sources: map[string]MarketDataSource{
 			"coingecko": {Enabled: true, RequestsPerMinute: 30, MonthlyRequests: 10000, TimeoutSeconds: 20},
 			"nobitex":   {Enabled: true, Egress: EgressDirect, TimeoutSeconds: 20},
@@ -394,6 +400,24 @@ func TestValidateMarketWorker_ChecksTheTickers(t *testing.T) {
 	for _, want := range []string{"market_data.tickers.interval_seconds", "market_data.tickers.outlier_percent",
 		"market_data.tickers.min_venues", "market_data.tickers.map_rank_limit", "market_data.tickers.deactivate_pairs_after_hours",
 		"every ticker turns stale"} {
+		assert.Contains(t, err.Error(), want)
+	}
+}
+
+func TestValidateMarketWorker_ChecksTheCandles(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+
+	Config = validMarketWorker()
+	Config.MarketData.Candles = MarketDataCandles{MaxPairsPerVenue: 0, RequestsPerRun: 0, Resolutions: map[string]MarketDataResolution{
+		"2h": {Enabled: true, IntervalMinutes: 60, BackfillDays: 1},
+		"1h": {Enabled: true, IntervalMinutes: 0, BackfillDays: 0, RetentionDays: -1},
+	}}
+	err := ValidateMarketWorker()
+	require.Error(t, err)
+	for _, want := range []string{"market_data.candles.quotes", "market_data.candles.max_pairs_per_venue",
+		"market_data.candles.requests_per_run", "market_data.candles.resolutions.2h is not a resolution",
+		"resolutions.1h.interval_minutes", "resolutions.1h.backfill_days", "resolutions.1h.retention_days"} {
 		assert.Contains(t, err.Error(), want)
 	}
 }

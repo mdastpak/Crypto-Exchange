@@ -528,6 +528,7 @@ func (c *Configuration) marketDataProblems(p *problems) {
 			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
 		}
 	}
+	c.candleProblems(p)
 	if tk.StaleAfterSeconds > 0 && tk.StaleAfterSeconds < tk.IntervalSeconds {
 		p.add("market_data.tickers.stale_after_seconds", "is %d; it must be at least interval_seconds (%d), or every ticker turns stale between two runs",
 			tk.StaleAfterSeconds, tk.IntervalSeconds)
@@ -567,6 +568,37 @@ func (c *Configuration) catalogProblems(p *problems) {
 	} {
 		if r.value < r.lo || r.value > r.hi {
 			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
+		}
+	}
+}
+
+// candleProblems checks market_data.candles.
+func (c *Configuration) candleProblems(p *problems) {
+	cd := c.MarketData.Candles
+	if len(cd.Quotes) == 0 {
+		p.add("market_data.candles.quotes", "is empty; it must list quote symbols, such as USDT")
+	}
+	if cd.MaxPairsPerVenue < 1 || cd.MaxPairsPerVenue > MaxCandlesMaxPairsPerVenue {
+		p.add("market_data.candles.max_pairs_per_venue", "is %d; it must be from 1 to %d", cd.MaxPairsPerVenue, MaxCandlesMaxPairsPerVenue)
+	}
+	if cd.RequestsPerRun < 1 || cd.RequestsPerRun > MaxCandlesRequestsPerRun {
+		p.add("market_data.candles.requests_per_run", "is %d; it must be from 1 to %d", cd.RequestsPerRun, MaxCandlesRequestsPerRun)
+	}
+	for _, name := range slices.Sorted(maps.Keys(cd.Resolutions)) {
+		r := cd.Resolutions[name]
+		key := "market_data.candles.resolutions." + name
+		if name != "5m" && name != "1h" && name != "1d" {
+			p.add(key, "is not a resolution; they are 5m, 1h, and 1d")
+			continue
+		}
+		if r.IntervalMinutes < 1 || r.IntervalMinutes > 1440 {
+			p.add(key+".interval_minutes", "is %d; it must be from 1 to 1440", r.IntervalMinutes)
+		}
+		if r.BackfillDays < 1 || r.BackfillDays > MaxCandlesDays {
+			p.add(key+".backfill_days", "is %d; it must be from 1 to %d", r.BackfillDays, MaxCandlesDays)
+		}
+		if r.RetentionDays < 0 || r.RetentionDays > MaxCandlesDays {
+			p.add(key+".retention_days", "is %d; it must be from 0 (keep) to %d", r.RetentionDays, MaxCandlesDays)
 		}
 	}
 }
