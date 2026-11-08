@@ -214,6 +214,7 @@ Every server instance connects with its own TLS session, so several instances be
 | `issuer` | `crypto-exchange` | Issuer claim written into tokens and required on every token |
 | `access_token.expiration_minutes` | **required** | Access token lifetime, at most 1440 (a day). There is no default. |
 | `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age`. It must be at least the access token lifetime. |
+| `sessions.max_lifetime_minutes` | `43200` | The absolute lifetime of a session, 30 days by default ([#144](https://github.com/mdastpak/Crypto-Exchange/issues/144)). A refresh never extends a session past its sign-in plus this; then the refresh answers `401` and the session's access tokens are refused, and the user signs in again. At least `refresh_token.expiration_minutes`, or the server does not start. Every instance checks the age of a session, so a lower value applies to the existing sessions at once. |
 | `sessions.max_per_user` | `5` | From 1 to 50. The most active sessions one user may have. A sign-in past it is refused with `409 session_limit_reached` until the user ends a session; see [Session limit](api.md#session-limit). |
 | `refresh_token.reuse_grace_seconds` | `10` | From 1 to 60. How long after a refresh the refresh token that it replaced still gets a new access token, for tabs that refresh at the same moment, instead of revoking the session as a reuse. See [`POST /public/auth/refresh`](api.md#post-publicauthrefresh). |
 
@@ -479,6 +480,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `JWT_REFRESH_TOKEN_EXPIRATION_MINUTES` | `jwt.refresh_token.expiration_minutes` |
 | `JWT_REFRESH_TOKEN_REUSE_GRACE_SECONDS` | `jwt.refresh_token.reuse_grace_seconds` |
 | `JWT_SESSIONS_MAX_PER_USER` | `jwt.sessions.max_per_user` |
+| `JWT_SESSIONS_MAX_LIFETIME_MINUTES` | `jwt.sessions.max_lifetime_minutes` |
 | `OTP_AUTH_NAME` | `otp.auth.name` |
 | `OTP_AUTH_TTL_SECONDS` | `otp.auth.ttl_seconds` |
 | `OTP_AUTH_LENGTH` | `otp.auth.length` |

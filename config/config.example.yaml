@@ -158,6 +158,7 @@ jwt:
     reuse_grace_seconds: 10    # The replaced token still works this long, for concurrent tabs
   sessions:
     max_per_user: 5            # Active sessions per user; a sign-in past it must end one
+    max_lifetime_minutes: 43200  # 30 days; no refresh extends a session past this
 
 otp:
   auth:

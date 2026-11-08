@@ -65,11 +65,12 @@ func (s *PostgresSessionStore) List(ctx context.Context, userID string, page pag
 	if hasAfter {
 		afterTime = after.CreatedAt
 	}
+	//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 	rows, err := s.DB.QueryContext(ctx, `
 		SELECT id, auth_method, COALESCE(user_agent, ''), COALESCE(host(ip), ''), created_at,
-			COALESCE(last_used_at, created_at), expires_at
+			COALESCE(last_used_at, created_at), `+cappedExpiry("expires_at")+`
 		FROM sessions
-		WHERE user_id = $1 AND status = 'ACTIVE' AND expires_at > NOW()
+		WHERE user_id = $1 AND `+liveSession("")+`
 		  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2::timestamptz, $3::uuid))
 		ORDER BY created_at DESC, id DESC
 		LIMIT $4`,
@@ -104,9 +105,10 @@ func nullUUID(id string) interface{} {
 
 func (s *PostgresSessionStore) RevokeOwn(ctx context.Context, sessionID, userID string, event audit.Event) error {
 	return s.inTx(ctx, func(tx *sql.Tx) (*audit.Event, bool, error) {
+		//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 		res, err := tx.ExecContext(ctx, `
 			UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
-			WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE' AND expires_at > NOW()`,
+			WHERE id = $1 AND user_id = $2 AND `+liveSession(""),
 			sessionID, userID)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to revoke session: %w", err)
@@ -126,9 +128,10 @@ func (s *PostgresSessionStore) RevokeOthers(ctx context.Context, userID, keep st
 		return 0, fmt.Errorf("failed to start the session transaction: %w", err)
 	}
 	defer tx.Rollback()
+	//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 	rows, err := tx.QueryContext(ctx, `
 		UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
-		WHERE user_id = $1 AND id <> $2 AND status = 'ACTIVE' AND expires_at > NOW()
+		WHERE user_id = $1 AND id <> $2 AND `+liveSession("")+`
 		RETURNING id`,
 		userID, keep)
 	if err != nil {

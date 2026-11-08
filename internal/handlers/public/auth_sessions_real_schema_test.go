@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -336,4 +337,59 @@ func TestSession_RealSchema_VerifyChecksTheSessionAndTheUser(t *testing.T) {
 		exec(`UPDATE users SET status = 'SUSPENDED' WHERE hk = $1`, claims.UUID)
 		assert.ErrorIs(t, verify(), auth.ErrSessionInvalid, "a dead session is reported first")
 	})
+}
+
+// A session ends at its absolute lifetime (#144), however often it is
+// refreshed: a refresh never extends it past its creation plus
+// jwt.sessions.max_lifetime_minutes, and at that point the refresh answers
+// 401 and its access tokens are refused, so a stolen refresh token that is
+// kept rotating still stops working.
+func TestSession_RealSchema_MaxLifetimeEndsTheSession(t *testing.T) {
+	env := newSessionTestEnv(t)
+	config.Config.JWT.Sessions.MaxLifetimeMinutes = 120 // the refresh tokens live 60
+	const email = "session-lifetime@example.com"
+	_, cookie, _ := env.signIn(t, email)
+	age := func(minutes int) {
+		t.Helper()
+		_, err := env.conn.Exec(`UPDATE sessions SET created_at = NOW() - make_interval(mins => $1)`, minutes)
+		require.NoError(t, err)
+	}
+	refresh := func(c *http.Cookie) (*httptest.ResponseRecorder, string, *http.Cookie) {
+		t.Helper()
+		w := env.send(http.MethodPost, "/public/auth/refresh", nil, withRefreshCookie(c.Value))
+		if w.Code != http.StatusOK {
+			return w, "", nil
+		}
+		var resp models.APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return w, resp.Info.(map[string]interface{})["access_token"].(string), findRefreshCookie(w)
+	}
+
+	// Before the limit, a refresh rotates, but no further than the limit:
+	// 100 minutes old, the new expiry is the 120th minute, not 60 from now.
+	age(100)
+	w, access, next := refresh(cookie)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var lifetime float64
+	require.NoError(t, env.conn.QueryRow(`SELECT EXTRACT(EPOCH FROM expires_at - created_at) / 60 FROM sessions`).Scan(&lifetime))
+	assert.InDelta(t, 120, lifetime, 0.01, "the expiry is capped at the absolute lifetime")
+	assert.Equal(t, http.StatusOK, env.send(http.MethodGet, "/user/ping", nil, withAuthorization(access)).Code)
+
+	// At the limit, the refresh is refused and the access token too.
+	age(120)
+	w, _, _ = refresh(next)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "a session at its absolute lifetime cannot be refreshed")
+	assert.Contains(t, w.Body.String(), "refresh_token_invalid")
+	assert.Equal(t, http.StatusUnauthorized, env.send(http.MethodGet, "/user/ping", nil, withAuthorization(access)).Code,
+		"RequireActiveSession refuses the access tokens of a session past its lifetime")
+
+	// The age is checked by itself, not only through expires_at: a session
+	// that an instance of an earlier release extended past the limit, or
+	// that predates a lowered limit, ends as well.
+	_, err := env.conn.Exec(`UPDATE sessions SET created_at = NOW() - INTERVAL '3 hours', expires_at = NOW() + INTERVAL '1 hour'`)
+	require.NoError(t, err)
+	w, _, _ = refresh(next)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, env.send(http.MethodGet, "/user/ping", nil, withAuthorization(access)).Code)
+	assert.Equal(t, "ACTIVE", env.sessionOf(t, email).status, "an ended session is not a reuse, and is not revoked")
 }
