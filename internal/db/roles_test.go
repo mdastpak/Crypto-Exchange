@@ -297,3 +297,36 @@ func TestGrantRuntimeRole_RefusesAnEmptyRole(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "postgres.user is empty")
 }
+
+// TestRuntimeRole_ManagesOnlyTheCandlePartitions checks the functions of
+// RuntimeFunctions (#268): the runtime role creates and drops the
+// partitions of market_candles through them, writes candles, and still
+// cannot drop or create any table itself.
+func TestRuntimeRole_ManagesOnlyTheCandlePartitions(t *testing.T) {
+	withRoles(t, config.MigrationsModeExternal)
+	require.NoError(t, Migrate(context.Background()))
+	runtime := openAs(t, rolesTestRole, rolesTestPassword)
+
+	var name string
+	require.NoError(t, runtime.QueryRow(`SELECT market_candles_ensure_partition('1h', '2026-11-08T19:00:00Z')`).Scan(&name))
+	assert.Equal(t, "market_candles_1h_2026_11", name)
+	_, err := runtime.Exec(`INSERT INTO market_venues (id, name, kind, region, enabled) VALUES ('binance', 'Binance', 'cex', 'global', TRUE)`)
+	require.NoError(t, err)
+	var pair int64
+	require.NoError(t, runtime.QueryRow(`INSERT INTO market_venue_pairs (venue_id, venue_symbol, base_symbol, quote_symbol)
+		VALUES ('binance', 'BTCUSDT', 'BTC', 'USDT') RETURNING id`).Scan(&pair))
+	_, err = runtime.Exec(`INSERT INTO market_candles (pair_id, resolution, open_time, open, high, low, close, volume)
+		VALUES ($1, '1h', '2026-11-08T19:00:00Z', 1, 2, 0.5, 1.5, 10)`, pair)
+	require.NoError(t, err, "the runtime role writes through the parent")
+
+	requireDenied(t, runtime, `DROP TABLE market_candles_1h_2026_11`)
+	requireDenied(t, runtime, `DELETE FROM market_candles`)
+	requireDenied(t, runtime, `CREATE TABLE market_candles_1h_2030_01 PARTITION OF market_candles_1h FOR VALUES FROM ('2030-01-01') TO ('2030-02-01')`)
+	problems, err := RoleProblems(context.Background(), runtime)
+	require.NoError(t, err)
+	assert.Empty(t, problems)
+
+	var dropped int
+	require.NoError(t, runtime.QueryRow(`SELECT market_candles_drop_partitions('1h', '2026-12-01T00:00:00Z')`).Scan(&dropped))
+	assert.Equal(t, 1, dropped)
+}

@@ -26,6 +26,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/candles"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/catalog"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/jobs"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source"
@@ -181,6 +182,60 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 			MapRankLimit:    cfg.Tickers.MapRankLimit,
 			DeactivateAfter: time.Duration(cfg.Tickers.DeactivatePairsAfterHours) * time.Hour,
 		}), Interval: interval, Timeout: max(interval, time.Minute)})
+		candleSpecs, err := candleJobs(store, src)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, candleSpecs...)
+	}
+	// The partitions of the candles, on any worker.
+	var retentions []candles.Retention
+	for _, name := range marketdata.Resolutions {
+		r := cfg.Candles.Resolutions[name]
+		retentions = append(retentions, candles.Retention{Resolution: name, Ensure: r.Enabled,
+			Keep: time.Duration(r.RetentionDays) * 24 * time.Hour})
+	}
+	specs = append(specs, jobs.Spec{Job: candles.NewPartitions(store, retentions, nil),
+		Interval: candlePartitionsInterval, Timeout: 5 * time.Minute})
+	return specs, nil
+}
+
+// candleRunTimeout bounds one run of the candles of a venue.
+const candleRunTimeout = 30 * time.Minute
+
+// candlePartitionsInterval is the time between two runs of the partitions
+// job, which creates the next period's partitions well before it starts.
+const candlePartitionsInterval = 6 * time.Hour
+
+// candleJobs returns the candle jobs of a venue, one per enabled resolution
+// that the venue gives.
+func candleJobs(store *marketdata.Store, src source.VenueSource) ([]jobs.Spec, error) {
+	cs, ok := src.(source.CandleSource)
+	if !ok {
+		return nil, nil
+	}
+	cfg := config.Config.MarketData.Candles
+	var specs []jobs.Spec
+	for _, name := range marketdata.Resolutions {
+		r := cfg.Resolutions[name]
+		if !r.Enabled {
+			continue
+		}
+		if s, ok := src.(interface{ Supports(source.Interval) bool }); ok && !s.Supports(source.Interval(name)) {
+			continue
+		}
+		job, err := candles.New(cs, store, candles.Options{
+			Resolution:     name,
+			Quotes:         cfg.Quotes,
+			MaxPairs:       cfg.MaxPairsPerVenue,
+			RequestsPerRun: cfg.RequestsPerRun,
+			Backfill:       time.Duration(r.BackfillDays) * 24 * time.Hour,
+			Retention:      time.Duration(r.RetentionDays) * 24 * time.Hour,
+		})
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, jobs.Spec{Job: job, Interval: time.Duration(r.IntervalMinutes) * time.Minute, Timeout: candleRunTimeout})
 	}
 	return specs, nil
 }

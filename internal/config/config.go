@@ -830,6 +830,52 @@ type MarketDataConfig struct {
 	Catalog MarketDataCatalog `yaml:"catalog"`
 	// Tickers configures the tickers of the venues (#267).
 	Tickers MarketDataTickers `yaml:"tickers"`
+	// Candles configures the candles of the venues (#268).
+	Candles MarketDataCandles `yaml:"candles"`
+}
+
+// MarketDataCandles configures the candle jobs of the venues.
+type MarketDataCandles struct {
+	// Quotes are the quote symbols of the pairs whose candles are kept.
+	Quotes []string `yaml:"quotes"`
+	// MaxPairsPerVenue bounds the pairs of a venue, the best-ranked
+	// bases first.
+	MaxPairsPerVenue int `yaml:"max_pairs_per_venue"`
+	// RequestsPerRun bounds the requests of one run of a venue and
+	// resolution.
+	RequestsPerRun int `yaml:"requests_per_run"`
+	// Resolutions configures 5m, 1h, and 1d.
+	Resolutions map[string]MarketDataResolution `yaml:"resolutions"`
+}
+
+// MarketDataResolution configures the candles of one resolution.
+type MarketDataResolution struct {
+	Enabled bool `yaml:"enabled"`
+	// IntervalMinutes is the time between two runs of a venue.
+	IntervalMinutes int `yaml:"interval_minutes"`
+	// BackfillDays is how far back the history goes.
+	BackfillDays int `yaml:"backfill_days"`
+	// RetentionDays is how long candles are kept; 0 keeps them.
+	RetentionDays int `yaml:"retention_days"`
+}
+
+// The defaults and bounds of market_data.candles.
+const (
+	DefaultCandlesMaxPairsPerVenue = 200
+	MaxCandlesMaxPairsPerVenue     = 10000
+	DefaultCandlesRequestsPerRun   = 300
+	MaxCandlesRequestsPerRun       = 10000
+	MaxCandlesDays                 = 36500
+)
+
+// DefaultCandleResolutions are the resolutions when the configuration sets
+// none: the full daily history, 180 days of hours, and no 5-minute candles.
+func DefaultCandleResolutions() map[string]MarketDataResolution {
+	return map[string]MarketDataResolution{
+		"1d": {Enabled: true, IntervalMinutes: 360, BackfillDays: 3650},
+		"1h": {Enabled: true, IntervalMinutes: 60, BackfillDays: 180, RetentionDays: 180},
+		"5m": {Enabled: false, IntervalMinutes: 5, BackfillDays: 2, RetentionDays: 7},
+	}
 }
 
 // MarketDataTickers configures the ticker jobs of the venues, and the rules
@@ -1343,6 +1389,25 @@ func setDefaults() {
 	if Config.MarketData.HealthAddr == "" {
 		Config.MarketData.HealthAddr = DefaultMarketDataHealthAddr
 	}
+	candles := &Config.MarketData.Candles
+	if len(candles.Quotes) == 0 {
+		candles.Quotes = []string{"USDT", "USD", "IRT"}
+	}
+	// A resolution that the file does not name takes its default; one it
+	// names keeps its own settings, with defaults for those left at zero.
+	resolutions := DefaultCandleResolutions()
+	for name, r := range candles.Resolutions {
+		if d, ok := resolutions[name]; ok {
+			if r.IntervalMinutes == 0 {
+				r.IntervalMinutes = d.IntervalMinutes
+			}
+			if r.BackfillDays == 0 {
+				r.BackfillDays = d.BackfillDays
+			}
+		}
+		resolutions[name] = r
+	}
+	candles.Resolutions = resolutions
 	catalog := &Config.MarketData.Catalog
 	if len(catalog.Priority) == 0 {
 		catalog.Priority = slices.Clone(CatalogSources)
@@ -1365,6 +1430,8 @@ func setDefaults() {
 		{&Config.MarketData.Tickers.MinVenues, DefaultTickersMinVenues},
 		{&Config.MarketData.Tickers.MapRankLimit, DefaultTickersMapRankLimit},
 		{&Config.MarketData.Tickers.DeactivatePairsAfterHours, DefaultTickersDeactivateAfterHrs},
+		{&Config.MarketData.Candles.MaxPairsPerVenue, DefaultCandlesMaxPairsPerVenue},
+		{&Config.MarketData.Candles.RequestsPerRun, DefaultCandlesRequestsPerRun},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
