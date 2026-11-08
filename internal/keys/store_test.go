@@ -309,3 +309,29 @@ func TestStore_TheFirstKeysAreAudited(t *testing.T) {
 	}
 	assert.Equal(t, []string{"blind-index/v1", "field-enc/v1", "row-mac/v1"}, got)
 }
+
+// TestStore_VerifyUnwrapsWithoutCreating checks the restore-drill check of
+// #236: Verify creates no key on an empty table, unwraps every key that is
+// not retired with the right KEK, and fails with any other.
+func TestStore_VerifyUnwrapsWithoutCreating(t *testing.T) {
+	ctx := context.Background()
+	provider := localProvider(t)
+	store, conn := newTestStore(t, provider)
+
+	count, err := store.Verify(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+	var rows int
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys`).Scan(&rows))
+	assert.Zero(t, rows, "Verify never creates a key")
+
+	_, err = store.Load(ctx)
+	require.NoError(t, err)
+	count, err = store.Verify(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, len(Purposes), count)
+
+	other := &Store{DB: conn, Provider: localProvider(t)}
+	_, err = other.Verify(ctx)
+	require.Error(t, err, "a database restored without its KEK fails the check")
+}

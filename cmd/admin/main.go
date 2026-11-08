@@ -18,6 +18,8 @@
 //	admin [-config path] [-migrations url] platform maintenance -reason <text> [flags]
 //	admin [-config path] [-migrations url] platform lockdown -feature <feature> -reason <text> [flags]
 //	admin [-config path] [-migrations url] platform lift -id <uuid> -note <text>
+//	admin [-config path] backup status [-rpo 5m]
+//	admin [-config path] [-migrations url] restore verify [-not-before t] [-not-after t] [-keys]
 //
 // create and reset-totp print the authenticator secret once. The server
 // needs admin.totp_key (or ADMIN_TOTP_KEY) set to the same value. The keys
@@ -27,6 +29,9 @@
 // The platform commands put the service under maintenance or lock a
 // feature (#235) without the HTTP API, for when it is unhealthy; every
 // server instance applies a change within platform.poll_interval_ms.
+// backup status and restore verify check WAL archiving and a restored
+// database (#236); they only read, never migrate, and exit with 1 when a
+// check fails, for monitoring and restore drills.
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -85,6 +90,11 @@ Platform controls (every instance applies a change within platform.poll_interval
     Both take -starts-at and -ends-at (RFC 3339), and -message-fa and -message-en for users;
     maintenance also takes -allow-networks and -allow-users (comma-separated).
   platform lift -id <uuid> -note <text>    End a control now, or cancel one that has not started.
+
+Backups and restores (read only; exit status 1 when a check fails; see docs/disaster-recovery.md):
+  backup status [-rpo 5m]                  Check WAL archiving on the primary against the RPO.
+  restore verify [-not-before t] [-not-after t] [-keys]
+                                           Check a restored database before it is put in service.
 `
 
 func main() {
@@ -107,6 +117,8 @@ type command struct {
 	control   platform.New
 	controlID string
 	note      string
+	// recovery holds the flags of backup status and restore verify.
+	recovery recoveryArgs
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -134,6 +146,10 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseOutboxArgs(cmd, global.Args()[1:], stderr)
 	case "platform":
 		return parsePlatformArgs(cmd, global.Args()[1:], stderr)
+	case "backup":
+		return parseBackupArgs(cmd, global.Args()[1:], stderr)
+	case "restore":
+		return parseRestoreArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -250,6 +266,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "platform ") {
 		return runPlatform(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "backup ") || strings.HasPrefix(cmd.name, "restore ") {
+		return runRecovery(cmd, stdout, stderr)
 	}
 	if config.Config.Admin.TOTPKey == "" {
 		fmt.Fprintln(stderr, "Error: admin.totp_key (or ADMIN_TOTP_KEY) is required; generate one with: openssl rand -base64 32")
