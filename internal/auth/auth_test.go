@@ -22,7 +22,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -638,7 +637,7 @@ func TestRequireActiveSession(t *testing.T) {
 
 func TestLogoutHandler(t *testing.T) {
 	setupTestKeys(t)
-	blacklist := NewTokenBlacklist((*redis.Client)(nil))
+	blacklist := NewTokenBlacklist(nil)
 	logout := func(sessions *fakeSessionStore) gin.HandlerFunc {
 		return func(c *gin.Context) { LogoutHandler(c, blacklist, sessions) }
 	}

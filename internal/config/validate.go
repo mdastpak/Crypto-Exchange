@@ -47,6 +47,7 @@ func (c *Configuration) validateServer() error {
 	c.rangeProblems(&p)
 	c.tlsProblems(&p)
 	release := c.Server.Mode == "release"
+	c.redisModeProblems(&p)
 	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
 	if release {
@@ -68,8 +69,11 @@ func (c *Configuration) requiredProblems(p *problems) {
 	require(c.Postgres.Port != "" || len(c.Postgres.Hosts) > 0, "postgres.port")
 	require(c.Postgres.User != "", "postgres.user")
 	require(c.Postgres.DBName != "", "postgres.dbname")
-	require(c.Redis.Host != "", "redis.host")
-	require(c.Redis.Port != "", "redis.port")
+	// Only the standalone mode connects to redis.host and redis.port; the
+	// other modes check their own lists in redisModeProblems.
+	standalone := c.Redis.Mode == "" || c.Redis.Mode == RedisModeStandalone
+	require(c.Redis.Host != "" || !standalone, "redis.host")
+	require(c.Redis.Port != "" || !standalone, "redis.port")
 	require(c.RabbitMQ.Host != "", "rabbitmq.host")
 	require(c.RabbitMQ.Port != "", "rabbitmq.port")
 	require(c.RabbitMQ.Username != "", "rabbitmq.username")
@@ -126,9 +130,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 		p.add("postgres.max_idle_conns", "is %d; it must not exceed postgres.max_open_conns (%d)", c.Postgres.MaxIdleConns, c.Postgres.MaxOpenConns)
 	}
 	for i, hostPort := range c.Postgres.Hosts {
-		host, port, err := net.SplitHostPort(strings.TrimSpace(hostPort))
-		n, portErr := strconv.Atoi(port)
-		if err != nil || host == "" || portErr != nil || n < 1 || n > 65535 {
+		if !validHostPort(hostPort) {
 			p.add("postgres.hosts", "entry %d is %q; each entry must be host:port, such as pg-1.internal:5432 or [2001:db8::1]:5432", i+1, hostPort)
 		}
 	}
@@ -333,4 +335,54 @@ func contains(list []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// redisModeProblems checks redis.mode and the settings of the mode (#231).
+func (c *Configuration) redisModeProblems(p *problems) {
+	r := c.Redis
+	addresses := func(key string, list []string) {
+		if len(list) == 0 {
+			p.add(key, "is empty; redis.mode %s needs at least one host:port", r.Mode)
+		}
+		for i, hostPort := range list {
+			if !validHostPort(hostPort) {
+				p.add(key, "entry %d is %q; each entry must be host:port, such as redis-1.internal:26379", i+1, hostPort)
+			}
+		}
+	}
+	switch r.Mode {
+	case "", RedisModeStandalone:
+		if len(r.Sentinel.Addresses) > 0 || len(r.Cluster.Addresses) > 0 {
+			p.add("redis.mode", "is %s, but redis.sentinel.addresses or redis.cluster.addresses is set; set redis.mode to the mode they are for", RedisModeStandalone)
+		}
+	case RedisModeSentinel:
+		if r.Sentinel.MasterName == "" {
+			p.add("redis.sentinel.master_name", "is empty; redis.mode sentinel needs the name of the primary that the sentinels monitor")
+		}
+		addresses("redis.sentinel.addresses", r.Sentinel.Addresses)
+	case RedisModeCluster:
+		addresses("redis.cluster.addresses", r.Cluster.Addresses)
+		if r.DB != 0 {
+			p.add("redis.db", "is %d; Redis Cluster has only database 0", r.DB)
+		}
+	default:
+		p.add("redis.mode", "is %q; it must be one of %s", r.Mode, strings.Join(RedisModes, ", "))
+	}
+	if r.Mode != RedisModeSentinel && (r.Sentinel.MasterName != "" || r.Sentinel.Username != "" || r.Sentinel.Password != "") {
+		p.add("redis.sentinel.master_name", "or the sentinel credentials are set, but redis.mode is %q, not sentinel", r.Mode)
+	}
+	if r.DurableWrites.Replicas < 0 {
+		p.add("redis.durable_writes.replicas", "is %d; it must be 0, which does not wait, or more", r.DurableWrites.Replicas)
+	}
+	if r.DurableWrites.TimeoutMs < 1 {
+		p.add("redis.durable_writes.timeout_ms", "is %d; it must be at least 1", r.DurableWrites.TimeoutMs)
+	}
+}
+
+// validHostPort reports whether hostPort is host:port with a port from 1
+// to 65535.
+func validHostPort(hostPort string) bool {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(hostPort))
+	n, portErr := strconv.Atoi(port)
+	return err == nil && host != "" && portErr == nil && n >= 1 && n <= 65535
 }

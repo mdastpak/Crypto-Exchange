@@ -28,4 +28,8 @@ const (
 	Admin
 	// Currencies is the database of internal/currencies.
 	Currencies
+	// RedisUtil is the database of internal/redisutil.
+	RedisUtil
+	// Auth is the database of internal/auth.
+	Auth
 )

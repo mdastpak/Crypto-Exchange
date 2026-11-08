@@ -198,3 +198,49 @@ func TestValidateServer_RefusesKeyFilesThatOthersMayWrite(t *testing.T) {
 		assert.Contains(t, got[0], "writable by other users")
 	}
 }
+
+// TestValidateServer_RedisModes checks the settings of each redis.mode
+// (#231): a valid configuration of each mode passes without host and port
+// outside the standalone mode, and each broken rule is reported alone.
+func TestValidateServer_RedisModes(t *testing.T) {
+	sentinel := func(c *Configuration) {
+		c.Redis.Mode, c.Redis.Host, c.Redis.Port = RedisModeSentinel, "", ""
+		c.Redis.Sentinel.MasterName = "crypto-exchange"
+		c.Redis.Sentinel.Addresses = []string{"s-1:26379", " s-2:26379", "[2001:db8::3]:26379"}
+	}
+	cluster := func(c *Configuration) {
+		c.Redis.Mode, c.Redis.Host, c.Redis.Port = RedisModeCluster, "", ""
+		c.Redis.Cluster.Addresses = []string{"r-1:6379", "r-2:6379"}
+	}
+	for name, change := range map[string]func(c *Configuration){"sentinel": sentinel, "cluster": cluster} {
+		c := secureRelease(t)
+		change(&c)
+		assert.Empty(t, problemsOf(c), name)
+	}
+
+	for name, tc := range map[string]struct {
+		change func(c *Configuration)
+		want   string
+	}{
+		"unknown mode":                {func(c *Configuration) { c.Redis.Mode = "ring" }, `redis.mode (REDIS_MODE) is "ring"; it must be one of standalone, sentinel, cluster`},
+		"sentinel without a name":     {func(c *Configuration) { sentinel(c); c.Redis.Sentinel.MasterName = "" }, "redis.sentinel.master_name (REDIS_SENTINEL_MASTER_NAME) is empty"},
+		"sentinel without sentinels":  {func(c *Configuration) { sentinel(c); c.Redis.Sentinel.Addresses = nil }, "redis.sentinel.addresses (REDIS_SENTINEL_ADDRESSES) is empty; redis.mode sentinel needs"},
+		"sentinel without a port":     {func(c *Configuration) { sentinel(c); c.Redis.Sentinel.Addresses[1] = "s-2" }, `redis.sentinel.addresses (REDIS_SENTINEL_ADDRESSES) entry 2 is "s-2"`},
+		"cluster without nodes":       {func(c *Configuration) { cluster(c); c.Redis.Cluster.Addresses = nil }, "redis.cluster.addresses (REDIS_CLUSTER_ADDRESSES) is empty; redis.mode cluster needs"},
+		"cluster with a bad port":     {func(c *Configuration) { cluster(c); c.Redis.Cluster.Addresses[0] = "r-1:0" }, `entry 1 is "r-1:0"`},
+		"cluster with database 2":     {func(c *Configuration) { cluster(c); c.Redis.DB = 2 }, "redis.db (REDIS_DB) is 2; Redis Cluster has only database 0"},
+		"standalone with a cluster":   {func(c *Configuration) { c.Redis.Cluster.Addresses = []string{"r-1:6379"} }, "redis.mode (REDIS_MODE) is standalone, but redis.sentinel.addresses or redis.cluster.addresses is set"},
+		"cluster with a sentinel":     {func(c *Configuration) { cluster(c); c.Redis.Sentinel.MasterName = "x" }, `redis.sentinel.master_name (REDIS_SENTINEL_MASTER_NAME) or the sentinel credentials are set, but redis.mode is "cluster"`},
+		"negative durable replicas":   {func(c *Configuration) { c.Redis.DurableWrites.Replicas = -1 }, "redis.durable_writes.replicas (REDIS_DURABLE_WRITES_REPLICAS) is -1"},
+		"negative durable wait":       {func(c *Configuration) { c.Redis.DurableWrites.TimeoutMs = -5 }, "redis.durable_writes.timeout_ms (REDIS_DURABLE_WRITES_TIMEOUT_MS) is -5; it must be at least 1"},
+		"standalone without its host": {func(c *Configuration) { c.Redis.Host = "" }, "required settings are not set: redis.host (REDIS_HOST)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := secureRelease(t)
+			tc.change(&c)
+			got := problemsOf(c)
+			require.Len(t, got, 1, "exactly one problem: %q", got)
+			assert.Contains(t, got[0], tc.want)
+		})
+	}
+}

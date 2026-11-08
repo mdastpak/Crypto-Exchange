@@ -188,6 +188,8 @@ Configuration is loaded from a YAML file, missing values are filled with default
 
 The data-protection keys, which future row seals and field encryption build on, are wrapped by a key-encryption key in HashiCorp Vault or OpenBao (Transit). [docs/data-protection.md](docs/data-protection.md) describes the key hierarchy, the setup, and how to rotate the keys.
 
+Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-availability.md](docs/redis-high-availability.md) describes the deployment and what a failover may lose.
+
 Backups, point-in-time recovery, the restore drill, and the disaster-recovery runbook are in [docs/disaster-recovery.md](docs/disaster-recovery.md). `admin backup status` alerts when WAL archiving falls behind the RPO, and `admin restore verify` checks a restored database before it is put in service.
 
 ## API overview
@@ -312,6 +314,7 @@ internal/otp/           One-time codes: generation, hashed storage in Redis, att
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
 internal/platform/      Maintenance and feature lockdowns: controls, watcher, route gate
+internal/redisutil/     Durable Redis writes, hash slots, and following cluster failovers
 internal/recovery/      Backup and restore checks: WAL archiving age, restored-database
                         verification
 internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
@@ -324,6 +327,7 @@ internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI co
 internal/totp/          Time-based one-time passwords (RFC 6238)
 pkg/utils/              Shared utilities
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
+scripts/redis-ha/       The Redis failover drill: Sentinel and Cluster on Docker
 ```
 
 ## Roadmap

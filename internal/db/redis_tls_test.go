@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/tlsproxy"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func TestNewRedisService_TLS(t *testing.T) {
 	require.NoError(t, err)
 	defer svc.Close()
 	assert.NoError(t, svc.Ping(context.Background()))
-	assert.NotNil(t, svc.Client.Options().TLSConfig)
+	assert.NotNil(t, svc.Client.(*redis.Client).Options().TLSConfig)
 }
 
 func TestNewRedisService_TLS_RefusesAnUntrustedCertificate(t *testing.T) {

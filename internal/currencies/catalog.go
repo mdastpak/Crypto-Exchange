@@ -97,7 +97,7 @@ type cachedList struct {
 // Catalog lists the public currencies.
 type Catalog struct {
 	db    *sql.DB
-	redis *redis.Client
+	redis redis.UniversalClient
 	ttl   time.Duration
 	// wait is how long to wait for another instance that loads the list.
 	wait time.Duration
@@ -117,7 +117,7 @@ type Catalog struct {
 // New returns a catalog that reads db and caches the list in client, fresh
 // for ttl, or for DefaultTTL when ttl is not positive. client must honor
 // context deadlines (ContextTimeoutEnabled), as the server's client does.
-func New(db *sql.DB, client *redis.Client, ttl time.Duration) *Catalog {
+func New(db *sql.DB, client redis.UniversalClient, ttl time.Duration) *Catalog {
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}

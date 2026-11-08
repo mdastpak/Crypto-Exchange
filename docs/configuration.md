@@ -119,7 +119,14 @@ Replace `10` with the version before the failed migration.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `host`, `port` | **required** | Connection settings |
+| `mode` | `standalone` | How the server reaches Redis (`REDIS_MODE`): `standalone` connects to `host` and `port`; `sentinel` asks the sentinels for the current primary and follows its failover; `cluster` connects to a Redis Cluster. See [Redis high availability](redis-high-availability.md). |
+| `host`, `port` | **required** in the `standalone` mode | The one node of the `standalone` mode |
+| `sentinel.master_name` | **required** in the `sentinel` mode | The name under which the sentinels monitor the primary (`REDIS_SENTINEL_MASTER_NAME`) |
+| `sentinel.addresses` | **required** in the `sentinel` mode | The sentinels, as `host:port` entries (`REDIS_SENTINEL_ADDRESSES`, comma-separated). List all of them, usually three. |
+| `sentinel.username`, `sentinel.password` | none | The sentinels' own credentials, when they require any (`REDIS_SENTINEL_USERNAME`, `REDIS_SENTINEL_PASSWORD`). The data nodes use `username` and `password`. |
+| `cluster.addresses` | **required** in the `cluster` mode | Some nodes of the cluster, as `host:port` entries (`REDIS_CLUSTER_ADDRESSES`, comma-separated); the client learns the others from them. The cluster mode needs `db` 0. |
+| `durable_writes.replicas` | `0` | How many replicas must hold a security counter before the server relies on it (`REDIS_DURABLE_WRITES_REPLICAS`): the OTP attempts and code requests, and the blacklist of logged-out tokens. Each such write is followed by `WAIT`; when fewer replicas acknowledge it in time, the request is answered with `503 database_busy` and `Retry-After`, and the code is not checked. `0` does not wait. Set it to 1 with a primary and two replicas, so that one replica may be down. |
+| `durable_writes.timeout_ms` | `250` | How long such a write waits for its replicas (`REDIS_DURABLE_WRITES_TIMEOUT_MS`) |
 | `username` | none | Redis ACL user (`REDIS_USERNAME`). Empty is the `default` user. Give the server a user of its own, limited to the commands and keys it needs. |
 | `password` | none | Redis password. Set it with `REDIS_PASSWORD`. |
 | `db` | `0` | Database index |
@@ -383,10 +390,18 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `POSTGRES_MAX_IDLE_CONNS` | `postgres.max_idle_conns` |
 | `POSTGRES_CONN_MAX_LIFETIME_MINUTES` | `postgres.conn_max_lifetime_minutes` |
 | `POSTGRES_CONN_MAX_IDLE_TIME_MINUTES` | `postgres.conn_max_idle_time_minutes` |
+| `REDIS_MODE` | `redis.mode` |
 | `REDIS_HOST` | `redis.host` |
 | `REDIS_PORT` | `redis.port` |
 | `REDIS_USERNAME` | `redis.username` |
 | `REDIS_PASSWORD` | `redis.password` |
+| `REDIS_SENTINEL_MASTER_NAME` | `redis.sentinel.master_name` |
+| `REDIS_SENTINEL_ADDRESSES` | `redis.sentinel.addresses` |
+| `REDIS_SENTINEL_USERNAME` | `redis.sentinel.username` |
+| `REDIS_SENTINEL_PASSWORD` | `redis.sentinel.password` |
+| `REDIS_CLUSTER_ADDRESSES` | `redis.cluster.addresses` |
+| `REDIS_DURABLE_WRITES_REPLICAS` | `redis.durable_writes.replicas` |
+| `REDIS_DURABLE_WRITES_TIMEOUT_MS` | `redis.durable_writes.timeout_ms` |
 | `REDIS_TLS_ENABLED` | `redis.tls.enabled` |
 | `REDIS_TLS_CA_FILE` | `redis.tls.ca_file` |
 | `REDIS_TLS_SERVER_NAME` | `redis.tls.server_name` |
