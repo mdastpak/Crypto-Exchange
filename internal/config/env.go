@@ -195,6 +195,7 @@ var envVars = []EnvVar{
 	intVar("JWT_REFRESH_TOKEN_EXPIRATION_MINUTES", "jwt.refresh_token.expiration_minutes", func(c *Configuration) *int { return &c.JWT.RefreshToken.Expiration }),
 	intVar("JWT_REFRESH_TOKEN_REUSE_GRACE_SECONDS", "jwt.refresh_token.reuse_grace_seconds", func(c *Configuration) *int { return &c.JWT.RefreshToken.ReuseGraceSeconds }),
 	intVar("JWT_SESSIONS_MAX_PER_USER", "jwt.sessions.max_per_user", func(c *Configuration) *int { return &c.JWT.Sessions.MaxPerUser }),
+	intVar("JWT_SESSIONS_MAX_LIFETIME_MINUTES", "jwt.sessions.max_lifetime_minutes", func(c *Configuration) *int { return &c.JWT.Sessions.MaxLifetimeMinutes }),
 
 	stringVar("OTP_AUTH_NAME", "otp.auth.name", func(c *Configuration) *string { return &c.OTP.Auth.Name }),
 	intVar("OTP_AUTH_TTL_SECONDS", "otp.auth.ttl_seconds", func(c *Configuration) *int { return &c.OTP.Auth.TTL }),

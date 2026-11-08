@@ -108,6 +108,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		"negative Redis pool":              {func(c *Configuration) { c.Redis.PoolSize = -1 }, "redis.pool_size (REDIS_POOL_SIZE) is -1"},
 		"more Redis idle than pool":        {func(c *Configuration) { c.Redis.MinIdleConns = 11 }, "redis.min_idle_conns (REDIS_MIN_IDLE_CONNS) is 11; it must not exceed redis.pool_size (10)"},
 		"access token over a day":          {func(c *Configuration) { c.JWT.AccessToken.Expiration = 1441 }, "jwt.access_token.expiration_minutes (JWT_ACCESS_TOKEN_EXPIRATION_MINUTES) is 1441; it must be at most 1440"},
+		"session lifetime below refresh":   {func(c *Configuration) { c.JWT.Sessions.MaxLifetimeMinutes = 10079 }, "jwt.sessions.max_lifetime_minutes (JWT_SESSIONS_MAX_LIFETIME_MINUTES) is 10079; it must be at least jwt.refresh_token.expiration_minutes (10080)"},
+		"no session lifetime":              {func(c *Configuration) { c.JWT.Sessions.MaxLifetimeMinutes = -1 }, "jwt.sessions.max_lifetime_minutes (JWT_SESSIONS_MAX_LIFETIME_MINUTES) is -1; it must be at least 1"},
 		"refresh shorter than access":      {func(c *Configuration) { c.JWT.RefreshToken.Expiration = 10 }, "jwt.refresh_token.expiration_minutes (JWT_REFRESH_TOKEN_EXPIRATION_MINUTES) is 10; it must be at least jwt.access_token.expiration_minutes (15)"},
 		"negative ping interval":           {func(c *Configuration) { c.WebSocket.PingInterval = -1 }, "websocket.ping_interval_seconds (WS_PING_INTERVAL_SECONDS) is -1"},
 		"WebSocket message over 1 MiB":     {func(c *Configuration) { c.WebSocket.MaxMessageSize = 2 << 20 }, "websocket.max_message_size_bytes (WS_MAX_MESSAGE_SIZE_BYTES) is 2097152; it must be at most 1048576"},

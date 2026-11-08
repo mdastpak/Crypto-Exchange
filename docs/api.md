@@ -141,7 +141,7 @@ Each sign-in creates a session in the `sessions` table. Only SHA-256 hashes of t
 
 On every request, the `/user/*` routes, except `POST /user/logout`, also check the token's session and user in the database. A token stays valid only while its session is active and has not expired, and while its user can still sign in. Logging out, refresh token reuse, and disabling, suspending, banning, or deleting the user therefore reject every access token of the session on the next request, also when the change is made directly in the database:
 
-- `401 Unauthorized - Session is not active` when the session was logged out, revoked for refresh token reuse, or has expired. The client must sign in again.
+- `401 Unauthorized - Session is not active` when the session was logged out, revoked for refresh token reuse, or has expired, which it also does at its absolute lifetime, `jwt.sessions.max_lifetime_minutes` after the sign-in, however often it was refreshed. The client must sign in again.
 - `403 This account is not available. Please contact support.` when the user became `INACTIVE`, `SUSPENDED`, or `BANNED`, was deleted, or became an administrator account.
 
 ### Request IDs
@@ -335,7 +335,7 @@ Exchanges the `refresh_token` cookie for a new access token. No request body is 
 
 Response `200`: `{"info": {"access_token": "<jwt>"}}`, together with a `Set-Cookie` header that carries a **new** refresh token. Each refresh token can be used only once:
 
-- The session's refresh token is replaced on every refresh (rotation), and its expiry moves forward by `refresh_token.expiration_minutes`.
+- The session's refresh token is replaced on every refresh (rotation), and its expiry moves forward by `refresh_token.expiration_minutes`, but never past the session's absolute lifetime: `jwt.sessions.max_lifetime_minutes` (30 days by default) after the sign-in ([#144](https://github.com/mdastpak/Crypto-Exchange/issues/144)). From then on, the refresh answers `401 refresh_token_invalid` and the session's access tokens get `401 session_inactive`, so a refresh token that someone keeps rotating, as a thief may while the user is offline, still ends. The user signs in again with a code.
 - Presenting a refresh token that was already rotated is treated as theft: the whole session is revoked, and its newest refresh token stops working too.
 - Except for concurrent refreshes ([#194](https://github.com/mdastpak/Crypto-Exchange/issues/194)): the tabs of a browser share the cookie and may refresh at the same moment. For `jwt.refresh_token.reuse_grace_seconds` (10 by default) after a rotation, the refresh token that it replaced still gets `200` with a new access token, but no `Set-Cookie`, so the cookie keeps the token that the winning request set. Only the token replaced by the last rotation has this grace, and only for that time; later, or for an older token, it is a reuse. A stolen refresh token used within the grace period therefore gets an access token, as with any refresh token that is not yet rotated.
 

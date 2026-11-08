@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
@@ -139,6 +141,45 @@ func HashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// SessionMaxLifetime is the absolute lifetime of a session (#144),
+// jwt.sessions.max_lifetime_minutes; 0, when it is not configured, as in
+// tests that set no configuration, sets no limit.
+func SessionMaxLifetime() time.Duration {
+	return time.Duration(config.Config.JWT.Sessions.MaxLifetimeMinutes) * time.Minute
+}
+
+// liveSession is the SQL condition of a session whose tokens may still be
+// used: active, not expired, and younger than SessionMaxLifetime (#144).
+// alias qualifies the columns, as "s" does s.status.
+//
+// The age is checked here, not only kept out of expires_at by rotate, so
+// that the limit holds for every session at once: for one that an instance
+// of an earlier release extended while a release rolls out, and for every
+// session when the limit is lowered.
+func liveSession(alias string) string {
+	p := ""
+	if alias != "" {
+		p = alias + "."
+	}
+	condition := p + "status = 'ACTIVE' AND " + p + "expires_at > NOW()"
+	if minutes := config.Config.JWT.Sessions.MaxLifetimeMinutes; minutes > 0 {
+		// A number from the configuration, never a value of a request.
+		condition += " AND " + p + "created_at > NOW() - make_interval(mins => " + strconv.Itoa(minutes) + ")"
+	}
+	return condition
+}
+
+// cappedExpiry is the SQL expression of a new expires_at, the parameter
+// param, which rotate never sets past the creation of the session plus
+// SessionMaxLifetime.
+func cappedExpiry(param string) string {
+	minutes := config.Config.JWT.Sessions.MaxLifetimeMinutes
+	if minutes <= 0 {
+		return param
+	}
+	return "LEAST(" + param + ", created_at + make_interval(mins => " + strconv.Itoa(minutes) + "))"
+}
+
 // sessionTouchInterval is how often the use of a session is recorded.
 const sessionTouchInterval = time.Minute
 
@@ -244,9 +285,10 @@ func limitSessions(ctx context.Context, tx *sql.Tx, session Session, event audit
 		return ErrAccountFrozen
 	}
 	if session.Replace != "" {
+		//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 		res, err := tx.ExecContext(ctx, `
 			UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
-			WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE' AND expires_at > NOW()`,
+			WHERE id = $1 AND user_id = $2 AND `+liveSession(""),
 			session.Replace, session.UserID)
 		if err != nil {
 			return fmt.Errorf("failed to end the replaced session: %w", err)
@@ -268,7 +310,7 @@ func limitSessions(ctx context.Context, tx *sql.Tx, session Session, event audit
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `
-		SELECT count(*) FROM sessions WHERE user_id = $1 AND status = 'ACTIVE' AND expires_at > NOW()`,
+		SELECT count(*) FROM sessions WHERE user_id = $1 AND `+liveSession(""),
 		session.UserID).Scan(&active); err != nil {
 		return fmt.Errorf("failed to count the active sessions: %w", err)
 	}
@@ -289,12 +331,13 @@ func (s *PostgresSessionStore) Rotate(ctx context.Context, r SessionRotation, ev
 // rotate rotates the tokens, or revokes a session whose refresh token was
 // already used. It is a sessionChange.
 func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Event) (*audit.Event, bool, error) {
+	//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 	res, err := tx.ExecContext(ctx, `
 		UPDATE sessions
-		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = $3, last_used_at = NOW(),
+		SET refresh_token_hash = $1, access_token_hash = $2, expires_at = `+cappedExpiry("$3::timestamptz")+`, last_used_at = NOW(),
 			previous_refresh_hash = refresh_token_hash, rotated_at = NOW()
 		WHERE id = $4 AND user_id = $5 AND refresh_token_hash = $6
-		  AND status = 'ACTIVE' AND expires_at > NOW()`,
+		  AND `+liveSession(""),
 		r.NewRefreshHash, r.NewAccessHash, r.ExpiresAt, r.SessionID, r.UserID, r.PresentedRefreshHash,
 	)
 	if err != nil {
@@ -310,11 +353,12 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 	// the grace period, is a concurrent refresh: it gets a new access token,
 	// and the session keeps its current refresh token.
 	if r.Grace > 0 {
+		//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 		res, err = tx.ExecContext(ctx, `
 			UPDATE sessions SET access_token_hash = $4, last_used_at = NOW()
 			WHERE id = $1 AND user_id = $2 AND previous_refresh_hash = $3
 			  AND rotated_at > NOW() - make_interval(secs => $5)
-			  AND status = 'ACTIVE' AND expires_at > NOW()`,
+			  AND `+liveSession(""),
 			r.SessionID, r.UserID, r.PresentedRefreshHash, r.NewAccessHash, r.Grace.Seconds(),
 		)
 		if err != nil {
@@ -330,10 +374,11 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 
 	// Otherwise, if the session is still active, the presented token is a
 	// valid but already rotated refresh token: revoke the session.
+	//nolint:gosec // G202: liveSession joins constant fragments and a number of the configuration; every value is an argument.
 	res, err = tx.ExecContext(ctx, `
 		UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
 		WHERE id = $1 AND user_id = $2 AND refresh_token_hash <> $3
-		  AND status = 'ACTIVE' AND expires_at > NOW()`,
+		  AND `+liveSession(""),
 		r.SessionID, r.UserID, r.PresentedRefreshHash,
 	)
 	if err != nil {
@@ -361,7 +406,7 @@ func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID str
 	// once a minute, so that most requests write nothing (#193).
 	err := s.DB.QueryRowContext(ctx, `
 		WITH found AS (
-			SELECT s.id, s.status = 'ACTIVE' AND s.expires_at > NOW() AS active, s.last_used_at,
+			SELECT s.id, (`+liveSession("s")+`) AS active, s.last_used_at,
 				u.status AS user_status, u.role, u.deleted_at IS NOT NULL AS deleted,
 				`+restrictions.FrozenSQL("u.hk")+` AS frozen
 			FROM sessions s JOIN users u ON u.hk = s.user_id

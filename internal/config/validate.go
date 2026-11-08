@@ -185,6 +185,11 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if access > 0 && refresh > 0 && refresh < access {
 		p.add("jwt.refresh_token.expiration_minutes", "is %d; it must be at least jwt.access_token.expiration_minutes (%d), or the session ends before its access token", refresh, access)
 	}
+	if lifetime := c.JWT.Sessions.MaxLifetimeMinutes; lifetime < 1 {
+		p.add("jwt.sessions.max_lifetime_minutes", "is %d; it must be at least 1", lifetime)
+	} else if refresh > 0 && lifetime < refresh {
+		p.add("jwt.sessions.max_lifetime_minutes", "is %d; it must be at least jwt.refresh_token.expiration_minutes (%d), the lifetime of one refresh token", lifetime, refresh)
+	}
 
 	ws := c.WebSocket
 	atLeast("websocket.ping_interval_seconds", ws.PingInterval, 1)

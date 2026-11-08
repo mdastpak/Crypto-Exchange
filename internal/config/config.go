@@ -230,6 +230,12 @@ type Configuration struct {
 			// MaxPerUser caps the active sessions of one user (#212). A
 			// sign-in past it is refused until the user ends one of them.
 			MaxPerUser int `yaml:"max_per_user"`
+			// MaxLifetimeMinutes is the absolute lifetime of a session
+			// (#144): no refresh extends a session past its creation plus
+			// this, and its tokens stop working then, so a refresh token
+			// that is kept rotating, as a stolen one may be, still ends.
+			// It must be at least jwt.refresh_token.expiration_minutes.
+			MaxLifetimeMinutes int `yaml:"max_lifetime_minutes"`
 		} `yaml:"sessions"`
 	} `yaml:"jwt"`
 
@@ -977,6 +983,7 @@ func setDefaults() {
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
+		{&Config.JWT.Sessions.MaxLifetimeMinutes, DefaultSessionMaxLifetimeMinutes},
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
 		{&Config.Platform.PollIntervalMs, DefaultPlatformPollIntervalMs},
@@ -1228,6 +1235,9 @@ const (
 	// to show in a refusal.
 	DefaultMaxSessionsPerUser = 5
 	MaxSessionsPerUser        = 50
+	// DefaultSessionMaxLifetimeMinutes is the absolute lifetime of a
+	// session, 30 days: a user signs in again at least that often.
+	DefaultSessionMaxLifetimeMinutes = 30 * 24 * 60
 	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
 	// favorites of a user, which are listed in one answer.
 	DefaultMaxFavoritesPerUser = 100
