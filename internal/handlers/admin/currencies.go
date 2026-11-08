@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gin-gonic/gin"
@@ -42,6 +43,12 @@ type AdminHandler struct {
 	OTP *otp.Store
 	// OTPSender delivers the emailed codes.
 	OTPSender notify.OTPSender
+
+	// Platform is this instance's copy of the platform controls (#235),
+	// which a change refreshes at once. LiftApproval are the features whose
+	// active lockdown needs a second administrator to lift.
+	Platform     *platform.Watcher
+	LiftApproval []platform.Feature
 }
 
 func NewHandler(is *models.InfraServices) *AdminHandler {

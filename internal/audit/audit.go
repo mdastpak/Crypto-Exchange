@@ -85,6 +85,14 @@ const (
 	// restriction.
 	ActionUserRestrictionAdd  = "user.restriction_add"
 	ActionUserRestrictionLift = "user.restriction_lift"
+	// The platform controls (#235): an administrator, or an operator with
+	// cmd/admin, creating a maintenance or a lockdown, changing its end or
+	// message, asking to lift it when a second administrator must approve,
+	// and lifting it. The target is the control.
+	ActionPlatformControlCreate      = "platform.control_create"
+	ActionPlatformControlUpdate      = "platform.control_update"
+	ActionPlatformControlLiftRequest = "platform.control_lift_request"
+	ActionPlatformControlLift        = "platform.control_lift"
 
 	// The commands of cmd/admin (#195). Their actor is the system, and the
 	// operator who ran them is named in the user agent; see Operator.
@@ -112,6 +120,8 @@ const (
 	TargetDataKey = "data_key"
 	// TargetOutboxMessage is a message of the outbox, by its id.
 	TargetOutboxMessage = "outbox_message"
+	// TargetPlatformControl is a maintenance or a lockdown (#235).
+	TargetPlatformControl = "platform_control"
 )
 
 // Operator returns the origin of the changes that an operator makes with a

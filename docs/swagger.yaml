@@ -24,6 +24,71 @@ definitions:
         description: Note says why, at most 1000 characters.
         type: string
     type: object
+  admin.ControlList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/platform.Control'
+        type: array
+    type: object
+  admin.CreateControlRequest:
+    properties:
+      allow_networks:
+        description: |-
+          AllowNetworks and AllowUsers may still use the service during a
+          maintenance, at most 50 of each: addresses or CIDR networks, and the
+          UUIDs of users.
+        items:
+          type: string
+        type: array
+      allow_users:
+        items:
+          type: string
+        type: array
+      announce_at:
+        description: |-
+          AnnounceAt is when users learn of the control, before its start; now
+          when absent.
+        type: string
+      ends_at:
+        type: string
+      feature:
+        allOf:
+        - $ref: '#/definitions/platform.Feature'
+        description: |-
+          Feature is the feature that a lockdown closes; a maintenance closes
+          everything and takes none.
+        enum:
+        - sign_up
+        - sign_in
+        - profile_changes
+        - deposits
+        - withdrawals
+        - trading
+        - api_keys
+        - websocket
+        - read_only
+        - scheduler
+        - outbox
+      kind:
+        allOf:
+        - $ref: '#/definitions/platform.Kind'
+        enum:
+        - maintenance
+        - lockdown
+      message:
+        allOf:
+        - $ref: '#/definitions/platform.Message'
+        description: Message is shown to users, at most 500 characters per language.
+      reason:
+        description: Reason is for administrators, at most 1000 characters.
+        type: string
+      starts_at:
+        description: |-
+          StartsAt is now when absent; EndsAt, when set, ends the control
+          without a lift.
+        type: string
+    type: object
   admin.CreateRestrictionRequest:
     properties:
       case_ref:
@@ -100,6 +165,12 @@ definitions:
           $ref: '#/definitions/delisting.Delisting'
         type: array
     type: object
+  admin.LiftControlRequest:
+    properties:
+      note:
+        description: Note says why, for the audit log, at most 1000 characters.
+        type: string
+    type: object
   admin.LiftRestrictionRequest:
     properties:
       note:
@@ -113,12 +184,29 @@ definitions:
           $ref: '#/definitions/rebrand.Migration'
         type: array
     type: object
+  admin.PlatformOverview:
+    properties:
+      controls:
+        items:
+          $ref: '#/definitions/platform.Control'
+        type: array
+      status:
+        $ref: '#/definitions/platform.Status'
+    type: object
   admin.RestrictionList:
     properties:
       items:
         items:
           $ref: '#/definitions/restrictions.Restriction'
         type: array
+    type: object
+  admin.UpdateControlRequest:
+    properties:
+      ends_at:
+        description: EndsAt extends or shortens the control.
+        type: string
+      message:
+        $ref: '#/definitions/platform.Message'
     type: object
   admin.adminSignInRequest:
     properties:
@@ -740,6 +828,193 @@ definitions:
       version:
         example: 2
         type: integer
+    type: object
+  platform.Control:
+    properties:
+      active:
+        description: Active is whether the control applies now.
+        type: boolean
+      allow_networks:
+        description: |-
+          AllowNetworks and AllowUsers may still use the service during a
+          maintenance.
+        items:
+          type: string
+        type: array
+      allow_users:
+        items:
+          type: string
+        type: array
+      announce_at:
+        description: AnnounceAt is when users learn of the control.
+        type: string
+      created_at:
+        type: string
+      created_by:
+        description: |-
+          CreatedBy, LiftRequestedBy, and LiftedBy are administrators; they
+          are absent for a change made with cmd/admin.
+        format: uuid
+        type: string
+      ends_at:
+        type: string
+      feature:
+        allOf:
+        - $ref: '#/definitions/platform.Feature'
+        enum:
+        - sign_up
+        - sign_in
+        - profile_changes
+        - deposits
+        - withdrawals
+        - trading
+        - api_keys
+        - websocket
+        - read_only
+        - scheduler
+        - outbox
+      id:
+        format: uuid
+        type: string
+      kind:
+        allOf:
+        - $ref: '#/definitions/platform.Kind'
+        enum:
+        - maintenance
+        - lockdown
+      lift_note:
+        type: string
+      lift_requested_at:
+        type: string
+      lift_requested_by:
+        format: uuid
+        type: string
+      lifted_at:
+        type: string
+      lifted_by:
+        format: uuid
+        type: string
+      message:
+        $ref: '#/definitions/platform.Message'
+      reason:
+        description: 'Reason is internal: users never see it.'
+        type: string
+      starts_at:
+        description: |-
+          StartsAt is when the control applies; EndsAt, when set, when it
+          stops.
+        type: string
+      version:
+        example: 1
+        type: integer
+    type: object
+  platform.Feature:
+    enum:
+    - sign_up
+    - sign_in
+    - profile_changes
+    - deposits
+    - withdrawals
+    - trading
+    - api_keys
+    - websocket
+    - read_only
+    - scheduler
+    - outbox
+    - service
+    - writes
+    type: string
+    x-enum-varnames:
+    - FeatureSignUp
+    - FeatureSignIn
+    - FeatureProfileChanges
+    - FeatureDeposits
+    - FeatureWithdrawals
+    - FeatureTrading
+    - FeatureAPIKeys
+    - FeatureWebSocket
+    - FeatureReadOnly
+    - FeatureScheduler
+    - FeatureOutbox
+    - UseService
+    - UseWrites
+  platform.Kind:
+    enum:
+    - maintenance
+    - lockdown
+    type: string
+    x-enum-varnames:
+    - KindMaintenance
+    - KindLockdown
+  platform.Message:
+    properties:
+      en:
+        type: string
+      fa:
+        type: string
+    type: object
+  platform.PublicControl:
+    properties:
+      ends_at:
+        type: string
+      feature:
+        allOf:
+        - $ref: '#/definitions/platform.Feature'
+        enum:
+        - sign_up
+        - sign_in
+        - profile_changes
+        - deposits
+        - withdrawals
+        - trading
+        - api_keys
+        - websocket
+        - read_only
+      kind:
+        allOf:
+        - $ref: '#/definitions/platform.Kind'
+        enum:
+        - maintenance
+        - lockdown
+      message:
+        $ref: '#/definitions/platform.Message'
+      starts_at:
+        type: string
+    type: object
+  platform.Status:
+    properties:
+      active:
+        description: |-
+          Active and Scheduled are the controls that apply now, and those that
+          are announced and start later, by start.
+        items:
+          $ref: '#/definitions/platform.PublicControl'
+        type: array
+      lockdowns:
+        description: Lockdowns are the features that are closed now.
+        items:
+          $ref: '#/definitions/platform.Feature'
+          enum:
+          - sign_up
+          - sign_in
+          - profile_changes
+          - deposits
+          - withdrawals
+          - trading
+          - api_keys
+          - websocket
+          - read_only
+        type: array
+      mode:
+        description: Mode is maintenance during a full maintenance, and open otherwise.
+        enum:
+        - open
+        - maintenance
+        type: string
+      scheduled:
+        items:
+          $ref: '#/definitions/platform.PublicControl'
+        type: array
     type: object
   public.CurrencyPage:
     properties:
@@ -2371,6 +2646,273 @@ paths:
       summary: Sign out an administrator
       tags:
       - admin sign-in
+  /api/v1/admin/platform:
+    get:
+      description: What users see now (the status of GET /api/v1/public/status), and
+        every maintenance and lockdown that applies now or starts later, with its
+        reason and allow lists. Read from the database, so it includes changes that
+        the instance has not applied yet.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.PlatformOverview'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the platform controls
+      tags:
+      - admin platform
+  /api/v1/admin/platform/controls:
+    get:
+      description: Every maintenance and lockdown, newest first, at most 200, lifted
+        and ended ones included.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.ControlList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the platform controls
+      tags:
+      - admin platform
+    post:
+      consumes:
+      - application/json
+      description: Creates a full maintenance (kind maintenance), which closes every
+        route of users with 503 maintenance except the status endpoint and sign-out,
+        and closes their WebSocket connections; or a lockdown of one feature (kind
+        lockdown), which refuses it with 503 feature_locked. Administrators are never
+        closed out, and the sessions of users are kept. The control applies from starts_at
+        (now when absent) until it is lifted or reaches ends_at, on every instance
+        within platform.poll_interval_ms. Users see it on the status endpoint and
+        over the WebSocket from announce_at. Audited as platform.control_create.
+      parameters:
+      - description: The control
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.CreateControlRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/platform.Control'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Put the service under maintenance, or lock a feature
+      tags:
+      - admin platform
+  /api/v1/admin/platform/controls/{id}:
+    patch:
+      consumes:
+      - application/json
+      description: Extends or shortens a control that has not ended, or changes its
+        message; the status endpoint, the WebSocket, and Retry-After follow. With
+        version, the change is refused with 409 version_conflict when the control
+        has changed since. An ended or lifted control answers 409 control_ended. Audited
+        as platform.control_update.
+      parameters:
+      - description: The control's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The version the change is based on
+        in: query
+        minimum: 1
+        name: version
+        type: integer
+      - description: The changes
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.UpdateControlRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/platform.Control'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Change the end or the message of a platform control
+      tags:
+      - admin platform
+  /api/v1/admin/platform/controls/{id}/lift:
+    post:
+      consumes:
+      - application/json
+      description: 'Ends a control now, or cancels one that has not started. An active
+        lockdown of a feature in platform.lift_approval (withdrawals and trading by
+        default) needs two administrators: the first call records the request and
+        answers 202, and a call by another administrator lifts it; the same administrator
+        gets 409 second_approval_required. With version, the lift is refused with
+        409 version_conflict when the control has changed since. An ended or lifted
+        control answers 409 control_ended. Audited as platform.control_lift_request
+        and platform.control_lift.'
+      parameters:
+      - description: The control's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The version the lift is based on
+        in: query
+        minimum: 1
+        name: version
+        type: integer
+      - description: Why
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.LiftControlRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/platform.Control'
+              type: object
+        "202":
+          description: The lift waits for another administrator
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/platform.Control'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Lift a platform control
+      tags:
+      - admin platform
   /api/v1/admin/users/{hk}/restrictions:
     get:
       description: 'The restrictions of a user, newest first, at most 200: every one,
@@ -2951,6 +3493,33 @@ paths:
       summary: Get a public currency
       tags:
       - currencies
+  /api/v1/public/status:
+    get:
+      description: Whether the exchange is open or under maintenance, the features
+        that are locked now, and the maintenances and lockdowns that are announced,
+        with their messages in Persian and English, for the apps to show a banner
+        or a countdown (#235). It answers during a maintenance too, from the memory
+        of the instance, so it never needs the database. Over the WebSocket, every
+        connection receives the same status as a platform.status event when it changes.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/platform.Status'
+              type: object
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Show the status of the exchange
+      tags:
+      - system
   /api/v1/user/contacts:
     get:
       description: The verified email address and mobile number of the signed-in user,

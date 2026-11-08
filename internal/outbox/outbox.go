@@ -99,6 +99,11 @@ type Options struct {
 	// dead letter (20), for the routes that do not set their own.
 	MaxAttempts int
 	Logger      *log.Logger
+	// Paused, when set, pauses the relay while it reports true: a lockdown
+	// of the outbox for maintenance that needs a quiet database or broker
+	// (#235). Messages wait in the outbox, in order, and are published
+	// after the pause.
+	Paused func() bool
 }
 
 // Relay publishes the messages of the outbox.
@@ -112,6 +117,7 @@ type Relay struct {
 	attempts  int
 	topics    []string
 	logger    *log.Logger
+	paused    func() bool
 	// batchTime is maxBatchTime; tests shorten it.
 	batchTime time.Duration
 
@@ -128,7 +134,7 @@ type Relay struct {
 func NewRelay(db *sql.DB, publisher Publisher, routes map[string]Route, opts Options) *Relay {
 	r := &Relay{
 		db: db, publisher: publisher, routes: routes,
-		batch: opts.Batch, interval: opts.Interval, retention: opts.Retention, attempts: opts.MaxAttempts, logger: opts.Logger,
+		batch: opts.Batch, interval: opts.Interval, retention: opts.Retention, attempts: opts.MaxAttempts, logger: opts.Logger, paused: opts.Paused,
 		batchTime: maxBatchTime,
 		nudge:     make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -202,8 +208,10 @@ func (r *Relay) run() {
 	defer ticker.Stop()
 	var lastCleanup, lastReport time.Time
 	for {
-		if _, err := r.Flush(context.Background()); err != nil {
-			r.logger.Printf("Outbox relay: %v", err)
+		if r.paused == nil || !r.paused() {
+			if _, err := r.Flush(context.Background()); err != nil {
+				r.logger.Printf("Outbox relay: %v", err)
+			}
 		}
 		if time.Since(lastCleanup) >= cleanupEvery {
 			if err := r.cleanup(context.Background()); err != nil {

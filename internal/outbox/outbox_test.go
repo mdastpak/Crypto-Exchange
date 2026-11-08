@@ -10,6 +10,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,4 +339,27 @@ func TestRelay_NudgeAndStop(t *testing.T) {
 	enqueue(t, db, "a", "a2")
 	r.Nudge()
 	assert.Equal(t, 1, pendingCount(t, db), "a stopped relay leaves the messages for another one")
+}
+
+// TestRelay_APauseHoldsTheMessages pauses the relay, as a lockdown of the
+// outbox does (#235), and expects the messages to wait, and to be published
+// in order once the pause ends.
+func TestRelay_APauseHoldsTheMessages(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	p := &publisher{}
+	var paused atomic.Bool
+	paused.Store(true)
+	r := NewRelay(db, p, twoTopics, Options{Interval: 20 * time.Millisecond, Logger: quiet, Paused: paused.Load})
+	r.Start()
+	t.Cleanup(func() { _ = r.Stop(context.Background()) })
+
+	enqueue(t, db, "a", "a1", "a2")
+	r.Nudge()
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, p.messages(), "a paused relay publishes nothing")
+	assert.Equal(t, 2, pendingCount(t, db))
+
+	paused.Store(false)
+	require.Eventually(t, func() bool { return len(p.messages()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	assert.Contains(t, p.messages()[0], "a1", "in order")
 }

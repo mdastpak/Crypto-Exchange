@@ -225,6 +225,14 @@ websocket:
   max_connections_per_ip: 20       # Per client address
   session_check_seconds: 60        # How often ended sessions are disconnected
 
+# Maintenance and lockdown controls (#235). The controls are created with the
+# admin API or cmd/admin; these settings say how each instance applies them.
+platform:
+  poll_interval_ms: 1000           # A change applies on every instance within this
+  stale_after_seconds: 30          # Then fail_closed closes while the controls are unknown
+  fail_closed: [deposits, withdrawals, trading]   # ["none"] closes nothing
+  lift_approval: [withdrawals, trading]           # Needs a second administrator to lift
+
 # The sections from here to observability are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe
 # the configuration of roadmap features; see "Settings reserved for roadmap
@@ -232,11 +240,6 @@ websocket:
 exchange:
   name: "Crypto Exchange"
   timezone: "UTC"
-  maintenance_window:
-    enabled: false
-    start: "02:00"
-    end: "04:00"
-    timezone: "UTC"
 
 assets:
   registry_path: "config/assets.yaml"

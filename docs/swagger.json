@@ -1756,6 +1756,411 @@
                 }
             }
         },
+        "/api/v1/admin/platform": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "What users see now (the status of GET /api/v1/public/status), and every maintenance and lockdown that applies now or starts later, with its reason and allow lists. Read from the database, so it includes changes that the instance has not applied yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin platform"
+                ],
+                "summary": "Show the platform controls",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.PlatformOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/platform/controls": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every maintenance and lockdown, newest first, at most 200, lifted and ended ones included.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin platform"
+                ],
+                "summary": "List the platform controls",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.ControlList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a full maintenance (kind maintenance), which closes every route of users with 503 maintenance except the status endpoint and sign-out, and closes their WebSocket connections; or a lockdown of one feature (kind lockdown), which refuses it with 503 feature_locked. Administrators are never closed out, and the sessions of users are kept. The control applies from starts_at (now when absent) until it is lifted or reaches ends_at, on every instance within platform.poll_interval_ms. Users see it on the status endpoint and over the WebSocket from announce_at. Audited as platform.control_create.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin platform"
+                ],
+                "summary": "Put the service under maintenance, or lock a feature",
+                "parameters": [
+                    {
+                        "description": "The control",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.CreateControlRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/platform.Control"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/platform/controls/{id}": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Extends or shortens a control that has not ended, or changes its message; the status endpoint, the WebSocket, and Retry-After follow. With version, the change is refused with 409 version_conflict when the control has changed since. An ended or lifted control answers 409 control_ended. Audited as platform.control_update.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin platform"
+                ],
+                "summary": "Change the end or the message of a platform control",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The control's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The version the change is based on",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The changes",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.UpdateControlRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/platform.Control"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/platform/controls/{id}/lift": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ends a control now, or cancels one that has not started. An active lockdown of a feature in platform.lift_approval (withdrawals and trading by default) needs two administrators: the first call records the request and answers 202, and a call by another administrator lifts it; the same administrator gets 409 second_approval_required. With version, the lift is refused with 409 version_conflict when the control has changed since. An ended or lifted control answers 409 control_ended. Audited as platform.control_lift_request and platform.control_lift.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin platform"
+                ],
+                "summary": "Lift a platform control",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The control's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The version the lift is based on",
+                        "name": "version",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Why",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.LiftControlRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/platform.Control"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "The lift waits for another administrator",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/platform.Control"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/users/{hk}/restrictions": {
             "get": {
                 "security": [
@@ -2620,6 +3025,44 @@
                         "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/status": {
+            "get": {
+                "description": "Whether the exchange is open or under maintenance, the features that are locked now, and the maintenances and lockdowns that are announced, with their messages in Persian and English, for the apps to show a banner or a countdown (#235). It answers during a maintenance too, from the memory of the instance, so it never needs the database. Over the WebSocket, every connection receives the same status as a platform.status event when it changes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Show the status of the exchange",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/platform.Status"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "default": {
@@ -3903,6 +4346,90 @@
                 }
             }
         },
+        "admin.ControlList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platform.Control"
+                    }
+                }
+            }
+        },
+        "admin.CreateControlRequest": {
+            "type": "object",
+            "properties": {
+                "allow_networks": {
+                    "description": "AllowNetworks and AllowUsers may still use the service during a\nmaintenance, at most 50 of each: addresses or CIDR networks, and the\nUUIDs of users.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allow_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "announce_at": {
+                    "description": "AnnounceAt is when users learn of the control, before its start; now\nwhen absent.",
+                    "type": "string"
+                },
+                "ends_at": {
+                    "type": "string"
+                },
+                "feature": {
+                    "description": "Feature is the feature that a lockdown closes; a maintenance closes\neverything and takes none.",
+                    "enum": [
+                        "sign_up",
+                        "sign_in",
+                        "profile_changes",
+                        "deposits",
+                        "withdrawals",
+                        "trading",
+                        "api_keys",
+                        "websocket",
+                        "read_only",
+                        "scheduler",
+                        "outbox"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Feature"
+                        }
+                    ]
+                },
+                "kind": {
+                    "enum": [
+                        "maintenance",
+                        "lockdown"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Kind"
+                        }
+                    ]
+                },
+                "message": {
+                    "description": "Message is shown to users, at most 500 characters per language.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Message"
+                        }
+                    ]
+                },
+                "reason": {
+                    "description": "Reason is for administrators, at most 1000 characters.",
+                    "type": "string"
+                },
+                "starts_at": {
+                    "description": "StartsAt is now when absent; EndsAt, when set, ends the control\nwithout a lift.",
+                    "type": "string"
+                }
+            }
+        },
         "admin.CreateRestrictionRequest": {
             "type": "object",
             "properties": {
@@ -4008,6 +4535,15 @@
                 }
             }
         },
+        "admin.LiftControlRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "description": "Note says why, for the audit log, at most 1000 characters.",
+                    "type": "string"
+                }
+            }
+        },
         "admin.LiftRestrictionRequest": {
             "type": "object",
             "properties": {
@@ -4028,6 +4564,20 @@
                 }
             }
         },
+        "admin.PlatformOverview": {
+            "type": "object",
+            "properties": {
+                "controls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platform.Control"
+                    }
+                },
+                "status": {
+                    "$ref": "#/definitions/platform.Status"
+                }
+            }
+        },
         "admin.RestrictionList": {
             "type": "object",
             "properties": {
@@ -4036,6 +4586,18 @@
                     "items": {
                         "$ref": "#/definitions/restrictions.Restriction"
                     }
+                }
+            }
+        },
+        "admin.UpdateControlRequest": {
+            "type": "object",
+            "properties": {
+                "ends_at": {
+                    "description": "EndsAt extends or shortens the control.",
+                    "type": "string"
+                },
+                "message": {
+                    "$ref": "#/definitions/platform.Message"
                 }
             }
         },
@@ -4892,6 +5454,252 @@
                 "version": {
                     "type": "integer",
                     "example": 2
+                }
+            }
+        },
+        "platform.Control": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "description": "Active is whether the control applies now.",
+                    "type": "boolean"
+                },
+                "allow_networks": {
+                    "description": "AllowNetworks and AllowUsers may still use the service during a\nmaintenance.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allow_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "announce_at": {
+                    "description": "AnnounceAt is when users learn of the control.",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "description": "CreatedBy, LiftRequestedBy, and LiftedBy are administrators; they\nare absent for a change made with cmd/admin.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ends_at": {
+                    "type": "string"
+                },
+                "feature": {
+                    "enum": [
+                        "sign_up",
+                        "sign_in",
+                        "profile_changes",
+                        "deposits",
+                        "withdrawals",
+                        "trading",
+                        "api_keys",
+                        "websocket",
+                        "read_only",
+                        "scheduler",
+                        "outbox"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Feature"
+                        }
+                    ]
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "enum": [
+                        "maintenance",
+                        "lockdown"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Kind"
+                        }
+                    ]
+                },
+                "lift_note": {
+                    "type": "string"
+                },
+                "lift_requested_at": {
+                    "type": "string"
+                },
+                "lift_requested_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "lifted_at": {
+                    "type": "string"
+                },
+                "lifted_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "message": {
+                    "$ref": "#/definitions/platform.Message"
+                },
+                "reason": {
+                    "description": "Reason is internal: users never see it.",
+                    "type": "string"
+                },
+                "starts_at": {
+                    "description": "StartsAt is when the control applies; EndsAt, when set, when it\nstops.",
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "platform.Feature": {
+            "type": "string",
+            "enum": [
+                "sign_up",
+                "sign_in",
+                "profile_changes",
+                "deposits",
+                "withdrawals",
+                "trading",
+                "api_keys",
+                "websocket",
+                "read_only",
+                "scheduler",
+                "outbox",
+                "service",
+                "writes"
+            ],
+            "x-enum-varnames": [
+                "FeatureSignUp",
+                "FeatureSignIn",
+                "FeatureProfileChanges",
+                "FeatureDeposits",
+                "FeatureWithdrawals",
+                "FeatureTrading",
+                "FeatureAPIKeys",
+                "FeatureWebSocket",
+                "FeatureReadOnly",
+                "FeatureScheduler",
+                "FeatureOutbox",
+                "UseService",
+                "UseWrites"
+            ]
+        },
+        "platform.Kind": {
+            "type": "string",
+            "enum": [
+                "maintenance",
+                "lockdown"
+            ],
+            "x-enum-varnames": [
+                "KindMaintenance",
+                "KindLockdown"
+            ]
+        },
+        "platform.Message": {
+            "type": "object",
+            "properties": {
+                "en": {
+                    "type": "string"
+                },
+                "fa": {
+                    "type": "string"
+                }
+            }
+        },
+        "platform.PublicControl": {
+            "type": "object",
+            "properties": {
+                "ends_at": {
+                    "type": "string"
+                },
+                "feature": {
+                    "enum": [
+                        "sign_up",
+                        "sign_in",
+                        "profile_changes",
+                        "deposits",
+                        "withdrawals",
+                        "trading",
+                        "api_keys",
+                        "websocket",
+                        "read_only"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Feature"
+                        }
+                    ]
+                },
+                "kind": {
+                    "enum": [
+                        "maintenance",
+                        "lockdown"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/platform.Kind"
+                        }
+                    ]
+                },
+                "message": {
+                    "$ref": "#/definitions/platform.Message"
+                },
+                "starts_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "platform.Status": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "description": "Active and Scheduled are the controls that apply now, and those that\nare announced and start later, by start.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platform.PublicControl"
+                    }
+                },
+                "lockdowns": {
+                    "description": "Lockdowns are the features that are closed now.",
+                    "type": "array",
+                    "items": {
+                        "enum": [
+                            "sign_up",
+                            "sign_in",
+                            "profile_changes",
+                            "deposits",
+                            "withdrawals",
+                            "trading",
+                            "api_keys",
+                            "websocket",
+                            "read_only"
+                        ],
+                        "$ref": "#/definitions/platform.Feature"
+                    }
+                },
+                "mode": {
+                    "description": "Mode is maintenance during a full maintenance, and open otherwise.",
+                    "type": "string",
+                    "enum": [
+                        "open",
+                        "maintenance"
+                    ]
+                },
+                "scheduled": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platform.PublicControl"
+                    }
                 }
             }
         },

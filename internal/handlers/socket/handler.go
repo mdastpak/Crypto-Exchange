@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/gorilla/websocket"
@@ -35,6 +36,10 @@ type WebSocketHandler struct {
 	// ErrAccountUnavailable. StartSessionWatcher uses it to close the
 	// connections of sessions that ended (#189).
 	VerifySession func(ctx context.Context, sessionID, userID string) error
+	// Platform refuses upgrades during a maintenance or a WebSocket
+	// lockdown (#235), and ApplyPlatform closes the open connections then.
+	// Without it, nothing is refused.
+	Platform *platform.Gate
 
 	limits limits
 	// open and openPerIP count the connections, guarded by Mu, including
@@ -60,7 +65,10 @@ type Client struct {
 	expiresAt time.Time
 	expiry    *time.Timer
 
-	ip       string
+	ip string
+	// addr is the client address itself; ip may be the prefix of an IPv6
+	// address.
+	addr     string
 	location *time.Location
 	limiter  *tokenBucket
 }

@@ -162,6 +162,14 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Delisting.IntervalSeconds; v < 1 || v > MaxDelistingIntervalSeconds {
 		p.add("delisting.interval_seconds", "is %d; it must be from 1 to %d", v, MaxDelistingIntervalSeconds)
 	}
+	if v := c.Platform.PollIntervalMs; v < MinPlatformPollIntervalMs || v > MaxPlatformPollIntervalMs {
+		p.add("platform.poll_interval_ms", "is %d; it must be from %d to %d", v, MinPlatformPollIntervalMs, MaxPlatformPollIntervalMs)
+	}
+	if v := c.Platform.StaleAfterSeconds; v < 1 || v > MaxPlatformStaleAfterSeconds {
+		p.add("platform.stale_after_seconds", "is %d; it must be from 1 to %d", v, MaxPlatformStaleAfterSeconds)
+	} else if v*1000 <= c.Platform.PollIntervalMs {
+		p.add("platform.stale_after_seconds", "is %d; it must be longer than platform.poll_interval_ms (%d ms), or every instance closes the fail-closed features between two reads", v, c.Platform.PollIntervalMs)
+	}
 	if v := c.JWT.Sessions.MaxPerUser; v < 1 || v > MaxSessionsPerUser {
 		p.add("jwt.sessions.max_per_user", "is %d; it must be from 1 to %d", v, MaxSessionsPerUser)
 	}

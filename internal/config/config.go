@@ -223,6 +223,26 @@ type Configuration struct {
 		IntervalSeconds int `yaml:"interval_seconds"`
 	} `yaml:"delisting"`
 
+	// Platform configures the maintenance and lockdown controls (#235).
+	Platform struct {
+		// PollIntervalMs is how often each instance reads the version of
+		// the controls, so that a change applies on every instance within
+		// it.
+		PollIntervalMs int `yaml:"poll_interval_ms"`
+		// StaleAfterSeconds is how long an instance applies the last
+		// controls it read, when it cannot read them, before it closes the
+		// features of FailClosed too.
+		StaleAfterSeconds int `yaml:"stale_after_seconds"`
+		// FailClosed are the features that an instance closes while it
+		// cannot read the controls. Unset is deposits, withdrawals, and
+		// trading; ["none"] is none.
+		FailClosed []string `yaml:"fail_closed"`
+		// LiftApproval are the features whose active lockdown a second
+		// administrator must approve to lift. Unset is withdrawals and
+		// trading; ["none"] is none.
+		LiftApproval []string `yaml:"lift_approval"`
+	} `yaml:"platform"`
+
 	// Keys says where the key-encryption key (KEK) of the data-protection
 	// keys lives. See docs/data-protection.md.
 	Keys KeysConfig `yaml:"keys"`
@@ -252,14 +272,8 @@ type Configuration struct {
 	} `yaml:"websocket"`
 
 	Exchange struct {
-		Name              string `yaml:"name"`
-		Timezone          string `yaml:"timezone"`
-		MaintenanceWindow struct {
-			Enabled  bool   `yaml:"enabled"`
-			Start    string `yaml:"start"`
-			End      string `yaml:"end"`
-			Timezone string `yaml:"timezone"`
-		} `yaml:"maintenance_window"`
+		Name     string `yaml:"name"`
+		Timezone string `yaml:"timezone"`
 	} `yaml:"exchange"`
 
 	Assets struct {
@@ -797,6 +811,8 @@ func setDefaults() {
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
+		{&Config.Platform.PollIntervalMs, DefaultPlatformPollIntervalMs},
+		{&Config.Platform.StaleAfterSeconds, DefaultPlatformStaleAfterSeconds},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -1026,6 +1042,14 @@ const (
 	// how late after its time a step of a delisting is applied.
 	DefaultDelistingIntervalSeconds = 30
 	MaxDelistingIntervalSeconds     = 3600
+
+	// The bounds of the platform settings (#235). A change of a control
+	// applies on every instance within platform.poll_interval_ms.
+	DefaultPlatformPollIntervalMs    = 1000
+	MinPlatformPollIntervalMs        = 100
+	MaxPlatformPollIntervalMs        = 60000
+	DefaultPlatformStaleAfterSeconds = 30
+	MaxPlatformStaleAfterSeconds     = 3600
 )
 
 // DefaultAdminSignInMinResponseMS is longer than the work of a sign-in
