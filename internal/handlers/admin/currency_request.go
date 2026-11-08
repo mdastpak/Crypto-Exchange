@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -74,22 +75,52 @@ func sendValidationErrors(c *gin.Context, errs fieldErrors) {
 var errMalformedCurrencyRequest = errors.New("malformed currency request")
 
 // decodeCurrencyRequest decodes the body strictly. An unknown field, such as
-// a server-controlled id or hk, is a field error. Other decoding failures
-// return errMalformedCurrencyRequest.
+// a server-controlled id or hk, is a field error, named by its path: a field
+// inside info is reported as "info.<name>". Other decoding failures return
+// errMalformedCurrencyRequest.
+//
+// encoding/json names an unknown field without its parent, so info is
+// decoded on its own, after the top level, and its unknown fields get the
+// "info." prefix here.
 func decodeCurrencyRequest(c *gin.Context) (currencyRequest, fieldErrors, error) {
-	var req currencyRequest
+	var top struct {
+		Status  *string         `json:"status"`
+		Info    json.RawMessage `json:"info"`
+		Version *int64          `json:"version"`
+	}
 	decoder := json.NewDecoder(io.LimitReader(c.Request.Body, maxCurrencyRequestBody))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
-			return req, fieldErrors{strings.Trim(name, `"`): "is not accepted"}, nil
+	if err := decoder.Decode(&top); err != nil {
+		if name, ok := unknownField(err); ok {
+			return currencyRequest{}, fieldErrors{name: "is not accepted"}, nil
 		}
-		return req, nil, errMalformedCurrencyRequest
+		return currencyRequest{}, nil, errMalformedCurrencyRequest
 	}
 	if decoder.More() {
-		return req, nil, errMalformedCurrencyRequest
+		return currencyRequest{}, nil, errMalformedCurrencyRequest
+	}
+	req := currencyRequest{Status: top.Status, Version: top.Version}
+	if len(top.Info) > 0 {
+		info := json.NewDecoder(bytes.NewReader(top.Info))
+		info.DisallowUnknownFields()
+		if err := info.Decode(&req.Info); err != nil {
+			if name, ok := unknownField(err); ok {
+				return req, fieldErrors{"info." + name: "is not accepted"}, nil
+			}
+			return req, nil, errMalformedCurrencyRequest
+		}
 	}
 	return req, nil, nil
+}
+
+// unknownField returns the name of the field that a decoder with
+// DisallowUnknownFields refused, or false for any other error.
+func unknownField(err error) (string, bool) {
+	name, ok := strings.CutPrefix(err.Error(), "json: unknown field ")
+	if !ok {
+		return "", false
+	}
+	return strings.Trim(name, `"`), true
 }
 
 // apply returns status and info with the fields of the request applied.

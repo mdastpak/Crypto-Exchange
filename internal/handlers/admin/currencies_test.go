@@ -735,6 +735,9 @@ func (s *AdminCurrenciesTestSuite) TestCreateCurrency_ValidationErrors() {
 		"server-controlled hk": {func(p map[string]interface{}) { p["hk"] = uuid.NewString() }, []string{"hk"}},
 		"server-controlled id": {func(p map[string]interface{}) { p["id"] = 7 }, []string{"id"}},
 		"timestamps":           {func(p map[string]interface{}) { p["created_at"] = "2026-01-01" }, []string{"created_at"}},
+		"unknown info field": {func(p map[string]interface{}) {
+			p["info"].(map[string]interface{})["decimals"] = 8
+		}, []string{"info.decimals"}},
 	}
 	for name, tc := range cases {
 		s.Run(name, func() {
@@ -836,6 +839,7 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ValidationErrors() {
 		"empty name":             {map[string]interface{}{"info": map[string]interface{}{"en_name": ""}}, []string{"info.en_name"}},
 		"token without contract": {map[string]interface{}{"info": map[string]interface{}{"is_token": true}}, []string{"info.contract"}},
 		"server-controlled hk":   {map[string]interface{}{"hk": uuid.NewString()}, []string{"hk"}},
+		"unknown info field":     {map[string]interface{}{"info": map[string]interface{}{"foo": 1}}, []string{"info.foo"}},
 	}
 	for name, tc := range cases {
 		s.Run(name, func() {

@@ -505,7 +505,7 @@ Creates a currency.
 | `info.is_token`, `info.if_fiat` | Optional, `false` by default. A fiat currency cannot be a token. |
 | `info.contract` | Required for a token. At most 128 letters, digits, or `:`, `_`, `.`, `-`. |
 
-Fields that the server controls, such as `id`, `hk`, `version`, and the timestamps, and any other unknown field, are rejected.
+Fields that the server controls, such as `id`, `hk`, `version`, and the timestamps, and any other unknown field, are rejected. An unknown field is named by its path, so a field inside `info` is reported as `info.<name>`, such as `{"errors": {"info.decimals": "is not accepted"}}`.
 
 Response `201`, with the first version of the currency:
 
