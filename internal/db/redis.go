@@ -48,6 +48,18 @@ func NewRedisService() (*RedisService, error) {
 // credentials, the TLS settings, the pool, and the timeouts apply in every
 // mode, to every node.
 func NewRedisClient() (redis.UniversalClient, error) {
+	client, err := newRedisClient()
+	if err != nil {
+		return nil, err
+	}
+	// A request that fails because Redis is away answers 503, not 500
+	// (#130).
+	redisutil.NoteUnavailable(client)
+	return client, nil
+}
+
+// newRedisClient builds the client of the mode.
+func newRedisClient() (redis.UniversalClient, error) {
 	cfg := config.Config.Redis
 	maxRetries := cfg.MaxRetries
 	if maxRetries == 0 {

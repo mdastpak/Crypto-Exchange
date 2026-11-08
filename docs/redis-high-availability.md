@@ -68,6 +68,10 @@ Redis replicates asynchronously: a write that the primary acknowledged may be mi
 
 With `durable_writes.replicas: 0`, the default, nothing waits, and a failover may give back the attempts made in the moment before it: as many as an attacker can send within the replication lag, usually a few milliseconds. Set it to 1 in production, with two replicas per primary, so that one replica may be down without stopping sign-in. When no replica can acknowledge, sign-in stops with `503` until one can: the service prefers that to handing out attempts.
 
+## While Redis is away
+
+A request that needs Redis while it cannot be reached, or cannot serve, as while a replica is promoted, answers `503 service_unavailable` with `Retry-After: 1`, not `500` ([#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)). Every command of the server's client goes through a hook that notes such an error on its request, and the response helpers turn the request's `500` into that answer, in every mode. The checks still fail closed: a token whose revocation cannot be checked is refused, and a sign-in code is not checked. What does not need Redis keeps working: the currency reads fall back to PostgreSQL, and the rate limits follow their `on_error`.
+
 `durable_writes` applies to every mode. In the `cluster` mode, `WAIT` runs on the primary of the key's slot.
 
 ## The failover drill
