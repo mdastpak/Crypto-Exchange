@@ -74,7 +74,7 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | Key | Default | Description |
 | --- | --- | --- |
 | `host`, `port`, `user`, `dbname` | **required** | Connection settings |
-| `password` | none | Database password. Set it with `POSTGRES_PASSWORD`. |
+| `password` | none | Database password. Set it with `POSTGRES_PASSWORD`. Any character works, spaces, quotes, backslashes, and `=` included, and so in `user` and `dbname`: the values are escaped, never formatted into a connection string ([#229](https://github.com/mdastpak/Crypto-Exchange/issues/229)). |
 | `sslmode` | `disable` | libpq SSL mode. Release mode needs `require`, `verify-ca`, or `verify-full`; use `verify-full` where possible. |
 | `max_open_conns` | `25` | Maximum open connections |
 | `max_idle_conns` | `5` | Maximum idle connections |

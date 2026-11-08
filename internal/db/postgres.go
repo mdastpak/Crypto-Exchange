@@ -6,6 +6,8 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
@@ -13,12 +15,12 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratepgx "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 type PostgresService struct {
-	DB      *sql.DB
-	connStr string
+	DB *sql.DB
 }
 
 // migrationLockID is a fixed Postgres advisory lock key used to serialize
@@ -84,21 +86,44 @@ func NewPostgresService() (*PostgresService, error) {
 // database as it is: migrating it first would hide a backup taken at an
 // older schema.
 func ConnectPostgres() (*PostgresService, error) {
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		config.Config.Postgres.Host, config.Config.Postgres.Port,
-		config.Config.Postgres.User, config.Config.Postgres.Password,
-		config.Config.Postgres.DBName, config.Config.Postgres.SSLMode)
-
-	db, err := sql.Open("pgx", connStr)
+	cfg, err := PostgresConfig()
 	if err != nil {
-		return nil, fmt.Errorf("error opening PostgreSQL database: %w", err)
+		return nil, err
 	}
+	db := stdlib.OpenDB(*cfg)
 
 	if err := pingWithRetry(db, config.Config.Postgres.ConnectRetries, time.Duration(config.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("error connecting to PostgreSQL database: %w", err)
 	}
-	return &PostgresService{DB: db, connStr: connStr}, nil
+	return &PostgresService{DB: db}, nil
+}
+
+// PostgresConfig returns the connection settings of the postgres section
+// (#229). It never formats a value into a connection string: the user, the
+// database name, and the sslmode go into a postgres:// URL, where url.URL
+// escapes each one, and the password is set on the parsed configuration
+// afterwards, so it passes through no parser at all. So a value with a
+// space, a quote, a backslash, or "=", such as a generated password, reaches
+// the server as it is, and no value can add or override a connection
+// keyword. An error never includes the password.
+func PostgresConfig() (*pgx.ConnConfig, error) {
+	pg := config.Config.Postgres
+	dsn := url.URL{
+		Scheme:   "postgres",
+		User:     url.User(pg.User),
+		Host:     net.JoinHostPort(pg.Host, pg.Port),
+		Path:     "/" + pg.DBName,
+		RawQuery: url.Values{"sslmode": {pg.SSLMode}}.Encode(),
+	}
+	cfg, err := pgx.ParseConfig(dsn.String())
+	if err != nil {
+		return nil, fmt.Errorf("invalid PostgreSQL settings (postgres.host, port, user, dbname, sslmode): %w", err)
+	}
+	// The fallbacks, one per address and TLS mode, take the password of
+	// cfg, so setting it here covers every attempt.
+	cfg.Password = pg.Password
+	return cfg, nil
 }
 
 func (p *PostgresService) Close() error {
