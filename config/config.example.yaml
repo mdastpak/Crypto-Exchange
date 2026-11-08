@@ -257,6 +257,16 @@ market_data:
   lease_seconds: 60            # How soon another worker takes over a dead worker's job
   max_concurrent_jobs: 4       # Runs of one worker at once
   retry_base_seconds: 30       # Wait after a failed run, doubled per failure up to the job's interval
+  # How this node reaches the sources: direct, proxy (proxy_url), or none.
+  egress:
+    default: direct
+    proxy_url: ""              # Prefer MARKET_DATA_PROXY_URL (http, https, or socks5)
+  # Sources by name. Limits are those of the plan, counted across all nodes.
+  sources:
+    coingecko:
+      enabled: false
+      requests_per_minute: 25  # Free (demo) plan: 30 per minute, 10,000 per month
+      monthly_requests: 9000
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.

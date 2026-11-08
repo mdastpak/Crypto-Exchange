@@ -12,7 +12,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | --- | --- | --- |
 | Tables, store, and `cmd/market-worker` with its probes | [#263](https://github.com/mdastpak/Crypto-Exchange/issues/263) | Done |
 | Job runner: each run once across workers, pause, dry run, jobs by reachable source | [#264](https://github.com/mdastpak/Crypto-Exchange/issues/264) | Done |
-| Source interfaces, rate-limited HTTP client with egress per node, stub source | [#265](https://github.com/mdastpak/Crypto-Exchange/issues/265) | Planned |
+| Source interfaces, rate-limited HTTP client with egress per node, stub source | [#265](https://github.com/mdastpak/Crypto-Exchange/issues/265) | Done |
 | Catalog from CoinGecko and CoinMarketCap | [#266](https://github.com/mdastpak/Crypto-Exchange/issues/266) | Planned |
 | Tickers of global and Iranian exchanges | [#267](https://github.com/mdastpak/Crypto-Exchange/issues/267) | Planned |
 | Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Planned |
@@ -56,6 +56,57 @@ Every worker runs the same jobs, and each run of a job happens on one worker ([#
 - **Shutdown.** A stopping worker waits for its runs until the shutdown deadline (30 seconds), then cancels them; their jobs are due at once for another worker.
 
 Each run is recorded in `market_sync_runs`, and logged with its time and counts.
+
+## Sources
+
+The jobs see the sources only through three interfaces of `internal/marketdata/source` ([#265](https://github.com/mdastpak/Crypto-Exchange/issues/265)), so that a source can be added, its plan changed, or a stub put in its place without touching the jobs:
+
+| Interface | Gives | Sources |
+| --- | --- | --- |
+| `CatalogSource` | Assets: a listing with symbol, name, rank, and supply, and one asset in full with its description, links, and contracts | CoinGecko, CoinMarketCap ([#266](https://github.com/mdastpak/Crypto-Exchange/issues/266)) |
+| `VenueSource` | The latest ticker of every pair of one exchange | Global and Iranian exchanges ([#267](https://github.com/mdastpak/Crypto-Exchange/issues/267)) |
+| `CandleSource` | The closed candles of a pair | The same exchanges ([#268](https://github.com/mdastpak/Crypto-Exchange/issues/268)) |
+
+Every source calls its API through a `Client`, which:
+
+- keeps every amount as a decimal: JSON numbers are decoded as `json.Number` and never pass through a float;
+- retries network errors, `429`, and `5xx` up to four attempts, waiting as `Retry-After` asks (a wait longer than a minute fails the request instead, and the run backs off), or 500 ms doubled per attempt with jitter; a `404` is `ErrNotFound`, and other answers fail at once;
+- stops calling a source after five failed requests in a row, for a minute, and then lets one request through to see whether it has recovered (each worker keeps its own circuit);
+- bounds every answer to 16 MiB and every request to the source's `timeout_seconds`;
+- sends the API key in the header the source expects, never in the URL, and keeps the proxy out of its errors, since its address may hold credentials.
+
+A stub catalog and a stub venue (`source/stub`) answer from fixed data, for tests and for development without network access or keys. Their data covers a coin, a token on several networks, two assets with one symbol, a rebranded token, and an amount that only a decimal keeps. `source/sourcetest` checks that a source keeps the contract of its interface; every source, real or stub, passes the same checks.
+
+### Limits of the plans
+
+The free and paid plans of the sources limit requests per minute, and some per month. `requests_per_minute` and `monthly_requests` of each source are counted in `market_source_usage` (migration 40) across every worker, in the calendar minute and month of the database's clock, so that the workers together keep within the plan however many there are. A request in a full minute waits for the next one; a request past the monthly limit fails with `ErrBudgetExhausted`, and the job backs off until the month turns or the limit is raised. The table holds one row per source and window, so it never grows.
+
+### Egress per node
+
+Each node says in its own configuration how it reaches the sources, so that one release runs on nodes with direct access to the internet, nodes behind a proxy or VPN gateway, and nodes in Iran that reach only the Iranian exchanges:
+
+- `market_data.egress.default` is the route of the node: `direct`, `proxy` (through `egress.proxy_url`, `http://`, `https://`, or `socks5://`), or `none`.
+- `market_data.sources.<name>.egress` overrides it for one source, such as an Iranian exchange that a node behind a foreign proxy reaches directly.
+- A source that is not enabled on a node, or whose route is `none`, is not called there, and the node does not run its jobs; another node that reaches it does.
+- The proxy variables of the environment (`HTTPS_PROXY`) are ignored, so that the configuration alone decides the route.
+
+For example, a node in Iran that reaches the global sources through a SOCKS5 gateway and the Iranian exchanges directly:
+
+```yaml
+market_data:
+  enabled: true
+  mode: live
+  egress:
+    default: proxy             # MARKET_DATA_PROXY_URL=socks5://user:pass@gw.example:1080
+  sources:
+    coingecko:
+      enabled: true
+      requests_per_minute: 25
+      monthly_requests: 9000
+    nobitex:
+      enabled: true
+      egress: direct
+```
 
 ## Data model
 

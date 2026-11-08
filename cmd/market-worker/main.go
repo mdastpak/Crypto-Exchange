@@ -142,6 +142,9 @@ func startJobs(conn *sql.DB, node string, specs []jobs.Spec) (func(ctx context.C
 		MaxConcurrent: cfg.MaxConcurrentJobs,
 		RetryBase:     time.Duration(cfg.RetryBaseSeconds) * time.Second,
 		Paused:        func() bool { return watcher.Paused(platform.FeatureMarketData) },
+		// The node runs only the jobs of the sources its configuration
+		// reaches (#265).
+		Reachable: cfg.Reachable,
 	}, specs...)
 	if err != nil {
 		return nil, err

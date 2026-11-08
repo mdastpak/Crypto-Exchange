@@ -343,6 +343,14 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `lease_seconds` | `60` | From 10 to 3600. How long a worker holds a job without renewing it, which it does every third of this time: how soon another worker takes over the job of a worker that died. |
 | `max_concurrent_jobs` | `4` | From 1 to 64. The runs of one worker at once. |
 | `retry_base_seconds` | `30` | From 1 to 3600. The wait after a failed run. It doubles with each further failure in a row, up to the interval of the job, with a jitter of ±20 %. |
+| `egress.default` | `direct` | How this node reaches the sources: `direct` (it reaches the internet itself), `proxy` (through `egress.proxy_url`), or `none` (it calls no source unless the source sets its own route). Each node sets its own; see [Egress per node](market-data.md#egress-per-node). |
+| `egress.proxy_url` | | The proxy of the `proxy` route: `http://`, `https://`, or `socks5://`, with credentials if needed. Set it with `MARKET_DATA_PROXY_URL`; it is never logged. Required when an enabled source goes through the proxy. |
+| `sources.<name>.enabled` | `false` | Whether this node calls the source. A source that is not listed is not called. |
+| `sources.<name>.egress` | | Overrides `egress.default` for the source: `direct`, `proxy`, or `none`. |
+| `sources.<name>.base_url` | | Overrides the API address of the source, such as the address of a paid plan; `https://` only. |
+| `sources.<name>.api_key` | | The key of the source's plan. Set it in the environment (`MARKET_DATA_COINGECKO_API_KEY`, `MARKET_DATA_COINMARKETCAP_API_KEY`). |
+| `sources.<name>.requests_per_minute`, `monthly_requests` | `0` | The limits of the source's plan, counted across every node in PostgreSQL; `0` is no limit of that kind. |
+| `sources.<name>.timeout_seconds` | `20` | From 1 to 120. Bounds one request to the source. |
 
 ### `platform`
 
@@ -541,6 +549,10 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `FAVORITES_MAX_PER_USER` | `favorites.max_per_user` |
 | `MARKET_DATA_ENABLED` | `market_data.enabled` |
 | `MARKET_DATA_MODE` | `market_data.mode` |
+| `MARKET_DATA_EGRESS` | `market_data.egress.default` |
+| `MARKET_DATA_PROXY_URL` | `market_data.egress.proxy_url` |
+| `MARKET_DATA_COINGECKO_API_KEY` | `market_data.sources.coingecko.api_key` |
+| `MARKET_DATA_COINMARKETCAP_API_KEY` | `market_data.sources.coinmarketcap.api_key` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |
 | `PLATFORM_STALE_AFTER_SECONDS` | `platform.stale_after_seconds` |

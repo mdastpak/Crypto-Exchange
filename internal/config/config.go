@@ -818,6 +818,74 @@ type MarketDataConfig struct {
 	// RetryBaseSeconds is the wait after a failed run; it doubles with
 	// each further failure in a row, up to the interval of the job.
 	RetryBaseSeconds int `yaml:"retry_base_seconds"`
+	// Egress says how this node reaches the sources (#265): directly, or
+	// through a proxy or a VPN gateway. Each node sets its own.
+	Egress MarketDataEgress `yaml:"egress"`
+	// Sources configures each source by name, such as coingecko or
+	// nobitex. A source that is not listed, or not enabled, is not used by
+	// this node.
+	Sources map[string]MarketDataSource `yaml:"sources"`
+}
+
+// MarketDataEgress is how a node of cmd/market-worker reaches the sources.
+type MarketDataEgress struct {
+	// Default is the route of the sources that set none: "direct" (the
+	// node reaches the internet itself), "proxy" (through ProxyURL), or
+	// "none" (this node calls no source unless the source says otherwise).
+	Default string `yaml:"default"`
+	// ProxyURL is the proxy of the "proxy" route: http://, https://, or
+	// socks5://, with credentials if it needs them. Set it with
+	// MARKET_DATA_PROXY_URL; it is never logged.
+	ProxyURL string `yaml:"proxy_url"`
+}
+
+// MarketDataSource configures one source of cmd/market-worker.
+type MarketDataSource struct {
+	Enabled bool `yaml:"enabled"`
+	// Egress overrides egress.default for this source: "direct",
+	// "proxy", or "none". An Iranian exchange may be "direct" on a node in
+	// Iran whose default is "proxy".
+	Egress string `yaml:"egress"`
+	// BaseURL overrides the API address of the source, for example the
+	// address of a paid plan.
+	BaseURL string `yaml:"base_url"`
+	// APIKey is the key of the source's plan, if it has one. Set it in the
+	// environment, such as MARKET_DATA_COINGECKO_API_KEY.
+	APIKey string `yaml:"api_key"`
+	// RequestsPerMinute and MonthlyRequests are the limits of the plan,
+	// counted across every node; 0 is no limit of that kind.
+	RequestsPerMinute int `yaml:"requests_per_minute"`
+	MonthlyRequests   int `yaml:"monthly_requests"`
+	// TimeoutSeconds bounds one request.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+}
+
+// The routes of market_data.egress.
+const (
+	EgressDirect = "direct"
+	EgressProxy  = "proxy"
+	EgressNone   = "none"
+)
+
+// Route returns the route of the named source on this node, and "none" for
+// a source that is not enabled.
+func (m MarketDataConfig) Route(source string) string {
+	s, ok := m.Sources[source]
+	if !ok || !s.Enabled {
+		return EgressNone
+	}
+	if s.Egress != "" {
+		return s.Egress
+	}
+	if m.Egress.Default == "" {
+		return EgressDirect
+	}
+	return m.Egress.Default
+}
+
+// Reachable reports whether this node calls the named source.
+func (m MarketDataConfig) Reachable(source string) bool {
+	return m.Route(source) != EgressNone
 }
 
 // The modes of market_data.mode.
@@ -841,6 +909,9 @@ const (
 	MaxMarketDataMaxConcurrentJobs     = 64
 	DefaultMarketDataRetryBaseSeconds  = 30
 	MaxMarketDataRetryBaseSeconds      = 3600
+	// DefaultMarketDataSourceTimeoutSeconds bounds one request to a source.
+	DefaultMarketDataSourceTimeoutSeconds = 20
+	MaxMarketDataSourceTimeoutSeconds     = 120
 )
 
 // DefaultJibitEndpoint is the base URL of the Jibit identity API.
@@ -1171,6 +1242,15 @@ func setDefaults() {
 
 	if Config.MarketData.Mode == "" {
 		Config.MarketData.Mode = MarketDataModeDryRun
+	}
+	if Config.MarketData.Egress.Default == "" {
+		Config.MarketData.Egress.Default = EgressDirect
+	}
+	for name, s := range Config.MarketData.Sources {
+		if s.TimeoutSeconds == 0 {
+			s.TimeoutSeconds = DefaultMarketDataSourceTimeoutSeconds
+			Config.MarketData.Sources[name] = s
+		}
 	}
 	if Config.MarketData.HealthAddr == "" {
 		Config.MarketData.HealthAddr = DefaultMarketDataHealthAddr
