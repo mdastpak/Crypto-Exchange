@@ -3214,6 +3214,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.APIResponse"
                         }
                     },
+                    "503": {
+                        "description": "identity_unavailable: the mobile number cannot be checked against the national ID now",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
                     "default": {
                         "description": "Any other error, in the envelope with a code",
                         "schema": {
@@ -3230,7 +3236,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Applies the change once both codes are right. A wrong code answers 401 code_invalid and names it in info.field; the codes already accepted stay accepted, so a retry needs only the others. Codes expire with the change.",
+                "description": "Applies the change once both codes are right. For a user with a verified national ID, a new mobile number must be registered to it (403 mobile_owner_mismatch), and the mobile number cannot be removed (409 mobile_required). A wrong code answers 401 code_invalid and names it in info.field; the codes already accepted stay accepted, so a retry needs only the others. Codes expire with the change.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3311,6 +3317,12 @@ const docTemplate = `{
                     },
                     "429": {
                         "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "identity_unavailable: the mobile number cannot be checked against the national ID now; the change stays, so confirm it again later",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }

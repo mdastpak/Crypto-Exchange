@@ -10,7 +10,9 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/identitytest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -292,6 +294,116 @@ func TestUserContacts_ChangeStartsASecurityHold(t *testing.T) {
 	assert.NotEmpty(t, recorded)
 
 	// The owner can still undo the change during the hold.
+	id, accountCode, _ = env.startChange(t, token, map[string]string{"action": "remove", "type": "mobile", "verify_with": "email"}, email, "")
+	status, resp = env.confirmChange(t, token, id, accountCode, "")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+}
+
+// withNationalID gives the user a verified national ID, sealed with the
+// test sealer that the handlers read it with, and a stub provider.
+func (e *e2eEnv) withNationalID(t *testing.T, userID, nationalID string) *identity.Stub {
+	t.Helper()
+	sealer := identitytest.NewSealer()
+	stub := &identity.Stub{}
+	e.handlers.User.Sealer, e.handlers.User.Ownership = sealer, stub
+	require.NoError(t, identity.SaveNationalID(context.Background(), e.db, sealer, userID, nationalID, "stub", "", time.Now()))
+	return stub
+}
+
+// TestUserContacts_MobileOwnership checks #253 for a user with a verified
+// national ID: a new mobile number must be registered to it, an outage
+// changes nothing and lets the change be confirmed later, and the number
+// cannot be removed.
+func TestUserContacts_MobileOwnership(t *testing.T) {
+	env := newE2EEnv(t)
+	const email, foreign, own, other = "kyc@example.com", "09121110010", "09121110011", "09121110012"
+	const nationalID = "0012345679"
+	token, _ := env.signedIn(t, email)
+	userID := userOf(t, token)
+	stub := env.withNationalID(t, userID, nationalID)
+	stub.SetOwner(foreign, "9876543210")
+	stub.SetOwner(own, nationalID)
+	stub.SetOwner(other, nationalID)
+
+	// A number in someone else's name is refused once both codes are in,
+	// and the change is gone.
+	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": foreign}, email, foreign)
+	status, resp := env.confirmChange(t, token, id, accountCode, newCode)
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Equal(t, "mobile_owner_mismatch", resp.Code)
+	assert.Equal(t, []string{"email"}, env.contactTypes(t, token))
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	assert.Equal(t, http.StatusNotFound, status, resp.Message)
+	var failures int
+	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM audit_events WHERE target_id = $1 AND reason = 'mobile_owner_mismatch'
+		AND changes::text NOT LIKE '%' || $2 || '%'`, userID, foreign).Scan(&failures))
+	assert.Equal(t, 1, failures, "the mismatch is audited, with the number masked")
+
+	// An outage changes nothing; the same change confirms after it.
+	id, accountCode, newCode = env.startChange(t, token, map[string]string{"action": "add", "value": own}, email, own)
+	stub.SetUnavailable(true)
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Equal(t, "identity_unavailable", resp.Code)
+	assert.Equal(t, []string{"email"}, env.contactTypes(t, token))
+	stub.SetUnavailable(false)
+	status, resp = env.confirmChange(t, token, id, "", "")
+	require.Equal(t, http.StatusOK, status, "the accepted codes are kept: %s", resp.Message)
+	assert.Equal(t, []string{"email", "mobile"}, env.contactTypes(t, token))
+
+	checkedRef := func() (bool, string) {
+		var checked bool
+		var ref string
+		require.NoError(t, env.db.QueryRow(`SELECT ownership_checked_at IS NOT NULL, COALESCE(ownership_ref, '') FROM user_contacts
+			WHERE user_hk = $1 AND type = 'mobile' AND removed_at IS NULL`, userID).Scan(&checked, &ref))
+		return checked, ref
+	}
+	checked, ref := checkedRef()
+	assert.True(t, checked)
+	assert.NotEmpty(t, ref, "the provider's reference is kept for disputes")
+
+	// The number cannot be removed, only replaced by another in the
+	// user's name.
+	status, resp = env.post(t, "/api/v1/user/contacts/changes", map[string]string{"action": "remove", "type": "mobile", "verify_with": "email"}, token)
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, "mobile_required", resp.Code)
+	id, accountCode, newCode = env.startChange(t, token, map[string]string{"action": "replace", "value": other}, own, other)
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	_, newRef := checkedRef()
+	assert.NotEqual(t, ref, newRef, "the replacement was checked again")
+
+	// Without a provider, a user with a national ID cannot change the
+	// number: it cannot be checked.
+	env.handlers.User.Ownership = nil
+	id, accountCode, newCode = env.startChange(t, token, map[string]string{"action": "replace", "value": own}, other, own)
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Equal(t, "identity_unavailable", resp.Code)
+
+	// Emails are not checked.
+	env.handlers.User.Ownership = stub
+	calls := stub.Calls
+	id, accountCode, newCode = env.startChange(t, token, map[string]string{"action": "replace", "value": "kyc2@example.com"}, email, "kyc2@example.com")
+	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	assert.Equal(t, calls, stub.Calls)
+}
+
+// TestUserContacts_MobileOwnershipWaitsForTheNationalID checks the choice
+// of #253 for level 0: a user without a verified national ID changes the
+// mobile number with the codes only, and the provider is not asked.
+func TestUserContacts_MobileOwnershipWaitsForTheNationalID(t *testing.T) {
+	env := newE2EEnv(t)
+	const email, mobile = "level0@example.com", "09121110013"
+	token, _ := env.signedIn(t, email)
+	stub := &identity.Stub{}
+	env.handlers.User.Ownership, env.handlers.User.Sealer = stub, identitytest.NewSealer()
+
+	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": mobile}, email, mobile)
+	status, resp := env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	assert.Zero(t, stub.Calls)
 	id, accountCode, _ = env.startChange(t, token, map[string]string{"action": "remove", "type": "mobile", "verify_with": "email"}, email, "")
 	status, resp = env.confirmChange(t, token, id, accountCode, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)

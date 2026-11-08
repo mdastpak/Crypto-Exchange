@@ -27,6 +27,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -175,6 +176,9 @@ func run() error {
 	}()
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
+	if err := configureIdentity(handlers); err != nil {
+		return fmt.Errorf("failed to configure the identity checks: %w", err)
+	}
 	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
 		return fmt.Errorf("failed to configure admin sign-in: %w", err)
 	}
@@ -485,6 +489,23 @@ func loadDataKeys(services *models.InfraServices, provider keys.Provider) (*keys
 	log.Printf("Loaded the data-protection keys with %s; current versions: %s; reloading every %v", provider.ID(),
 		strings.Join(current, ", "), live.Interval())
 	return live, nil
+}
+
+// configureIdentity sets the mobile ownership provider of the contact
+// changes (#253), and the keys that read national IDs.
+func configureIdentity(h *InfraHandlers) error {
+	ownership, err := identity.FromConfig(config.Config.Identity.MobileOwnership)
+	if err != nil {
+		return err
+	}
+	h.User.Ownership = ownership
+	if ownership == nil {
+		log.Println("WARNING: identity.mobile_ownership.provider is none: users with a verified national ID cannot add or replace a mobile number")
+	}
+	if h.DataKeys != nil {
+		h.User.Sealer = h.DataKeys
+	}
+	return nil
 }
 
 // configureAdminSignIn enables admin sign-in when totpKey is set. Codes are

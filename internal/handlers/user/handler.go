@@ -3,6 +3,7 @@ package user
 import (
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -23,6 +24,13 @@ type UserHandler struct {
 	// OTPSender delivers those codes. The server sets the configured
 	// delivery; without one, the contact changes are unavailable.
 	OTPSender notify.OTPSender
+	// Ownership checks that a mobile number belongs to the user's
+	// national ID (#253). Without it, a user who has a verified national
+	// ID cannot add or replace a mobile number.
+	Ownership identity.MobileOwnership
+	// Sealer reads national IDs. Without it, a user who has one cannot
+	// change their mobile number.
+	Sealer identity.Sealer
 }
 
 // NewHandler function to initialize CurrenciesUserHandler with dependencies

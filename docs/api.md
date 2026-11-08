@@ -1005,6 +1005,10 @@ Errors of both routes, with their `code`:
 | `401` | `code_invalid` | A wrong or expired code |
 | `404` | `change_not_found` | An unknown or expired change, or one that another user started |
 | `403` | `contact_too_new` | The contact to verify with was verified after the one being replaced or removed, less than `contacts.new_contact_cooldown_hours` ago ([#250](https://github.com/mdastpak/Crypto-Exchange/issues/250)). `info.available_at` says when it may. Verify with the contact being changed, or an older one, instead. Checked on start and again on confirm. |
+| `403` | `mobile_owner_mismatch` | On confirm: the new mobile number is not registered to the user's verified national ID ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)). The change is gone; nothing changed. See [Mobile ownership](#mobile-ownership). |
+| `409` | `mobile_required` | Removing the mobile number of a user who has a verified national ID; replace it instead |
+| `409` | `identity_changed` | The user's verified national ID changed between the check and the change; start again |
+| `503` | `identity_unavailable` | On confirm: the number cannot be checked against the national ID now, because the provider does not answer or none is configured. The change and its accepted codes stay until they expire, so confirm again later. |
 | `409` | `contact_exists` | Adding a type the user already has; replace it instead |
 | `409` | `contact_not_found` | Replacing or removing a type the user does not have, or verifying with one |
 | `409` | `same_contact` | Replacing a contact with itself |
@@ -1012,6 +1016,15 @@ Errors of both routes, with their `code`:
 | `409` | `contact_in_use` | The new contact belongs to another account. This is only said once the code proved control of it. Starting the change does not tell. |
 | `409` | `channel_unavailable` | Codes cannot be sent to that type of contact |
 | `429` | `rate_limited` | Too many codes, or too many wrong codes, which also end the change |
+
+#### Mobile ownership
+
+For a user who has a verified national ID, a mobile number is more than a line that receives codes: it must be registered to the user's national ID, as the Shahkar service of the Communications Regulatory Authority answers it through the configured KYC provider (`identity.mobile_ownership`, [#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)).
+
+- Adding or replacing a mobile number is checked once both codes are right, before anything changes. A number in someone else's name answers `403 mobile_owner_mismatch`, and the attempt is audited. When the provider cannot answer, the confirmation answers `503 identity_unavailable` and can be sent again.
+- The mobile number cannot be removed (`409 mobile_required`), only replaced.
+- The time, the provider, and its reference of the last successful check are kept with the number, for disputes and for the recheck at sign-in ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)).
+- A user without a verified national ID (level 0) changes the mobile number with the codes alone; the number is checked when the national ID is verified ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)).
 
 Each applied change is audited as `user.contact_add`, `user.contact_replace`, or `user.contact_remove`, with the contacts masked. A confirmation with a wrong code is recorded as a `failure`. The contacts are checked again when the change is applied, under a lock of the user, so that concurrent changes on any instance see each other.
 
