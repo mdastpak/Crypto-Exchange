@@ -278,6 +278,15 @@ type Configuration struct {
 		SignInMinResponseMS int `yaml:"sign_in_min_response_ms"`
 	} `yaml:"admin"`
 
+	// Contacts configures the email and mobile changes of users (#199).
+	Contacts struct {
+		// NewContactCooldownHours is how long a newly verified contact
+		// cannot prove a replacement or removal of another contact of the
+		// account (#250), so that a contact added with a stolen session
+		// cannot take over the account at once.
+		NewContactCooldownHours int `yaml:"new_contact_cooldown_hours"`
+	} `yaml:"contacts"`
+
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
 		// (#217), together.
@@ -985,6 +994,7 @@ func setDefaults() {
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
 		{&Config.JWT.Sessions.MaxLifetimeMinutes, DefaultSessionMaxLifetimeMinutes},
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
+		{&Config.Contacts.NewContactCooldownHours, DefaultNewContactCooldownHours},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
 		{&Config.Platform.PollIntervalMs, DefaultPlatformPollIntervalMs},
 		{&Config.Platform.StaleAfterSeconds, DefaultPlatformStaleAfterSeconds},
@@ -1238,6 +1248,12 @@ const (
 	// DefaultSessionMaxLifetimeMinutes is the absolute lifetime of a
 	// session, 30 days: a user signs in again at least that often.
 	DefaultSessionMaxLifetimeMinutes = 30 * 24 * 60
+	// DefaultNewContactCooldownHours and MaxNewContactCooldownHours bound
+	// contacts.new_contact_cooldown_hours (#250): three days by default,
+	// and at most thirty.
+	DefaultNewContactCooldownHours = 72
+	MaxNewContactCooldownHours     = 720
+
 	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
 	// favorites of a user, which are listed in one answer.
 	DefaultMaxFavoritesPerUser = 100

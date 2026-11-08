@@ -62,6 +62,7 @@ const (
 	codeCodeInvalid     = "code_invalid"
 	codeRateLimited     = "rate_limited"
 	codeChannelMissing  = "channel_unavailable"
+	codeContactTooNew   = "contact_too_new"
 )
 
 // changeKeyPrefix is the Redis key prefix of pending changes.
@@ -147,7 +148,7 @@ func (h *UserHandler) ListContacts(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	contacts, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
+	contacts, _, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the contacts of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list contacts.", nil)
@@ -167,26 +168,30 @@ type storedContact struct {
 }
 
 // verifiedContacts returns the verified email and mobile contacts of a user,
-// email first.
+// email first, and the time of the database when it read them. The rules
+// that depend on the age of a contact compare with that time, never with
+// the clock of the instance, so that every instance decides the same way.
+// It is the zero time when the user has no verified contact.
 func verifiedContacts(ctx context.Context, q interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-}, userHK string) ([]storedContact, error) {
-	rows, err := q.QueryContext(ctx, `SELECT type::text, value, verified_at FROM user_contacts c
+}, userHK string) ([]storedContact, time.Time, error) {
+	rows, err := q.QueryContext(ctx, `SELECT type::text, value, verified_at, NOW() FROM user_contacts c
 		WHERE user_hk = $1 AND is_primary AND verified_at IS NOT NULL AND type IN ('email', 'mobile') AND c.removed_at IS NULL
 		ORDER BY type`, userHK)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	defer rows.Close()
 	var out []storedContact
+	var now time.Time
 	for rows.Next() {
 		var ct storedContact
-		if err := rows.Scan(&ct.typ, &ct.value, &ct.verifiedAt); err != nil {
-			return nil, err
+		if err := rows.Scan(&ct.typ, &ct.value, &ct.verifiedAt, &now); err != nil {
+			return nil, time.Time{}, err
 		}
 		out = append(out, ct)
 	}
-	return out, rows.Err()
+	return out, now, rows.Err()
 }
 
 func findContact(contacts []storedContact, typ string) (storedContact, bool) {
@@ -205,38 +210,41 @@ type contactChange struct {
 	account            storedContact
 }
 
-// errChange is a refusal of a change, with its status, code, and message.
+// errChange is a refusal of a change, with its status, code, and message,
+// and the info of the answer, if any.
 type errChange struct {
 	status        int
 	code, message string
+	info          gin.H
 }
 
 func (e *errChange) Error() string { return e.message }
 
-// planChange checks a change against the current contacts of the user. It
-// runs when the change starts, and again under the row lock when it is
-// applied, since the contacts may have changed in between.
-func planChange(req ContactChangeRequest, contacts []storedContact) (contactChange, error) {
+// planChange checks a change against the current contacts of the user, as
+// the database read them at now. It runs when the change starts, and again
+// under the row lock when it is applied, since the contacts may have
+// changed in between.
+func planChange(req ContactChangeRequest, contacts []storedContact, now time.Time) (contactChange, error) {
 	ch := contactChange{action: req.Action, typ: req.Type, value: req.Value}
 	current, has := findContact(contacts, ch.typ)
 	switch ch.action {
 	case contactAdd:
 		if has {
-			return ch, &errChange{http.StatusConflict, codeContactExists, "You already have a contact of this type; replace it instead."}
+			return ch, &errChange{status: http.StatusConflict, code: codeContactExists, message: "You already have a contact of this type; replace it instead."}
 		}
 	case contactReplace:
 		if !has {
-			return ch, &errChange{http.StatusConflict, codeContactNotFound, "You have no contact of this type to replace."}
+			return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "You have no contact of this type to replace."}
 		}
 		if strings.EqualFold(current.value, ch.value) {
-			return ch, &errChange{http.StatusConflict, codeSameContact, "The new contact is the one you already have."}
+			return ch, &errChange{status: http.StatusConflict, code: codeSameContact, message: "The new contact is the one you already have."}
 		}
 	case contactRemove:
 		if !has {
-			return ch, &errChange{http.StatusConflict, codeContactNotFound, "You have no contact of this type to remove."}
+			return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "You have no contact of this type to remove."}
 		}
 		if len(contacts) < 2 {
-			return ch, &errChange{http.StatusConflict, codeLastContact, "Your last verified contact cannot be removed."}
+			return ch, &errChange{status: http.StatusConflict, code: codeLastContact, message: "Your last verified contact cannot be removed."}
 		}
 	}
 
@@ -250,10 +258,42 @@ func planChange(req ContactChangeRequest, contacts []storedContact) (contactChan
 	}
 	account, ok := findContact(contacts, verifyWith)
 	if !ok {
-		return ch, &errChange{http.StatusConflict, codeContactNotFound, "The contact to verify with is not one of your verified contacts."}
+		return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "The contact to verify with is not one of your verified contacts."}
+	}
+	if err := checkCooldown(ch, account, current, now); err != nil {
+		return ch, err
 	}
 	ch.account = account
 	return ch, nil
+}
+
+// checkCooldown refuses a replacement or removal of the contact target
+// that is proven with account, another contact that was verified after
+// target and less than contacts.new_contact_cooldown_hours before now
+// (#250). Without it, someone with a stolen session who adds a contact of
+// their own could use it at once to replace or remove the owner's contact,
+// and take the account. The older contact can always change the newer one,
+// so that the owner can undo an unwanted new contact at once, and a
+// contact can always be changed with its own code. Adding is never
+// refused: it takes nothing away.
+func checkCooldown(ch contactChange, account, target storedContact, now time.Time) error {
+	if ch.action == contactAdd || account.typ == ch.typ || !account.verifiedAt.After(target.verifiedAt) {
+		return nil
+	}
+	cooldown := time.Duration(config.Config.Contacts.NewContactCooldownHours) * time.Hour
+	if cooldown <= 0 {
+		return nil
+	}
+	availableAt := account.verifiedAt.Add(cooldown)
+	if !now.Before(availableAt) {
+		return nil
+	}
+	return &errChange{
+		status:  http.StatusForbidden,
+		code:    codeContactTooNew,
+		message: "The contact you verify with was added recently and cannot change your other contacts yet. Use the contact you are changing, or an older one, or try again later.",
+		info:    gin.H{"available_at": availableAt.UTC().Format(time.RFC3339)},
+	}
 }
 
 // validateChangeRequest normalizes the request and names its invalid
@@ -340,13 +380,13 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	contacts, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
+	contacts, now, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to read the contacts of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the change.", nil)
 		return
 	}
-	plan, err := planChange(req, contacts)
+	plan, err := planChange(req, contacts, now)
 	if sendRefusal(c, err) {
 		return
 	}
@@ -409,7 +449,11 @@ func (h *UserHandler) issue(ctx context.Context, value, typ, client string) (otp
 func sendRefusal(c *gin.Context, err error) bool {
 	var refusal *errChange
 	if errors.As(err, &refusal) {
-		helpers.SendError(c, refusal.status, refusal.code, refusal.message, nil)
+		var info interface{}
+		if refusal.info != nil {
+			info = refusal.info
+		}
+		helpers.SendError(c, refusal.status, refusal.code, refusal.message, info)
 		return true
 	}
 	return false
@@ -637,21 +681,23 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 
 	if _, err := loadProfile(ctx, tx, uuid.MustParse(ch.UserID), true); err != nil {
 		if errors.Is(err, errAccountUnavailable) || errors.Is(err, errProfileNotFound) {
-			return nil, &errChange{http.StatusForbidden, helpers.CodeAccountUnavailable, "This account is not available. Please contact support."}
+			return nil, &errChange{status: http.StatusForbidden, code: helpers.CodeAccountUnavailable, message: "This account is not available. Please contact support."}
 		}
 		return nil, err
 	}
-	contacts, err := verifiedContacts(ctx, tx, ch.UserID)
+	contacts, now, err := verifiedContacts(ctx, tx, ch.UserID)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := planChange(ContactChangeRequest{Action: ch.Action, Type: ch.Type, Value: ch.Value}, contacts)
+	// The contact that proved the account is checked by value, not by
+	// type, in case it was replaced in between.
+	plan, err := planChange(ContactChangeRequest{Action: ch.Action, Type: ch.Type, Value: ch.Value, VerifyWith: accountType(contacts, ch.AccountContact)}, contacts, now)
 	if err != nil {
 		return nil, err
 	}
 	// The contact that proved the account must still be one of the user's.
 	if _, ok := findContactValue(contacts, ch.AccountContact); !ok {
-		return nil, &errChange{http.StatusConflict, codeContactNotFound, "The contact you verified with has changed; start the change again."}
+		return nil, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "The contact you verified with has changed; start the change again."}
 	}
 
 	e := contactEvent(c, ch.UserID, ch)
@@ -679,7 +725,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		// The user proved control of the contact, so the answer may say
 		// that another account holds it; that account signs in with it.
-		return nil, &errChange{http.StatusConflict, codeContactInUse, "This contact belongs to another account."}
+		return nil, &errChange{status: http.StatusConflict, code: codeContactInUse, message: "This contact belongs to another account."}
 	}
 	if err != nil {
 		return nil, err
@@ -687,11 +733,20 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	if err := audit.Record(ctx, tx, e); err != nil {
 		return nil, err
 	}
-	after, err := verifiedContacts(ctx, tx, ch.UserID)
+	after, _, err := verifiedContacts(ctx, tx, ch.UserID)
 	if err != nil {
 		return nil, err
 	}
 	return after, tx.Commit()
+}
+
+// accountType returns the type of the contact with the given value, or ""
+// when the user no longer has it.
+func accountType(contacts []storedContact, value string) string {
+	if ct, ok := findContactValue(contacts, value); ok {
+		return ct.typ
+	}
+	return ""
 }
 
 func findContactValue(contacts []storedContact, value string) (storedContact, bool) {

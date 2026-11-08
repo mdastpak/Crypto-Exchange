@@ -977,7 +977,7 @@ A user holds at most one email address and one mobile number, both verified, and
 | `action` | `add`, `replace`, or `remove` |
 | `value` | The new contact, for `add` and `replace`. An email address, or an Iranian mobile number in any usual form, which is normalized. |
 | `type` | `email` or `mobile`: the contact to remove. For `add` and `replace`, it is taken from `value`. |
-| `verify_with` | Optional, `email` or `mobile`: the verified contact that receives the account code. By default, the contact being replaced or removed, or for `add`, the one the user has. A user who lost a mobile number replaces it with `verify_with: "email"`. |
+| `verify_with` | Optional, `email` or `mobile`: the verified contact that receives the account code. By default, the contact being replaced or removed, or for `add`, the one the user has. A user who lost a mobile number replaces it with `verify_with: "email"`, unless the email address is newer than the mobile number and was verified less than `contacts.new_contact_cooldown_hours` ago. |
 
 The answer names where the codes went, and for how many seconds they are valid:
 
@@ -994,6 +994,7 @@ Errors of both routes, with their `code`:
 | `400` | `validation_failed` | An invalid field, named in `info.errors` |
 | `401` | `code_invalid` | A wrong or expired code |
 | `404` | `change_not_found` | An unknown or expired change, or one that another user started |
+| `403` | `contact_too_new` | The contact to verify with was verified after the one being replaced or removed, less than `contacts.new_contact_cooldown_hours` ago ([#250](https://github.com/mdastpak/Crypto-Exchange/issues/250)). `info.available_at` says when it may. Verify with the contact being changed, or an older one, instead. Checked on start and again on confirm. |
 | `409` | `contact_exists` | Adding a type the user already has; replace it instead |
 | `409` | `contact_not_found` | Replacing or removing a type the user does not have, or verifying with one |
 | `409` | `same_contact` | Replacing a contact with itself |
