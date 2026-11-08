@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -730,6 +731,17 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	if err != nil {
 		return nil, err
 	}
+	// A change of a contact is a security change: it holds withdrawals
+	// and the other operations that a second factor protects (#251), in
+	// this transaction, so that the hold exists as soon as the change does.
+	until, err := restrictions.StartSecurityHold(ctx, tx, ch.UserID, time.Duration(config.Config.Security.ChangeHoldHours)*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	if e.Changes.After == nil {
+		e.Changes.After = map[string]interface{}{}
+	}
+	e.Changes.After["security_hold_until"] = until.UTC().Format(time.RFC3339)
 	if err := audit.Record(ctx, tx, e); err != nil {
 		return nil, err
 	}

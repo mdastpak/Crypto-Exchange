@@ -783,7 +783,17 @@ Ends the restriction now. The `note` is required. The optional query parameter `
 
 ### `GET /user/restrictions`
 
-The restrictions that apply to the signed-in user, as they see them: `id`, `scope`, `operations`, `currency_hk`, `until` (when shown), and `created_at`, so that a client can disable what they block ahead of time.
+The restrictions that apply to the signed-in user, as they see them: `id`, `scope`, `operations`, `currency_hk`, `until` (when shown), and `created_at`, so that a client can disable what they block ahead of time. `security_hold_until` is when the [security hold](#security-hold) ends, and is absent without one.
+
+### Security hold
+
+A change of a security setting of an account holds, for `security.change_hold_hours` (24 by default), the operations that a second factor protects ([#251](https://github.com/mdastpak/Crypto-Exchange/issues/251)). If someone else made the change, they cannot use it at once to move funds out, and the owner has time to notice and undo it.
+
+- **What starts it:** adding, replacing, or removing an email address or mobile number, and, once they exist, a change of the second factor (#161) or a contact taken by another account (#252). A change during a hold extends it; it is never shortened.
+- **What it holds:** withdrawals of every kind, which answer `403 security_hold` with `info.operation` and `info.until`, and, once they exist, registering a withdrawal destination (#160) and turning off the second factor (#161). A restriction of an administrator comes first and answers with its own code.
+- **What it does not hold:** contact changes, so that the owner can undo an unwanted change at once ([#250](https://github.com/mdastpak/Crypto-Exchange/issues/250) keeps a new contact from changing the older ones), sign-in, deposits, and trading.
+
+The hold is part of the user's row and is read in the transaction of each held operation, so it applies on every instance at once. The audit event of the change records `security_hold_until`.
 
 ## Maintenance and lockdowns
 
