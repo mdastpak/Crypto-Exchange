@@ -14,23 +14,33 @@ import (
 )
 
 // Keyring holds the unwrapped data keys that are not retired, in memory
-// only. It does not change after Load.
+// only. It does not change after Load; Live swaps in a newer one.
 type Keyring struct {
 	keys map[Purpose][]Key // by ascending version
+	// now is the clock that Current compares activation times with.
+	now func() time.Time
 }
 
-// Current returns the newest key of purpose, which new seals and
-// ciphertexts use.
+// Current returns the key of purpose that new seals and ciphertexts use:
+// the newest version whose activation time has passed (#233). A newer
+// version that is not active yet is already loaded, so data that other
+// instances write with it once it is active can be read here.
 func (r *Keyring) Current(purpose Purpose) (Key, error) {
 	versions := r.keys[purpose]
-	if len(versions) == 0 {
-		return Key{}, fmt.Errorf("%w: %s", ErrNoKey, purpose)
+	now := time.Now()
+	if r.now != nil {
+		now = r.now()
 	}
-	return versions[len(versions)-1], nil
+	for i := len(versions) - 1; i >= 0; i-- {
+		if !versions[i].activeFrom.After(now) {
+			return versions[i], nil
+		}
+	}
+	return Key{}, fmt.Errorf("%w: %s", ErrNoKey, purpose)
 }
 
 // Version returns one version of purpose, to check a seal or decrypt a value
-// written with it.
+// written with it. It returns versions that are not active yet too.
 func (r *Keyring) Version(purpose Purpose, version int) (Key, error) {
 	for _, key := range r.keys[purpose] {
 		if key.version == version {
@@ -40,14 +50,27 @@ func (r *Keyring) Version(purpose Purpose, version int) (Key, error) {
 	return Key{}, fmt.Errorf("%w: %s/v%d", ErrNoKey, purpose, version)
 }
 
+// newest returns the newest loaded version of purpose, active or not.
+func (r *Keyring) newest(purpose Purpose) (Key, bool) {
+	versions := r.keys[purpose]
+	if len(versions) == 0 {
+		return Key{}, false
+	}
+	return versions[len(versions)-1], true
+}
+
 // Info describes a stored data key, without the key.
 type Info struct {
 	Purpose   Purpose
 	Version   int
 	KEKID     string
 	CreatedAt time.Time
-	RetiredAt *time.Time
-	// Current marks the newest version that is not retired.
+	// ActiveFrom is when the version starts writing; until then it only
+	// reads (#233).
+	ActiveFrom time.Time
+	RetiredAt  *time.Time
+	// Current marks the version that writes now: the newest active
+	// version that is not retired.
 	Current bool
 }
 
@@ -59,6 +82,12 @@ type Store struct {
 	// their transaction (#195): for cmd/admin, audit.Operator. Zero is the
 	// system, as for the first keys that the server creates.
 	Origin audit.Event
+	// ActivationDelay is how long after Rotate a new version starts
+	// writing (#233). Until then every instance only reads with it, so it
+	// must exceed the reload interval of the instances, with a margin for
+	// a reload that fails: then every instance has loaded the version
+	// before any writes with it.
+	ActivationDelay time.Duration
 }
 
 // record writes the audit event of action on a key in tx. The event names
@@ -103,7 +132,7 @@ func (s *Store) Load(ctx context.Context) (*Keyring, error) {
 	}
 
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT purpose, version, kek_id, wrapped_key FROM data_keys WHERE retired_at IS NULL ORDER BY purpose, version`)
+		`SELECT purpose, version, kek_id, wrapped_key, active_from FROM data_keys WHERE retired_at IS NULL ORDER BY purpose, version`)
 	if err != nil {
 		return nil, fmt.Errorf("reading the data keys: %w", err)
 	}
@@ -114,14 +143,15 @@ func (s *Store) Load(ctx context.Context) (*Keyring, error) {
 		var version int
 		var kekID string
 		var wrapped []byte
-		if err := rows.Scan(&purpose, &version, &kekID, &wrapped); err != nil {
+		var activeFrom time.Time
+		if err := rows.Scan(&purpose, &version, &kekID, &wrapped, &activeFrom); err != nil {
 			return nil, fmt.Errorf("reading the data keys: %w", err)
 		}
 		secret, err := s.unwrap(ctx, purpose, version, kekID, wrapped)
 		if err != nil {
 			return nil, err
 		}
-		ring.keys[purpose] = append(ring.keys[purpose], Key{purpose: purpose, version: version, secret: secret})
+		ring.keys[purpose] = append(ring.keys[purpose], Key{purpose: purpose, version: version, secret: secret, activeFrom: activeFrom})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading the data keys: %w", err)
@@ -136,12 +166,17 @@ func (s *Store) Load(ctx context.Context) (*Keyring, error) {
 		return nil, err
 	}
 	for _, purpose := range Purposes {
-		current, err := ring.Current(purpose)
-		if err != nil {
+		newest, ok := ring.newest(purpose)
+		if !ok {
 			return nil, fmt.Errorf("every data key of purpose %s is retired; check the data_keys table", purpose)
 		}
-		if current.version != latest[purpose] {
+		if newest.version != latest[purpose] {
 			return nil, fmt.Errorf("the newest data key %s/v%d is retired, which the key commands never do; check the data_keys table", purpose, latest[purpose])
+		}
+		// Retire keeps an active version, and the first version is active
+		// at once, so one is always active unless the table was changed.
+		if _, err := ring.Current(purpose); err != nil {
+			return nil, fmt.Errorf("no data key of purpose %s is active yet, which the key commands never leave; check the data_keys table", purpose)
 		}
 	}
 	return ring, nil
@@ -266,9 +301,10 @@ func (s *Store) newWrappedKey(ctx context.Context, purpose Purpose, version int)
 	return wrapped, nil
 }
 
-// Rotate creates the next version of purpose and returns it. Each process
-// uses it as the current key once it loads the keys again, after a restart;
-// the older versions stay readable until they are retired.
+// Rotate creates the next version of purpose and returns it. Every
+// instance loads it within its reload interval and reads with it at once,
+// and writes with it from ActivationDelay after now (#233); the older
+// versions stay readable until they are retired.
 func (s *Store) Rotate(ctx context.Context, purpose Purpose) (int, error) {
 	if !purpose.Valid() {
 		return 0, fmt.Errorf("unknown purpose %q", purpose)
@@ -282,13 +318,25 @@ func (s *Store) Rotate(ctx context.Context, purpose Purpose) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if s.ActivationDelay < 0 {
+		return 0, fmt.Errorf("the activation delay %v is negative", s.ActivationDelay)
+	}
+	// A first version has nothing written before it to read, so it is
+	// active at once; otherwise the purpose would have no key that writes.
+	delay := s.ActivationDelay
+	if latest == 0 {
+		delay = 0
+	}
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO data_keys (purpose, version, kek_id, wrapped_key) VALUES ($1, $2, $3, $4)`,
-			purpose, version, s.Provider.ID(), wrapped); err != nil {
+			`INSERT INTO data_keys (purpose, version, kek_id, wrapped_key, active_from)
+			 VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5))`,
+			purpose, version, s.Provider.ID(), wrapped, delay.Seconds()); err != nil {
 			return err
 		}
-		return s.record(ctx, tx, audit.ActionDataKeyRotate, purpose, version, kekChange("", s.Provider.ID()))
+		changes := kekChange("", s.Provider.ID())
+		changes.After["activation_delay_seconds"] = delay.Seconds()
+		return s.record(ctx, tx, audit.ActionDataKeyRotate, purpose, version, changes)
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
@@ -309,7 +357,9 @@ func (s *Store) Retire(ctx context.Context, purpose Purpose, version int) error 
 		res, err := tx.ExecContext(ctx, `
 			UPDATE data_keys SET retired_at = NOW()
 			WHERE purpose = $1 AND version = $2 AND retired_at IS NULL
-			  AND version < (SELECT MAX(version) FROM data_keys WHERE purpose = $1)`,
+			  AND EXISTS (SELECT 1 FROM data_keys newer
+			              WHERE newer.purpose = $1 AND newer.version > $2
+			                AND newer.retired_at IS NULL AND newer.active_from <= NOW())`,
 			purpose, version)
 		if err != nil {
 			return err
@@ -327,11 +377,12 @@ func (s *Store) Retire(ctx context.Context, purpose Purpose, version int) error 
 		return nil
 	}
 
-	var retired sql.NullTime
+	var retired, newerFrom sql.NullTime
 	var latest int
 	err = s.DB.QueryRowContext(ctx, `
-		SELECT retired_at, (SELECT MAX(version) FROM data_keys WHERE purpose = $1)
-		FROM data_keys WHERE purpose = $1 AND version = $2`, purpose, version).Scan(&retired, &latest)
+		SELECT retired_at, (SELECT MAX(version) FROM data_keys WHERE purpose = $1),
+		       (SELECT MIN(active_from) FROM data_keys WHERE purpose = $1 AND version > $2 AND retired_at IS NULL)
+		FROM data_keys WHERE purpose = $1 AND version = $2`, purpose, version).Scan(&retired, &latest, &newerFrom)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %s/v%d", ErrNoKey, purpose, version)
@@ -339,8 +390,14 @@ func (s *Store) Retire(ctx context.Context, purpose Purpose, version int) error 
 		return fmt.Errorf("retiring data key %s/v%d: %w", purpose, version, err)
 	case retired.Valid:
 		return fmt.Errorf("data key %s/v%d is already retired", purpose, version)
-	default:
+	case version == latest:
 		return fmt.Errorf("data key %s/v%d is the newest version; rotate first, then retire it", purpose, version)
+	default:
+		at := "later"
+		if newerFrom.Valid {
+			at = "at " + newerFrom.Time.UTC().Format(time.RFC3339)
+		}
+		return fmt.Errorf("data key %s/v%d still writes: the newer version becomes active %s; retire it after that", purpose, version, at)
 	}
 }
 
@@ -409,8 +466,9 @@ func (s *Store) Rewrap(ctx context.Context, from Provider) (int, error) {
 // List describes every stored data key, oldest first within each purpose.
 func (s *Store) List(ctx context.Context) ([]Info, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT purpose, version, kek_id, created_at, retired_at,
-		       retired_at IS NULL AND version = MAX(version) FILTER (WHERE retired_at IS NULL) OVER (PARTITION BY purpose)
+		SELECT purpose, version, kek_id, created_at, active_from, retired_at,
+		       retired_at IS NULL AND active_from <= NOW()
+		       AND version = MAX(version) FILTER (WHERE retired_at IS NULL AND active_from <= NOW()) OVER (PARTITION BY purpose)
 		FROM data_keys ORDER BY purpose, version`)
 	if err != nil {
 		return nil, fmt.Errorf("reading the data keys: %w", err)
@@ -421,7 +479,7 @@ func (s *Store) List(ctx context.Context) ([]Info, error) {
 		var info Info
 		var retired sql.NullTime
 		var current sql.NullBool
-		if err := rows.Scan(&info.Purpose, &info.Version, &info.KEKID, &info.CreatedAt, &retired, &current); err != nil {
+		if err := rows.Scan(&info.Purpose, &info.Version, &info.KEKID, &info.CreatedAt, &info.ActiveFrom, &retired, &current); err != nil {
 			return nil, fmt.Errorf("reading the data keys: %w", err)
 		}
 		if retired.Valid {

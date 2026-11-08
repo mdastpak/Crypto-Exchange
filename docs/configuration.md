@@ -147,8 +147,10 @@ Every server instance connects with its own TLS session, so several instances be
 | `ssl.user.private_key` | **required** | Path to the RSA private key PEM that signs user tokens, for example `"internal/ssl/user/private_key.pem"`. A relative path starts at the working directory. A list of path segments, which earlier versions required, is still accepted. |
 | `ssl.user.public_key` | **required** | Path to the matching public key PEM |
 | `ssl.user.retired_public_keys` | `[]` | Paths of the public keys of earlier user key pairs. Tokens they signed stay valid until they expire. See [Rotating signing keys](#rotating-signing-keys). |
+| `ssl.user.next_public_keys` | `[]` | Paths of the public keys of the user key pair that will sign next. Tokens it signs are accepted before any instance signs with it, the first phase of a [rotation](#rotating-signing-keys) ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)). |
 | `ssl.admin.private_key`, `ssl.admin.public_key` | none | The key pair that signs admin tokens. Without it, admin routes reject every token, and the server logs a warning. It must differ from the user key pair. |
 | `ssl.admin.retired_public_keys` | `[]` | Public keys of earlier admin key pairs |
+| `ssl.admin.next_public_keys` | `[]` | Public keys of the admin key pair that will sign next |
 | `issuer` | `crypto-exchange` | Issuer claim written into tokens and required on every token |
 | `access_token.expiration_minutes` | **required** | Access token lifetime, at most 1440 (a day). There is no default. |
 | `refresh_token.expiration_minutes` | **required** | Refresh token lifetime, and the cookie `Max-Age`. It must be at least the access token lifetime. |
@@ -159,10 +161,14 @@ Keys must be RSA keys of at least 2048 bits, and a public key must belong to its
 
 #### Rotating signing keys
 
+A rotation has two phases, each a rolling restart, so that no instance ever rejects a token that another instance signed ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)):
+
 1. Generate a new key pair for the role.
-2. Point `private_key` and `public_key` at the new pair, and add the old public key to `retired_public_keys`.
-3. Restart every server instance. New tokens are signed with the new key, and tokens signed with the old key keep working.
+2. **Phase 1: accept the new key everywhere.** Add the new public key to `next_public_keys`, and restart every instance. Instances still sign with the old key; restarted ones also accept the new key, which nobody signs with yet.
+3. **Phase 2: sign with the new key.** Once every instance runs phase 1, point `private_key` and `public_key` at the new pair, move the old public key to `retired_public_keys`, empty `next_public_keys`, and restart every instance again. Restarted instances sign with the new key, which the others already accept; every instance still accepts the old key.
 4. After `refresh_token.expiration_minutes` (or `access_token.expiration_minutes` for admin keys, which have no refresh tokens), remove the old key from `retired_public_keys`.
+
+Skipping phase 1 signs users out at random during the restart: an instance that has not restarted rejects every token that a restarted one signed.
 
 ### `otp`
 
@@ -260,8 +266,10 @@ The data-protection keys seal rows and encrypt fields, so that someone with acce
 | `transit.key` | none | Name of the Transit key that wraps the data keys |
 | `transit.ca_cert` | none | PEM file of the certificate authorities to trust for the server, instead of the system ones |
 | `transit.timeout_seconds` | `10` | Timeout of each request to the server |
+| `reload_interval_seconds` | `60` | From 5 to 3600. How often each instance checks `data_keys`, and loads a rotation, a retirement, or a re-wrap without a restart ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)). An instance that meets a value sealed with a version it does not hold also reloads at once, at most every 5 seconds. |
+| `activation_delay_seconds` | `300` | How long after `admin keys rotate` the new version starts writing. Until then every instance only reads with it. At least twice `reload_interval_seconds`, so that every instance has loaded a version before any writes with it. `admin keys rotate` reads it from the configuration it is given. |
 
-The key service is only contacted at startup and by the `admin keys` commands: a running server keeps the keys in memory and does not depend on it.
+The key service is contacted at startup, when `data_keys` changed, and by the `admin keys` commands. A running server keeps the keys in memory: when a reload fails, because the key service is unreachable, it keeps the keys it has and logs the failure, so it does not depend on the key service between changes.
 
 ### `websocket`
 
@@ -410,6 +418,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `KEYS_TRANSIT_MOUNT` | `keys.transit.mount` |
 | `KEYS_TRANSIT_KEY` | `keys.transit.key` |
 | `KEYS_TRANSIT_TIMEOUT_SECONDS` | `keys.transit.timeout_seconds` |
+| `KEYS_RELOAD_INTERVAL_SECONDS` | `keys.reload_interval_seconds` |
+| `KEYS_ACTIVATION_DELAY_SECONDS` | `keys.activation_delay_seconds` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |

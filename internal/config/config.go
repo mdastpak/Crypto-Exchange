@@ -388,6 +388,10 @@ type JWTKeyPaths struct {
 	// RetiredPublicKeys lists the public keys of earlier key pairs. Tokens
 	// they signed are accepted until they expire.
 	RetiredPublicKeys []KeyPath `yaml:"retired_public_keys"`
+	// NextPublicKeys lists the public keys of the key pair that will sign
+	// next (#233): every instance accepts its tokens before any instance
+	// signs with it, which is the first phase of a rotation.
+	NextPublicKeys []KeyPath `yaml:"next_public_keys"`
 }
 
 // KeyPath is the path of a key file. In YAML it is a string. A list of path
@@ -431,7 +435,22 @@ type KeysConfig struct {
 		CACert    string `yaml:"ca_cert"`
 		Timeout   int    `yaml:"timeout_seconds"`
 	} `yaml:"transit"`
+	// ReloadIntervalSeconds is how often each instance checks data_keys
+	// and loads a rotation, a retirement, or a re-wrap (#233).
+	ReloadIntervalSeconds int `yaml:"reload_interval_seconds"`
+	// ActivationDelaySeconds is how long after keys rotate the new
+	// version starts writing. Every instance reads with it from its next
+	// reload, so it must be at least twice the reload interval.
+	ActivationDelaySeconds int `yaml:"activation_delay_seconds"`
 }
+
+// Defaults and bounds of the reloading of the data keys (#233).
+const (
+	DefaultKeysReloadIntervalSeconds  = 60
+	MinKeysReloadIntervalSeconds      = 5
+	MaxKeysReloadIntervalSeconds      = 3600
+	DefaultKeysActivationDelaySeconds = 300
+)
 
 // Key providers, as keys.provider spells them.
 const (
@@ -680,6 +699,15 @@ func (c *Configuration) validateKeys() error {
 		return fmt.Errorf("keys.transit.timeout_seconds (%s) is %d; it must be a positive number of seconds",
 			envVarFor("keys.transit.timeout_seconds"), c.Keys.Transit.Timeout)
 	}
+	reload := c.Keys.ReloadIntervalSeconds
+	if reload < MinKeysReloadIntervalSeconds || reload > MaxKeysReloadIntervalSeconds {
+		return fmt.Errorf("keys.reload_interval_seconds (%s) is %d; it must be from %d to %d",
+			envVarFor("keys.reload_interval_seconds"), reload, MinKeysReloadIntervalSeconds, MaxKeysReloadIntervalSeconds)
+	}
+	if c.Keys.ActivationDelaySeconds < 2*reload {
+		return fmt.Errorf("keys.activation_delay_seconds (%s) is %d; it must be at least twice keys.reload_interval_seconds (%d), so that every instance loads a new key before any writes with it",
+			envVarFor("keys.activation_delay_seconds"), c.Keys.ActivationDelaySeconds, 2*reload)
+	}
 	return nil
 }
 
@@ -785,6 +813,12 @@ func setDefaults() {
 
 	if Config.Keys.Transit.Mount == "" {
 		Config.Keys.Transit.Mount = "transit"
+	}
+	if Config.Keys.ReloadIntervalSeconds == 0 {
+		Config.Keys.ReloadIntervalSeconds = DefaultKeysReloadIntervalSeconds
+	}
+	if Config.Keys.ActivationDelaySeconds == 0 {
+		Config.Keys.ActivationDelaySeconds = max(DefaultKeysActivationDelaySeconds, 2*Config.Keys.ReloadIntervalSeconds)
 	}
 	if Config.Keys.Transit.Timeout == 0 {
 		Config.Keys.Transit.Timeout = 10

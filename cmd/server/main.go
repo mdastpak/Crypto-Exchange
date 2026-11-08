@@ -53,7 +53,7 @@ type InfraHandlers struct {
 	Sessions       auth.SessionStore
 	// DataKeys holds the data-protection keys for row seals (#139) and
 	// field encryption (#140). It is nil without keys.provider.
-	DataKeys *keys.Keyring
+	DataKeys *keys.Live
 	// Platform refuses the requests that a maintenance or a lockdown closes
 	// (#235). Without a watcher, it lets every request through.
 	Platform *platform.Gate
@@ -154,6 +154,10 @@ func run() error {
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
 	if otpWorker != nil {
 		workers = append(workers, worker{"OTP delivery worker", otpWorker.Stop})
+	}
+	if handlers.DataKeys != nil {
+		handlers.DataKeys.Start()
+		workers = append(workers, worker{"data key reloader", handlers.DataKeys.Stop})
 	}
 	// Stops the workers and the WebSocket event consumer, which start below,
 	// before the services close when startup fails after them. Otherwise
@@ -453,25 +457,30 @@ func dataKeyProvider(releaseMode bool) (keys.Provider, error) {
 }
 
 // loadDataKeys unwraps the data-protection keys, creating the first version
-// of each purpose on the first start. The key service is only needed here:
-// the keys stay in memory until the process ends.
-func loadDataKeys(services *models.InfraServices, provider keys.Provider) (*keys.Keyring, error) {
+// of each purpose on the first start. The keys stay in memory; the returned
+// keyring reloads them when data_keys changes, once started (#233), so a
+// rotation reaches every instance without a restart.
+func loadDataKeys(services *models.InfraServices, provider keys.Provider) (*keys.Live, error) {
 	if provider == nil {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ring, err := (&keys.Store{DB: services.Postgres.DB, Provider: provider}).Load(ctx)
+	store := &keys.Store{DB: services.Postgres.DB, Provider: provider}
+	live, err := keys.NewLive(ctx, store, keys.LiveOptions{
+		ReloadInterval: time.Duration(config.Config.Keys.ReloadIntervalSeconds) * time.Second,
+	})
 	if err != nil {
 		return nil, err
 	}
 	var current []string
 	for _, purpose := range keys.Purposes {
-		key, _ := ring.Current(purpose)
+		key, _ := live.Current(purpose)
 		current = append(current, key.String())
 	}
-	log.Printf("Loaded the data-protection keys with %s; current versions: %s", provider.ID(), strings.Join(current, ", "))
-	return ring, nil
+	log.Printf("Loaded the data-protection keys with %s; current versions: %s; reloading every %v", provider.ID(),
+		strings.Join(current, ", "), live.Interval())
+	return live, nil
 }
 
 // configureAdminSignIn enables admin sign-in when totpKey is set. Codes are
@@ -593,6 +602,13 @@ func readKeyPair(paths config.JWTKeyPaths) (auth.KeyPair, error) {
 			return auth.KeyPair{}, err
 		}
 		pair.Retired = append(pair.Retired, retired)
+	}
+	for i, path := range paths.NextPublicKeys {
+		next, err := read(fmt.Sprintf("next_public_keys[%d]", i), path)
+		if err != nil {
+			return auth.KeyPair{}, err
+		}
+		pair.Next = append(pair.Next, next)
 	}
 	return pair, nil
 }

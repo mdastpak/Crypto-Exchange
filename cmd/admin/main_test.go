@@ -242,9 +242,25 @@ func TestRun_ManagesDataKeys(t *testing.T) {
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "Created data key row-mac/v2")
 
+	assert.Contains(t, stdout, "writes with it from", "a new version waits for keys.activation_delay_seconds (#233)")
+
+	code, stdout, stderr = runCLI(t, append(base, "keys", "list")...)
+	require.Equal(t, 0, code, stderr)
+	assert.Regexp(t, `(?m)^row-mac\s+1\s+current\s`, stdout, "the first version writes at once")
+	assert.Regexp(t, `(?m)^row-mac\s+2\s+pending\s`, stdout)
+
 	code, _, stderr = runCLI(t, append(base, "keys", "retire", "-purpose", "row-mac", "-version", "2")...)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr, "newest version")
+	code, _, stderr = runCLI(t, append(base, "keys", "retire", "-purpose", "row-mac", "-version", "1")...)
+	assert.Equal(t, 1, code, "v1 still writes until v2 is active")
+	assert.Contains(t, stderr, "still writes")
+
+	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Exec(`UPDATE data_keys SET active_from = NOW() - INTERVAL '1 second' WHERE version = 2`)
+	require.NoError(t, err, "the activation delay passes")
 	code, stdout, stderr = runCLI(t, append(base, "keys", "retire", "-purpose", "row-mac", "-version", "1")...)
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "Retired data key row-mac/v1")
@@ -257,9 +273,9 @@ func TestRun_ManagesDataKeys(t *testing.T) {
 	require.Equal(t, 0, code, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
 	require.Len(t, lines, 3, stdout)
-	assert.Regexp(t, `^PURPOSE\s+VERSION\s+STATE\s+KEK\s+CREATED\s+RETIRED$`, lines[0])
-	assert.Regexp(t, `^row-mac\s+1\s+retired\s+local:[0-9a-f]{16}\s+\S+\s+\d{4}-`, lines[1])
-	assert.Regexp(t, `^row-mac\s+2\s+current\s+local:[0-9a-f]{16}\s+\S+\s+-$`, lines[2])
+	assert.Regexp(t, `^PURPOSE\s+VERSION\s+STATE\s+KEK\s+CREATED\s+ACTIVE FROM\s+RETIRED$`, lines[0])
+	assert.Regexp(t, `^row-mac\s+1\s+retired\s+local:[0-9a-f]{16}\s+\S+\s+\S+\s+\d{4}-`, lines[1])
+	assert.Regexp(t, `^row-mac\s+2\s+current\s+local:[0-9a-f]{16}\s+\S+\s+\S+\s+-$`, lines[2])
 	assert.NotContains(t, stdout, base64.StdEncoding.EncodeToString(kek))
 
 	var targets []string

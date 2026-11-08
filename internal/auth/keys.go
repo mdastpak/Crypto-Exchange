@@ -41,6 +41,11 @@ type KeyPair struct {
 	// stay valid until they expire, so keys can be rotated without signing
 	// everyone out.
 	Retired [][]byte
+	// Next holds the public keys of the key pairs that will sign next
+	// (#233). Every instance accepts tokens they sign before any instance
+	// signs with them, so that a rolling restart that switches the signing
+	// key never meets an instance that rejects the new tokens.
+	Next [][]byte
 }
 
 // roleKeys are the parsed keys of one role.
@@ -109,16 +114,21 @@ func parseKeyPair(pair KeyPair) (*roleKeys, error) {
 	}
 
 	keys := &roleKeys{signing: private, signingKID: kid, verifying: map[string]*rsa.PublicKey{kid: public}}
-	for i, pemData := range pair.Retired {
-		retired, err := jwt.ParseRSAPublicKeyFromPEM(pemData)
-		if err != nil {
-			return nil, fmt.Errorf("retired public key %d: %w", i+1, err)
+	for _, extra := range []struct {
+		name string
+		pems [][]byte
+	}{{"retired", pair.Retired}, {"next", pair.Next}} {
+		for i, pemData := range extra.pems {
+			public, err := jwt.ParseRSAPublicKeyFromPEM(pemData)
+			if err != nil {
+				return nil, fmt.Errorf("%s public key %d: %w", extra.name, i+1, err)
+			}
+			extraKID, err := checkedKeyID(public)
+			if err != nil {
+				return nil, fmt.Errorf("%s public key %d: %w", extra.name, i+1, err)
+			}
+			keys.verifying[extraKID] = public
 		}
-		retiredKID, err := checkedKeyID(retired)
-		if err != nil {
-			return nil, fmt.Errorf("retired public key %d: %w", i+1, err)
-		}
-		keys.verifying[retiredKID] = retired
 	}
 	return keys, nil
 }

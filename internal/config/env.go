@@ -202,6 +202,8 @@ var envVars = []EnvVar{
 	stringVar("KEYS_TRANSIT_MOUNT", "keys.transit.mount", func(c *Configuration) *string { return &c.Keys.Transit.Mount }),
 	stringVar("KEYS_TRANSIT_KEY", "keys.transit.key", func(c *Configuration) *string { return &c.Keys.Transit.Key }),
 	intVar("KEYS_TRANSIT_TIMEOUT_SECONDS", "keys.transit.timeout_seconds", func(c *Configuration) *int { return &c.Keys.Transit.Timeout }),
+	intVar("KEYS_RELOAD_INTERVAL_SECONDS", "keys.reload_interval_seconds", func(c *Configuration) *int { return &c.Keys.ReloadIntervalSeconds }),
+	intVar("KEYS_ACTIVATION_DELAY_SECONDS", "keys.activation_delay_seconds", func(c *Configuration) *int { return &c.Keys.ActivationDelaySeconds }),
 
 	stringVar("SMTP_PASSWORD", "notifications.email.password", func(c *Configuration) *string { return &c.Notifications.Email.Password }),
 	stringVar("KAVENEGAR_API_KEY", "notifications.sms.kavenegar.api_key", func(c *Configuration) *string { return &c.Notifications.SMS.Kavenegar.APIKey }),

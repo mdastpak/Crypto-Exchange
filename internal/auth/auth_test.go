@@ -983,3 +983,63 @@ func mustRefreshToken(t testing.TB) string {
 	require.NoError(t, err)
 	return token
 }
+
+// TestRotation_TwoPhasesNeverRejectAToken rotates the user signing key the
+// way docs/configuration.md describes (#233). In each step of a rolling
+// restart, instances of two consecutive states serve at once; a token that
+// either signs must pass the other. The process holds one key set at a
+// time, so each instance is a key set installed in turn.
+func TestRotation_TwoPhasesNeverRejectAToken(t *testing.T) {
+	setupTestConfig()
+	testKeys(t)
+	oldKey, newKey := retiredTestKey, userTestKey
+	nextOf := func(pair KeyPair, next *rsa.PrivateKey) KeyPair {
+		pair.Next = append(pair.Next, publicKeyToPEM(&next.PublicKey))
+		return pair
+	}
+	states := []struct {
+		name string
+		keys KeyPair
+	}{
+		{"before the rotation", pairOf(oldKey)},
+		{"phase 1: the new public key in next_public_keys", nextOf(pairOf(oldKey), newKey)},
+		{"phase 2: signing with the new key, the old one retired", pairOf(newKey, oldKey)},
+	}
+	issue := func(pair KeyPair) string {
+		require.NoError(t, SetKeys(map[string]KeyPair{RoleUser: pair}))
+		return mustToken(t, RoleUser)
+	}
+	for i := 0; i+1 < len(states); i++ {
+		a, b := states[i], states[i+1]
+		t.Run(a.name+" and "+b.name, func(t *testing.T) {
+			fromA, fromB := issue(a.keys), issue(b.keys)
+			for _, verifier := range []KeyPair{a.keys, b.keys} {
+				require.NoError(t, SetKeys(map[string]KeyPair{RoleUser: verifier}))
+				for _, token := range []string{fromA, fromB} {
+					_, err := ParseToken(token, RoleUser, TokenTypeAccess)
+					assert.NoError(t, err)
+				}
+			}
+		})
+	}
+
+	// Skipping phase 1, as the procedure before #233 did, rejects the new
+	// tokens on the instances that have not restarted yet.
+	fromNew := issue(states[2].keys)
+	require.NoError(t, SetKeys(map[string]KeyPair{RoleUser: states[0].keys}))
+	_, err := ParseToken(fromNew, RoleUser, TokenTypeAccess)
+	assert.ErrorIs(t, err, ErrUnknownKeyID)
+}
+
+func TestSetKeys_RejectsAnInvalidNextKey(t *testing.T) {
+	setupTestConfig()
+	testKeys(t)
+	pair := pairOf(userTestKey)
+	pair.Next = [][]byte{[]byte("x")}
+	err := SetKeys(map[string]KeyPair{RoleUser: pair})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "next public key 1")
+
+	pair.Next = [][]byte{publicKeyToPEM(&adminTestKey.PublicKey)}
+	assert.Error(t, SetKeys(map[string]KeyPair{RoleUser: pair, RoleAdmin: pairOf(adminTestKey)}), "a next key may not belong to another role")
+}

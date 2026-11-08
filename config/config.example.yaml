@@ -108,6 +108,7 @@ jwt:
       private_key: ""
       public_key: ""
       retired_public_keys: []  # Earlier admin public keys, accepted until their tokens expire
+      next_public_keys: []     # The next admin public key, accepted before it signs (rotation phase 1)
     user:
       # Generated as described in the README. Paths are relative to the
       # working directory. Set with JWT_SSL_USER_PRIVATE_KEY and
@@ -117,6 +118,10 @@ jwt:
       # Earlier user public keys, for key rotation, for example:
       # - "internal/ssl/user/2026-10/public_key.pem"
       retired_public_keys: []
+      # The public key that will sign next, accepted by every instance
+      # before any signs with it (phase 1 of a rotation, see
+      # docs/configuration.md).
+      next_public_keys: []
   issuer: "crypto-exchange"     # The iss claim, required on every token
   access_token:
     expiration_minutes: 15     # At most 1440 (a day)
@@ -211,6 +216,8 @@ keys:
     key: ""                 # The Transit key that wraps the data keys
     ca_cert: ""             # VAULT_CACERT: PEM file of the CAs to trust
     timeout_seconds: 10
+  reload_interval_seconds: 60    # How often each instance loads a change of data_keys
+  activation_delay_seconds: 300  # A rotated key writes only after this; at least 2x the reload interval
 
 websocket:
   # Origins accepted by the WebSocket origin check; empty allows same-origin

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"hash"
 	"strconv"
+	"time"
 )
 
 // Purpose is what a data key is for. Every key has exactly one purpose, and
@@ -68,6 +69,9 @@ type Key struct {
 	purpose Purpose
 	version int
 	secret  []byte
+	// activeFrom is when the key becomes the one that writes (#233); it
+	// reads from the moment it is loaded.
+	activeFrom time.Time
 }
 
 // Purpose returns the purpose of the key.
