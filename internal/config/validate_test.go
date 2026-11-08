@@ -276,7 +276,7 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
 	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
-		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog()}
+		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog(), Tickers: validTickers()}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
@@ -296,6 +296,11 @@ func validCatalog() MarketDataCatalog {
 		Top: 500, IntervalHours: 24, DetailsPerRun: 200, DetailsMaxAgeDays: 30, DeactivateAfterDays: 14}
 }
 
+func validTickers() MarketDataTickers {
+	return MarketDataTickers{IntervalSeconds: 120, StaleAfterSeconds: 600, OutlierPercent: 5, MinVenues: 3,
+		MapRankLimit: 1000, DeactivatePairsAfterHours: 24}
+}
+
 func validMarketWorker() Configuration {
 	var c Configuration
 	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.DBName = "db", "5432", "app", "exchange"
@@ -303,6 +308,7 @@ func validMarketWorker() Configuration {
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
 		Egress:  MarketDataEgress{Default: EgressProxy, ProxyURL: "socks5://user:secret@gw.example:1080"},
 		Catalog: validCatalog(),
+		Tickers: validTickers(),
 		Sources: map[string]MarketDataSource{
 			"coingecko": {Enabled: true, RequestsPerMinute: 30, MonthlyRequests: 10000, TimeoutSeconds: 20},
 			"nobitex":   {Enabled: true, Egress: EgressDirect, TimeoutSeconds: 20},
@@ -374,6 +380,22 @@ func TestValidateMarketWorker_ChecksTheCatalog(t *testing.T) {
 	Config = validMarketWorker()
 	Config.MarketData.Sources["coinmarketcap"] = MarketDataSource{Enabled: true, APIKey: "key", TimeoutSeconds: 20, Egress: EgressDirect}
 	assert.NoError(t, ValidateMarketWorker())
+}
+
+func TestValidateMarketWorker_ChecksTheTickers(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+
+	Config = validMarketWorker()
+	Config.MarketData.Tickers = MarketDataTickers{IntervalSeconds: 10, StaleAfterSeconds: 5, OutlierPercent: 0,
+		MinVenues: 1, MapRankLimit: 0, DeactivatePairsAfterHours: 0}
+	err := ValidateMarketWorker()
+	require.Error(t, err)
+	for _, want := range []string{"market_data.tickers.interval_seconds", "market_data.tickers.outlier_percent",
+		"market_data.tickers.min_venues", "market_data.tickers.map_rank_limit", "market_data.tickers.deactivate_pairs_after_hours",
+		"every ticker turns stale"} {
+		assert.Contains(t, err.Error(), want)
+	}
 }
 
 func TestSourceKeyVar_AddsTheKeyWithoutEnablingTheSource(t *testing.T) {

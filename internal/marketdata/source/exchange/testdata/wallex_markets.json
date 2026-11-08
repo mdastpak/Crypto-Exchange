@@ -1,0 +1,18 @@
+{
+  "result": {
+    "symbols": {
+      "BTCTMN": {"symbol": "BTCTMN", "baseAsset": "BTC", "quoteAsset": "TMN", "faName": "بیت کوین - تومان",
+                 "stats": {"bidPrice": "6799000000", "askPrice": "6800500000", "24h_ch": 0.7, "24h_volume": "4.25",
+                           "24h_quoteVolume": "28900000000", "24h_highPrice": "6850000000", "24h_lowPrice": "6700000000",
+                           "lastPrice": "6800000000", "lastQty": "0.001", "lastTradeSide": "BUY"}},
+      "USDTTMN": {"symbol": "USDTTMN", "baseAsset": "USDT", "quoteAsset": "TMN",
+                  "stats": {"bidPrice": 99990, "askPrice": 100010, "24h_volume": 250000, "24h_quoteVolume": "25000000000",
+                            "24h_highPrice": "101000", "24h_lowPrice": "99000", "lastPrice": "100000"}},
+      "ETHUSDT": {"symbol": "ETHUSDT", "baseAsset": "ETH", "quoteAsset": "USDT",
+                  "stats": {"bidPrice": "-", "askPrice": "-", "24h_volume": "-", "lastPrice": "3501.2"}},
+      "NOPTMN": {"symbol": "NOPTMN", "baseAsset": "NOP", "quoteAsset": "TMN", "stats": {"lastPrice": "-"}}
+    }
+  },
+  "message": "The operation was successful",
+  "success": true
+}

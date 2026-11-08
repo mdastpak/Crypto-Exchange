@@ -512,6 +512,26 @@ func (c *Configuration) marketDataProblems(p *problems) {
 		}
 	}
 	c.catalogProblems(p)
+	tk := c.MarketData.Tickers
+	for _, r := range []struct {
+		key           string
+		value, lo, hi int
+	}{
+		{"market_data.tickers.interval_seconds", tk.IntervalSeconds, MinTickersIntervalSeconds, MaxTickersIntervalSeconds},
+		{"market_data.tickers.stale_after_seconds", tk.StaleAfterSeconds, 1, MaxTickersStaleAfterSeconds},
+		{"market_data.tickers.outlier_percent", tk.OutlierPercent, 1, 100},
+		{"market_data.tickers.min_venues", tk.MinVenues, 2, MaxTickersMinVenues},
+		{"market_data.tickers.map_rank_limit", tk.MapRankLimit, 1, MaxCatalogTop},
+		{"market_data.tickers.deactivate_pairs_after_hours", tk.DeactivatePairsAfterHours, 1, 24 * MaxCatalogDays},
+	} {
+		if r.value < r.lo || r.value > r.hi {
+			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
+		}
+	}
+	if tk.StaleAfterSeconds > 0 && tk.StaleAfterSeconds < tk.IntervalSeconds {
+		p.add("market_data.tickers.stale_after_seconds", "is %d; it must be at least interval_seconds (%d), or every ticker turns stale between two runs",
+			tk.StaleAfterSeconds, tk.IntervalSeconds)
+	}
 }
 
 // catalogProblems checks market_data.catalog.

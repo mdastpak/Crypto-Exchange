@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "stats": {
+    "btc-rls": {"isClosed": false, "bestSell": "68000000000", "bestBuy": "67990000000", "volumeSrc": "12.5",
+                "volumeDst": "850000000000", "latest": "67995000000", "mark": "67995000000", "dayLow": "67000000000",
+                "dayHigh": "68500000000", "dayOpen": "67500000000", "dayClose": "67995000000", "dayChange": "0.74"},
+    "btc-usdt": {"isClosed": false, "bestSell": "68020", "bestBuy": "68010", "volumeSrc": "3.1", "volumeDst": "210000",
+                 "latest": "68015.5", "dayLow": "67000", "dayHigh": "68500", "dayOpen": "67500"},
+    "usdt-rls": {"isClosed": false, "bestSell": "1000010", "bestBuy": "999990", "volumeSrc": "100000",
+                 "volumeDst": "100000000000", "latest": "1000005", "dayLow": "990000", "dayHigh": "1010000", "dayOpen": "995000"},
+    "old-rls": {"isClosed": true, "isClosedReason": "delisted"}
+  }
+}

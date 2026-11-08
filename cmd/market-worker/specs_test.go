@@ -30,6 +30,8 @@ func TestJobSpecs_OnlyTheCatalogSourcesThisNodeReaches(t *testing.T) {
 		},
 		Catalog: config.MarketDataCatalog{Priority: []string{"coingecko", "coinmarketcap"}, Coverage: config.CatalogCoverageList,
 			Top: 500, IntervalHours: 24, DetailsPerRun: 200, DetailsMaxAgeDays: 30, DeactivateAfterDays: 14},
+		Tickers: config.MarketDataTickers{IntervalSeconds: 120, StaleAfterSeconds: 600, OutlierPercent: 5, MinVenues: 3,
+			MapRankLimit: 1000, DeactivatePairsAfterHours: 24},
 	}
 	specs, err := jobSpecs(nil)
 	require.NoError(t, err)
@@ -42,6 +44,15 @@ func TestJobSpecs_OnlyTheCatalogSourcesThisNodeReaches(t *testing.T) {
 	specs, err = jobSpecs(nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"catalog:coingecko", "catalog:coinmarketcap"}, names(specs))
+
+	config.Config.MarketData.Sources["binance"] = config.MarketDataSource{Enabled: true, TimeoutSeconds: 20}
+	config.Config.MarketData.Sources["nobitex"] = config.MarketDataSource{Enabled: true, TimeoutSeconds: 20, Egress: config.EgressDirect}
+	config.Config.MarketData.Egress.Default = config.EgressNone
+	specs, err = jobSpecs(nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tickers:nobitex"}, names(specs),
+		"a node in Iran without a route abroad collects the Iranian venues")
+	assert.Equal(t, "2m0s", specs[0].Interval.String())
 
 	config.Config.MarketData.Sources = nil
 	specs, err = jobSpecs(nil)

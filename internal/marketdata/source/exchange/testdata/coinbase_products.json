@@ -1,0 +1,12 @@
+{
+  "products": [
+    {"product_id": "BTC-USD", "price": "68001.23", "price_percentage_change_24h": "0.5", "volume_24h": "12001.123456",
+     "base_currency_id": "BTC", "quote_currency_id": "USD", "status": "online", "trading_disabled": false, "is_disabled": false,
+     "product_type": "SPOT"},
+    {"product_id": "ETH-USDC", "price": "3500.1", "volume_24h": "5000", "base_currency_id": "ETH", "quote_currency_id": "USDC",
+     "status": "online", "trading_disabled": false, "is_disabled": false, "product_type": "SPOT"},
+    {"product_id": "OLD-USD", "price": "1", "volume_24h": "0", "base_currency_id": "OLD", "quote_currency_id": "USD",
+     "status": "delisted", "trading_disabled": true, "is_disabled": true, "product_type": "SPOT"}
+  ],
+  "num_products": 3
+}

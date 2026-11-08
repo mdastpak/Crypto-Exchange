@@ -271,6 +271,13 @@ market_data:
       enabled: false           # Needs MARKET_DATA_COINMARKETCAP_API_KEY, on every plan
       requests_per_minute: 25  # Free (Basic) plan: 30 per minute, 10,000 credits per month
       monthly_requests: 9000
+    # Venues (docs/market-data.md#tickers): public endpoints, no key.
+    binance: {enabled: false}
+    okx: {enabled: false}
+    kraken: {enabled: false}
+    coinbase: {enabled: false}
+    nobitex: {enabled: false}  # Iranian venues often answer only from Iran: egress: direct on a node there
+    wallex: {enabled: false}
   # The catalog of assets (docs/market-data.md#catalog).
   catalog:
     priority: [coingecko, coinmarketcap]  # Primary source first
@@ -280,6 +287,14 @@ market_data:
     details_per_run: 200       # Full records read per run
     details_max_age_days: 30   # When a record is read again
     deactivate_after_days: 14  # Unlisted this long: inactive (all coverage only)
+  # The tickers of the venues (docs/market-data.md#tickers).
+  tickers:
+    interval_seconds: 120      # Time between two runs of a venue
+    stale_after_seconds: 600   # Older tickers are stale
+    outlier_percent: 5         # Further from the median of the venues: an outlier
+    min_venues: 3              # Venues with a fresh price that make a median
+    map_rank_limit: 1000       # A shared symbol maps to the only asset ranked within this
+    deactivate_pairs_after_hours: 24
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
 # management service; see docs/data-protection.md. No feature uses them yet.

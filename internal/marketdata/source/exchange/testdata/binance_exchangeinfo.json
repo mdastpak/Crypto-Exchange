@@ -1,0 +1,10 @@
+{
+  "timezone": "UTC",
+  "serverTime": 1762628400000,
+  "symbols": [
+    {"symbol": "BTCUSDT", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT", "isSpotTradingAllowed": true},
+    {"symbol": "ETHBTC", "status": "TRADING", "baseAsset": "ETH", "quoteAsset": "BTC", "isSpotTradingAllowed": true},
+    {"symbol": "SHIBUSDT", "status": "TRADING", "baseAsset": "SHIB", "quoteAsset": "USDT", "isSpotTradingAllowed": true},
+    {"symbol": "LUNAUSDT", "status": "BREAK", "baseAsset": "LUNA", "quoteAsset": "USDT", "isSpotTradingAllowed": true}
+  ]
+}

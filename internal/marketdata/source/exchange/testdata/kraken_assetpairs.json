@@ -1,0 +1,9 @@
+{
+  "error": [],
+  "result": {
+    "XXBTZUSD": {"altname": "XBTUSD", "wsname": "XBT/USD", "base": "XXBT", "quote": "ZUSD", "status": "online"},
+    "XDGUSD": {"altname": "XDGUSD", "wsname": "XDG/USD", "base": "XXDG", "quote": "ZUSD", "status": "online"},
+    "ETHEUR": {"altname": "ETHEUR", "wsname": "ETH/EUR", "base": "XETH", "quote": "ZEUR", "status": "online"},
+    "OLDUSD": {"altname": "OLDUSD", "wsname": "OLD/USD", "base": "OLD", "quote": "ZUSD", "status": "delisted"}
+  }
+}
