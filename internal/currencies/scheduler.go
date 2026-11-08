@@ -37,6 +37,10 @@ type Scheduler struct {
 	// currency list and nudges the outbox relay.
 	after func(ctx context.Context, changes []Change)
 	now   func() time.Time
+	// Paused, when set, pauses the runs while it reports true: a lockdown
+	// of the scheduler for maintenance that needs a quiet database (#235).
+	// A due step is applied at the first run after the pause.
+	Paused func() bool
 
 	stop     chan struct{}
 	done     chan struct{}
@@ -67,6 +71,9 @@ func (s *Scheduler) Start() {
 }
 
 func (s *Scheduler) run() {
+	if s.Paused != nil && s.Paused() {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), s.interval+30*time.Second)
 	defer cancel()
 	for _, advance := range s.advance {

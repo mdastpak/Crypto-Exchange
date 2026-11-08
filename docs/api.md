@@ -81,11 +81,15 @@ An error response contains only a fixed message for each error. Internal details
 | `order_mismatch` | `409` | A reorder of the favorites does not name each favorite of the kind once |
 | `session_not_found` | `409` | The session to end at the [session limit](#session-limit) is not an active session of the user |
 | `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
+| `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
+| `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
 | `internal_error` | `500` | An unexpected failure, described in the server log |
 | `not_implemented` | `501` | Not implemented yet |
 | `unavailable` | `503` | A dependency is unavailable; try again later |
+| `maintenance` | `503` | The exchange is under [maintenance](#maintenance-and-lockdowns); `info` has the message and the end, and `Retry-After` the wait when the end is known |
+| `feature_locked` | `503` | A [lockdown](#maintenance-and-lockdowns) closes the feature; `info.feature` names it |
 | `error` | other | A status without a code of its own |
 
 ### Pagination
@@ -777,6 +781,104 @@ Ends the restriction now. The `note` is required. The optional query parameter `
 
 The restrictions that apply to the signed-in user, as they see them: `id`, `scope`, `operations`, `currency_hk`, `until` (when shown), and `created_at`, so that a client can disable what they block ahead of time.
 
+## Maintenance and lockdowns
+
+Administrators take the whole service, or one feature, out of users' reach for planned maintenance or in an incident ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). A control is one of:
+
+- **A full maintenance** (`kind: maintenance`). Every route of users answers `503 maintenance`: the currency reads, sign-in, refresh, and every `/user/*` route, and new WebSocket connections are refused while open ones close. Still open are `GET /public/status`, the probes under `/system`, sign-out, ending sessions (`DELETE /user/sessions`, `DELETE /user/sessions/{id}`), and every admin route. Sessions are kept, so users are still signed in afterwards. `allow_networks` and `allow_users` let testers, or the office network, through to check the service before it reopens.
+- **A lockdown** (`kind: lockdown`) of one feature, which answers `503 feature_locked` while the rest stays open:
+
+| Feature | Closes |
+| --- | --- |
+| `sign_up` | New accounts. Existing users still sign in. A new contact learns it after its code, since the server does not reveal which contacts have accounts. |
+| `sign_in` | New sign-ins (`POST /public/auth`, `/public/auth/{uuid}`, `/public/auth/sessions/replace`). Sessions and refreshes continue. |
+| `profile_changes` | `PATCH /user/profile` and contact changes |
+| `deposits`, `withdrawals`, `trading` | The money flows, which check them in their own transaction as they are built ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70), [#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) |
+| `api_keys` | Requests signed with API keys ([#64](https://github.com/mdastpak/Crypto-Exchange/issues/64)), once they exist |
+| `websocket` | New WebSocket connections, and the open ones |
+| `read_only` | Every change by users: every `/user/*` method but `GET`, and the features above that change something. Reads continue. |
+| `scheduler`, `outbox` | Pause the scheduler of delistings and migrations, or the relay of the outbox, for work that needs a quiet database or broker. Users never see these. |
+
+A control applies from `starts_at`, now by default, until it is lifted or reaches `ends_at`. A scheduled control starts and ends at its times without a job. Users see it from `announce_at`, which defaults to its creation, on `GET /public/status` and over the WebSocket, so the apps can show a countdown. Several controls may apply at once; a maintenance comes first. Controls are never deleted, so the history stays.
+
+A refusal:
+
+```json
+{
+  "status": 503,
+  "code": "maintenance",
+  "message": "The exchange is under maintenance. Please try again later.",
+  "info": {
+    "kind": "maintenance",
+    "feature": "service",
+    "ends_at": "2026-11-08T04:00:00Z",
+    "message": { "fa": "...", "en": "We are upgrading the database" }
+  }
+}
+```
+
+`feature` is the closed feature of a lockdown, and for a maintenance the use that was refused (`service` for any request, or a feature). `Retry-After` gives the seconds until `ends_at`; a control without an end has none.
+
+**Every instance applies the same controls.** They are stored in PostgreSQL. Each instance keeps a copy in memory, so the gates need no query per request, and reads the version of the controls every `platform.poll_interval_ms` (1 second by default): a change made on any instance, or with `cmd/admin platform`, applies everywhere within it, and the instance that made it applies it at once. An instance that starts during a maintenance starts in it, and its readiness stays green, so that a load balancer keeps routing to it the `503` answers and the status. Without RabbitMQ or Redis, the controls keep working. The money flows check the controls again in their transaction, under a share lock that a new control waits for, so an operation in flight when a lockdown is created either commits before it or is refused.
+
+**While an instance cannot read the controls**, for example during a database failover, it keeps applying the last ones it read for `platform.stale_after_seconds` (30), and then also closes the features of `platform.fail_closed` (deposits, withdrawals, and trading by default) with `503 feature_locked`, `info.state_unknown: true`, and `Retry-After: 5`, until a read succeeds. It does the same from its start until its first read. It never opens silently.
+
+### `GET /public/status`
+
+What users see: `mode` (`open` or `maintenance`), `lockdowns` (the features closed now), `active` (the controls that apply now), and `scheduled` (those announced that start later), each with `kind`, `feature`, `starts_at`, `ends_at`, and `message`. Reasons, allow lists, and the `scheduler` and `outbox` lockdowns are left out. It answers from the memory of the instance, during a maintenance too.
+
+```json
+{
+  "mode": "open",
+  "lockdowns": ["withdrawals"],
+  "active": [{ "kind": "lockdown", "feature": "withdrawals", "starts_at": "2026-11-08T06:00:00Z", "message": { "en": "Withdrawals are paused" } }],
+  "scheduled": [{ "kind": "maintenance", "starts_at": "2026-11-09T02:00:00Z", "ends_at": "2026-11-09T04:00:00Z", "message": { "fa": "...", "en": "..." } }]
+}
+```
+
+### `POST /admin/platform/controls` (admin)
+
+```json
+{
+  "kind": "maintenance",
+  "starts_at": "2026-11-09T02:00:00Z",
+  "ends_at": "2026-11-09T04:00:00Z",
+  "announce_at": "2026-11-08T12:00:00Z",
+  "message": { "fa": "...", "en": "Scheduled maintenance" },
+  "reason": "PostgreSQL major upgrade",
+  "allow_networks": ["203.0.113.0/24"],
+  "allow_users": ["<uuid>"]
+}
+```
+
+A lockdown has `"kind": "lockdown"` and a `feature`, and no allow lists. `reason` is required, at most 1000 characters, and only administrators see it; each message is at most 500 characters. `starts_at` may be up to a minute in the past, which means now; `ends_at` is after the start; `announce_at` is not after the start. At most 50 networks (addresses or CIDR) and 50 users. Response `201` with the control. Errors: `400` (`validation_failed`). Audited as `platform.control_create`.
+
+### `GET /admin/platform` (admin)
+
+The status of `GET /public/status`, and every control that applies now or starts later, with its reason, allow lists, version, and `lift_requested_by`, read from the database.
+
+### `GET /admin/platform/controls` (admin)
+
+Every control, newest first, at most 200, lifted and ended ones included.
+
+### `PATCH /admin/platform/controls/{id}` (admin)
+
+```json
+{ "ends_at": "2026-11-09T05:00:00Z", "message": { "fa": "...", "en": "Extended by an hour" } }
+```
+
+Extends or shortens a control that has not ended, or changes its message; the status, the WebSocket, and `Retry-After` follow. At least one field is required. The optional query parameter `version` works as for currencies. Response `200` with the control. Errors: `400`, `404`, and `409` with `control_ended` or `version_conflict`. Audited as `platform.control_update`.
+
+### `POST /admin/platform/controls/{id}/lift` (admin)
+
+```json
+{ "note": "Wallet checked, signatures rotated" }
+```
+
+Ends a control now, or cancels one that has not started. An active lockdown of a feature in `platform.lift_approval` (withdrawals and trading by default) needs two administrators: the first call answers `202` and records `lift_requested_by`, while the lockdown keeps applying; a call by another administrator lifts it with `200`. The administrator who asked gets `409 second_approval_required`. The `note` is required. The optional query parameter `version` works as for currencies. Errors: `400`, `404`, and `409` with `control_ended`, `second_approval_required`, or `version_conflict`. Audited as `platform.control_lift_request` and `platform.control_lift`.
+
+When the API itself is unhealthy, `cmd/admin platform status | maintenance | lockdown | lift` does the same against the database; see the [architecture](architecture.md#platform-commands).
+
 ## Audit log
 
 ### `GET /admin/audit` (admin)
@@ -985,6 +1087,7 @@ A token in the URL is not read, because URLs end up in access logs. A request th
 | `401` | `session_inactive` | The token's session has ended |
 | `403` | `account_unavailable` | The user can no longer sign in |
 | `403` | `account_frozen` | The account is frozen |
+| `503` | `maintenance`, `feature_locked` | A [maintenance or a WebSocket lockdown](#maintenance-and-lockdowns) applies. It is checked after the token, so that a maintenance can let its allowed users through; `Retry-After` is set as on the REST routes. |
 
 An authenticated connection lasts as long as its authorization, as a REST request would:
 
@@ -1000,6 +1103,7 @@ The close frame says why, with the codes of the REST routes in its reason:
 | `4401` | `token_invalid` | A `reauth` brought a token that is invalid, that names another user, or no token |
 | `4403` | `account_unavailable` | The user can no longer sign in |
 | `4403` | `account_frozen` | The account is frozen; the connection closes at the next session check |
+| `1013` | `maintenance`, `feature_locked` | A [maintenance or a WebSocket lockdown](#maintenance-and-lockdowns) started. The `platform.status` event comes about a second before; reconnect once it ends. |
 
 After `4401`, refresh the access token and reconnect with the new one; after `4403`, do not reconnect. An anonymous connection is never closed for these reasons.
 
@@ -1049,6 +1153,12 @@ The token is checked like the token of the upgrade. When it is refused, the conn
 `{"event": "subscribe", "channels": [...]}` is accepted but has no effect yet. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66).
 
 ### Server messages
+
+When what users see of the [maintenance and lockdowns](#maintenance-and-lockdowns) changes (a control is announced, starts, ends, changes, or is lifted), every connection receives the status of `GET /public/status`. Each instance sends it from its own copy of the controls, without the broker:
+
+```json
+{ "event": "platform.status", "status": { "mode": "maintenance", "lockdowns": [], "active": [...], "scheduled": [] } }
+```
 
 Currency events (see [Currencies](#currencies)) are broadcast to every connected client, with `server_time` set by the server that sends them:
 

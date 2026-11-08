@@ -14,12 +14,19 @@
 //	admin [-config path] [-migrations url] outbox list
 //	admin [-config path] [-migrations url] outbox retry -id <n>
 //	admin [-config path] [-migrations url] outbox discard -id <n>
+//	admin [-config path] [-migrations url] platform status
+//	admin [-config path] [-migrations url] platform maintenance -reason <text> [flags]
+//	admin [-config path] [-migrations url] platform lockdown -feature <feature> -reason <text> [flags]
+//	admin [-config path] [-migrations url] platform lift -id <uuid> -note <text>
 //
 // create and reset-totp print the authenticator secret once. The server
 // needs admin.totp_key (or ADMIN_TOTP_KEY) set to the same value. The keys
 // commands need the keys section of the server's configuration and never
 // print a key; docs/data-protection.md describes when to run them. The outbox
 // commands handle the messages that the server could not publish (#192).
+// The platform commands put the service under maintenance or lock a
+// feature (#235) without the HTTP API, for when it is unhealthy; every
+// server instance applies a change within platform.poll_interval_ms.
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -45,6 +52,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 )
 
 const usage = `Usage: admin [-config path] [-migrations url] [-operator name] <command> [flags]
@@ -67,6 +75,16 @@ Outbox (messages the server could not publish):
   outbox list            Show the pending messages and list the dead letters.
   outbox retry -id <n>   Publish a dead letter again, after the later messages of its topic.
   outbox discard -id <n> Delete a dead letter, which is then never published.
+
+Platform controls (every instance applies a change within platform.poll_interval_ms):
+  platform status                          Show what users see, and the controls that apply now or later.
+  platform maintenance -reason <text>      Close the whole service to users.
+  platform lockdown -feature <f> -reason <text>
+                                           Close one feature: sign_up, sign_in, profile_changes, deposits,
+                                           withdrawals, trading, api_keys, websocket, read_only, scheduler, outbox.
+    Both take -starts-at and -ends-at (RFC 3339), and -message-fa and -message-en for users;
+    maintenance also takes -allow-networks and -allow-users (comma-separated).
+  platform lift -id <uuid> -note <text>    End a control now, or cancel one that has not started.
 `
 
 func main() {
@@ -84,6 +102,11 @@ type command struct {
 	version        int
 	id             int64
 	operator       string
+	// control is the control of platform maintenance and lockdown;
+	// controlID and note are those of platform lift.
+	control   platform.New
+	controlID string
+	note      string
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -109,6 +132,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseKeysArgs(cmd, global.Args()[1:], stderr)
 	case "outbox":
 		return parseOutboxArgs(cmd, global.Args()[1:], stderr)
+	case "platform":
+		return parsePlatformArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -222,6 +247,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "outbox ") {
 		return runOutbox(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "platform ") {
+		return runPlatform(cmd, stdout, stderr)
 	}
 	if config.Config.Admin.TOTPKey == "" {
 		fmt.Fprintln(stderr, "Error: admin.totp_key (or ADMIN_TOTP_KEY) is required; generate one with: openssl rand -base64 32")

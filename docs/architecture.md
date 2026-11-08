@@ -47,6 +47,7 @@ flowchart TB
 | `internal/handlers/*` | HTTP and WebSocket handlers. They currently contain the business logic and SQL directly ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). |
 | `internal/middleware` | Security headers, CORS, Redis rate limiters, validation and recovery helpers |
 | `internal/domain/*` | Exchange domain model (asset, market, order, trade, balance, account, kyc, custody, shared). It is not used by handlers yet. |
+| `internal/platform` | Maintenance and feature lockdowns ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)): the controls in PostgreSQL, the check that money operations make in their transaction, the watcher that keeps each instance's copy, and the gate of the routes. See [Platform controls](#platform-controls). |
 | `internal/models`, `internal/helpers` | API models and the response envelope |
 
 ### Request pipeline
@@ -186,6 +187,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `user.contact_add`, `user.contact_replace`, `user.contact_remove` | A user changes a contact after proving the account and the new contact with codes, in the transaction of the change; the event holds the contacts masked | `success`; `failure` with `code_invalid` for a confirmation with a wrong code |
 | `admin.create`, `admin.totp_reset`, `admin.disable` | `cmd/admin` creates an administrator, replaces its authenticator secret, or disables it, in the transaction of the change; the target is the administrator. `admin.create` holds the address and the role, `admin.disable` the status before and after, and none holds a secret. | `success` |
 | `data_key.create`, `data_key.rotate`, `data_key.retire`, `data_key.rewrap` | The server creates the first data keys, or `cmd/admin keys` rotates, retires, or re-wraps one, in the transaction of the change; the target is `purpose/vN`, and the event holds the KEK, never the key | `success` |
+| `platform.control_create`, `platform.control_update`, `platform.control_lift_request`, `platform.control_lift` | An administrator, or `cmd/admin platform`, opens, changes, or lifts a maintenance or a lockdown, in the transaction of the change; the target is the control, and the event holds its kind, feature, times, and reason. A lift that waits for a second administrator records `platform.control_lift_request`. | `success` |
 | `outbox.retry`, `outbox.discard` | `cmd/admin outbox` retries or discards a dead letter; the target is the message, and the event holds its topic | `success` |
 | `user.session_revoke` | A user ends a session from the session list, one event per ended session, in the transaction that revokes it; the target is the session | `success` |
 
@@ -194,6 +196,19 @@ Failed and refused attempts, and admin logouts, are recorded on a best-effort ba
 A user's session changes with its event, in one transaction of the session store. A change that grants access, a new session or new tokens, never commits without its event. A revocation, a logout, a revocation for reuse, or one from the session list, writes its event under a savepoint: if the event cannot be written, the session is revoked without it and the failure is logged, so that an unavailable audit log never keeps a session alive.
 
 Administrators read the log with `GET /api/v1/admin/audit`: newest first, filtered by actor, action, target, outcome, and time, a page at a time, by the event's hk. The query names only the filters that are set, so that it uses the index of each.
+
+#### Platform controls
+
+`platform_controls` holds the maintenances and the feature lockdowns ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)), and `platform_state` one row with a version that every change counts.
+
+- **Active.** A control is active once its start has passed, until its end or its lift. A scheduled control starts and ends by time alone, with no job, so every instance sees it at the same moment.
+- **Each instance's copy.** The watcher of each instance reads the version every `platform.poll_interval_ms`, and reloads the controls when it changed. The routes, the WebSocket gateway, the outbox relay, and the scheduler ask that copy, so a change reaches every instance within one interval, without a broker. When an instance cannot read the controls for `platform.stale_after_seconds`, it refuses the features of `platform.fail_closed` (deposits, withdrawals, and trading by default) with `state_unknown`, since it cannot know whether they are closed.
+- **Money operations.** An operation that moves money checks the controls again inside its own transaction, under `FOR SHARE` on `platform_state`, while a change takes `FOR UPDATE`. So an operation either commits before a lockdown, or is refused after it; none commits after the lockdown was reported.
+- **Two administrators.** Lifting an active lockdown of a feature in `platform.lift_approval` (withdrawals and trading by default) takes a request and the approval of another administrator. The lockdown applies until the approval.
+
+##### Platform commands
+
+`cmd/admin platform` works on the database directly, for when the API is unhealthy: `status` lists the controls, `maintenance` and `lockdown` open one (`-reason`, and `-feature` for a lockdown, `-starts-at`, `-ends-at`, the messages, and the allow lists), and `lift -id ... -note ...` lifts one at once. Its changes are audited with the `system` actor, and reach the instances within one poll interval.
 
 ### Redis
 

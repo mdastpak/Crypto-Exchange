@@ -33,6 +33,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Transactional outbox | Implemented | Events are written with their change and relayed to RabbitMQ by one instance at a time, with retries and dead letters that `cmd/admin outbox` lists, retries, or discards ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)). |
 | Data-protection keys | Implemented | Keys for row seals and field encryption, wrapped by a key-encryption key in Vault or OpenBao Transit, with rotation ([#138](https://github.com/mdastpak/Crypto-Exchange/issues/138)). No table uses them yet. |
 | WebSocket gateway | Partial | Ping and pong, token authentication with reauth, connections closed when their session ends, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
+| Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL, Redis, or RabbitMQ is unavailable ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
@@ -305,6 +306,7 @@ internal/notify/        Delivery of sign-in codes by email and SMS through Rabbi
 internal/otp/           One-time codes: generation, hashed storage in Redis, attempt limits
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
+internal/platform/      Maintenance and feature lockdowns: controls, watcher, route gate
 internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
 internal/rebrand/        Currency migrations: rebrands, redenominations, mergers, by phase
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and

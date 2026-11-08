@@ -33,6 +33,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 
@@ -53,6 +54,9 @@ type InfraHandlers struct {
 	// DataKeys holds the data-protection keys for row seals (#139) and
 	// field encryption (#140). It is nil without keys.provider.
 	DataKeys *keys.Keyring
+	// Platform refuses the requests that a maintenance or a lockdown closes
+	// (#235). Without a watcher, it lets every request through.
+	Platform *platform.Gate
 }
 
 var (
@@ -138,9 +142,14 @@ func run() error {
 		return fmt.Errorf("failed to load the data-protection keys: %w", err)
 	}
 	otpSender, otpWorker := newOTPDelivery(otpChannels, services.RabbitMQ)
-	relay := newOutboxRelay(services, handlers)
-	workers := []worker{{"outbox relay", relay.Stop}}
+	watcher, err := startPlatform(services, handlers)
+	if err != nil {
+		return fmt.Errorf("invalid platform configuration: %w", err)
+	}
+	relay := newOutboxRelay(services, handlers, watcher)
+	workers := []worker{{"outbox relay", relay.Stop}, {"platform watcher", watcher.Stop}}
 	scheduler := newDelistingScheduler(services, handlers, relay)
+	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
 	if otpWorker != nil {
@@ -320,13 +329,40 @@ type worker struct {
 // currency list and publishes the currency events to the price updates
 // exchange, and lets the admin handler nudge it after a change. Every
 // instance runs one; one at a time relays.
-func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers) *outbox.Relay {
+// startPlatform starts this instance's copy of the platform controls
+// (#235), and gives it to the gates of the routes, the WebSocket, and the
+// admin API. The WebSocket tells its clients of every change, and closes
+// those that a control closes.
+func startPlatform(services *models.InfraServices, handlers *InfraHandlers) (*platform.Watcher, error) {
+	settings, err := platform.SettingsFromConfig()
+	if err != nil {
+		return nil, err
+	}
+	watcher := platform.NewWatcher(services.Postgres.DB, settings.Options)
+	gate := &platform.Gate{Watcher: watcher}
+	handlers.Platform = gate
+	handlers.Public.Platform = gate
+	handlers.Socket.Platform = gate
+	handlers.Admin.Platform = watcher
+	handlers.Admin.LiftApproval = settings.Approval
+	watcher.OnChange(handlers.Socket.ApplyPlatform)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	watcher.Start(ctx)
+	return watcher, nil
+}
+
+func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers, watcher *platform.Watcher) *outbox.Relay {
 	route := outbox.Route{Exchange: config.Config.RabbitMQ.Exchanges.PriceUpdates}
 	if catalog := handlers.Public.Currencies; catalog != nil {
 		route.Before = catalog.Invalidate
 	}
+	var opts outbox.Options
+	if watcher != nil {
+		opts.Paused = func() bool { return watcher.Paused(platform.FeatureOutbox) }
+	}
 	relay := outbox.NewRelay(services.Postgres.DB, services.RabbitMQ,
-		map[string]outbox.Route{models.CurrencyEventTopic: route}, outbox.Options{})
+		map[string]outbox.Route{models.CurrencyEventTopic: route}, opts)
 	handlers.Admin.Outbox = relay
 	return relay
 }
@@ -373,6 +409,7 @@ func validateConfiguration() (keys.Provider, error) {
 		otp.SettingsFromConfig().Validate(release),
 		notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, release),
 		keyErr,
+		platformSettingsErr(),
 	)
 	if err != nil {
 		return nil, err
@@ -382,6 +419,13 @@ func validateConfiguration() (keys.Provider, error) {
 
 // problemList formats the problems of an error from validateConfiguration,
 // one per line.
+// platformSettingsErr reports the unknown features of the platform
+// settings, with the other problems of the configuration.
+func platformSettingsErr() error {
+	_, err := platform.SettingsFromConfig()
+	return err
+}
+
 func problemList(err error) string {
 	lines := strings.Split(err.Error(), "\n")
 	for i, line := range lines {
@@ -671,6 +715,14 @@ var apiV1Since = time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
 
 // registerAPI registers the routes of the API under g.
 func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimiter) {
+	// The platform controls (#235): a full maintenance closes every route
+	// of users but the status, sign-out, and ending sessions; a lockdown
+	// closes its feature. The WebSocket checks them at the upgrade, after
+	// the token, so that a maintenance can let allowed users through.
+	gate := ih.Platform
+	service := gate.Require(platform.UseService)
+	signIn := gate.Require(platform.UseService, platform.FeatureSignIn)
+
 	socketGroup := g.Group("/ws")
 	{
 		socketGroup.Use(rl.WSRateLimit())
@@ -681,12 +733,13 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	// code requests per hour and code verifications per minute.
 	publicGroup := g.Group("/public")
 	{
-		publicGroup.GET("/currencies", ih.Public.GetActiveCurrencies)
-		publicGroup.GET("/currencies/:hk", ih.Public.GetCurrencyByHK)
-		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), ih.Public.RequestOTP)
-		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.VerifyOTP)
-		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.ReplaceSession)
-		publicGroup.POST("/auth/refresh", ih.Public.RefreshToken)
+		publicGroup.GET("/status", ih.Public.PlatformStatus)
+		publicGroup.GET("/currencies", service, ih.Public.GetActiveCurrencies)
+		publicGroup.GET("/currencies/:hk", service, ih.Public.GetCurrencyByHK)
+		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
+		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.VerifyOTP)
+		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ReplaceSession)
+		publicGroup.POST("/auth/refresh", service, ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
 		// here too, behind the same authentication as /user/logout.
 		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), userLogout(ih))
@@ -724,6 +777,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/users/:hk/restrictions", ih.Admin.ListRestrictions)
 		adminGroup.POST("/users/:hk/restrictions", ih.Admin.CreateRestriction)
 		adminGroup.POST("/users/:hk/restrictions/:id/lift", ih.Admin.LiftRestriction)
+		adminGroup.GET("/platform", ih.Admin.GetPlatform)
+		adminGroup.GET("/platform/controls", ih.Admin.ListControls)
+		adminGroup.POST("/platform/controls", ih.Admin.CreateControl)
+		adminGroup.PATCH("/platform/controls/:id", ih.Admin.UpdateControl)
+		adminGroup.POST("/platform/controls/:id/lift", ih.Admin.LiftControl)
 		adminGroup.POST("/logout", adminLogout(ih))
 	}
 
@@ -738,11 +796,17 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// Every other user route requires an active session and a user who
 		// can still sign in.
 		activeGroup := userGroup.Group("", auth.RequireActiveSession(ih.Sessions))
-		activeGroup.GET("/profile", ih.User.GetProfile)
-		activeGroup.PATCH("/profile", ih.User.UpdateProfile)
-		activeGroup.GET("/sessions", ih.User.ListSessions)
+		// Ending sessions stays open during a maintenance, as signing out
+		// does: a user who lost a device must be able to end its session.
 		activeGroup.DELETE("/sessions", ih.User.RevokeOtherSessions)
 		activeGroup.DELETE("/sessions/:id", ih.User.RevokeSession)
+		// The rest closes during a maintenance, and its changes during a
+		// read-only lockdown.
+		activeGroup.Use(service, gate.Writes())
+		profileChanges := gate.Require(platform.FeatureProfileChanges)
+		activeGroup.GET("/profile", ih.User.GetProfile)
+		activeGroup.PATCH("/profile", profileChanges, ih.User.UpdateProfile)
+		activeGroup.GET("/sessions", ih.User.ListSessions)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
@@ -753,8 +817,8 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.DELETE("/favorites/pairs/:hk", ih.User.RemoveFavoritePair)
 		// Starting a change sends codes, so it has the limit of a code
 		// request, on top of the limits of the codes themselves.
-		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), ih.User.StartContactChange)
-		activeGroup.POST("/contacts/changes/:id", rl.AuthRateLimit(middleware.AuthLogin), ih.User.ConfirmContactChange)
+		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.StartContactChange)
+		activeGroup.POST("/contacts/changes/:id", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.ConfirmContactChange)
 	}
 }
 

@@ -234,6 +234,17 @@ Writing to the database is not enough to create an administrator: changing `user
 | --- | --- | --- |
 | `interval_seconds` | `30` | From 1 to 3600. How often the scheduler of each instance applies the steps of [delistings](api.md#delistings) and the phases of [currency migrations](api.md#currency-migrations) that are due, so a step applies at most this late. Every instance runs it; each step is applied once. |
 
+### `platform`
+
+The [maintenance and lockdown controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). The controls themselves are in the database, created through the admin API or `cmd/admin platform`; these settings say how each instance applies them.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `poll_interval_ms` | `1000` | From 100 to 60000. How often each instance reads the version of the controls, and the controls when it changed. A change made on any instance, or with `cmd/admin`, applies on every instance within this interval; the instance that made it applies it at once. A control that starts or ends on schedule applies at its time, without a read. |
+| `stale_after_seconds` | `30` | From 1 to 3600, and longer than `poll_interval_ms`. How long an instance keeps applying the last controls it read when it cannot read them, for example while PostgreSQL fails over. After it, the instance also closes the features of `fail_closed`, until a read succeeds. |
+| `fail_closed` | `[deposits, withdrawals, trading]` | The features that an instance closes while it does not know the controls: after `stale_after_seconds` without a read, and from its start until its first read. Refusals answer `503 feature_locked` with `state_unknown`. `["none"]` closes nothing. The other routes stay open. |
+| `lift_approval` | `[withdrawals, trading]` | The features whose active lockdown an administrator lifts only with a second one: the first request answers `202`, and another administrator's request lifts it. `["none"]` needs no second administrator. `cmd/admin`, which needs access to the database, lifts at once. |
+
 ### `keys`
 
 The data-protection keys seal rows and encrypt fields, so that someone with access to the database alone can neither change protected rows unnoticed nor read protected data. They are wrapped by a key-encryption key (KEK) that stays in a key management service. [`docs/data-protection.md`](data-protection.md) describes the key hierarchy and how to rotate keys. No feature uses the keys yet: row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) and field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will, and will then require a provider in release mode.
@@ -293,7 +304,7 @@ The following sections are parsed, and some receive defaults, but no code uses t
 
 | Section | Purpose | Related issues |
 | --- | --- | --- |
-| `exchange` | Display name, time zone, maintenance window | none |
+| `exchange` | Display name and time zone. The maintenance window that was reserved here is replaced by the scheduled [maintenance controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)); `exchange.maintenance_window` is no longer read. | none |
 | `assets` | Asset registry path (`config/assets.yaml`) and automatic synchronization | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57) |
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
 | `price_aggregator` | Price providers, VWAP windows, outlier threshold, quorum, staleness | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) |
@@ -386,6 +397,10 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `FAVORITES_MAX_PER_USER` | `favorites.max_per_user` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
+| `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |
+| `PLATFORM_STALE_AFTER_SECONDS` | `platform.stale_after_seconds` |
+| `PLATFORM_FAIL_CLOSED` | `platform.fail_closed`, as a comma-separated list |
+| `PLATFORM_LIFT_APPROVAL` | `platform.lift_approval`, as a comma-separated list |
 | `KEYS_PROVIDER` | `keys.provider` |
 | `KEYS_LOCAL_KEK` | `keys.local.kek` |
 | `VAULT_ADDR` | `keys.transit.address` |

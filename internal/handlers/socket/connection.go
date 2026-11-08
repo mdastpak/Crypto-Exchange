@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -100,6 +101,7 @@ func (h *WebSocketHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip string) {
+	addr := ip
 	ip = h.addressKey(ip)
 	select {
 	case <-h.ShutdownCh:
@@ -116,6 +118,14 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 			w.Header().Set("WWW-Authenticate", "Bearer")
 		}
 		reject(w, status, code, message)
+		return
+	}
+	subject := platform.Subject{IP: addr}
+	if claims != nil {
+		subject.UserHK = claims.UUID
+	}
+	if locked := h.platformLocked(subject); locked != nil {
+		rejectLocked(w, locked)
 		return
 	}
 	if status, message := h.reserve(ip); status != 0 {
@@ -135,6 +145,7 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		Send:     make(chan []byte, 256),
 		Timezone: "UTC",
 		ip:       ip,
+		addr:     addr,
 		limiter:  newTokenBucket(h.limits.messagesPerSecond, h.limits.messageBurst),
 	}
 	if claims != nil {

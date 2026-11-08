@@ -25,6 +25,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
+	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
@@ -48,6 +49,9 @@ type PublicHandler struct {
 	// Blacklist holds the revoked access tokens, for the optional token of
 	// the favorites filter.
 	Blacklist *auth.TokenBlacklist
+	// Platform serves the status of the platform controls (#235). Without
+	// it, the status is open.
+	Platform *platform.Gate
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
@@ -233,6 +237,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account cannot sign in. Please contact support.", nil)
 		return
 	}
+	var locked *platform.Locked
+	if errors.As(err, &locked) {
+		h.noteSignIn(ctx, attempt, audit.Denied, locked.Code())
+		platform.Send(c, locked)
+		return
+	}
 	if errors.Is(err, errAdminAccount) {
 		h.noteSignIn(ctx, attempt, audit.Failure, "use_admin_sign_in")
 		helpers.SendError(c, http.StatusForbidden, "use_admin_sign_in", "Administrators must use the admin sign-in.", nil)
@@ -371,6 +381,13 @@ func (h *PublicHandler) createUser(ctx context.Context, origin audit.Event, cont
 		return uuid.Nil, fmt.Errorf("start the transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// A lockdown of sign-up refuses new accounts (#235). It is checked in
+	// the transaction, so that a sign-up in flight when the lockdown is
+	// created either commits before it or is refused.
+	if err := platform.Check(ctx, tx, platform.FeatureSignUp, platform.Subject{IP: origin.IP}); err != nil {
+		return uuid.Nil, err
+	}
 
 	var userHK uuid.UUID
 	if err := tx.QueryRowContext(ctx, `INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk`).Scan(&userHK); err != nil {

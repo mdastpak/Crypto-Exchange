@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -405,6 +406,35 @@ func TestScheduler_RunsTheStepsThatAreDue(t *testing.T) {
 		t.Fatal("the scheduler did not apply the step")
 	}
 	assert.Equal(t, "delist_announced", lifecycle(t, db, hk).State)
+}
+
+// TestScheduler_APauseHoldsTheSteps pauses the scheduler, as a lockdown of
+// the scheduler does (#235), and expects a due step to wait for the end of
+// the pause.
+func TestScheduler_APauseHoldsTheSteps(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	hk := insertCurrency(t, db, "PAUSE", "approved")
+	_, _, err := delisting.Schedule(ctx, db, hk, plan(time.Now(), fullDelisting[0]), origin())
+	require.NoError(t, err)
+	got := make(chan []currencies.Change, 1)
+	s := currencies.NewScheduler(db, 50*time.Millisecond, func(_ context.Context, changes []currencies.Change) { got <- changes }, delisting.Advance)
+	var paused atomic.Bool
+	paused.Store(true)
+	s.Paused = paused.Load
+	s.Start()
+	defer func() { require.NoError(t, s.Stop(ctx)) }()
+	select {
+	case <-got:
+		t.Fatal("a paused scheduler applied a step")
+	case <-time.After(300 * time.Millisecond):
+	}
+	paused.Store(false)
+	select {
+	case changes := <-got:
+		require.Len(t, changes, 1)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the scheduler did not apply the step after the pause")
+	}
 }
 
 // TestDelisting_AnEmergencyHaltCanBeCancelledOrTakenFurther: a delisting

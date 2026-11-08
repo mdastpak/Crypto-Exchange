@@ -187,6 +187,10 @@ var envVars = []EnvVar{
 	intVar("ADMIN_SIGN_IN_MIN_RESPONSE_MS", "admin.sign_in_min_response_ms", func(c *Configuration) *int { return &c.Admin.SignInMinResponseMS }),
 	intVar("FAVORITES_MAX_PER_USER", "favorites.max_per_user", func(c *Configuration) *int { return &c.Favorites.MaxPerUser }),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
+	intVar("PLATFORM_POLL_INTERVAL_MS", "platform.poll_interval_ms", func(c *Configuration) *int { return &c.Platform.PollIntervalMs }),
+	intVar("PLATFORM_STALE_AFTER_SECONDS", "platform.stale_after_seconds", func(c *Configuration) *int { return &c.Platform.StaleAfterSeconds }),
+	listVar("PLATFORM_FAIL_CLOSED", "platform.fail_closed", func(c *Configuration) *[]string { return &c.Platform.FailClosed }),
+	listVar("PLATFORM_LIFT_APPROVAL", "platform.lift_approval", func(c *Configuration) *[]string { return &c.Platform.LiftApproval }),
 
 	stringVar("KEYS_PROVIDER", "keys.provider", func(c *Configuration) *string { return &c.Keys.Provider }),
 	stringVar("KEYS_LOCAL_KEK", "keys.local.kek", func(c *Configuration) *string { return &c.Keys.Local.KEK }),
