@@ -61,10 +61,17 @@ func send(c *gin.Context, status int, code, message string, info interface{}) {
 	// A 500 of a request whose query PostgreSQL refused for a moment, such
 	// as a lock wait past lock_timeout, is not a bug: the client may retry
 	// (#230).
-	if status == http.StatusInternalServerError && c.Request != nil && dberr.Busy(c.Request.Context()) {
-		status, code, info = http.StatusServiceUnavailable, dberr.Code, nil
-		message = "The service is busy. Please try again."
-		c.Header("Retry-After", strconv.Itoa(dberr.RetryAfterSeconds))
+	if status == http.StatusInternalServerError && c.Request != nil {
+		if answer, ok := dberr.UnavailableOf(c.Request.Context()); ok {
+			// A dependency that the request needs was away, such as
+			// RabbitMQ for a sign-in code (#232).
+			status, code, info, message = http.StatusServiceUnavailable, answer.Code, nil, answer.Message
+			c.Header("Retry-After", strconv.Itoa(answer.RetryAfterSeconds))
+		} else if dberr.Busy(c.Request.Context()) {
+			status, code, info = http.StatusServiceUnavailable, dberr.Code, nil
+			message = "The service is busy. Please try again."
+			c.Header("Retry-After", strconv.Itoa(dberr.RetryAfterSeconds))
+		}
 	}
 	response := models.APIResponse{Status: status, Message: message, Info: info}
 	if status >= http.StatusBadRequest {

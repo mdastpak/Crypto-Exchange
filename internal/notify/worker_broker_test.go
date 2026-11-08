@@ -13,6 +13,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -259,4 +260,150 @@ func TestWorker_Broker_DropsCodesThatExpireInTheQueue(t *testing.T) {
 
 	_, ok := getMessage(t, topology.opts.Queue, 0)
 	assert.False(t, ok, "the broker drops a job once its code has expired")
+}
+
+// TestWorker_Broker_DeclaresQuorumQueues checks the queue types of #232: a
+// declaration of the job and dead-letter queues as classic queues is
+// refused, because they exist as quorum queues.
+func TestWorker_Broker_DeclaresQuorumQueues(t *testing.T) {
+	topology := newBrokerTopology(t, &syncBuffer{})
+	worker := NewWorker(topology.svc, emailOnlyChannels(), topology.opts)
+	require.NoError(t, worker.Start())
+	stopWorker(t, worker)
+
+	for _, queue := range []string{topology.opts.Queue, topology.opts.DeadLetterQueue} {
+		withBrokerChannel(t, func(ch *amqp.Channel) {
+			_, err := ch.QueueDeclare(queue, true, false, false, false, amqp.Table{amqp.QueueTypeArg: amqp.QueueTypeClassic})
+			var amqpErr *amqp.Error
+			require.ErrorAs(t, err, &amqpErr, queue)
+			assert.Equal(t, amqp.PreconditionFailed, amqpErr.Code, "%s is a quorum queue: %v", queue, err)
+		})
+	}
+}
+
+// TestWorker_Broker_DrainsTheLegacyQueue fills a classic queue as a worker
+// of an earlier version left it, bound to the exchange (#232). The worker
+// unbinds it, delivers its jobs, and deletes it once no other worker
+// consumes it; new jobs go to the quorum queue only.
+func TestWorker_Broker_DrainsTheLegacyQueue(t *testing.T) {
+	saved := legacyPoll
+	legacyPoll = 100 * time.Millisecond
+	t.Cleanup(func() { legacyPoll = saved })
+	logs := &syncBuffer{}
+	topology := newBrokerTopology(t, logs)
+	legacy := topology.opts.Queue + "_legacy"
+	topology.opts.LegacyQueue = legacy
+
+	// An instance of the earlier version: the classic queue, bound, with
+	// two jobs in it and a consumer that does not take them yet.
+	oldWorker, err := topology.svc.OpenChannel()
+	require.NoError(t, err)
+	_, err = oldWorker.QueueDeclare(legacy, true, false, false, false, nil)
+	require.NoError(t, err)
+	require.NoError(t, oldWorker.QueueBind(legacy, "", topology.opts.Exchange, false, nil))
+	t.Cleanup(func() {
+		withBrokerChannel(t, func(ch *amqp.Channel) { _, _ = ch.QueueDelete(legacy, false, false, false) })
+	})
+	channels := Channels{Email: deliverFunc(func(context.Context, OTPMessage) error { return nil })}
+	sender := NewQueueSender(topology.svc, topology.opts.Exchange, channels, time.Minute)
+	require.NoError(t, sender.SendOTP(context.Background(), testEmailMessage))
+	require.NoError(t, sender.SendOTP(context.Background(), testEmailMessage))
+	require.NoError(t, oldWorker.Qos(1, 0, false))
+	held, err := oldWorker.Consume(legacy, "old-worker", false, false, false, false, nil)
+	require.NoError(t, err)
+	oldJob := <-held // the earlier version holds one job, unacknowledged
+
+	var mu sync.Mutex
+	var codes []string
+	delivered := Channels{Email: deliverFunc(func(_ context.Context, msg OTPMessage) error {
+		mu.Lock()
+		defer mu.Unlock()
+		codes = append(codes, msg.Code)
+		return nil
+	})}
+	worker := NewWorker(topology.svc, delivered, topology.opts)
+	require.NoError(t, worker.Start())
+	defer stopWorker(t, worker)
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(codes)
+	}
+
+	require.Eventually(t, func() bool { return count() == 1 }, 10*time.Second, 20*time.Millisecond, "the job left in the legacy queue is delivered")
+	require.NoError(t, sender.SendOTP(context.Background(), testEmailMessage))
+	require.Eventually(t, func() bool { return count() == 2 }, 10*time.Second, 20*time.Millisecond, "a new job reaches the quorum queue")
+	assert.Never(t, func() bool { return count() > 2 }, 300*time.Millisecond, 20*time.Millisecond, "the legacy queue is unbound: the new job is not copied to it")
+	withBrokerChannel(t, func(ch *amqp.Channel) {
+		q, err := ch.QueueDeclarePassive(legacy, true, false, false, false, nil)
+		require.NoError(t, err, "the queue stays while the earlier version consumes it")
+		assert.Equal(t, 1, q.Consumers)
+	})
+
+	// The earlier version stops: its job goes back, is delivered, and the
+	// empty queue is deleted.
+	require.NoError(t, oldJob.Nack(false, true))
+	require.NoError(t, oldWorker.Close())
+	require.Eventually(t, func() bool { return count() == 3 }, 10*time.Second, 20*time.Millisecond, "the job of the earlier version is delivered")
+	require.Eventually(t, func() bool {
+		return strings.Contains(logs.String(), "deleted the drained classic queue "+legacy)
+	}, 10*time.Second, 20*time.Millisecond)
+	withBrokerChannel(t, func(ch *amqp.Channel) {
+		_, err := ch.QueueDeclarePassive(legacy, true, false, false, false, nil)
+		var amqpErr *amqp.Error
+		require.ErrorAs(t, err, &amqpErr)
+		assert.Equal(t, amqp.NotFound, amqpErr.Code)
+	})
+	assert.NotContains(t, logs.String(), testEmailMessage.Code)
+}
+
+// TestWorker_Broker_StartsWithoutTheBroker starts the worker of a service
+// that cannot reach the broker (#232): Start succeeds, and once the broker
+// is back, the worker declares its queues and delivers.
+func TestWorker_Broker_StartsWithoutTheBroker(t *testing.T) {
+	logs := &syncBuffer{}
+	topology := newBrokerTopology(t, logs)
+	proxy, err := tcpproxy.New("localhost:5672")
+	require.NoError(t, err)
+	t.Cleanup(proxy.Close)
+	saved := config.Config.RabbitMQ
+	t.Cleanup(func() { config.Config.RabbitMQ = saved })
+	config.Config.RabbitMQ.Host, config.Config.RabbitMQ.Port = proxy.Host(), proxy.Port()
+	proxy.SetDown(true)
+	late, err := rabbitmq.NewRabbitMQService(topology.opts.Exchange)
+	require.NoError(t, err)
+	t.Cleanup(func() { late.Close() })
+
+	delivered := make(chan OTPMessage, 1)
+	channels := Channels{Email: deliverFunc(func(_ context.Context, msg OTPMessage) error {
+		delivered <- msg
+		return nil
+	})}
+	worker := NewWorker(late, channels, topology.opts)
+	require.NoError(t, worker.Start(), "the worker starts without the broker")
+	defer stopWorker(t, worker)
+	assert.Contains(t, logs.String(), "RabbitMQ is not available")
+
+	sender := NewQueueSender(late, topology.opts.Exchange, channels, time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	assert.Error(t, sender.SendOTP(ctx, testEmailMessage), "no code can be queued while the broker is away")
+
+	proxy.SetDown(false)
+	require.Eventually(t, late.IsHealthy, 20*time.Second, 50*time.Millisecond)
+	// The worker declares the queue once it consumes; until then the
+	// exchange drops what is published.
+	require.Eventually(t, func() bool {
+		withBrokerChannel(t, func(ch *amqp.Channel) {
+			_, err = ch.QueueDeclarePassive(topology.opts.Queue, true, false, false, false, nil)
+		})
+		return err == nil
+	}, 30*time.Second, 100*time.Millisecond)
+	require.NoError(t, sender.SendOTP(context.Background(), testEmailMessage))
+	select {
+	case msg := <-delivered:
+		assert.Equal(t, testEmailMessage, msg)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the code was not delivered once the broker was back; log:\n%s", logs.String())
+	}
 }

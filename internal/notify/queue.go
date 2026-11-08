@@ -2,11 +2,16 @@ package notify
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
+
+	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -17,12 +22,26 @@ const otpJobType = "otp"
 // so it is only ever written to the broker, never to a log or to the
 // dead-letter queue.
 type otpJob struct {
+	// ID identifies the job, so that a worker can tell a job that the
+	// broker hands out again from a new one (#232).
+	ID            string    `json:"id,omitempty"`
 	Type          string    `json:"type"`
 	ContactType   string    `json:"contact_type"`
 	Contact       string    `json:"contact"`
 	MaskedContact string    `json:"masked_contact"`
 	Code          string    `json:"code"`
 	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+// deliveryID is the key of the job in the delivery log: its ID, or, for a
+// job of an earlier version, which has none, a hash of its body. The body
+// holds the code and its expiry, so two jobs never share it.
+func (j otpJob) deliveryID(body []byte) string {
+	if j.ID != "" {
+		return j.ID
+	}
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func (j otpJob) message() OTPMessage {
@@ -90,6 +109,7 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 
 	now := s.now()
 	job := otpJob{
+		ID:            uuid.NewString(),
 		Type:          otpJobType,
 		ContactType:   msg.ContactType,
 		Contact:       msg.Contact,
@@ -99,8 +119,11 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 	publishing := amqp.Publishing{
 		ContentType: "application/json",
 		Type:        otpJobType,
-		// A code is useless once it expires, so there is no reason to keep it
-		// on the broker's disk across restarts.
+		MessageId:   job.ID,
+		// A code is useless once it expires, so it is published as
+		// transient. The quorum queue (#232) still writes it to the disks of
+		// a majority of its nodes, whatever its delivery mode: that is what
+		// keeps it when a node is lost. It expires there with the code.
 		DeliveryMode: amqp.Transient,
 		Timestamp:    now,
 	}
@@ -116,6 +139,9 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 	}
 	publishing.Body = body
 	if err := s.publisher.PublishMessage(ctx, s.exchange, publishing); err != nil {
+		// The broker is away or did not confirm the job: the request is
+		// answered with 503 and Retry-After, not 500 (#232).
+		dberr.MarkUnavailable(ctx, dberr.DeliveryUnavailable)
 		return fmt.Errorf("queue the sign-in code: %w", err)
 	}
 	return nil

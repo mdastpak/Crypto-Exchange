@@ -25,10 +25,15 @@ type ServiceStatus struct {
 // dependency is reported quickly instead of holding the probe.
 const defaultCheckTimeout = 2 * time.Second
 
-// dependency is a service that the instance needs to serve traffic.
+// dependency is a service that the instance uses to serve traffic.
 type dependency struct {
 	name  string
 	check func(ctx context.Context) error
+	// optional marks a service that only some routes need, so that the
+	// instance stays ready without it: RabbitMQ, which only the delivery of
+	// sign-in codes needs at once (#232). The currency events wait in the
+	// outbox, and a sign-in code request answers 503 while it is away.
+	optional bool
 }
 
 var errUnavailable = errors.New("unavailable")
@@ -45,19 +50,19 @@ func (h *SystemHandler) dependencies() []dependency {
 				return errUnavailable
 			}
 			return h.Postgres.Ping(ctx)
-		}},
+		}, false},
 		{"redis", func(ctx context.Context) error {
 			if h.Redis == nil {
 				return errUnavailable
 			}
 			return h.Redis.Ping(ctx)
-		}},
+		}, false},
 		{"rabbitmq", func(ctx context.Context) error {
 			if h.RabbitMQService == nil || !h.RabbitMQService.IsHealthy() {
 				return errUnavailable
 			}
 			return nil
-		}},
+		}, true},
 	}
 }
 
@@ -75,14 +80,17 @@ func (h *SystemHandler) LivenessHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// ReadinessHandler checks every dependency at once and answers 200 when all
-// of them are available, and 503 otherwise, so that load balancers and
-// orchestrators stop sending traffic to an instance that cannot serve it.
+// ReadinessHandler checks every dependency at once and answers 200 when
+// PostgreSQL and Redis are available, and 503 otherwise, so that load
+// balancers and orchestrators stop sending traffic to an instance that
+// cannot serve it. Without RabbitMQ the instance stays ready, with the
+// status degraded (#232): every instance shares the broker, so taking them
+// all out of service would turn a broker outage into an outage of the API.
 // The details per dependency are left out in release mode, where they would
 // only tell outsiders about the internals.
 //
 // @Summary Readiness
-// @Description 503 while PostgreSQL, Redis, or RabbitMQ is unavailable, or while the instance drains at shutdown.
+// @Description 503 while PostgreSQL or Redis is unavailable, or while the instance drains at shutdown. Without RabbitMQ it answers 200 with the status degraded: only the delivery of sign-in codes needs the broker.
 // @Tags system
 // @Produce json
 // @Success 200 {object} HealthStatus
@@ -122,7 +130,9 @@ func (h *SystemHandler) ReadinessHandler(c *gin.Context) {
 		health.Details[dep.name] = results[i]
 		if results[i].Status != "ok" {
 			health.Status = "degraded"
-			code = http.StatusServiceUnavailable
+			if !dep.optional {
+				code = http.StatusServiceUnavailable
+			}
 		}
 	}
 	if gin.Mode() == gin.ReleaseMode {

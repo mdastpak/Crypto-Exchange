@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -470,5 +472,54 @@ func TestRedis_ModeSettings(t *testing.T) {
 	Config.Redis.Host, Config.Redis.Port = "", "" // as in a file that lists only the cluster
 	if err := ValidateServer(); err != nil {
 		assert.NotContains(t, err.Error(), "redis.", "the cluster mode needs no host or port")
+	}
+}
+
+// TestRabbitMQ_Hosts checks rabbitmq.hosts, its environment variable, its
+// validation, and the nodes that the RabbitMQ service dials (#232).
+func TestRabbitMQ_Hosts(t *testing.T) {
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
+	assert.Empty(t, Config.RabbitMQ.Hosts)
+	nodes := RabbitMQNodes()
+	require.Len(t, nodes, 1, "without hosts, the one node of host and port")
+	assert.Equal(t, net.JoinHostPort(Config.RabbitMQ.Host, Config.RabbitMQ.Port), nodes[0].Address)
+	assert.Equal(t, GetRabbitMQURL(), nodes[0].URL)
+
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
+		"RABBITMQ_HOSTS": "rmq-1:5672, rmq-2:5673,[2001:db8::1]:5672",
+	}))
+	assert.Equal(t, []string{"rmq-1:5672", "rmq-2:5673", "[2001:db8::1]:5672"}, Config.RabbitMQ.Hosts)
+	Config.RabbitMQ.Host, Config.RabbitMQ.Port = "", "" // as in a file that sets only hosts
+	if err := ValidateServer(); err != nil {
+		assert.NotContains(t, err.Error(), "rabbitmq.host (", "hosts replaces host")
+		assert.NotContains(t, err.Error(), "rabbitmq.port (", "hosts replaces port")
+	}
+	nodes = RabbitMQNodes()
+	require.Len(t, nodes, 3)
+	for i, want := range []struct{ host, address string }{
+		{"rmq-1", "rmq-1:5672"}, {"rmq-2", "rmq-2:5673"}, {"2001:db8::1", "[2001:db8::1]:5672"},
+	} {
+		assert.Equal(t, want.host, nodes[i].Host, "the host names the TLS server")
+		assert.Equal(t, want.address, nodes[i].Address)
+		uri, err := amqp.ParseURI(nodes[i].URL)
+		require.NoError(t, err)
+		assert.Equal(t, want.host, uri.Host)
+		assert.Equal(t, Config.RabbitMQ.Password, uri.Password, "every node uses the same account")
+	}
+
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"host and hosts":      {map[string]string{"RABBITMQ_HOSTS": "rmq-1:5672"}, "rabbitmq.host (RABBITMQ_HOST) is set together with rabbitmq.hosts"},
+		"a host without port": {map[string]string{"RABBITMQ_HOSTS": "rmq-1"}, `entry 1 is "rmq-1"`},
+		"a bad port":          {map[string]string{"RABBITMQ_HOSTS": "rmq-1:5672,rmq-2:0"}, `entry 2 is "rmq-2:0"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, loadFile(t, configFile("config.compose.yaml"), tc.env))
+			err := ValidateServer()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
 	}
 }

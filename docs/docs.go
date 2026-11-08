@@ -4295,7 +4295,7 @@ const docTemplate = `{
         },
         "/system/ready": {
             "get": {
-                "description": "503 while PostgreSQL, Redis, or RabbitMQ is unavailable, or while the instance drains at shutdown.",
+                "description": "503 while PostgreSQL or Redis is unavailable, or while the instance drains at shutdown. Without RabbitMQ it answers 200 with the status degraded: only the delivery of sign-in codes needs the broker.",
                 "produces": [
                     "application/json"
                 ],

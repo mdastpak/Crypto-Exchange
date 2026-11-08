@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/dberr"
+
+	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,11 +59,16 @@ func TestQueueSender_PublishesAnExpiringJob(t *testing.T) {
 	assert.Equal(t, "application/json", msg.ContentType)
 	assert.Equal(t, "otp", msg.Type)
 	assert.Equal(t, "90000", msg.Expiration, "the broker drops the job when the code expires")
-	assert.Equal(t, uint8(amqp.Transient), msg.DeliveryMode, "codes are not written to the broker's disk")
+	assert.Equal(t, uint8(amqp.Transient), msg.DeliveryMode, "codes are not meant to outlive their expiry")
 
 	var job otpJob
 	require.NoError(t, json.Unmarshal(msg.Body, &job))
+	_, err := uuid.Parse(job.ID)
+	require.NoError(t, err, "every job has an ID of its own (#232)")
+	assert.Equal(t, job.ID, msg.MessageId)
+	assert.Equal(t, job.ID, job.deliveryID(msg.Body))
 	assert.Equal(t, otpJob{
+		ID:            job.ID,
 		Type:          "otp",
 		ContactType:   ContactEmail,
 		Contact:       "alice@example.com",
@@ -86,8 +94,12 @@ func TestQueueSender_ReportsPublishFailures(t *testing.T) {
 	publisher := &recordingPublisher{err: errors.New("publish confirm timeout")}
 	sender := NewQueueSender(publisher, "notifications", emailOnlyChannels(), time.Minute)
 
-	err := sender.SendOTP(context.Background(), testEmailMessage)
+	ctx := dberr.Track(context.Background())
+	err := sender.SendOTP(ctx, testEmailMessage)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "publish confirm timeout")
+	answer, ok := dberr.UnavailableOf(ctx)
+	require.True(t, ok, "the request is answered with 503, not 500 (#232)")
+	assert.Equal(t, dberr.CodeDeliveryUnavailable, answer.Code)
 }

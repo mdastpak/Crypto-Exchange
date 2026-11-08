@@ -16,16 +16,42 @@ import (
 )
 
 // Default queue topology of the Worker.
+//
+// The queues are quorum queues (#232): a classic queue lives on one node of
+// a RabbitMQ cluster, so while that node is down, no sign-in code can be
+// queued or delivered. A quorum queue is replicated to a majority of the
+// nodes and survives the loss of any one of three. The type of a queue
+// cannot change in place, so the quorum queues have names of their own,
+// and the worker drains the classic queue of earlier versions (see
+// LegacyOTPQueue).
 const (
 	// DefaultOTPQueue receives the sign-in code jobs published to the
 	// notifications exchange.
-	DefaultOTPQueue = "notifications.otp"
+	DefaultOTPQueue = "notifications.otp.quorum"
 	// DefaultDeadLetterExchange receives a record of every job that could not
 	// be delivered.
 	DefaultDeadLetterExchange = "notifications.dead-letter"
 	// DefaultOTPDeadLetterQueue keeps those records for deadLetterTTL.
-	DefaultOTPDeadLetterQueue = "notifications.otp.dead-letter"
+	DefaultOTPDeadLetterQueue = "notifications.otp.dead-letter.quorum"
+	// LegacyOTPQueue is the classic queue of the versions before #232.
+	// The worker unbinds it from the exchange, delivers the jobs left in
+	// it, and deletes it once it is empty and no worker of an earlier
+	// version consumes it any more.
+	LegacyOTPQueue = "notifications.otp"
+	// LegacyOTPDeadLetterQueue is the classic dead-letter queue of those
+	// versions. Its records expire within seven days; delete it then.
+	LegacyOTPDeadLetterQueue = "notifications.otp.dead-letter"
 )
+
+// deliveryLimit bounds how often a quorum queue hands out one job, so that
+// a job that crashes its worker every time cannot circle forever. The
+// queue then drops it: it has no broker dead-letter exchange on purpose,
+// since that would copy the code to the dead-letter queue.
+const deliveryLimit = 10
+
+// legacyPoll is how often the worker looks at the legacy queue while it
+// exists.
+var legacyPoll = 30 * time.Second
 
 const (
 	deadLetterTTL       = 7 * 24 * time.Hour
@@ -63,7 +89,14 @@ type WorkerOptions struct {
 	// MaxAttempts bounds the delivery attempts per job (default 3). A job is
 	// also given up once its code expires.
 	MaxAttempts int
-	Logger      *log.Logger
+	// LegacyQueue is a queue of an earlier version to drain and then
+	// delete, LegacyOTPQueue in the server. Empty drains none.
+	LegacyQueue string
+	// Delivered remembers the jobs that were delivered, so that a job that
+	// the broker hands out again, because its worker stopped before
+	// acknowledging it, is not sent twice. Nil remembers none.
+	Delivered DeliveryLog
+	Logger    *log.Logger
 }
 
 // Worker consumes sign-in code jobs and delivers them through the configured
@@ -77,6 +110,8 @@ type Worker struct {
 	queue              string
 	deadLetterExchange string
 	deadLetterQueue    string
+	legacyQueue        string
+	delivered          DeliveryLog
 	concurrency        int
 	maxAttempts        int
 	retryBackoff       time.Duration
@@ -98,6 +133,8 @@ func NewWorker(broker Broker, channels Channels, opts WorkerOptions) *Worker {
 		queue:              opts.Queue,
 		deadLetterExchange: opts.DeadLetterExchange,
 		deadLetterQueue:    opts.DeadLetterQueue,
+		legacyQueue:        opts.LegacyQueue,
+		delivered:          opts.Delivered,
 		concurrency:        opts.Concurrency,
 		maxAttempts:        opts.MaxAttempts,
 		retryBackoff:       defaultRetryBackoff,
@@ -128,23 +165,26 @@ func NewWorker(broker Broker, channels Channels, opts WorkerOptions) *Worker {
 }
 
 // Start declares the queues and starts consuming in the background. The
-// queues are declared before Start returns, because the exchange drops jobs
-// published while no queue is bound to it.
+// queues are declared before Start returns when the broker can be reached,
+// because the exchange drops jobs published while no queue is bound to
+// it. When it cannot (#232), Start logs it and returns: the worker declares
+// the queues once the broker is back, and until then no job can be
+// published either.
 func (w *Worker) Start() error {
 	if w.exchange == "" {
 		return errors.New("the worker needs the notifications exchange")
 	}
-	ch, err := w.broker.OpenChannel()
-	if err != nil {
-		return fmt.Errorf("open a channel: %w", err)
-	}
-	err = w.declare(ch)
-	ch.Close()
-	if err != nil {
-		return err
-	}
 	if !w.started.CompareAndSwap(false, true) {
 		return errors.New("the worker is already started")
+	}
+	if ch, err := w.broker.OpenChannel(); err != nil {
+		w.logger.Printf("OTP delivery worker: RabbitMQ is not available (%v); starting once it is", err)
+	} else {
+		err = w.declare(ch)
+		ch.Close()
+		if err != nil {
+			w.logger.Printf("OTP delivery worker: %v; declaring again once consuming starts", err)
+		}
 	}
 	go w.run()
 	return nil
@@ -181,14 +221,23 @@ func (w *Worker) declare(ch *amqp.Channel) error {
 	if err := ch.ExchangeDeclare(w.deadLetterExchange, "fanout", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare exchange %s: %w", w.deadLetterExchange, err)
 	}
-	deadLetterArgs := amqp.Table{"x-message-ttl": int64(deadLetterTTL / time.Millisecond)}
+	deadLetterArgs := amqp.Table{
+		amqp.QueueTypeArg:       amqp.QueueTypeQuorum,
+		amqp.QueueMessageTTLArg: int64(deadLetterTTL / time.Millisecond),
+	}
 	if _, err := ch.QueueDeclare(w.deadLetterQueue, true, false, false, false, deadLetterArgs); err != nil {
 		return fmt.Errorf("declare queue %s: %w", w.deadLetterQueue, err)
 	}
 	if err := ch.QueueBind(w.deadLetterQueue, "", w.deadLetterExchange, false, nil); err != nil {
 		return fmt.Errorf("bind queue %s: %w", w.deadLetterQueue, err)
 	}
-	if _, err := ch.QueueDeclare(w.queue, true, false, false, false, nil); err != nil {
+	// The jobs expire with their code, by their own expiration, which
+	// quorum queues honor since RabbitMQ 3.10.
+	queueArgs := amqp.Table{
+		amqp.QueueTypeArg:  amqp.QueueTypeQuorum,
+		"x-delivery-limit": int64(deliveryLimit),
+	}
+	if _, err := ch.QueueDeclare(w.queue, true, false, false, false, queueArgs); err != nil {
 		return fmt.Errorf("declare queue %s: %w", w.queue, err)
 	}
 	if err := ch.QueueBind(w.queue, "", w.exchange, false, nil); err != nil {
@@ -201,6 +250,14 @@ func (w *Worker) declare(ch *amqp.Channel) error {
 // current one closes, for example while the service reconnects to the broker.
 func (w *Worker) run() {
 	defer close(w.done)
+	if w.legacyQueue != "" {
+		legacyDone := make(chan struct{})
+		go func() {
+			defer close(legacyDone)
+			w.drainLegacy()
+		}()
+		defer func() { <-legacyDone }()
+	}
 	backoff := time.Second
 	for {
 		consumed, err := w.consume()
@@ -293,6 +350,12 @@ func (w *Worker) handle(d amqp.Delivery) {
 		_ = d.Ack(false)
 		return
 	}
+	id := job.deliveryID(d.Body)
+	if w.alreadyDelivered(id, job) {
+		w.logger.Printf("Skipped a sign-in code job for %s %s that was already delivered (redelivered: %t)", job.ContactType, job.MaskedContact, d.Redelivered)
+		_ = d.Ack(false)
+		return
+	}
 
 	deliverer := w.channels.For(job.ContactType)
 	if deliverer == nil {
@@ -305,6 +368,7 @@ func (w *Worker) handle(d amqp.Delivery) {
 	switch {
 	case err == nil:
 		w.logger.Printf("Delivered the sign-in code to %s %s (attempt %d)", job.ContactType, job.MaskedContact, attempts)
+		w.markDelivered(id, job)
 		_ = d.Ack(false)
 	case errors.Is(err, errStopping):
 		_ = d.Nack(false, true)
@@ -400,4 +464,110 @@ func (w *Worker) deadLetter(record deadLetter) {
 	if err != nil {
 		w.logger.Printf("Failed to record an undelivered sign-in code on %s: %v", w.deadLetterQueue, err)
 	}
+}
+
+// deliveryLogTimeout bounds a call to the delivery log, which is on the
+// path of every job.
+const deliveryLogTimeout = time.Second
+
+// alreadyDelivered reports whether the delivery log holds job. When the log
+// cannot be read, the job is delivered: a code sent twice is better than a
+// code not sent.
+func (w *Worker) alreadyDelivered(id string, job otpJob) bool {
+	if w.delivered == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deliveryLogTimeout)
+	defer cancel()
+	delivered, err := w.delivered.Delivered(ctx, id)
+	if err != nil {
+		w.logger.Printf("Could not check whether the sign-in code for %s %s was delivered, delivering it: %v", job.ContactType, job.MaskedContact, err)
+		return false
+	}
+	return delivered
+}
+
+// markDelivered records job in the delivery log until shortly after its
+// code expires, when a redelivery would be dropped anyway.
+func (w *Worker) markDelivered(id string, job otpJob) {
+	if w.delivered == nil {
+		return
+	}
+	ttl := time.Hour
+	if !job.ExpiresAt.IsZero() {
+		ttl = max(job.ExpiresAt.Sub(w.now())+time.Minute, time.Minute)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deliveryLogTimeout)
+	defer cancel()
+	if err := w.delivered.MarkDelivered(ctx, id, ttl); err != nil {
+		w.logger.Printf("Could not record the delivery of the sign-in code for %s %s: %v", job.ContactType, job.MaskedContact, err)
+	}
+}
+
+// drainLegacy moves the queue of an earlier version out of the way (#232):
+// it unbinds it from the exchange, so that new jobs go only to the quorum
+// queue, delivers the jobs left in it, and deletes it once it is empty and
+// no worker of an earlier version consumes it. Until then, it looks again
+// every legacyPoll, since a worker of an earlier version that reconnects
+// binds the queue again. It returns when the queue is gone or the worker
+// stops.
+func (w *Worker) drainLegacy() {
+	for {
+		gone, err := w.drainLegacyOnce()
+		switch {
+		case gone:
+			return
+		case err != nil && !w.stopping():
+			w.logger.Printf("OTP delivery worker: draining %s: %v", w.legacyQueue, err)
+		}
+		select {
+		case <-w.stop:
+			return
+		case <-time.After(legacyPoll):
+		}
+	}
+}
+
+// drainLegacyOnce makes one pass over the legacy queue and reports whether
+// it is gone.
+func (w *Worker) drainLegacyOnce() (gone bool, err error) {
+	ch, err := w.broker.OpenChannel()
+	if err != nil {
+		return false, err
+	}
+	defer ch.Close()
+	queue, err := ch.QueueDeclarePassive(w.legacyQueue, true, false, false, false, nil)
+	if err != nil {
+		var amqpErr *amqp.Error
+		if errors.As(err, &amqpErr) && amqpErr.Code == amqp.NotFound {
+			return true, nil
+		}
+		return false, err
+	}
+	if err := ch.QueueUnbind(w.legacyQueue, "", w.exchange, nil); err != nil {
+		return false, fmt.Errorf("unbind: %w", err)
+	}
+	drained := 0
+	for !w.stopping() {
+		d, ok, err := ch.Get(w.legacyQueue, false)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			break
+		}
+		w.handle(d)
+		drained++
+	}
+	if drained > 0 {
+		w.logger.Printf("OTP delivery worker: delivered %d job(s) left in %s", drained, w.legacyQueue)
+	}
+	if queue.Consumers > 0 || w.stopping() {
+		return false, nil // a worker of an earlier version still consumes it
+	}
+	if _, err := ch.QueueDelete(w.legacyQueue, true, true, false); err != nil {
+		return false, fmt.Errorf("delete: %w", err)
+	}
+	w.logger.Printf("OTP delivery worker: deleted the drained classic queue %s", w.legacyQueue)
+	return true, nil
 }

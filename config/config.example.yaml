@@ -104,6 +104,7 @@ rabbitmq:
   password: ""  # Set with RABBITMQ_PASSWORD
   host: "localhost"
   port: "5672"
+  # hosts: ["rmq-1.internal:5671", "rmq-2.internal:5671", "rmq-3.internal:5671"]  # A cluster, in place of host and port
   vhost: "/"                    # Set with RABBITMQ_VHOST
   tls:                          # Release mode needs enabled, or private_network (see redis.tls)
     enabled: false

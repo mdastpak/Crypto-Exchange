@@ -187,6 +187,11 @@ type Configuration struct {
 		Password string `yaml:"password"`
 		Host     string `yaml:"host"`
 		Port     string `yaml:"port"`
+		// Hosts lists the nodes of a RabbitMQ cluster, as host:port, in
+		// place of Host and Port (#232). The service dials them in random
+		// order, on startup and after every lost connection, so that it
+		// reaches a healthy node while one is down.
+		Hosts []string `yaml:"hosts"`
 		// VHost is the virtual host to connect to. Empty is the broker's
 		// default virtual host, "/".
 		VHost     string    `yaml:"vhost"`
@@ -1113,6 +1118,33 @@ func (c *Configuration) JWTPublicKeyPath() string {
 func GetRabbitMQURL() string {
 	return RabbitMQURL(Config.RabbitMQ.Username, Config.RabbitMQ.Password,
 		Config.RabbitMQ.Host, Config.RabbitMQ.Port, Config.RabbitMQ.VHost, Config.RabbitMQ.TLS.Enabled)
+}
+
+// RabbitMQNode is one node that the RabbitMQ service may dial: its host,
+// for the TLS server name, its address (host:port), for the logs, and its
+// URI, which holds the password and must never be logged.
+type RabbitMQNode struct {
+	Host    string
+	Address string
+	URL     string
+}
+
+// RabbitMQNodes returns the nodes of rabbitmq.hosts, or the one node of
+// rabbitmq.host and rabbitmq.port when hosts is empty (#232).
+func RabbitMQNodes() []RabbitMQNode {
+	r := Config.RabbitMQ
+	if len(r.Hosts) == 0 {
+		return []RabbitMQNode{{Host: r.Host, Address: net.JoinHostPort(r.Host, r.Port), URL: GetRabbitMQURL()}}
+	}
+	nodes := make([]RabbitMQNode, 0, len(r.Hosts))
+	for _, hostPort := range r.Hosts {
+		host, port, err := net.SplitHostPort(strings.TrimSpace(hostPort))
+		if err != nil {
+			continue // validateServer reports it
+		}
+		nodes = append(nodes, RabbitMQNode{Host: host, Address: net.JoinHostPort(host, port), URL: RabbitMQURL(r.Username, r.Password, host, port, r.VHost, r.TLS.Enabled)})
+	}
+	return nodes
 }
 
 // RabbitMQURL builds the AMQP URI of a broker (#185). The user, the

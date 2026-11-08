@@ -179,8 +179,23 @@ func TestWithMigrationLock_StopsAndNamesTheHolder(t *testing.T) {
 	migrationLockPoll = 50 * time.Millisecond
 	t.Cleanup(func() { migrationLockPoll = savedPoll })
 
-	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
+	// The same lock held in another database, as the migrations of another
+	// service or of a parallel test package do, does not block this one and
+	// is not named.
+	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, "postgres", testPGSSLMode)
 	saved := ApplicationName
+	ApplicationName = "other-database"
+	otherPool, err := ConnectPostgres()
+	ApplicationName = saved
+	require.NoError(t, err)
+	defer otherPool.Close()
+	other, err := otherPool.DB.Conn(context.Background())
+	require.NoError(t, err)
+	defer other.Close()
+	_, err = other.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, migrationLockID)
+	require.NoError(t, err)
+
+	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
 	ApplicationName = "lock-holder-test"
 	holderPool, err := ConnectPostgres()
 	ApplicationName = saved

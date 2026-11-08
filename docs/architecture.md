@@ -43,7 +43,7 @@ flowchart TB
 | `internal/db` | PostgreSQL connection with startup retries, several hosts with `target_session_attrs`, server-side timeouts, and `application_name`; migrations under an advisory lock with a bounded wait; Redis client of the standalone, sentinel, or cluster mode |
 | `internal/redisutil` | Durable Redis writes (`WAIT` on the primary of the key), hash slots, and a cluster client that follows failovers |
 | `internal/dberr` | Notes on each request when PostgreSQL refused one of its queries for a moment (a lock or statement timeout, a deadlock, a failover), so that the response helpers answer `503 database_busy` instead of `500` ([#230](https://github.com/mdastpak/Crypto-Exchange/issues/230)) |
-| `internal/rabbitmq` | Connection and publishing with confirms. One supervisor goroutine owns the connection and the publishing channel: it reconnects after a broker restart and restores the channel after a channel-level error, while publishes wait up to five seconds for it. |
+| `internal/rabbitmq` | Connection and publishing with confirms. One supervisor goroutine owns the connection and the publishing channel: it reconnects after a broker restart, to another node of a cluster when its node is gone, and restores the channel after a channel-level error, while publishes wait up to five seconds for it. The service starts without the broker and connects in the background. |
 | `internal/notify` | Sign-in code delivery: the queue sender used by OTP sign-in, the worker that consumes the queue with retries and a dead-letter queue, and the SMTP and Kavenegar SMS channels |
 | `internal/otp` | Sign-in codes: unbiased generation, Redis sessions with hashed codes and encrypted contacts, atomic attempt limits per code and per contact |
 | `internal/handlers/*` | HTTP and WebSocket handlers. They currently contain the business logic and SQL directly ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). |
@@ -72,9 +72,9 @@ The API routes are registered twice by `registerAPI` ([#53](https://github.com/m
 
 1. Load the configuration and the RSA key pair.
 2. Connect to PostgreSQL with retries, then apply the migrations under a PostgreSQL advisory lock.
-3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges.
+3. Connect to Redis, then to RabbitMQ, and declare the fan-out exchanges. When no RabbitMQ node can be reached, the server starts without it, logs a warning, and connects in the background ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)).
 4. Load the data-protection keys when `keys.provider` is set: unwrap them through the key management service, creating the first version of each on the first start. The server refuses to start when a key cannot be unwrapped.
-5. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events.
+5. Declare the sign-in code queues and start the delivery worker, when a delivery channel is configured. Subscribe the WebSocket gateway to currency events. Without the broker, both start and do this once it is back.
 6. Start the HTTP server (with TLS when enabled). Startup does not touch the shared currency cache: the list of public currencies is loaded from PostgreSQL on the first read that misses it ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)).
 7. On `SIGINT` or `SIGTERM`, or when the HTTP server fails, stop within `server.shutdown_timeout_seconds` (30 by default), in this order ([#49](https://github.com/mdastpak/Crypto-Exchange/issues/49)):
    1. `/system/ready` answers `503` with `"status": "draining"`, so that load balancers stop routing new requests to the instance, and responses ask clients to close their connections.
@@ -237,9 +237,11 @@ Redis runs as one node, behind Sentinel, or as a cluster (`redis.mode`). Every s
 | `price_updates` | Durable fan-out exchange | Currency change events, published by the outbox relay, and price ticks in the future |
 | `trade_events` | Durable fan-out exchange | Declared at startup for upcoming features |
 | `notifications` | Durable fan-out exchange | Sign-in code jobs |
-| `notifications.otp` | Durable queue bound to `notifications` | Consumed by the delivery worker. Jobs expire with the code. |
-| `notifications.dead-letter`, `notifications.otp.dead-letter` | Durable fan-out exchange and queue | Records of codes that could not be delivered, without the code or the raw contact, kept for seven days |
-| Server-named queue per instance | Exclusive, auto-delete queue bound to `price_updates` | WebSocket broadcast consumer. Each instance has its own queue, so every instance receives every event. The queue disappears when the instance disconnects. |
+| `notifications.otp.quorum` | Quorum queue bound to `notifications` | Consumed by the delivery worker. Jobs expire with the code. Replicated to a majority of the nodes, so a lost node loses no job. |
+| `notifications.dead-letter`, `notifications.otp.dead-letter.quorum` | Durable fan-out exchange and quorum queue | Records of codes that could not be delivered, without the code or the raw contact, kept for seven days |
+| Server-named queue per instance | Exclusive, auto-delete queue bound to `price_updates` | WebSocket broadcast consumer. Each instance has its own queue, so every instance receives every event. The queue disappears when the instance disconnects. After it subscribes again, the instance tells its clients to reload the currencies (`currencies.resync`). |
+
+RabbitMQ runs as a cluster of three nodes (`rabbitmq.hosts`). The server stays ready without the broker, with the status `degraded`, and a sign-in code request then answers `503 delivery_unavailable`. [RabbitMQ high availability](rabbitmq-high-availability.md) describes the deployment, the upgrade from the classic queues, and the failover drill ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)).
 
 #### The outbox
 

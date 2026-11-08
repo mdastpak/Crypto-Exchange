@@ -74,7 +74,7 @@ func TestNewOTPDelivery_DevLogCodesWritesCodesToTheLog(t *testing.T) {
 	withOTPDeliveryConfig(t, true)
 	email := &notify.EmailDeliverer{}
 
-	sender, worker := newOTPDelivery(notify.Channels{Email: email}, nil)
+	sender, worker := newOTPDelivery(notify.Channels{Email: email}, nil, nil)
 
 	assert.IsType(t, notify.DevLogSender{}, sender, "development logging replaces delivery")
 	assert.Nil(t, worker)
@@ -83,7 +83,7 @@ func TestNewOTPDelivery_DevLogCodesWritesCodesToTheLog(t *testing.T) {
 func TestNewOTPDelivery_WithoutChannelsRefusesSignIn(t *testing.T) {
 	withOTPDeliveryConfig(t, false)
 
-	sender, worker := newOTPDelivery(notify.Channels{}, nil)
+	sender, worker := newOTPDelivery(notify.Channels{}, nil, nil)
 
 	assert.False(t, sender.Supports("email"), "sign-in must be refused rather than claim to send a code")
 	assert.False(t, sender.Supports("mobile"))
@@ -93,7 +93,7 @@ func TestNewOTPDelivery_WithoutChannelsRefusesSignIn(t *testing.T) {
 func TestNewOTPDelivery_QueuesCodesForTheConfiguredChannels(t *testing.T) {
 	withOTPDeliveryConfig(t, false)
 
-	sender, worker := newOTPDelivery(notify.Channels{Email: &notify.EmailDeliverer{}}, nil)
+	sender, worker := newOTPDelivery(notify.Channels{Email: &notify.EmailDeliverer{}}, nil, nil)
 
 	assert.IsType(t, &notify.QueueSender{}, sender)
 	assert.True(t, sender.Supports("email"))

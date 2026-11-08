@@ -8,7 +8,9 @@
 // a note; the database tracer of internal/db records each busy error of a
 // query run with that context; and the response helpers turn a 500 of a
 // noted request into 503. A durable Redis write that its replicas did not
-// acknowledge is noted the same way, through MarkBusy (#231).
+// acknowledge is noted the same way, through MarkBusy (#231), and a
+// dependency that is away, such as RabbitMQ, through MarkUnavailable, with
+// an answer of its own (#232).
 package dberr
 
 import (
@@ -55,8 +57,12 @@ func IsReadOnly(err error) bool {
 
 type noteKey struct{}
 
-// note records whether a request met a busy database.
-type note struct{ busy atomic.Bool }
+// note records whether a request met a busy database, or a dependency that
+// was away.
+type note struct {
+	busy        atomic.Bool
+	unavailable atomic.Pointer[Unavailable]
+}
 
 // Track returns ctx with a note, for one request.
 func Track(ctx context.Context) context.Context {
@@ -88,4 +94,48 @@ func MarkBusy(ctx context.Context) {
 func Busy(ctx context.Context) bool {
 	n, ok := ctx.Value(noteKey{}).(*note)
 	return ok && n.busy.Load()
+}
+
+// Unavailable is the answer to a request that failed because a dependency
+// it needs was away, such as RabbitMQ for the delivery of a sign-in code
+// (#232): 503 with Code, Message, and Retry-After.
+type Unavailable struct {
+	Code              string
+	Message           string
+	RetryAfterSeconds int
+}
+
+// CodeDeliveryUnavailable answers a request for a code that cannot be
+// queued for delivery, because RabbitMQ is away.
+const CodeDeliveryUnavailable = "delivery_unavailable"
+
+// DeliveryUnavailable is the answer of CodeDeliveryUnavailable. A broker
+// restart or a failover to another node takes seconds.
+var DeliveryUnavailable = Unavailable{
+	Code:              CodeDeliveryUnavailable,
+	Message:           "Codes cannot be sent right now. Please try again in a moment.",
+	RetryAfterSeconds: 5,
+}
+
+// MarkUnavailable notes on the request of ctx, if it is tracked, that a
+// dependency it needs was away, and how to answer it. The response helpers
+// answer a 500 of such a request with it.
+func MarkUnavailable(ctx context.Context, answer Unavailable) {
+	if n, ok := ctx.Value(noteKey{}).(*note); ok {
+		n.unavailable.Store(&answer)
+	}
+}
+
+// UnavailableOf returns the answer that MarkUnavailable noted on the
+// request of ctx.
+func UnavailableOf(ctx context.Context) (Unavailable, bool) {
+	n, ok := ctx.Value(noteKey{}).(*note)
+	if !ok {
+		return Unavailable{}, false
+	}
+	answer := n.unavailable.Load()
+	if answer == nil {
+		return Unavailable{}, false
+	}
+	return *answer, true
 }

@@ -2,12 +2,14 @@ package rabbitmq
 
 import (
 	"context"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/google/uuid"
@@ -210,4 +212,73 @@ func TestReconnect_Broker_RestoresAChannelClosedOutsidePublish(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond, "the supervisor must replace the closed channel by itself")
 	assert.True(t, svc.IsHealthy())
 	assert.NoError(t, publishWithTimeout(svc, exchange, `{"after": true}`))
+}
+
+// TestStartup_Broker_ConnectsWhenTheBrokerComesBack starts the service while
+// the broker is away (#232): it starts, unhealthy, and once the broker is
+// back it connects, declares its exchange, and publishes.
+func TestStartup_Broker_ConnectsWhenTheBrokerComesBack(t *testing.T) {
+	probe, err := amqp.Dial(brokerTestURL)
+	if err != nil {
+		t.Skipf("RabbitMQ is not reachable at localhost:5672: %v", err)
+	}
+	probe.Close()
+	proxy, err := tcpproxy.New("localhost:5672")
+	require.NoError(t, err)
+	t.Cleanup(proxy.Close)
+	t.Cleanup(withRabbitMQConfig(proxy.Host(), proxy.Port(), "guest", "guest"))
+	proxy.SetDown(true)
+
+	exchange := "test_late_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	svc, err := NewRabbitMQService(exchange)
+	require.NoError(t, err, "the service starts without the broker")
+	t.Cleanup(func() {
+		svc.Close()
+		withBrokerChannel(t, func(ch *amqp.Channel) { _ = ch.ExchangeDelete(exchange, false, false) })
+	})
+	assert.False(t, svc.IsHealthy())
+	assert.Error(t, svc.LastError())
+
+	proxy.SetDown(false)
+	require.Eventually(t, svc.IsHealthy, 20*time.Second, 50*time.Millisecond, "it connects once the broker is back")
+	assert.NoError(t, svc.LastError())
+	deliveries := consumeThrough(t, svc, exchange)
+	require.NoError(t, publishWithTimeout(svc, exchange, `{"late": true}`), "the exchange was declared on connecting")
+	select {
+	case d := <-deliveries:
+		assert.JSONEq(t, `{"late": true}`, string(d.Body))
+	case <-time.After(5 * time.Second):
+		t.Fatal("the message was not delivered")
+	}
+}
+
+// TestHosts_Broker_SkipsANodeThatIsDown lists a node where nothing listens
+// next to a working one (#232): the service connects to the working node,
+// whatever the random order, also after a lost connection.
+func TestHosts_Broker_SkipsANodeThatIsDown(t *testing.T) {
+	probe, err := amqp.Dial(brokerTestURL)
+	if err != nil {
+		t.Skipf("RabbitMQ is not reachable at localhost:5672: %v", err)
+	}
+	probe.Close()
+	proxy, err := tcpproxy.New("localhost:5672")
+	require.NoError(t, err)
+	t.Cleanup(proxy.Close)
+	t.Cleanup(withRabbitMQConfig("", "", "guest", "guest"))
+	config.Config.RabbitMQ.Hosts = []string{"127.0.0.2:1", proxy.Host() + ":" + proxy.Port()}
+
+	for range 3 {
+		svc, err := NewRabbitMQService()
+		require.NoError(t, err)
+		assert.True(t, svc.IsHealthy())
+		assert.Equal(t, net.JoinHostPort(proxy.Host(), proxy.Port()), svc.ConnectedTo())
+		require.NoError(t, svc.Close())
+	}
+
+	svc, err := NewRabbitMQService()
+	require.NoError(t, err)
+	t.Cleanup(func() { svc.Close() })
+	proxy.Cut()
+	require.Eventually(t, func() bool { return svc.IsHealthy() && svc.LastError() == nil }, 20*time.Second, 50*time.Millisecond)
+	assert.Equal(t, net.JoinHostPort(proxy.Host(), proxy.Port()), svc.ConnectedTo())
 }

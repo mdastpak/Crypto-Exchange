@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,11 +22,16 @@ import (
 // that a broker restart or a channel-level error is recovered without the
 // callers noticing more than a short delay.
 type RabbitMQService struct {
-	url string
-	// tls configures the connection when rabbitmq.tls is enabled, and is
-	// nil otherwise.
-	tls       *tls.Config
+	// nodes are the brokers that the service may dial: the nodes of
+	// rabbitmq.hosts, or the one of rabbitmq.host (#232).
+	nodes     []node
 	exchanges []string
+	// connectedTo is the address of the node of the current connection, for
+	// the logs and the tests.
+	connectedTo atomic.Value
+	// lastErr holds the error of the last failed connection attempt, until
+	// one succeeds, for readiness and the tests.
+	lastErr atomic.Pointer[error]
 
 	// mu guards conn, channel, confirms, and ready. Only the supervisor
 	// replaces the connection and restores the publishing channel; a publish
@@ -68,6 +74,18 @@ var (
 	errServiceClosed      = errors.New("rabbitmq service closed")
 	errChannelUnavailable = errors.New("rabbitmq channel is not available")
 )
+
+// node is a broker that the service may dial.
+type node struct {
+	// address is the node's host:port, for the logs.
+	address string
+	// url holds the password; it is never logged.
+	url string
+	// tls configures the connection when rabbitmq.tls is enabled, with the
+	// node's own host as the server name unless rabbitmq.tls.server_name
+	// sets one; it is nil without TLS.
+	tls *tls.Config
+}
 
 // confirmBufferSize lets the broker run ahead of the dispatcher goroutine
 // without blocking the connection's reader.
@@ -136,14 +154,28 @@ func (t *confirmTracker) forget(tag uint64) {
 	t.mu.Unlock()
 }
 
+// NewRabbitMQService connects to RabbitMQ and declares the exchanges. When
+// no node can be reached, it does not fail (#232): it logs the error and
+// keeps connecting in the background, so that a server started during a
+// broker outage serves every route that does not need the broker, and a
+// rolling deploy does not crash-loop. Until the connection is up,
+// IsHealthy is false, publishes fail after a short wait, and OpenChannel
+// fails; the consumers retry on their own. It fails only on settings that
+// cannot work, such as a TLS file that does not load.
 func NewRabbitMQService(exchanges ...string) (*RabbitMQService, error) {
-	tlsConfig, err := config.Config.RabbitMQ.TLS.TLSConfig(config.Config.RabbitMQ.Host)
-	if err != nil {
-		return nil, fmt.Errorf("rabbitmq.tls: %w", err)
+	var nodes []node
+	for _, n := range config.RabbitMQNodes() {
+		tlsConfig, err := config.Config.RabbitMQ.TLS.TLSConfig(n.Host)
+		if err != nil {
+			return nil, fmt.Errorf("rabbitmq.tls: %w", err)
+		}
+		nodes = append(nodes, node{address: n.Address, url: n.URL, tls: tlsConfig})
+	}
+	if len(nodes) == 0 {
+		return nil, errors.New("no RabbitMQ node is configured")
 	}
 	r := &RabbitMQService{
-		url:       config.GetRabbitMQURL(),
-		tls:       tlsConfig,
+		nodes:     nodes,
 		exchanges: exchanges,
 		ready:     make(chan struct{}),
 		stop:      make(chan struct{}),
@@ -152,26 +184,65 @@ func NewRabbitMQService(exchanges ...string) (*RabbitMQService, error) {
 
 	conn, ch, err := r.open()
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+		log.Printf("WARNING: RabbitMQ cannot be reached (%v); starting without it and connecting in the background", err)
+	} else if !r.install(conn, ch) {
+		return nil, errServiceClosed
+	} else {
+		log.Printf("RabbitMQ connected to %s, with publisher confirms", r.ConnectedTo())
 	}
-	r.install(conn, ch)
 
 	r.wg.Add(1)
 	go r.supervise(conn, ch)
-
-	log.Println("RabbitMQ connection and channel established with publisher confirms")
 	return r, nil
 }
 
-// open dials the broker and opens the publishing channel.
+// ConnectedTo returns the address (host:port) of the node of the current
+// connection, or "" before the first connection.
+func (r *RabbitMQService) ConnectedTo() string {
+	address, _ := r.connectedTo.Load().(string)
+	return address
+}
+
+// open dials the nodes in random order, so that the instances spread over
+// the cluster and a node that is down delays a connection by one dial at
+// most, and opens the publishing channel on the first node that answers.
+// It returns the error of every node when none does.
 func (r *RabbitMQService) open() (*amqp.Connection, *amqp.Channel, error) {
-	conn, err := amqp.DialConfig(r.url, amqp.Config{
+	var errs []error
+	// The order only spreads the load; it need not be unpredictable.
+	for _, i := range rand.Perm(len(r.nodes)) { //nolint:gosec // G404: not a security decision
+		n := r.nodes[i]
+		conn, ch, err := r.openNode(n)
+		if err == nil {
+			r.connectedTo.Store(n.address)
+			r.lastErr.Store(nil)
+			return conn, ch, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", n.address, err))
+	}
+	err := errors.Join(errs...)
+	r.lastErr.Store(&err)
+	return nil, nil, err
+}
+
+// LastError returns the error of the last connection attempt when it
+// failed, and nil once one succeeds.
+func (r *RabbitMQService) LastError() error {
+	if err := r.lastErr.Load(); err != nil {
+		return *err
+	}
+	return nil
+}
+
+// openNode dials one node and opens the publishing channel.
+func (r *RabbitMQService) openNode(n node) (*amqp.Connection, *amqp.Channel, error) {
+	conn, err := amqp.DialConfig(n.url, amqp.Config{
 		Heartbeat: 10 * time.Second,
 		Locale:    "en_US",
 		Dial:      amqp.DefaultDial(dialTimeout),
 		// With an amqps URL, the client dials with this configuration
 		// (#186). It is nil without TLS.
-		TLSClientConfig: r.tls,
+		TLSClientConfig: n.tls,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -273,8 +344,18 @@ func (r *RabbitMQService) requestChannel() {
 // supervise watches the connection and the publishing channel and replaces
 // whichever closes, until the service is closed. The close notifications are
 // local to this goroutine, so no other goroutine reads them.
+//
+// Without a connection, which happens when the service started while no
+// node could be reached, it connects first.
 func (r *RabbitMQService) supervise(conn *amqp.Connection, ch *amqp.Channel) {
 	defer r.wg.Done()
+	if conn == nil {
+		conn, ch = r.reconnect()
+		if conn == nil {
+			return
+		}
+		log.Printf("RabbitMQ connected to %s, with publisher confirms", r.ConnectedTo())
+	}
 	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
 	chClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
 
@@ -295,7 +376,7 @@ func (r *RabbitMQService) supervise(conn *amqp.Connection, ch *amqp.Channel) {
 			}
 			connClosed = conn.NotifyClose(make(chan *amqp.Error, 1))
 			chClosed = ch.NotifyClose(make(chan *amqp.Error, 1))
-			log.Println("RabbitMQ reconnected")
+			log.Printf("RabbitMQ reconnected to %s", r.ConnectedTo())
 
 		case err := <-chClosed:
 			// After a channel-level error, such as a publish to an unknown
@@ -455,7 +536,11 @@ func (r *RabbitMQService) Publish(ctx context.Context, exchange, message string)
 }
 
 // waitForChannel returns the publishing channel, waiting up to channelWait
-// while the supervisor restores it.
+// while the supervisor restores it. When the broker is known to be away,
+// because there is no connection and the last attempt to make one failed,
+// it fails at once (#232): a request that needs the broker during an outage
+// is answered without a wait, while one that comes during a reconnect,
+// which usually takes a moment, waits for it.
 func (r *RabbitMQService) waitForChannel(ctx context.Context) (*amqp.Channel, error) {
 	if r.stop == nil {
 		// Never connected, so no supervisor will ever provide a channel.
@@ -468,10 +553,13 @@ func (r *RabbitMQService) waitForChannel(ctx context.Context) (*amqp.Channel, er
 			return nil, errServiceClosed
 		}
 		r.mu.RLock()
-		ch, ready := r.channel, r.ready
+		ch, ready, conn := r.channel, r.ready, r.conn
 		r.mu.RUnlock()
 		if ch != nil {
 			return ch, nil
+		}
+		if (conn == nil || conn.IsClosed()) && r.LastError() != nil {
+			return nil, fmt.Errorf("%w: %w", errChannelUnavailable, r.LastError())
 		}
 		r.requestChannel()
 		select {

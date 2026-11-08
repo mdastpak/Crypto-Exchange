@@ -26,24 +26,48 @@ func withRabbitMQConfig(host, port, username, password string) func() {
 	return func() { config.Config.RabbitMQ = original }
 }
 
-func TestNewRabbitMQService_FailsWithBadHost(t *testing.T) {
-	restore := withRabbitMQConfig("no-such-rabbitmq-host-xyz", "5672", "guest", "guest")
-	defer restore()
+// TestNewRabbitMQService_StartsWithoutTheBroker starts the service while no
+// node can be reached (#232): it starts, unhealthy, keeps the error of the
+// attempt, fails a publish within its context, and closes at once.
+func TestNewRabbitMQService_StartsWithoutTheBroker(t *testing.T) {
+	for name, hostPort := range map[string][2]string{
+		"unknown host":    {"no-such-rabbitmq-host-xyz", "5672"},
+		"nothing listens": {"127.0.0.1", "1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			restore := withRabbitMQConfig(hostPort[0], hostPort[1], "guest", "guest")
+			defer restore()
 
-	svc, err := NewRabbitMQService()
-	assert.Error(t, err)
-	assert.Nil(t, svc)
+			svc, err := NewRabbitMQService()
+			require.NoError(t, err)
+			require.NotNil(t, svc)
+			assert.False(t, svc.IsHealthy())
+			assert.Empty(t, svc.ConnectedTo())
+			require.Error(t, svc.LastError())
+			assert.Contains(t, svc.LastError().Error(), hostPort[0], "the error names the node")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			assert.Error(t, svc.Publish(ctx, "x", "{}"))
+			_, err = svc.OpenChannel()
+			assert.Error(t, err)
+
+			started := time.Now()
+			require.NoError(t, svc.Close())
+			assert.Less(t, time.Since(started), 2*time.Second, "Close stops the background connection")
+		})
+	}
 }
 
-func TestNewRabbitMQService_FailsWithUnreachablePort(t *testing.T) {
-	// Port 1 should have nothing listening and refuse the connection quickly.
+// TestNewRabbitMQService_RefusesSettingsThatCannotWork checks that a TLS
+// setting that cannot load still stops the startup.
+func TestNewRabbitMQService_RefusesSettingsThatCannotWork(t *testing.T) {
 	restore := withRabbitMQConfig("127.0.0.1", "1", "guest", "guest")
 	defer restore()
-
-	svc, err := NewRabbitMQService()
-	assert.Error(t, err)
-	assert.Nil(t, svc)
-	assert.Contains(t, err.Error(), "failed to connect to RabbitMQ")
+	config.Config.RabbitMQ.TLS = config.ClientTLS{Enabled: true, CAFile: "/does/not/exist.pem"}
+	_, err := NewRabbitMQService()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rabbitmq.tls")
 }
 
 func TestRabbitMQService_IsHealthy_ZeroValue(t *testing.T) {
