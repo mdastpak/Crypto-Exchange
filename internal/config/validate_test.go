@@ -134,6 +134,12 @@ func TestValidateServer_Rules(t *testing.T) {
 		"ownership timeout over a minute": {func(c *Configuration) { c.Identity.MobileOwnership.TimeoutSeconds = 61 }, "identity.mobile_ownership.timeout_seconds (IDENTITY_MOBILE_OWNERSHIP_TIMEOUT_SECONDS) is 61"},
 		"negative rate limit":             {func(c *Configuration) { c.RateLimits.Auth.OTPRequestsPerHour = -1 }, "rate_limits.auth.otp_requests_per_hour (RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR) is -1"},
 
+		// The market data routes (#269).
+		"unknown market data region":    {func(c *Configuration) { c.MarketData.API.Regions = []string{"global", "eu"} }, `market_data.api.regions has "eu"; the regions are global and ir`},
+		"market data cache over 1 hour": {func(c *Configuration) { c.MarketData.API.CacheSeconds = 3601 }, "market_data.api.cache_seconds is 3601; it must be from 1 to 3600"},
+		"outlier share over 100":        {func(c *Configuration) { c.MarketData.Tickers.OutlierPercent = 101 }, "market_data.tickers.outlier_percent is 101; it must be from 1 to 100"},
+		"median of one venue":           {func(c *Configuration) { c.MarketData.Tickers.MinVenues = 1 }, "market_data.tickers.min_venues is 1; it must be from 2 to 20"},
+
 		// TLS files, in every mode.
 		"TLS without files": {func(c *Configuration) { c.Server.TLS.Enabled = true }, "server.tls.enabled (SERVER_TLS_ENABLED) is true, but server.tls.cert_file (SERVER_TLS_CERT_FILE) and server.tls.key_file (SERVER_TLS_KEY_FILE) must both be set"},
 	} {
@@ -276,7 +282,8 @@ func TestValidateMarketWorker_NeedsOnlyPostgresAndItsSection(t *testing.T) {
 	Config.Postgres.Host, Config.Postgres.Port, Config.Postgres.User, Config.Postgres.DBName = "db", "5432", "app", "exchange"
 	Config.MarketData = MarketDataConfig{Mode: MarketDataModeDryRun, HealthAddr: ":8081",
 		PollSeconds: 5, LeaseSeconds: 60, MaxConcurrentJobs: 4, RetryBaseSeconds: 30,
-		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog(), Tickers: validTickers(), Candles: validCandles()}
+		Egress: MarketDataEgress{Default: EgressDirect}, Catalog: validCatalog(), Tickers: validTickers(), Candles: validCandles(),
+		API: MarketDataAPI{CacheSeconds: 30}}
 	assert.NoError(t, ValidateMarketWorker(), "no JWT, Redis, or RabbitMQ setting is needed")
 
 	Config.Postgres.User = ""
@@ -315,6 +322,7 @@ func validMarketWorker() Configuration {
 		Catalog: validCatalog(),
 		Tickers: validTickers(),
 		Candles: validCandles(),
+		API:     MarketDataAPI{CacheSeconds: 30},
 		Sources: map[string]MarketDataSource{
 			"coingecko": {Enabled: true, RequestsPerMinute: 30, MonthlyRequests: 10000, TimeoutSeconds: 20},
 			"nobitex":   {Enabled: true, Egress: EgressDirect, TimeoutSeconds: 20},

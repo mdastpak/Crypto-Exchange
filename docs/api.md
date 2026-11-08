@@ -616,6 +616,48 @@ A rebrand that changes the symbol, as MATIC became POL, keeps the symbol before 
 
 The history of a currency, each change with its fields before and after, is in the audit log: `GET /admin/audit?target_type=currency&target_id={hk}`.
 
+## Market data
+
+The global market data catalog ([`docs/market-data.md`](market-data.md#public-api)): crypto assets, their prices at other exchanges, and their charts, read only and without sign-in. These assets are not the currencies of this exchange: each has `verified` and `label`, which is `unverified` unless an administrator linked it to a listed currency. Hidden assets are never served.
+
+Answers are cached for `market_data.api.cache_seconds` (30), with `Cache-Control: public, max-age=…` and an `ETag`; send it back in `If-None-Match` to get `304 Not Modified`. Prices, supplies, and volumes are decimal strings, times RFC 3339 in UTC.
+
+### `GET /market-data/assets`
+
+The assets by market cap rank, the unranked last, then by slug, [paginated](#pagination). `q` (at most 64 characters) matches the exact symbol in any case, or a part of the name or slug.
+
+```json
+{"items": [{"slug": "bitcoin", "symbol": "BTC", "name": "Bitcoin", "kind": "coin", "verified": false, "label": "unverified",
+  "active": true, "market_cap_rank": 1, "max_supply": "21000000", "attribution": "Data from CoinGecko", "updated_at": "2026-11-08T12:00:00Z"}],
+ "next_cursor": "eyJ2IjoxLCJhIjp7InIiOjEsInMiOiJiaXRjb2luIn19"}
+```
+
+### `GET /market-data/assets/{slug}`
+
+The asset, with `description`, `links`, and its token `contracts` by network. `404 market_asset_not_found` for an unknown or hidden asset.
+
+### `GET /market-data/assets/{slug}/venues`
+
+The latest ticker of the asset at each enabled venue that this release shows, to compare exchanges. Each quote has `venue`, `venue_name`, `region`, `pair`, `quote`, `last`, the optional `bid`, `ask`, `volume_base`, `volume_quote`, `high`, `low`, `open`, and `observed_at`, with:
+
+- `stale`: observed more than `stale_after_seconds` ago.
+- `outlier`: further than `outlier_percent` from the `median` of the fresh prices of the same quote at the venues; the median needs `min_venues` venues.
+
+Prices of different quotes (`USDT`, `USD`, `IRT` for tomans) are never compared.
+
+### `GET /market-data/assets/{slug}/candles`
+
+The closed candles of the asset's pair at a venue, oldest first: `{"t": open time, "o", "h", "l", "c", "v": volume in the base}`.
+
+| Parameter | |
+| --- | --- |
+| `venue` | Required, such as `binance` or `nobitex`. |
+| `quote` | Required, such as `USDT` or `IRT`. |
+| `interval` | Required: `5m`, `1h`, or `1d`. |
+| `from`, `to` | Optional, RFC 3339: the candles that open in `[from, to)`, at most 1000. Without `to`, up to now; without `from`, the 500 candles before `to`. |
+
+`400 validation_failed` for a missing or invalid parameter, or a range of more than 1000 candles; `404 market_pair_not_found` when the venue has no such pair, or is not shown in this release.
+
 ## Currency migrations
 
 A migration moves the holders of one or more source currencies to one target, each source at its ratio: the units of the target that one unit of the source becomes ([#215](https://github.com/mdastpak/Crypto-Exchange/issues/215)). It models a rebrand with a new token (MATIC to POL, 1), a redenomination (100 LEND = 1 AAVE, 0.01; 1 MKR = 24,000 SKY, 24000), and a merger (AGIX and OCEAN into FET, each at its own ratio). Ratios are decimals with at most 18 digits after the point, never floats.

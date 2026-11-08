@@ -2441,6 +2441,290 @@
                 }
             }
         },
+        "/api/v1/market-data/assets": {
+            "get": {
+                "description": "The crypto assets of the global catalog, by market cap rank, the unranked last. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market data"
+                ],
+                "summary": "List the assets of the market data catalog",
+                "parameters": [
+                    {
+                        "maxLength": 64,
+                        "type": "string",
+                        "description": "The exact symbol, or a part of the name or slug, in any case",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of assets, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/marketdata.AssetPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "304": {
+                        "description": "Not modified: the If-None-Match matches"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/market-data/assets/{slug}": {
+            "get": {
+                "description": "The asset of the slug, with its description, links, supply, contracts, and the attribution of its source. A hidden asset is not found.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market data"
+                ],
+                "summary": "Get an asset of the market data catalog",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The slug of the asset, such as bitcoin",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/marketdata.AssetView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "304": {
+                        "description": "Not modified: the If-None-Match matches"
+                    },
+                    "404": {
+                        "description": "market_asset_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/market-data/assets/{slug}/candles": {
+            "get": {
+                "description": "The closed candles of the asset's pair with the quote at the venue, oldest first, that open in [from, to): at most 1000. Without from, the last 500 candles before to; without to, up to now.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market data"
+                ],
+                "summary": "Get the chart of an asset at an exchange",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The slug of the asset, such as bitcoin",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The venue, such as binance or nobitex",
+                        "name": "venue",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The quote symbol, such as USDT or IRT",
+                        "name": "quote",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "5m",
+                            "1h",
+                            "1d"
+                        ],
+                        "type": "string",
+                        "description": "The candle interval",
+                        "name": "interval",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "The first open time, RFC 3339",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "The end, exclusive, RFC 3339",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/marketdata.Chart"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "304": {
+                        "description": "Not modified: the If-None-Match matches"
+                    },
+                    "400": {
+                        "description": "validation_failed, such as a range of more than 1000 candles",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "market_asset_not_found or market_pair_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/market-data/assets/{slug}/venues": {
+            "get": {
+                "description": "The latest ticker of the asset on each enabled venue of the regions this release shows, by quote, with the flags of its quality: stale past the staleness limit, and outlier when further from the median of the venues than the configured share. Prices in different quotes are never compared.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market data"
+                ],
+                "summary": "Compare the prices of an asset across exchanges",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The slug of the asset, such as bitcoin",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/marketdata.VenueComparison"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "304": {
+                        "description": "Not modified: the If-None-Match matches"
+                    },
+                    "404": {
+                        "description": "market_asset_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth": {
             "post": {
                 "description": "Sends a one-time code to an email address or a mobile number. Limited per hour and client address.",
@@ -5156,6 +5440,242 @@
                 "status": {
                     "type": "string",
                     "example": "ACTIVE"
+                }
+            }
+        },
+        "marketdata.AssetPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/marketdata.AssetView"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor asks for the next page. It is left out on the last page.",
+                    "type": "string"
+                }
+            }
+        },
+        "marketdata.AssetView": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "attribution": {
+                    "type": "string"
+                },
+                "circulating_supply": {
+                    "type": "string"
+                },
+                "contracts": {
+                    "description": "Contracts are the contracts of a token, by network.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/marketdata.Contract"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "Kind is coin, token, or unknown.",
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "links": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "logo_url": {
+                    "type": "string"
+                },
+                "market_cap_rank": {
+                    "type": "integer"
+                },
+                "max_supply": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "total_supply": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "verified": {
+                    "description": "Verified is true only for an asset that an administrator linked to a\ncurrency listed on this exchange; Label says the same for display.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "marketdata.CandlePoint": {
+            "type": "object",
+            "properties": {
+                "c": {
+                    "type": "string"
+                },
+                "h": {
+                    "type": "string"
+                },
+                "l": {
+                    "type": "string"
+                },
+                "o": {
+                    "type": "string"
+                },
+                "t": {
+                    "description": "T is the open time of the candle.",
+                    "type": "string"
+                },
+                "v": {
+                    "description": "V is the volume in the base asset.",
+                    "type": "string"
+                }
+            }
+        },
+        "marketdata.Chart": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "candles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/marketdata.CandlePoint"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "quote": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "venue": {
+                    "type": "string"
+                },
+                "verified": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "marketdata.Contract": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                }
+            }
+        },
+        "marketdata.VenueComparison": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "outlier_percent": {
+                    "type": "string"
+                },
+                "quotes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/marketdata.VenueQuote"
+                    }
+                },
+                "stale_after_seconds": {
+                    "type": "integer"
+                },
+                "verified": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "marketdata.VenueQuote": {
+            "type": "object",
+            "properties": {
+                "ask": {
+                    "type": "string"
+                },
+                "bid": {
+                    "type": "string"
+                },
+                "high": {
+                    "type": "string"
+                },
+                "last": {
+                    "type": "string"
+                },
+                "low": {
+                    "type": "string"
+                },
+                "median": {
+                    "description": "Median is the median of the fresh prices of the same quote, when\nenough venues have one.",
+                    "type": "string"
+                },
+                "observed_at": {
+                    "type": "string"
+                },
+                "open": {
+                    "type": "string"
+                },
+                "outlier": {
+                    "description": "Outlier: the price is too far from the median of the venues.",
+                    "type": "boolean"
+                },
+                "pair": {
+                    "type": "string"
+                },
+                "quote": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "stale": {
+                    "description": "Stale: the ticker is older than the staleness limit.",
+                    "type": "boolean"
+                },
+                "venue": {
+                    "type": "string"
+                },
+                "venue_name": {
+                    "type": "string"
+                },
+                "volume_base": {
+                    "type": "string"
+                },
+                "volume_quote": {
+                    "type": "string"
                 }
             }
         },

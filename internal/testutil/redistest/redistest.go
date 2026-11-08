@@ -36,4 +36,6 @@ const (
 	Notify
 	// Socket is the database of internal/handlers/socket.
 	Socket
+	// MarketData is the database of internal/handlers/marketdata.
+	MarketData
 )

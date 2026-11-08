@@ -218,28 +218,33 @@ func (s *Store) MarkAssetsSeen(ctx context.Context, ids []int64, seenAt time.Tim
 	return err
 }
 
-// Asset returns an asset by id, or ErrNotFound.
-func (s *Store) Asset(ctx context.Context, id int64) (Asset, error) {
+// assetColumns are the columns of an Asset, in the order of scanAsset.
+const assetColumns = `id, slug, symbol, name, kind, status, currency_hk::text, active, description, links,
+	logo_url, market_cap_rank, circulating_supply, total_supply, max_supply, attribution,
+	created_at, updated_at, last_seen_at`
+
+// scanAsset reads an Asset from a row of assetColumns.
+func scanAsset(row interface{ Scan(dest ...any) error }) (Asset, error) {
 	var a Asset
 	var links []byte
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, slug, symbol, name, kind, status, currency_hk::text, active, description, links,
-			logo_url, market_cap_rank, circulating_supply, total_supply, max_supply, attribution,
-			created_at, updated_at, last_seen_at
-		FROM market_assets WHERE id = $1`, id).Scan(
-		&a.ID, &a.Slug, &a.Symbol, &a.Name, &a.Kind, &a.Status, &a.CurrencyHK, &a.Active, &a.Description, &links,
+	if err := row.Scan(&a.ID, &a.Slug, &a.Symbol, &a.Name, &a.Kind, &a.Status, &a.CurrencyHK, &a.Active, &a.Description, &links,
 		&a.LogoURL, &a.MarketCapRank, &a.CirculatingSupply, &a.TotalSupply, &a.MaxSupply, &a.Attribution,
-		&a.CreatedAt, &a.UpdatedAt, &a.LastSeenAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Asset{}, ErrNotFound
-	}
-	if err != nil {
+		&a.CreatedAt, &a.UpdatedAt, &a.LastSeenAt); err != nil {
 		return Asset{}, err
 	}
 	if err := json.Unmarshal(links, &a.Links); err != nil {
-		return Asset{}, fmt.Errorf("marketdata: links of asset %d: %w", id, err)
+		return Asset{}, fmt.Errorf("marketdata: links of asset %d: %w", a.ID, err)
 	}
 	return a, nil
+}
+
+// Asset returns an asset by id, or ErrNotFound.
+func (s *Store) Asset(ctx context.Context, id int64) (Asset, error) {
+	a, err := scanAsset(s.db.QueryRowContext(ctx, `SELECT `+assetColumns+` FROM market_assets WHERE id = $1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Asset{}, ErrNotFound
+	}
+	return a, err
 }
 
 // UpsertVenue adds a venue or updates its description. Whether a venue is
@@ -370,7 +375,7 @@ func (s *Store) StartRun(ctx context.Context, job, node, mode string) (int64, er
 func (s *Store) FinishRun(ctx context.Context, id int64, read, written int, runErr error) error {
 	status, message := "succeeded", ""
 	if runErr != nil {
-		status, message = "failed", truncate(runErr.Error(), maxRunError)
+		status, message = "failed", clip(runErr.Error(), maxRunError)
 	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE market_sync_runs SET status = $2, finished_at = NOW(), items_read = $3,
@@ -436,7 +441,7 @@ func (d AssetDetails) normalized() (AssetDetails, error) {
 			return d, errors.New("marketdata: a negative supply")
 		}
 	}
-	d.Description = truncate(d.Description, 20000)
+	d.Description = clip(d.Description, 20000)
 	return d, nil
 }
 
@@ -450,8 +455,8 @@ func checkIdentity(source, externalID string) error {
 	return nil
 }
 
-// truncate cuts s to at most n characters.
-func truncate(s string, n int) string {
+// clip cuts s to at most n characters.
+func clip(s string, n int) string {
 	if utf8.RuneCountInString(s) <= n {
 		return s
 	}

@@ -529,6 +529,7 @@ func (c *Configuration) marketDataProblems(p *problems) {
 		}
 	}
 	c.candleProblems(p)
+	c.marketDataAPIProblems(p)
 	if tk.StaleAfterSeconds > 0 && tk.StaleAfterSeconds < tk.IntervalSeconds {
 		p.add("market_data.tickers.stale_after_seconds", "is %d; it must be at least interval_seconds (%d), or every ticker turns stale between two runs",
 			tk.StaleAfterSeconds, tk.IntervalSeconds)
@@ -642,5 +643,19 @@ func mobileOwnershipProblems(p *problems, m MobileOwnershipConfig) {
 	}
 	if v := m.RecheckDays; v < 1 || v > 365 {
 		p.add("identity.mobile_ownership.recheck_days", "is %d; it must be from 1 to 365", v)
+	}
+}
+
+// marketDataAPIProblems checks the settings of the public market data
+// routes of the server (#269).
+func (c *Configuration) marketDataAPIProblems(p *problems) {
+	api := c.MarketData.API
+	for _, region := range api.Regions {
+		if region != "global" && region != "ir" {
+			p.add("market_data.api.regions", "has %q; the regions are global and ir", region)
+		}
+	}
+	if api.CacheSeconds < 1 || api.CacheSeconds > MaxMarketDataAPICacheSeconds {
+		p.add("market_data.api.cache_seconds", "is %d; it must be from 1 to %d", api.CacheSeconds, MaxMarketDataAPICacheSeconds)
 	}
 }
