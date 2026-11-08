@@ -299,6 +299,12 @@ Writing to the database is not enough to create an administrator: changing `user
 | --- | --- | --- |
 | `new_contact_cooldown_hours` | `72` | From 1 to 720. How long a newly added or replaced email or mobile cannot prove the replacement or removal of an older contact of the account ([#250](https://github.com/mdastpak/Crypto-Exchange/issues/250)). Such a change is refused with `403 contact_too_new` until then; a contact can always be replaced or removed with its own code. See [Contacts](api.md#contacts). Every instance compares with the database clock, so they all decide the same way. |
 
+### `security`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `change_hold_hours` | `24` | From 1 to 720. How long the operations that a second factor protects are held after a security change of a user: adding, replacing, or removing an email address or mobile number, and later a change of the second factor ([#251](https://github.com/mdastpak/Crypto-Exchange/issues/251)). Withdrawals then answer `403 security_hold` with `info.until`. A change extends the hold and never shortens it. Contact changes are not held. The hold is stored in the user's row, so it applies on every instance at once; a new value applies to holds that start after it. See [Security hold](api.md#security-hold). |
+
 ### `favorites`
 
 | Key | Default | Description |
@@ -497,6 +503,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `ADMIN_TOTP_KEY` | `admin.totp_key` |
 | `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `CONTACTS_NEW_CONTACT_COOLDOWN_HOURS` | `contacts.new_contact_cooldown_hours` |
+| `SECURITY_CHANGE_HOLD_HOURS` | `security.change_hold_hours` |
 | `FAVORITES_MAX_PER_USER` | `favorites.max_per_user` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |

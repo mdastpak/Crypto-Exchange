@@ -121,6 +121,7 @@ func TestValidateServer_Rules(t *testing.T) {
 		"migration password without user":  {func(c *Configuration) { c.Server.Mode, c.Postgres.Migrations.Password = "debug", "secret" }, "postgres.migrations.password (POSTGRES_MIGRATIONS_PASSWORD) is set without postgres.migrations.user"},
 		"no contact cooldown":              {func(c *Configuration) { c.Contacts.NewContactCooldownHours = -1 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is -1; it must be from 1 to 720"},
 		"contact cooldown over 30 days":    {func(c *Configuration) { c.Contacts.NewContactCooldownHours = 721 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is 721"},
+		"no security hold":                 {func(c *Configuration) { c.Security.ChangeHoldHours = -1 }, "security.change_hold_hours (SECURITY_CHANGE_HOLD_HOURS) is -1; it must be from 1 to 720"},
 		"negative rate limit":              {func(c *Configuration) { c.RateLimits.Auth.OTPRequestsPerHour = -1 }, "rate_limits.auth.otp_requests_per_hour (RATE_LIMITS_AUTH_OTP_REQUESTS_PER_HOUR) is -1"},
 
 		// TLS files, in every mode.

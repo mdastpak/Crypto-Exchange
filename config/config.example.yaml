@@ -224,6 +224,10 @@ admin:
 contacts:
   new_contact_cooldown_hours: 72  # A new contact cannot replace or remove another one for this long
 
+# What follows a change of the email, the mobile, or the second factor.
+security:
+  change_hold_hours: 24  # Withdrawals and other second-factor operations are held this long
+
 # Personal favorites of currencies and trading pairs.
 favorites:
   max_per_user: 100            # Favorite currencies and pairs per user, together

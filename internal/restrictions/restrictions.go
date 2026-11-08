@@ -219,8 +219,10 @@ func (r *Refusal) Error() string {
 }
 
 // Check returns a *Refusal when a restriction of the user blocks op on the
-// currency currencyHK, which is empty for an operation on no currency. A
-// check that guards a change of money runs in its transaction after Lock.
+// currency currencyHK, which is empty for an operation on no currency, or
+// when the security hold of the user (#251) blocks op. A restriction comes
+// before the hold, since it says more. A check that guards a change of
+// money runs in its transaction after Lock.
 func Check(ctx context.Context, q Querier, userHK string, op Operation, currencyHK string) error {
 	if !slices.Contains(Operations, op) {
 		return fmt.Errorf("unknown operation %q", op)
@@ -262,6 +264,9 @@ func Check(ctx context.Context, q Querier, userHK string, op Operation, currency
 		}
 	}
 	if found == nil {
+		if held(op) {
+			return CheckSecurityHold(ctx, q, userHK, op)
+		}
 		return nil
 	}
 	return found
@@ -324,6 +329,8 @@ func Send(c *gin.Context, err error) bool {
 	case CodeAssetRestricted:
 		message = messageAssetRestricted
 		info["currency_hk"] = r.CurrencyHK
+	case CodeSecurityHold:
+		message = messageSecurityHold
 	}
 	if r.Until != nil {
 		info["until"] = r.Until.UTC().Format(time.RFC3339)

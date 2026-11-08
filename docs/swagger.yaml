@@ -1453,6 +1453,13 @@ definitions:
         items:
           $ref: '#/definitions/restrictions.PublicRestriction'
         type: array
+      security_hold_until:
+        description: |-
+          SecurityHoldUntil is when the security hold ends (#251): after a
+          change of a contact or of the second factor, withdrawals and the
+          other operations that a second factor protects answer 403
+          security_hold until then. It is absent when no hold applies.
+        type: string
     type: object
   user.RevokedSessions:
     properties:
@@ -4052,7 +4059,9 @@ paths:
       description: 'The restrictions that apply now to the signed-in user: the operations
         they block, on every currency or on one, and when they end when that is shown.
         Never the reason. A frozen account cannot sign in, so it is not listed here:
-        its requests answer 403 account_frozen.'
+        its requests answer 403 account_frozen. security_hold_until is when the hold
+        that follows a change of a contact or of the second factor ends; until then,
+        withdrawals answer 403 security_hold.'
       produces:
       - application/json
       responses:

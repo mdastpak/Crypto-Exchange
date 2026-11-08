@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -252,5 +254,45 @@ func TestUserContacts_NewContactCooldown(t *testing.T) {
 	assert.Equal(t, []string{"email"}, env.contactTypes(t, token))
 	id, accountCode, newCode = env.startChange(t, token, map[string]string{"action": "replace", "value": "fresh@example.com"}, email, "fresh@example.com")
 	status, resp = env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+}
+
+// TestUserContacts_ChangeStartsASecurityHold checks #251: an applied
+// contact change holds withdrawals in its transaction, the user sees the
+// hold, and the audit event records it.
+func TestUserContacts_ChangeStartsASecurityHold(t *testing.T) {
+	env := newE2EEnv(t)
+	const email, mobile = "held@example.com", "09121110008"
+	token, _ := env.signedIn(t, email)
+	userID := userOf(t, token)
+
+	status, body := env.sessionCall(t, http.MethodGet, "/api/v1/user/restrictions", token)
+	require.Equal(t, http.StatusOK, status, body)
+	assert.NotContains(t, body["info"], "security_hold_until", "signing up starts no hold")
+	require.NoError(t, restrictions.Check(context.Background(), env.db, userID, restrictions.OpWithdraw, ""))
+
+	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": mobile}, email, mobile)
+	status, resp := env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+
+	var refusal *restrictions.Refusal
+	require.ErrorAs(t, restrictions.Check(context.Background(), env.db, userID, restrictions.OpWithdraw, ""), &refusal)
+	assert.Equal(t, restrictions.CodeSecurityHold, refusal.Code)
+	assert.WithinDuration(t, time.Now().Add(24*time.Hour), *refusal.Until, time.Minute)
+
+	status, body = env.sessionCall(t, http.MethodGet, "/api/v1/user/restrictions", token)
+	require.Equal(t, http.StatusOK, status, body)
+	shown, err := time.Parse(time.RFC3339, body["info"].(map[string]interface{})["security_hold_until"].(string))
+	require.NoError(t, err)
+	assert.WithinDuration(t, *refusal.Until, shown, time.Second)
+
+	var recorded string
+	require.NoError(t, env.db.QueryRow(`SELECT changes->'after'->>'security_hold_until' FROM audit_events
+		WHERE target_id = $1 AND action = $2 AND outcome = 'success'`, userID, audit.ActionUserContactAdd).Scan(&recorded))
+	assert.NotEmpty(t, recorded)
+
+	// The owner can still undo the change during the hold.
+	id, accountCode, _ = env.startChange(t, token, map[string]string{"action": "remove", "type": "mobile", "verify_with": "email"}, email, "")
+	status, resp = env.confirmChange(t, token, id, accountCode, "")
 	require.Equal(t, http.StatusOK, status, resp.Message)
 }

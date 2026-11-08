@@ -287,6 +287,16 @@ type Configuration struct {
 		NewContactCooldownHours int `yaml:"new_contact_cooldown_hours"`
 	} `yaml:"contacts"`
 
+	// Security configures the protections that follow a change of the
+	// security settings of a user.
+	Security struct {
+		// ChangeHoldHours is how long the operations that a second factor
+		// protects, such as withdrawals, are held after a change of the
+		// email address, the mobile number, or the second factor of a user
+		// (#251).
+		ChangeHoldHours int `yaml:"change_hold_hours"`
+	} `yaml:"security"`
+
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
 		// (#217), together.
@@ -995,6 +1005,7 @@ func setDefaults() {
 		{&Config.JWT.Sessions.MaxLifetimeMinutes, DefaultSessionMaxLifetimeMinutes},
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 		{&Config.Contacts.NewContactCooldownHours, DefaultNewContactCooldownHours},
+		{&Config.Security.ChangeHoldHours, DefaultSecurityChangeHoldHours},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
 		{&Config.Platform.PollIntervalMs, DefaultPlatformPollIntervalMs},
 		{&Config.Platform.StaleAfterSeconds, DefaultPlatformStaleAfterSeconds},
@@ -1253,6 +1264,12 @@ const (
 	// and at most thirty.
 	DefaultNewContactCooldownHours = 72
 	MaxNewContactCooldownHours     = 720
+
+	// DefaultSecurityChangeHoldHours and MaxSecurityChangeHoldHours bound
+	// security.change_hold_hours (#251): a day by default, and at most
+	// thirty.
+	DefaultSecurityChangeHoldHours = 24
+	MaxSecurityChangeHoldHours     = 720
 
 	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
 	// favorites of a user, which are listed in one answer.
