@@ -1,0 +1,19 @@
+{
+  "status": {"error_code": 0, "error_message": null, "credit_count": 1},
+  "data": {
+    "825": {"id": 825, "name": "Tether USDt", "symbol": "USDT", "slug": "tether", "category": "token",
+      "description": "Tether USDt (USDT) is a cryptocurrency with a value meant to mirror the value of the U.S. dollar.",
+      "logo": "https://s2.coinmarketcap.com/static/img/coins/64x64/825.png",
+      "urls": {"website": ["https://tether.to"], "technical_doc": ["https://tether.to/wp-content/uploads/2016/06/TetherWhitePaper.pdf"],
+        "explorer": ["https://etherscan.io/token/0xdac17f958d2ee523a2206206994597c13d831ec7"], "source_code": [], "reddit": [], "twitter": ["https://twitter.com/tether_to"]},
+      "contract_address": [
+        {"contract_address": "0xdac17f958d2ee523a2206206994597c13d831ec7", "platform": {"name": "Ethereum", "coin": {"id": "1027", "name": "Ethereum", "symbol": "ETH", "slug": "ethereum"}}},
+        {"contract_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "platform": {"name": "Tron20", "coin": {"id": "1958", "name": "TRON", "symbol": "TRX", "slug": "tron"}}},
+        {"contract_address": "0x55d398326f99059ff775485246999027b3197955", "platform": {"name": "BNB Smart Chain (BEP20)", "coin": {"id": "1839", "name": "BNB", "symbol": "BNB", "slug": "bnb"}}}
+      ]},
+    "1": {"id": 1, "name": "Bitcoin", "symbol": "BTC", "slug": "bitcoin", "category": "coin",
+      "description": "Bitcoin (BTC) is a cryptocurrency launched in 2010.", "logo": "https://s2.coinmarketcap.com/static/img/coins/64x64/1.png",
+      "urls": {"website": ["https://bitcoin.org/"], "technical_doc": ["https://bitcoin.org/bitcoin.pdf"], "explorer": [], "source_code": ["https://github.com/bitcoin/bitcoin"], "reddit": ["https://reddit.com/r/bitcoin"], "twitter": []},
+      "contract_address": []}
+  }
+}

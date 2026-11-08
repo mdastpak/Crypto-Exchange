@@ -1,0 +1,10 @@
+[
+  {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin", "image": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+   "current_price": 68012.5, "market_cap": 1345000000000, "market_cap_rank": 1,
+   "circulating_supply": 19750000.0, "total_supply": 21000000.0, "max_supply": 21000000.0},
+  {"id": "ethereum", "symbol": "eth", "name": "Ethereum", "image": "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png",
+   "market_cap_rank": 2, "circulating_supply": 120300000.123456789012345678, "total_supply": 120300000.123456789012345678, "max_supply": null},
+  {"id": "tether", "symbol": "usdt", "name": "Tether", "image": "http://insecure.example/tether.png",
+   "market_cap_rank": 3, "circulating_supply": 120000000000, "total_supply": 120000000000, "max_supply": null},
+  {"id": "", "symbol": "bad", "name": "No id"}
+]

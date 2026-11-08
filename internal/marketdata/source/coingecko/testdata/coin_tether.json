@@ -1,0 +1,15 @@
+{
+  "id": "tether", "symbol": "usdt", "name": "Tether", "asset_platform_id": "ethereum",
+  "platforms": {"ethereum": "0xdac17f958d2ee523a2206206994597c13d831ec7", "tron": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "": ""},
+  "description": {"en": "Tether (USDT) is a <a href=\"https://tether.to\">stablecoin</a>.\r\n\r\n<script>alert(1)</script>It is pegged to the &quot;US dollar&quot; &amp; backed.<br>Second line."},
+  "image": {"thumb": "https://coin-images.coingecko.com/coins/images/325/thumb/Tether.png", "large": "https://coin-images.coingecko.com/coins/images/325/large/Tether.png"},
+  "market_cap_rank": 3,
+  "links": {
+    "homepage": ["", "javascript:alert(1)", "https://tether.to/"],
+    "whitepaper": "https://tether.to/en/whitepaper/",
+    "blockchain_site": ["https://etherscan.io/token/0xdac17f958d2ee523a2206206994597c13d831ec7", ""],
+    "subreddit_url": "http://reddit.com/r/tether",
+    "twitter_screen_name": "Tether_to",
+    "repos_url": {"github": [], "bitbucket": []}
+  }
+}

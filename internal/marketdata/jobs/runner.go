@@ -87,6 +87,19 @@ func (r *Run) AddRead(n int) { r.read.Add(int64(n)) }
 // AddWritten counts items that the run wrote, or would write in a dry run.
 func (r *Run) AddWritten(n int) { r.written.Add(int64(n)) }
 
+// Read and Written are the counts of the run.
+func (r *Run) Read() int    { return int(r.read.Load()) }
+func (r *Run) Written() int { return int(r.written.Load()) }
+
+// NewRun returns a run outside a Runner, for the tests of a job: in mode,
+// with a fence that always holds when fence is nil.
+func NewRun(mode string, fence func(ctx context.Context) error) *Run {
+	if fence == nil {
+		fence = func(context.Context) error { return nil }
+	}
+	return &Run{mode: mode, fence: fence}
+}
+
 // Options configure a Runner.
 type Options struct {
 	// Node names the worker in the leases and the run records.

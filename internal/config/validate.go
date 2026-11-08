@@ -506,6 +506,48 @@ func (c *Configuration) marketDataProblems(p *problems) {
 		if s.TimeoutSeconds < 1 || s.TimeoutSeconds > MaxMarketDataSourceTimeoutSeconds {
 			p.add(key+".timeout_seconds", "is %d; it must be from 1 to %d", s.TimeoutSeconds, MaxMarketDataSourceTimeoutSeconds)
 		}
+		// Every CoinMarketCap plan, the free one too, needs a key.
+		if name == "coinmarketcap" && s.Enabled && s.APIKey == "" {
+			p.add(key+".api_key", "is not set; every CoinMarketCap plan needs a key (MARKET_DATA_COINMARKETCAP_API_KEY)")
+		}
+	}
+	c.catalogProblems(p)
+}
+
+// catalogProblems checks market_data.catalog.
+func (c *Configuration) catalogProblems(p *problems) {
+	cat := c.MarketData.Catalog
+	if len(cat.Priority) == 0 {
+		p.add("market_data.catalog.priority", "is empty; it must list %s", strings.Join(CatalogSources, ", "))
+	}
+	seen := map[string]bool{}
+	for _, name := range cat.Priority {
+		switch {
+		case !slices.Contains(CatalogSources, name):
+			p.add("market_data.catalog.priority", "has %q; the catalog sources are %s", name, strings.Join(CatalogSources, ", "))
+		case seen[name]:
+			p.add("market_data.catalog.priority", "has %q twice", name)
+		}
+		seen[name] = true
+	}
+	switch cat.Coverage {
+	case CatalogCoverageList, CatalogCoverageTop, CatalogCoverageAll:
+	default:
+		p.add("market_data.catalog.coverage", "is %q; it must be list, top, or all", cat.Coverage)
+	}
+	for _, r := range []struct {
+		key           string
+		value, lo, hi int
+	}{
+		{"market_data.catalog.top", cat.Top, 1, MaxCatalogTop},
+		{"market_data.catalog.interval_hours", cat.IntervalHours, 1, MaxCatalogIntervalHours},
+		{"market_data.catalog.details_per_run", cat.DetailsPerRun, 1, MaxCatalogDetailsPerRun},
+		{"market_data.catalog.details_max_age_days", cat.DetailsMaxAgeDays, 1, MaxCatalogDays},
+		{"market_data.catalog.deactivate_after_days", cat.DeactivateAfterDays, 1, MaxCatalogDays},
+	} {
+		if r.value < r.lo || r.value > r.hi {
+			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
+		}
 	}
 }
 

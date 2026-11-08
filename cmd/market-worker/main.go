@@ -25,7 +25,12 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/catalog"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/jobs"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/source"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coingecko"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coinmarketcap"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 )
 
@@ -72,7 +77,11 @@ func run() error {
 	cfg := config.Config.MarketData
 	var stopJobs func(ctx context.Context) error
 	if cfg.Enabled {
-		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, jobSpecs()); err != nil {
+		specs, err := jobSpecs(postgres.DB)
+		if err != nil {
+			return fmt.Errorf("invalid market data jobs: %w", err)
+		}
+		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, specs); err != nil {
 			return err
 		}
 		log.Printf("Market worker started in %s mode", cfg.Mode)
@@ -120,9 +129,59 @@ func serve(ctx context.Context, srv *http.Server, p *probes) error {
 	return failure
 }
 
-// jobSpecs are the jobs of the worker. The sources and their jobs come
-// with #265 to #268.
-func jobSpecs() []jobs.Spec { return nil }
+// catalogRunTimeout bounds one run of the catalog sync of a source.
+const catalogRunTimeout = time.Hour
+
+// jobSpecs are the jobs of the worker: those of the sources that this node
+// reaches. Another node may run the jobs of the others.
+func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
+	cfg := config.Config.MarketData
+	store := marketdata.NewStore(conn)
+	var specs []jobs.Spec
+	for _, name := range cfg.Catalog.Priority {
+		if !cfg.Reachable(name) {
+			continue
+		}
+		src, ids, err := catalogSource(conn, name)
+		if err != nil {
+			return nil, err
+		}
+		job, err := catalog.New(src, store, catalog.Options{
+			Priority:        cfg.Catalog.Priority,
+			Coverage:        cfg.Catalog.Coverage,
+			Top:             cfg.Catalog.Top,
+			IDs:             ids,
+			DetailsPerRun:   cfg.Catalog.DetailsPerRun,
+			DetailsMaxAge:   time.Duration(cfg.Catalog.DetailsMaxAgeDays) * 24 * time.Hour,
+			DeactivateAfter: time.Duration(cfg.Catalog.DeactivateAfterDays) * 24 * time.Hour,
+		})
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, jobs.Spec{Job: job, Interval: time.Duration(cfg.Catalog.IntervalHours) * time.Hour, Timeout: catalogRunTimeout})
+	}
+	return specs, nil
+}
+
+// catalogSource returns the named catalog source on its client, and the ids
+// of its "list" coverage.
+func catalogSource(conn *sql.DB, name string) (source.CatalogSource, []string, error) {
+	switch name {
+	case coingecko.Name:
+		client, err := source.ClientFromConfig(conn, name, coingecko.Settings(config.Config.MarketData.Sources[name].BaseURL))
+		if err != nil {
+			return nil, nil, err
+		}
+		return coingecko.New(client), coingecko.DevelopmentIDs, nil
+	case coinmarketcap.Name:
+		client, err := source.ClientFromConfig(conn, name, coinmarketcap.Settings)
+		if err != nil {
+			return nil, nil, err
+		}
+		return coinmarketcap.New(client), coinmarketcap.DevelopmentIDs, nil
+	}
+	return nil, nil, fmt.Errorf("%s is not a catalog source", name)
+}
 
 // startJobs starts the platform watcher, whose lockdown of market_data
 // pauses the jobs on every worker, and the runner of the jobs. It returns
