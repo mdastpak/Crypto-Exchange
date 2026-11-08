@@ -50,7 +50,7 @@ type queryRower interface {
 // to an instant in that same time zone.
 // The contacts come as one JSON object of the primary contact of each type.
 const profileQuery = `SELECT hk, status, role,
-	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary), '{}'),
+	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary AND c.removed_at IS NULL), '{}'),
 	first_name, last_name, display_name, kyc_status, kyc_tier,
 	created_at AT TIME ZONE current_setting('TimeZone')
 	FROM users WHERE hk = $1 AND deleted_at IS NULL`

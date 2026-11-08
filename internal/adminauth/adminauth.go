@@ -341,8 +341,8 @@ func (s *Service) VerifyTOTP(ctx context.Context, adminID, code string) error {
 // verifies the address that the operator entered.
 func (s *Service) ConfirmEmail(ctx context.Context, adminID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE user_contacts SET verified_at = NOW(), updated_at = NOW()
-		 WHERE user_hk = $1 AND type = 'email' AND verified_at IS NULL`,
+		`UPDATE user_contacts c SET verified_at = NOW(), updated_at = NOW()
+		 WHERE user_hk = $1 AND type = 'email' AND verified_at IS NULL AND c.removed_at IS NULL`,
 		adminID,
 	)
 	if err != nil {

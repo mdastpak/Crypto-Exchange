@@ -512,3 +512,30 @@ func TestDelisting_CancelsAndStepsOnManyInstancesDoNotDeadlock(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestOverride_AClearedOverrideIsGone: an override marked cleared (#248),
+// as the next release clears one, no longer applies, and setting it again
+// takes the same row back.
+func TestOverride_AClearedOverrideIsGone(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	hk := insertCurrency(t, db, "CLR", "approved")
+	refused := false
+	_, _, err := delisting.Override(ctx, db, hk, currencies.CapabilityDeposit, &refused, "incident", origin())
+	require.NoError(t, err)
+	var refusal *currencies.Refusal
+	require.ErrorAs(t, currencies.Check(ctx, db, hk, currencies.CapabilityDeposit, false), &refusal)
+
+	_, err = db.Exec(`UPDATE currency_capability_overrides SET cleared_at = NOW(), cleared_by = $2
+		WHERE currency_hk = $1 AND capability = 'deposit'`, hk, uuid.NewString())
+	require.NoError(t, err)
+	assert.NoError(t, currencies.Check(ctx, db, hk, currencies.CapabilityDeposit, false), "a cleared override does not apply")
+	l, _, err := delisting.Override(ctx, db, hk, currencies.CapabilityDeposit, nil, "", origin())
+	require.NoError(t, err)
+	assert.True(t, l.Capabilities.Deposit)
+
+	_, _, err = delisting.Override(ctx, db, hk, currencies.CapabilityDeposit, &refused, "again", origin())
+	require.NoError(t, err)
+	require.ErrorAs(t, currencies.Check(ctx, db, hk, currencies.CapabilityDeposit, false), &refusal, "set again, it applies")
+	assert.Equal(t, 1, count(t, db, `SELECT count(*) FROM currency_capability_overrides
+		WHERE currency_hk = $1 AND capability = 'deposit' AND cleared_at IS NULL AND cleared_by IS NULL`, hk))
+}

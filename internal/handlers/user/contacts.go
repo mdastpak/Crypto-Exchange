@@ -171,8 +171,8 @@ type storedContact struct {
 func verifiedContacts(ctx context.Context, q interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 }, userHK string) ([]storedContact, error) {
-	rows, err := q.QueryContext(ctx, `SELECT type::text, value, verified_at FROM user_contacts
-		WHERE user_hk = $1 AND is_primary AND verified_at IS NOT NULL AND type IN ('email', 'mobile')
+	rows, err := q.QueryContext(ctx, `SELECT type::text, value, verified_at FROM user_contacts c
+		WHERE user_hk = $1 AND is_primary AND verified_at IS NOT NULL AND type IN ('email', 'mobile') AND c.removed_at IS NULL
 		ORDER BY type`, userHK)
 	if err != nil {
 		return nil, err
@@ -662,14 +662,16 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 		err = db.InsertContact(ctx, tx, ch.UserID, plan.typ, plan.value, true)
 		e.Changes = &audit.Changes{After: map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)}}
 	case contactReplace:
-		_, err = tx.ExecContext(ctx, `UPDATE user_contacts SET value = $3, verified_at = NOW(), updated_at = NOW()
-			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary`, ch.UserID, plan.typ, plan.value)
+		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET value = $3, verified_at = NOW(), updated_at = NOW()
+			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, plan.value)
 		e.Changes = &audit.Changes{
 			Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)},
 			After:  map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)},
 		}
 	case contactRemove:
-		_, err = tx.ExecContext(ctx, `DELETE FROM user_contacts WHERE user_hk = $1 AND type = $2::contact_type AND is_primary`,
+		// The instances of the release before #248 do not know removed_at,
+		// so this release still deletes; the next one marks the row.
+		_, err = tx.ExecContext(ctx, `DELETE FROM user_contacts c WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`,
 			ch.UserID, plan.typ)
 		e.Changes = &audit.Changes{Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)}}
 	}

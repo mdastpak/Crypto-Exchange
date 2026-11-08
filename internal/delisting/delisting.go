@@ -456,18 +456,20 @@ func Override(ctx context.Context, db *sql.DB, currencyHK string, k currencies.C
 		return nil, Change{}, err
 	}
 	var before sql.NullBool
-	err = tx.QueryRowContext(ctx, `SELECT allowed FROM currency_capability_overrides WHERE currency_hk = $1 AND capability = $2`,
+	err = tx.QueryRowContext(ctx, `SELECT allowed FROM currency_capability_overrides WHERE currency_hk = $1 AND capability = $2 AND cleared_at IS NULL`,
 		currencyHK, k).Scan(&before)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, Change{}, fmt.Errorf("failed to read the override: %w", err)
 	}
 	if allowed == nil {
+		// The instances of the release before #248 do not know cleared_at,
+		// so this release still deletes; the next one marks the row.
 		_, err = tx.ExecContext(ctx, `DELETE FROM currency_capability_overrides WHERE currency_hk = $1 AND capability = $2`, currencyHK, k)
 	} else {
 		_, err = tx.ExecContext(ctx, `INSERT INTO currency_capability_overrides (currency_hk, capability, allowed, note, created_by)
 			VALUES ($1, $2, $3, NULLIF($4, ''), $5)
 			ON CONFLICT (currency_hk, capability) DO UPDATE SET allowed = EXCLUDED.allowed, note = EXCLUDED.note,
-				created_by = EXCLUDED.created_by, created_at = NOW()`, currencyHK, k, *allowed, note, origin.ActorID)
+				created_by = EXCLUDED.created_by, created_at = NOW(), cleared_at = NULL, cleared_by = NULL`, currencyHK, k, *allowed, note, origin.ActorID)
 	}
 	if err != nil {
 		return nil, Change{}, fmt.Errorf("failed to change the override: %w", err)

@@ -150,13 +150,13 @@ func Listed(c models.Currency) bool {
 // the lifecycle with its overrides and next step, and the previous symbols.
 const DetailColumns = `c.lifecycle,
 	COALESCE((SELECT json_object_agg(o.capability, o.allowed) FROM currency_capability_overrides o
-		WHERE o.currency_hk = c.hk), '{}'::json),
+		WHERE o.currency_hk = c.hk AND o.cleared_at IS NULL), '{}'::json),
 	(SELECT json_build_object('state', s.state, 'at', s.scheduled_at)
 		FROM currency_delisting_steps s JOIN currency_delistings d ON d.hk = s.delisting_hk
 		WHERE d.currency_hk = c.hk AND d.status = 'scheduled' AND s.applied_at IS NULL
 		ORDER BY s.scheduled_at LIMIT 1),
 	COALESCE((SELECT string_agg(p.symbol, ',' ORDER BY p.created_at DESC, p.symbol) FROM currency_symbols p
-		WHERE p.currency_hk = c.hk AND NOT p.current), ''),
+		WHERE p.currency_hk = c.hk AND NOT p.current AND p.released_at IS NULL), ''),
 	(SELECT json_build_object('id', m.hk, 'target_hk', m.target_hk, 'phase', m.phase, 'forced', m.forced,
 			'ratio', trim_scale(src.ratio)::TEXT,
 			'next', (SELECT json_build_object('phase', ph.phase, 'at', ph.scheduled_at) FROM currency_migration_phases ph
