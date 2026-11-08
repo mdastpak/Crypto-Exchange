@@ -324,6 +324,19 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | --- | --- | --- |
 | `max_per_user` | `100` | From 1 to 1000. The most favorite currencies and pairs that one user may have, together. An add past it is refused with `409 favorites_limit_reached`; see [Favorites](api.md#favorites). |
 
+### `geoip`
+
+The country of each client ([#284](https://github.com/mdastpak/Crypto-Exchange/issues/284)), for the site of their country ([#285](https://github.com/mdastpak/Crypto-Exchange/issues/285)). [`docs/geoip.md`](geoip.md) describes the sources, how to get and update a database, and the licences. Off by default: then no request has a country.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Finds the country of clients. Needs `header`, `database_path`, or both. |
+| `header` | empty | The request header in which a CDN or load balancer in front of the server sends the country, such as `CF-IPCountry` (Cloudflare) or `CloudFront-Viewer-Country`. It is trusted only when the request comes from one of `server.trusted_proxies`, so it needs them; from anyone else it is ignored. It comes before the database. |
+| `database_path` | empty | A MaxMind-format country or city database (`.mmdb`), such as GeoLite2-Country, GeoIP2-Country, or DB-IP Lite Country. It is read into memory at start; in release mode a file that does not load stops the server, otherwise the server starts without it. |
+| `reload_interval_seconds` | `300` | From 10 to 86400. How often each instance checks the file and loads a new version without a restart. A new file that does not load keeps the loaded one. |
+| `max_age_days` | `45` | From 1 to 365. The age of the database, by its build date, after which `/system/ready` reports `geoip` as failing and the status `degraded`. The instance stays ready. |
+| `overrides` | `{}` | Addresses or networks mapped to countries, such as `{"192.168.0.0/16": "IR"}`, to try the flow locally. They come before the other sources. Release mode refuses them. |
+
 ### `i18n`
 
 The languages of the product ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)); [`docs/i18n.md`](i18n.md) describes how the locale of a request is chosen and how frontends lay out right-to-left languages.
@@ -597,6 +610,11 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `MARKET_DATA_PROXY_URL` | `market_data.egress.proxy_url` |
 | `MARKET_DATA_COINGECKO_API_KEY` | `market_data.sources.coingecko.api_key` |
 | `MARKET_DATA_COINMARKETCAP_API_KEY` | `market_data.sources.coinmarketcap.api_key` |
+| `GEOIP_ENABLED` | `geoip.enabled` |
+| `GEOIP_HEADER` | `geoip.header` |
+| `GEOIP_DATABASE_PATH` | `geoip.database_path` |
+| `GEOIP_RELOAD_INTERVAL_SECONDS` | `geoip.reload_interval_seconds` |
+| `GEOIP_MAX_AGE_DAYS` | `geoip.max_age_days` |
 | `I18N_DEFAULT_LOCALE` | `i18n.default_locale` |
 | `I18N_LOCALES` | `i18n.locales`, as a comma-separated list |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |

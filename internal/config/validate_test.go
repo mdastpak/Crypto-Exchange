@@ -90,6 +90,10 @@ func TestValidateServer_Rules(t *testing.T) {
 		"locales without English":   {func(c *Configuration) { c.I18n.Locales = []string{"fa"} }, `i18n.locales (I18N_LOCALES) and i18n.default_locale (I18N_DEFAULT_LOCALE) are not valid: the locales must include "en"`},
 		"default locale not listed": {func(c *Configuration) { c.I18n.DefaultLocale = "ar" }, `default locale "ar" is not one of the locales (en, fa)`},
 		"locale not a tag":          {func(c *Configuration) { c.I18n.Locales = []string{"en", "not a tag"} }, "not a BCP 47 language tag"},
+		"GeoIP without a source":    {func(c *Configuration) { c.GeoIP.Enabled = true }, "geoip.enabled (GEOIP_ENABLED) is true, but neither geoip.header (GEOIP_HEADER) nor geoip.database_path (GEOIP_DATABASE_PATH) is set"},
+		"GeoIP reload too often":    {func(c *Configuration) { c.GeoIP.ReloadIntervalSeconds = 1 }, "geoip.reload_interval_seconds (GEOIP_RELOAD_INTERVAL_SECONDS) is 1; it must be from 10 to 86400"},
+		"GeoIP max age too long":    {func(c *Configuration) { c.GeoIP.MaxAgeDays = 400 }, "geoip.max_age_days (GEOIP_MAX_AGE_DAYS) is 400; it must be from 1 to 365"},
+		"GeoIP overrides released":  {func(c *Configuration) { c.GeoIP.Overrides = map[string]string{"10.0.0.0/8": "IR"} }, "geoip.overrides is set; it fixes the country of addresses for local tests, and release mode refuses it"},
 		"RabbitMQ half a client pair": {func(c *Configuration) {
 			c.RabbitMQ.TLS.Enabled, c.RabbitMQ.TLS.CertFile = true, "/run/secrets/client.pem"
 		}, "rabbitmq.tls cannot be used: cert_file and key_file must be set together"},
@@ -512,4 +516,18 @@ func TestLocales_DefaultsAndEnvironment(t *testing.T) {
 	assert.Equal(t, []string{"en", "ar"}, r.Codes())
 	assert.Equal(t, "ar", r.Default().Code)
 	assert.Equal(t, "rtl", r.Default().Dir)
+}
+
+func TestValidateServer_GeoIPOverridesOutsideRelease(t *testing.T) {
+	c := secureRelease(t)
+	c.Server.Mode = "debug"
+	c.GeoIP.Enabled = true
+	c.GeoIP.Overrides = map[string]string{"192.168.0.0/16": "IR"}
+	assert.Empty(t, problemsOf(c), "overrides alone are a source, outside release mode")
+	c.GeoIP.Overrides = map[string]string{"192.168.0.0/16": "Iran"}
+	assert.Contains(t, strings.Join(problemsOf(c), "\n"), "geoip.overrides is not valid")
+	c.GeoIP.Overrides, c.GeoIP.Header, c.Server.TLS.BehindProxy, c.Server.TrustedProxies = nil, "CF-IPCountry", false, nil
+	assert.Equal(t, []string{"geoip.header (GEOIP_HEADER) is set, but server.trusted_proxies (SERVER_TRUSTED_PROXIES) is empty; the header is only trusted from the proxies that set it"}, problemsOf(c))
+	assert.Equal(t, DefaultGeoIPReloadIntervalSeconds, c.GeoIP.ReloadIntervalSeconds)
+	assert.Equal(t, DefaultGeoIPMaxAgeDays, c.GeoIP.MaxAgeDays)
 }

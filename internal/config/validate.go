@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 )
 
 // problems collects what is wrong with a configuration, so that the server
@@ -222,6 +224,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)
 	}
 	c.i18nProblems(p)
+	c.geoIPProblems(p)
 	c.marketDataProblems(p)
 	if v := c.Delisting.IntervalSeconds; v < 1 || v > MaxDelistingIntervalSeconds {
 		p.add("delisting.interval_seconds", "is %d; it must be from 1 to %d", v, MaxDelistingIntervalSeconds)
@@ -289,6 +292,9 @@ var postgresTLSModes = []string{"require", "verify-ca", "verify-full"}
 // releaseProblems refuses settings that are acceptable for development but
 // not in production.
 func (c *Configuration) releaseProblems(p *problems) {
+	if len(c.GeoIP.Overrides) > 0 {
+		p.add("geoip.overrides", "is set; it fixes the country of addresses for local tests, and release mode refuses it")
+	}
 	if c.Identity.MobileOwnership.Provider == MobileOwnershipStub {
 		p.add("identity.mobile_ownership.provider", "is \"stub\", which matches every mobile number; release mode needs a real provider, or none")
 	}
@@ -697,5 +703,26 @@ func (c *Configuration) marketDataAPIProblems(p *problems) {
 func (c *Configuration) i18nProblems(p *problems) {
 	if _, err := c.Locales(); err != nil {
 		p.add("i18n.locales", "and i18n.default_locale (%s) are not valid: %v", envVarFor("i18n.default_locale"), err)
+	}
+}
+
+// geoIPProblems checks the geoip section (#284). The database file itself
+// is read at start, where a missing one stops a release.
+func (c *Configuration) geoIPProblems(p *problems) {
+	g := c.GeoIP
+	if g.Enabled && strings.TrimSpace(g.Header) == "" && strings.TrimSpace(g.DatabasePath) == "" && len(g.Overrides) == 0 {
+		p.add("geoip.enabled", "is true, but neither geoip.header (%s) nor geoip.database_path (%s) is set", envVarFor("geoip.header"), envVarFor("geoip.database_path"))
+	}
+	if g.Enabled && strings.TrimSpace(g.Header) != "" && len(c.Server.TrustedProxies) == 0 {
+		p.add("geoip.header", "is set, but server.trusted_proxies (%s) is empty; the header is only trusted from the proxies that set it", envVarFor("server.trusted_proxies"))
+	}
+	if v := g.ReloadIntervalSeconds; v < MinGeoIPReloadIntervalSeconds || v > MaxGeoIPReloadIntervalSeconds {
+		p.add("geoip.reload_interval_seconds", "is %d; it must be from %d to %d", v, MinGeoIPReloadIntervalSeconds, MaxGeoIPReloadIntervalSeconds)
+	}
+	if v := g.MaxAgeDays; v < 1 || v > MaxGeoIPMaxAgeDays {
+		p.add("geoip.max_age_days", "is %d; it must be from 1 to %d", v, MaxGeoIPMaxAgeDays)
+	}
+	if _, err := geoip.New(geoip.Options{Overrides: g.Overrides}); err != nil {
+		p.add("geoip.overrides", "is not valid: %v", err)
 	}
 }

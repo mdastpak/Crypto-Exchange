@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 )
@@ -14,6 +15,10 @@ type SystemHandler struct {
 	Postgres        *db.PostgresService
 	Redis           *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
+	// GeoIP is checked when it is set (#284): a database that is missing,
+	// failed to reload, or is stale makes the instance degraded, never
+	// unready, since it only makes the suggested site worse.
+	GeoIP *geoip.Resolver
 
 	// checks replaces the dependency checks in tests.
 	checks []dependency

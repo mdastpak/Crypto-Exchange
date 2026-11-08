@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -171,4 +174,29 @@ func TestReadiness_AnswersDrainingDuringShutdown(t *testing.T) {
 	}
 	code, _ = get("/live")
 	assert.Equal(t, http.StatusOK, code, "the process is still alive")
+}
+
+// TestDependencies_GeoIPIsOptional checks that a GeoIP database that is not
+// loaded, or stale, makes the instance degraded but keeps it ready (#284),
+// and that an instance without GeoIP does not report it.
+func TestDependencies_GeoIPIsOptional(t *testing.T) {
+	assert.Len(t, (&SystemHandler{}).dependencies(), 3)
+
+	resolver, err := geoip.New(geoip.Options{DatabasePath: filepath.Join(t.TempDir(), "missing.mmdb")})
+	require.NoError(t, err)
+	require.Error(t, resolver.Load())
+	deps := (&SystemHandler{GeoIP: resolver}).dependencies()
+	require.Len(t, deps, 4)
+	geo := deps[3]
+	assert.Equal(t, "geoip", geo.name)
+	assert.True(t, geo.optional)
+	assert.Error(t, geo.check(context.Background()))
+
+	h := &SystemHandler{checks: []dependency{
+		{"postgres", func(context.Context) error { return nil }, false},
+		geo,
+	}}
+	w := get(h, "/system/ready")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "degraded", healthOf(t, w).Status)
 }

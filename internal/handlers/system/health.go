@@ -44,7 +44,7 @@ func (h *SystemHandler) dependencies() []dependency {
 	if h.checks != nil {
 		return h.checks
 	}
-	return []dependency{
+	deps := []dependency{
 		{"postgres", func(ctx context.Context) error {
 			if h.Postgres == nil {
 				return errUnavailable
@@ -64,6 +64,12 @@ func (h *SystemHandler) dependencies() []dependency {
 			return nil
 		}, true},
 	}
+	if h.GeoIP != nil {
+		deps = append(deps, dependency{"geoip", func(context.Context) error {
+			return h.GeoIP.Check(time.Now())
+		}, true})
+	}
+	return deps
 }
 
 // LivenessHandler reports that the process serves requests. It checks no
