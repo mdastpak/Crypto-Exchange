@@ -35,6 +35,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | WebSocket gateway | Partial | Ping and pong, token authentication with reauth, connections closed when their session ends, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
 | Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
 | Backups and disaster recovery | Partial | The checks, the monthly restore drill, and the runbook are in the repository ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)); WAL archiving and base backups are set up per environment with the backup tool, as [docs/disaster-recovery.md](docs/disaster-recovery.md) describes. |
+| Global market data catalog | Foundation | `cmd/market-worker` and the `market_` tables of unverified assets, global and Iranian exchanges, pairs, and tickers; the jobs and sources follow in [#262](https://github.com/mdastpak/Crypto-Exchange/issues/262). See [docs/market-data.md](docs/market-data.md). |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL or Redis is unavailable, and `200` with the status `degraded` while RabbitMQ is ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33), [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
@@ -285,6 +286,7 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 ```text
 cmd/admin/              Operator command: administrators, data keys, outbox dead letters,
                         platform controls, backup and restore checks
+cmd/market-worker/      Worker of the global market data catalog (docs/market-data.md)
 cmd/server/             Application entry point, routing, and lifecycle
 config/                 Configuration files: the example and Compose configurations,
                         the local config.yaml (ignored), and the asset registry and
@@ -312,6 +314,7 @@ internal/helpers/       Response helpers
 internal/identity/      Identity checks with a KYC provider: mobile ownership against the
                         national ID (Jibit client and a stub), sealed national IDs
 internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit
+internal/marketdata/    Global market data catalog: unverified assets, venues, pairs, tickers
 internal/middleware/    Security headers, CORS, rate limiting, validation, recovery
 internal/models/        API models for currencies and users
 internal/notify/        Delivery of sign-in codes by email and SMS through RabbitMQ

@@ -330,6 +330,16 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | --- | --- | --- |
 | `interval_seconds` | `30` | From 1 to 3600. How often the scheduler of each instance applies the steps of [delistings](api.md#delistings) and the phases of [currency migrations](api.md#currency-migrations) that are due, so a step applies at most this late. Every instance runs it; each step is applied once. |
 
+### `market_data`
+
+[`cmd/market-worker`](market-data.md), which collects the global market data catalog ([#262](https://github.com/mdastpak/Crypto-Exchange/issues/262)). The server does not read this section.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Runs the jobs of the worker. A worker that is not enabled only answers its health probes, so that it can be deployed before it is switched on. |
+| `mode` | `dry_run` | `dry_run` or `live`. In `dry_run`, the jobs collect and check what they would write, and record only their runs; in `live`, they write. Try a new source or job in `dry_run` first. |
+| `health_addr` | `:8081` | The address of the worker's `/system/live` and `/system/ready`. |
+
 ### `platform`
 
 The [maintenance and lockdown controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). The controls themselves are in the database, created through the admin API or `cmd/admin platform`; these settings say how each instance applies them.
@@ -525,6 +535,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `IDENTITY_MOBILE_OWNERSHIP_TIMEOUT_SECONDS` | `identity.mobile_ownership.timeout_seconds` |
 | `IDENTITY_MOBILE_OWNERSHIP_RECHECK_DAYS` | `identity.mobile_ownership.recheck_days` |
 | `FAVORITES_MAX_PER_USER` | `favorites.max_per_user` |
+| `MARKET_DATA_ENABLED` | `market_data.enabled` |
+| `MARKET_DATA_MODE` | `market_data.mode` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |
 | `PLATFORM_STALE_AFTER_SECONDS` | `platform.stale_after_seconds` |
