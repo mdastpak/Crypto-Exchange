@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -178,4 +179,64 @@ func TestSendResponse_AnswersAnUnavailableDependencyWith503(t *testing.T) {
 
 	_, ok := dberr.UnavailableOf(context.Background())
 	assert.False(t, ok, "an untracked request has no note")
+}
+
+// TestSendResponse_TranslatesIntoTheLocaleOfTheRequest checks the
+// translation of the envelope (#283): the message by its text, a varying
+// message by its specific code but never by the code of a status, and the
+// headers that tell caches and clients which language they got.
+func TestSendResponse_TranslatesIntoTheLocaleOfTheRequest(t *testing.T) {
+	registry := i18n.MustNew("en", "en", "fa")
+	send := func(lang string, fn func(c *gin.Context)) *httptest.ResponseRecorder {
+		engine := gin.New()
+		engine.Use(i18n.Middleware(registry))
+		engine.GET("/", fn)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/?lang="+lang, nil))
+		return w
+	}
+	message := func(w *httptest.ResponseRecorder) models.APIResponse {
+		var body models.APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		return body
+	}
+
+	w := send("fa", func(c *gin.Context) { SendResponse(c, http.StatusBadRequest, "Invalid request body", nil) })
+	body := message(w)
+	assert.Equal(t, "بدنه درخواست نامعتبر است.", body.Message)
+	assert.Equal(t, "invalid_request", body.Code, "the code never changes")
+	assert.Equal(t, "fa", w.Header().Get("Content-Language"))
+	assert.Contains(t, w.Header().Values("Vary"), i18n.VaryHeaders)
+
+	w = send("fa", func(c *gin.Context) {
+		SendError(c, http.StatusForbidden, "account_frozen", "A message that varies: 42", nil)
+	})
+	assert.Equal(t, "این حساب مسدود شده است. لطفاً با پشتیبانی تماس بگیرید.", message(w).Message)
+
+	// The code of a status translates nothing: the English stays, and the
+	// answer says it is English.
+	w = send("fa", func(c *gin.Context) { SendResponse(c, http.StatusNotFound, "Currency BTC not found", nil) })
+	assert.Equal(t, "Currency BTC not found", message(w).Message)
+	assert.Equal(t, "en", w.Header().Get("Content-Language"))
+	assert.Contains(t, w.Header().Values("Vary"), i18n.VaryHeaders, "an error answer varies with the locale")
+
+	// A success that has a translation is translated; one in English that
+	// has none does not vary, so caches may share it.
+	w = send("fa", func(c *gin.Context) { SendResponse(c, http.StatusOK, "Profile retrieved successfully.", nil) })
+	assert.Equal(t, "پروفایل دریافت شد.", message(w).Message)
+	w = send("fa", func(c *gin.Context) { SendResponse(c, http.StatusOK, "OK", nil) })
+	assert.Equal(t, "en", w.Header().Get("Content-Language"))
+	assert.Empty(t, w.Header().Values("Vary"))
+
+	w = send("en", func(c *gin.Context) { SendResponse(c, http.StatusBadRequest, "Invalid request body", nil) })
+	assert.Equal(t, "Invalid request body", message(w).Message)
+	assert.Equal(t, "en", w.Header().Get("Content-Language"))
+}
+
+// TestSendResponse_WithoutTheMiddlewareStaysEnglish keeps the envelope of
+// the routes and tests that run without the locale middleware unchanged.
+func TestSendResponse_WithoutTheMiddlewareStaysEnglish(t *testing.T) {
+	w, _ := performSendResponse(http.StatusBadRequest, "Invalid request body", nil)
+	assert.Contains(t, w.Body.String(), "Invalid request body")
+	assert.Empty(t, w.Header().Get("Content-Language"))
 }

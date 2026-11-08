@@ -324,6 +324,15 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | --- | --- | --- |
 | `max_per_user` | `100` | From 1 to 1000. The most favorite currencies and pairs that one user may have, together. An add past it is refused with `409 favorites_limit_reached`; see [Favorites](api.md#favorites). |
 
+### `i18n`
+
+The languages of the product ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)); [`docs/i18n.md`](i18n.md) describes how the locale of a request is chosen and how frontends lay out right-to-left languages.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `locales` | `[en, fa]` | The supported locales, as BCP 47 tags such as `fa` or `en-GB`, in the order a language switcher lists them. Each is listed once, and `en` is required: it is the language of every message that has no translation. The names and the direction (RTL or LTR) of each come from its language, so `fa`, `ar`, `he`, `ur`, and `ckb` are RTL. A locale without a catalog in `internal/i18n/catalogs` is offered, but the API's messages stay in English for it. A release outside Iran may list only the languages of its markets. |
+| `default_locale` | `en` | One of `locales`. The locale of a request that names no supported locale, in its query, headers, or cookie. |
+
 ### `delisting`
 
 | Key | Default | Description |
@@ -575,6 +584,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `MARKET_DATA_PROXY_URL` | `market_data.egress.proxy_url` |
 | `MARKET_DATA_COINGECKO_API_KEY` | `market_data.sources.coingecko.api_key` |
 | `MARKET_DATA_COINMARKETCAP_API_KEY` | `market_data.sources.coinmarketcap.api_key` |
+| `I18N_DEFAULT_LOCALE` | `i18n.default_locale` |
+| `I18N_LOCALES` | `i18n.locales`, as a comma-separated list |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |
 | `PLATFORM_STALE_AFTER_SECONDS` | `platform.stale_after_seconds` |

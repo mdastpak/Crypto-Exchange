@@ -234,6 +234,8 @@ var envVars = []EnvVar{
 	stringVar("MARKET_DATA_PROXY_URL", "market_data.egress.proxy_url", func(c *Configuration) *string { return &c.MarketData.Egress.ProxyURL }),
 	sourceKeyVar("MARKET_DATA_COINGECKO_API_KEY", "coingecko"),
 	sourceKeyVar("MARKET_DATA_COINMARKETCAP_API_KEY", "coinmarketcap"),
+	stringVar("I18N_DEFAULT_LOCALE", "i18n.default_locale", func(c *Configuration) *string { return &c.I18n.DefaultLocale }),
+	listVar("I18N_LOCALES", "i18n.locales", func(c *Configuration) *[]string { return &c.I18n.Locales }),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
 	intVar("PLATFORM_POLL_INTERVAL_MS", "platform.poll_interval_ms", func(c *Configuration) *int { return &c.Platform.PollIntervalMs }),
 	intVar("PLATFORM_STALE_AFTER_SECONDS", "platform.stale_after_seconds", func(c *Configuration) *int { return &c.Platform.StaleAfterSeconds }),

@@ -96,7 +96,7 @@ func NewCORSMiddleware(allowedOrigins []string) (gin.HandlerFunc, error) {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Requested-With")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Requested-With, X-Locale")
 			c.Header("Access-Control-Max-Age", "86400")
 			c.Header("Access-Control-Expose-Headers", exposedHeaders)
 		}

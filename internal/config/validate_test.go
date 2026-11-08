@@ -79,14 +79,17 @@ func TestValidateServer_Rules(t *testing.T) {
 		"migration password in server": {func(c *Configuration) {
 			c.Postgres.Migrations.User, c.Postgres.Migrations.Password = "exchange_owner", "secret"
 		}, "postgres.migrations.password (POSTGRES_MIGRATIONS_PASSWORD) is set; in release mode only the release step"},
-		"no Redis password":       {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
-		"RabbitMQ guest user":     {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
-		"RabbitMQ guest password": {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
-		"Redis without TLS":       {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
-		"RabbitMQ without TLS":    {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
-		"Redis CA file missing":   {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
-		"IPv6 prefix too short":   {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
-		"IPv6 prefix too long":    {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
+		"no Redis password":         {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
+		"RabbitMQ guest user":       {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
+		"RabbitMQ guest password":   {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
+		"Redis without TLS":         {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
+		"RabbitMQ without TLS":      {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
+		"Redis CA file missing":     {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
+		"IPv6 prefix too short":     {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
+		"IPv6 prefix too long":      {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
+		"locales without English":   {func(c *Configuration) { c.I18n.Locales = []string{"fa"} }, `i18n.locales (I18N_LOCALES) and i18n.default_locale (I18N_DEFAULT_LOCALE) are not valid: the locales must include "en"`},
+		"default locale not listed": {func(c *Configuration) { c.I18n.DefaultLocale = "ar" }, `default locale "ar" is not one of the locales (en, fa)`},
+		"locale not a tag":          {func(c *Configuration) { c.I18n.Locales = []string{"en", "not a tag"} }, "not a BCP 47 language tag"},
 		"RabbitMQ half a client pair": {func(c *Configuration) {
 			c.RabbitMQ.TLS.Enabled, c.RabbitMQ.TLS.CertFile = true, "/run/secrets/client.pem"
 		}, "rabbitmq.tls cannot be used: cert_file and key_file must be set together"},
@@ -436,4 +439,24 @@ func TestSourceKeyVar_AddsTheKeyWithoutEnablingTheSource(t *testing.T) {
 	require.NoError(t, v.set(&c, "cg-key"))
 	assert.Equal(t, "cg-key", c.MarketData.Sources["coingecko"].APIKey)
 	assert.False(t, c.MarketData.Sources["coingecko"].Enabled)
+}
+
+func TestLocales_DefaultsAndEnvironment(t *testing.T) {
+	c := secureRelease(t)
+	assert.Equal(t, "en", c.I18n.DefaultLocale)
+	assert.Equal(t, []string{"en", "fa"}, c.I18n.Locales)
+
+	// A configuration built without defaults, as tests build them.
+	r, err := (&Configuration{}).Locales()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"en", "fa"}, r.Codes())
+
+	require.NoError(t, overlayEnv(&c, func(name string) string {
+		return map[string]string{"I18N_LOCALES": "en, ar", "I18N_DEFAULT_LOCALE": "ar"}[name]
+	}))
+	r, err = c.Locales()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"en", "ar"}, r.Codes())
+	assert.Equal(t, "ar", r.Default().Code)
+	assert.Equal(t, "rtl", r.Default().Dir)
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
@@ -65,6 +66,9 @@ type InfraHandlers struct {
 	// Platform refuses the requests that a maintenance or a lockdown closes
 	// (#235). Without a watcher, it lets every request through.
 	Platform *platform.Gate
+	// Locales are the supported locales (#283). RouteHandler fills it from
+	// the configuration when it is nil.
+	Locales *i18n.Registry
 }
 
 var (
@@ -859,6 +863,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	publicGroup := g.Group("/public")
 	{
 		publicGroup.GET("/status", ih.Public.PlatformStatus)
+		publicGroup.GET("/locales", public.Locales(ih.Locales))
 		publicGroup.GET("/currencies", service, ih.Public.GetActiveCurrencies)
 		publicGroup.GET("/currencies/:hk", service, ih.Public.GetCurrencyByHK)
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
@@ -965,8 +970,19 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
 	}
 
+	if ih.Locales == nil {
+		locales, err := config.Config.Locales()
+		if err != nil {
+			return fmt.Errorf("invalid i18n settings: %w", err)
+		}
+		ih.Locales = locales
+	}
+
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.RequestID())
+	// Every answer after this point, refusals of the limits included, is
+	// in the visitor's language where it has a translation (#283).
+	r.Use(i18n.Middleware(ih.Locales))
 	security := middleware.SecurityOptions{
 		HSTS:                  config.Config.HSTSEnabled(),
 		HSTSMaxAge:            config.Config.Server.HSTS.MaxAgeSeconds,

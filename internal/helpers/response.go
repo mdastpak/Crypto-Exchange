@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +74,10 @@ func send(c *gin.Context, status int, code, message string, info interface{}) {
 			c.Header("Retry-After", strconv.Itoa(dberr.RetryAfterSeconds))
 		}
 	}
+	// Only a code that a caller chose names one kind of error; the code of
+	// a status covers messages of different meanings, so it translates
+	// none (#283).
+	message = localize(c, status, code, message)
 	response := models.APIResponse{Status: status, Message: message, Info: info}
 	if status >= http.StatusBadRequest {
 		if code == "" {
@@ -87,4 +92,27 @@ func send(c *gin.Context, status int, code, message string, info interface{}) {
 	if status >= http.StatusBadRequest {
 		c.Abort()
 	}
+}
+
+// localize returns message in the locale of the request (#283) and sets
+// Content-Language to the language that the message is in. A message
+// without a translation stays in English, and says so. An error answer
+// varies with the headers that the locale is negotiated from, so that a
+// cache does not serve one visitor's language to another; a translated
+// answer of any status does too.
+func localize(c *gin.Context, status int, code, message string) string {
+	n, ok := i18n.FromGin(c)
+	if !ok {
+		return message
+	}
+	translated, ok := n.Translate(code, message)
+	language := i18n.English
+	if ok {
+		message, language = translated, n.Locale.Code
+	}
+	c.Header("Content-Language", language)
+	if ok || status >= http.StatusBadRequest {
+		c.Writer.Header().Add("Vary", i18n.VaryHeaders)
+	}
+	return message
 }

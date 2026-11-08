@@ -349,6 +349,12 @@ websocket:
   max_connections_per_user: 10     # Per signed-in user, over all instances
   session_check_seconds: 60        # How often ended sessions are disconnected
 
+# The languages of the product (#283). Direction (RTL/LTR) and names come
+# from each language; see docs/i18n.md.
+i18n:
+  locales: [en, fa]                # BCP 47 tags; en is required
+  default_locale: en               # For a request that names no supported locale
+
 # Maintenance and lockdown controls (#235). The controls are created with the
 # admin API or cmd/admin; these settings say how each instance applies them.
 platform:
