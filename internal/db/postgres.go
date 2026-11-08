@@ -53,20 +53,11 @@ func withMigrationLock(ctx context.Context, db *sql.DB, fn func() error) error {
 }
 
 func NewPostgresService() (*PostgresService, error) {
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		config.Config.Postgres.Host, config.Config.Postgres.Port,
-		config.Config.Postgres.User, config.Config.Postgres.Password,
-		config.Config.Postgres.DBName, config.Config.Postgres.SSLMode)
-
-	db, err := sql.Open("pgx", connStr)
+	service, err := ConnectPostgres()
 	if err != nil {
-		return nil, fmt.Errorf("error opening PostgreSQL database: %w", err)
+		return nil, err
 	}
-
-	if err := pingWithRetry(db, config.Config.Postgres.ConnectRetries, time.Duration(config.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("error connecting to PostgreSQL database: %w", err)
-	}
+	db := service.DB
 
 	// Serialize migrations via a Postgres advisory lock, so that replicas of
 	// this service that start at the same time do not migrate the same
@@ -85,10 +76,29 @@ func NewPostgresService() (*PostgresService, error) {
 
 	log.Println("PostgreSQL connected and migrations applied successfully.")
 
-	return &PostgresService{
-		DB:      db,
-		connStr: connStr,
-	}, nil
+	return service, nil
+}
+
+// ConnectPostgres connects to the configured database, with the startup
+// retries, and does not migrate it. A restore drill (#236) checks a restored
+// database as it is: migrating it first would hide a backup taken at an
+// older schema.
+func ConnectPostgres() (*PostgresService, error) {
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		config.Config.Postgres.Host, config.Config.Postgres.Port,
+		config.Config.Postgres.User, config.Config.Postgres.Password,
+		config.Config.Postgres.DBName, config.Config.Postgres.SSLMode)
+
+	db, err := sql.Open("pgx", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("error opening PostgreSQL database: %w", err)
+	}
+
+	if err := pingWithRetry(db, config.Config.Postgres.ConnectRetries, time.Duration(config.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("error connecting to PostgreSQL database: %w", err)
+	}
+	return &PostgresService{DB: db, connStr: connStr}, nil
 }
 
 func (p *PostgresService) Close() error {

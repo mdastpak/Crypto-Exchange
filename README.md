@@ -34,6 +34,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Data-protection keys | Implemented | Keys for row seals and field encryption, wrapped by a key-encryption key in Vault or OpenBao Transit, with rotation ([#138](https://github.com/mdastpak/Crypto-Exchange/issues/138)). No table uses them yet. |
 | WebSocket gateway | Partial | Ping and pong, token authentication with reauth, connections closed when their session ends, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
 | Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
+| Backups and disaster recovery | Partial | The checks, the monthly restore drill, and the runbook are in the repository ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)); WAL archiving and base backups are set up per environment with the backup tool, as [docs/disaster-recovery.md](docs/disaster-recovery.md) describes. |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL, Redis, or RabbitMQ is unavailable ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
@@ -187,6 +188,8 @@ Configuration is loaded from a YAML file, missing values are filled with default
 
 The data-protection keys, which future row seals and field encryption build on, are wrapped by a key-encryption key in HashiCorp Vault or OpenBao (Transit). [docs/data-protection.md](docs/data-protection.md) describes the key hierarchy, the setup, and how to rotate the keys.
 
+Backups, point-in-time recovery, the restore drill, and the disaster-recovery runbook are in [docs/disaster-recovery.md](docs/disaster-recovery.md). `admin backup status` alerts when WAL archiving falls behind the RPO, and `admin restore verify` checks a restored database before it is put in service.
+
 ## API overview
 
 The API is versioned under `/api/v1`: the paths of the API in the table below are relative to it, so `/public/currencies` is `/api/v1/public/currencies`. The health probes under `/system/` are not part of the API and have no version. The unversioned paths of earlier releases still answer as deprecated aliases, with `Deprecation` and `Link` headers that point to the versioned path ([docs/api.md](docs/api.md#versions)).
@@ -277,7 +280,8 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 ## Project layout
 
 ```text
-cmd/admin/              Operator command: administrators, data keys, outbox dead letters
+cmd/admin/              Operator command: administrators, data keys, outbox dead letters,
+                        platform controls, backup and restore checks
 cmd/server/             Application entry point, routing, and lifecycle
 config/                 Configuration files: the example and Compose configurations,
                         the local config.yaml (ignored), and the asset registry and
@@ -307,6 +311,8 @@ internal/otp/           One-time codes: generation, hashed storage in Redis, att
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
 internal/platform/      Maintenance and feature lockdowns: controls, watcher, route gate
+internal/recovery/      Backup and restore checks: WAL archiving age, restored-database
+                        verification
 internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
 internal/rebrand/        Currency migrations: rebrands, redenominations, mergers, by phase
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and
@@ -316,6 +322,7 @@ internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI co
                         checks, users, and network proxies
 internal/totp/          Time-based one-time passwords (RFC 6238)
 pkg/utils/              Shared utilities
+scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
 ```
 
 ## Roadmap

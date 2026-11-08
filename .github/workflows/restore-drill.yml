@@ -1,0 +1,43 @@
+name: Restore drill
+
+# A point-in-time recovery from end to end (#236): scripts/dr/restore-drill.sh
+# archives WAL, takes a base backup, restores it to a point between two
+# changes, and checks the result with "admin restore verify". It runs every
+# month, by hand, and on the pull requests that change the drill or the
+# checks, so that the tooling of docs/disaster-recovery.md keeps working.
+# The drill of the real backups runs on staging; see that document.
+
+on:
+  schedule:
+    - cron: "17 3 1 * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/dr/**"
+      - "internal/recovery/**"
+      - "cmd/admin/recovery.go"
+      - "internal/db/migrations/**"
+      - ".github/workflows/restore-drill.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    name: Restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run the restore drill
+        run: scripts/dr/restore-drill.sh

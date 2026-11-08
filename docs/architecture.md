@@ -33,7 +33,7 @@ flowchart TB
 | Package | Responsibility |
 | --- | --- |
 | `cmd/server` | Startup, route registration, graceful shutdown |
-| `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them, and list, rotate, retire, and re-wrap the data-protection keys |
+| `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them; list, rotate, retire, and re-wrap the data-protection keys; handle outbox dead letters; manage platform controls; and check backups and restored databases |
 | `internal/adminauth` | Administrator accounts: creation, TOTP enrollment with encrypted secrets, authenticator checks with replay protection |
 | `internal/totp` | Time-based one-time passwords (RFC 6238) |
 | `internal/assetregistry` | Loads and checks `config/assets.yaml`: one entry per asset with its networks, contract addresses validated by format and checksum (EIP-55 for Ethereum, Base58Check for TRON), and markets of known assets. Not loaded at runtime yet ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)). |
@@ -47,6 +47,7 @@ flowchart TB
 | `internal/handlers/*` | HTTP and WebSocket handlers. They currently contain the business logic and SQL directly ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). |
 | `internal/middleware` | Security headers, CORS, Redis rate limiters, validation and recovery helpers |
 | `internal/domain/*` | Exchange domain model (asset, market, order, trade, balance, account, kyc, custody, shared). It is not used by handlers yet. |
+| `internal/recovery` | Backup and restore checks ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)): the age of the newest archived WAL against the RPO, and the verification of a restored database. See [disaster-recovery.md](disaster-recovery.md). |
 | `internal/platform` | Maintenance and feature lockdowns ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)): the controls in PostgreSQL, the check that money operations make in their transaction, the watcher that keeps each instance's copy, and the gate of the routes. See [Platform controls](#platform-controls). |
 | `internal/models`, `internal/helpers` | API models and the response envelope |
 

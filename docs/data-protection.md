@@ -159,7 +159,7 @@ The token of `admin keys rewrap` needs both `encrypt` and `decrypt`.
 If the Transit key is deleted, or the storage of Vault or OpenBao is lost without a backup, the wrapped data keys can never be unwrapped again. The server then refuses to start. Sealed rows can no longer be checked, and encrypted fields can no longer be read: that data is lost. There is deliberately no command that exports the unwrapped keys. To prevent this:
 
 - keep `deletion_allowed` off for the key;
-- back up the storage of Vault or OpenBao, encrypted, apart from the database backups;
+- back up the storage of Vault or OpenBao, encrypted, apart from the database backups, and check that each database backup unwraps with its KEK backup with `admin restore verify -keys` ([disaster-recovery.md](disaster-recovery.md));
 - limit who may change the key's configuration.
 
 ### Suspected leaks

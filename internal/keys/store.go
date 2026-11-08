@@ -147,6 +147,38 @@ func (s *Store) Load(ctx context.Context) (*Keyring, error) {
 	return ring, nil
 }
 
+// Verify unwraps every data key that is not retired, with the configured
+// key-encryption key, and changes nothing: unlike Load, it never creates a
+// first key. A restore drill (#236) runs it on a restored database, to prove
+// that the backup of the key management service matches the database
+// backup; a database restored without its KEK cannot be read. It returns the
+// number of keys it unwrapped.
+func (s *Store) Verify(ctx context.Context) (int, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT purpose, version, kek_id, wrapped_key FROM data_keys WHERE retired_at IS NULL ORDER BY purpose, version`)
+	if err != nil {
+		return 0, fmt.Errorf("reading the data keys: %w", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var purpose Purpose
+		var version int
+		var kekID string
+		var wrapped []byte
+		if err := rows.Scan(&purpose, &version, &kekID, &wrapped); err != nil {
+			return count, fmt.Errorf("reading the data keys: %w", err)
+		}
+		secret, err := s.unwrap(ctx, purpose, version, kekID, wrapped)
+		if err != nil {
+			return count, err
+		}
+		clear(secret)
+		count++
+	}
+	return count, rows.Err()
+}
+
 // scanLatest reads the newest version of each purpose, retired or not.
 func (s *Store) scanLatest(ctx context.Context, latest map[Purpose]int) error {
 	rows, err := s.DB.QueryContext(ctx, `SELECT purpose, MAX(version) FROM data_keys GROUP BY purpose`)
