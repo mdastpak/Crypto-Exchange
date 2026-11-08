@@ -501,7 +501,7 @@ Creates a currency.
 | --- | --- |
 | `status` | `approved`, `pending`, or `suspend`. Optional, `pending` by default. A currency is only marked `deleted` by `DELETE`. |
 | `info.en_name`, `info.fa_name` | Required, at most 100 characters. Leading and trailing spaces are removed. |
-| `info.symbol` | Required, 2 to 15 letters or digits. It is stored in upper case, so `usdt` and `USDT` are the same symbol. |
+| `info.symbol` | Required, 2 to 15 letters or digits. It is stored in upper case, so `usdt` and `USDT` are the same symbol; the database refuses any other case (migration 36). |
 | `info.is_token`, `info.if_fiat` | Optional, `false` by default. A fiat currency cannot be a token. |
 | `info.contract` | Required for a token. At most 128 letters, digits, or `:`, `_`, `.`, `-`. |
 
