@@ -1,0 +1,13 @@
+{
+  "code": "0",
+  "msg": "",
+  "data": [
+    {"instType": "SPOT", "instId": "BTC-USDT", "last": "68010.5", "lastSz": "0.001", "askPx": "68010.6", "askSz": "1",
+     "bidPx": "68010.5", "bidSz": "2", "open24h": "67490.1", "high24h": "68490", "low24h": "66990", "volCcy24h": "601234567.891",
+     "vol24h": "8842.12", "ts": "1762628399500", "sodUtc0": "67600", "sodUtc8": "67700"},
+    {"instType": "SPOT", "instId": "ETH-USDC", "last": "3500.25", "askPx": "", "bidPx": "", "open24h": "3480", "high24h": "3550",
+     "low24h": "3450", "volCcy24h": "1000", "vol24h": "0.3", "ts": "1762628399000"},
+    {"instType": "SPOT", "instId": "BROKEN", "last": "1", "ts": "1762628399000"},
+    {"instType": "SPOT", "instId": "NOP-USDT", "last": "", "ts": "1762628399000"}
+  ]
+}

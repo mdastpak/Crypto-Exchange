@@ -1,0 +1,16 @@
+[
+  {"symbol": "BTCUSDT", "priceChange": "512.10000000", "priceChangePercent": "0.758", "weightedAvgPrice": "67950.12000000",
+   "prevClosePrice": "67500.00000000", "lastPrice": "68012.10000000", "lastQty": "0.00100000", "bidPrice": "68012.09000000",
+   "bidQty": "1.20000000", "askPrice": "68012.10000000", "askQty": "0.50000000", "openPrice": "67500.00000000",
+   "highPrice": "68500.00000000", "lowPrice": "67000.00000000", "volume": "15234.12345678", "quoteVolume": "1035123456.12345678",
+   "openTime": 1762542000000, "closeTime": 1762628399999, "firstId": 1, "lastId": 1000, "count": 1000},
+  {"symbol": "ETHBTC", "lastPrice": "0.05123000", "bidPrice": "0.05122000", "askPrice": "0.05123000", "openPrice": "0.05100000",
+   "highPrice": "0.05200000", "lowPrice": "0.05050000", "volume": "12345.00000000", "quoteVolume": "632.50000000",
+   "openTime": 1762542000000, "closeTime": 1762628399000, "count": 10},
+  {"symbol": "SHIBUSDT", "lastPrice": "0.00001234", "bidPrice": "0.00001235", "askPrice": "0.00001234", "openPrice": "0.00001200",
+   "highPrice": "0.00001300", "lowPrice": "0.00001100", "volume": "123456789012.00", "quoteVolume": "1523456.78",
+   "openTime": 1762542000000, "closeTime": 1762628398000, "count": 10},
+  {"symbol": "LUNAUSDT", "lastPrice": "0.40000000", "closeTime": 1762628398000, "count": 0},
+  {"symbol": "OLDUSDT", "lastPrice": "0.00000000", "closeTime": 1762628398000, "count": 0},
+  {"symbol": "NEWUSDT", "lastPrice": "1.00000000", "closeTime": 1762628398000, "count": 1}
+]

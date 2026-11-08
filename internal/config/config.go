@@ -828,7 +828,44 @@ type MarketDataConfig struct {
 	Sources map[string]MarketDataSource `yaml:"sources"`
 	// Catalog configures the catalog sync (#266).
 	Catalog MarketDataCatalog `yaml:"catalog"`
+	// Tickers configures the tickers of the venues (#267).
+	Tickers MarketDataTickers `yaml:"tickers"`
 }
+
+// MarketDataTickers configures the ticker jobs of the venues, and the rules
+// of their quality where they are read.
+type MarketDataTickers struct {
+	// IntervalSeconds is the time between two runs of a venue.
+	IntervalSeconds int `yaml:"interval_seconds"`
+	// StaleAfterSeconds: a ticker observed longer ago is stale.
+	StaleAfterSeconds int `yaml:"stale_after_seconds"`
+	// OutlierPercent: a price that differs from the median of the venues
+	// by more than this share is an outlier.
+	OutlierPercent int `yaml:"outlier_percent"`
+	// MinVenues is the fewest venues with a fresh price of the same quote
+	// that make a median.
+	MinVenues int `yaml:"min_venues"`
+	// MapRankLimit: a pair whose symbol several assets share maps to the
+	// only one ranked within this limit, or stays unmapped.
+	MapRankLimit int `yaml:"map_rank_limit"`
+	// DeactivatePairsAfterHours marks inactive the pairs that a venue has
+	// not listed for this long.
+	DeactivatePairsAfterHours int `yaml:"deactivate_pairs_after_hours"`
+}
+
+// The defaults and bounds of market_data.tickers.
+const (
+	DefaultTickersIntervalSeconds    = 120
+	MinTickersIntervalSeconds        = 30
+	MaxTickersIntervalSeconds        = 3600
+	DefaultTickersStaleAfterSeconds  = 600
+	MaxTickersStaleAfterSeconds      = 86400
+	DefaultTickersOutlierPercent     = 5
+	DefaultTickersMinVenues          = 3
+	MaxTickersMinVenues              = 20
+	DefaultTickersMapRankLimit       = 1000
+	DefaultTickersDeactivateAfterHrs = 24
+)
 
 // MarketDataCatalog configures the catalog sync of cmd/market-worker: which
 // assets it keeps, and how often it reads them.
@@ -1322,6 +1359,12 @@ func setDefaults() {
 		{&catalog.DetailsPerRun, DefaultCatalogDetailsPerRun},
 		{&catalog.DetailsMaxAgeDays, DefaultCatalogDetailsMaxAgeDays},
 		{&catalog.DeactivateAfterDays, DefaultCatalogDeactivateAfterDays},
+		{&Config.MarketData.Tickers.IntervalSeconds, DefaultTickersIntervalSeconds},
+		{&Config.MarketData.Tickers.StaleAfterSeconds, DefaultTickersStaleAfterSeconds},
+		{&Config.MarketData.Tickers.OutlierPercent, DefaultTickersOutlierPercent},
+		{&Config.MarketData.Tickers.MinVenues, DefaultTickersMinVenues},
+		{&Config.MarketData.Tickers.MapRankLimit, DefaultTickersMapRankLimit},
+		{&Config.MarketData.Tickers.DeactivatePairsAfterHours, DefaultTickersDeactivateAfterHrs},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback

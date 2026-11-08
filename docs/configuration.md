@@ -358,6 +358,12 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `catalog.details_per_run` | `200` | From 1 to 10000. The full records (description, links, contracts) read in one run. |
 | `catalog.details_max_age_days` | `30` | From 1 to 365. When a full record is read again. |
 | `catalog.deactivate_after_days` | `14` | From 1 to 365. Assets that no source listed for this long are marked inactive; only with the `all` coverage. |
+| `tickers.interval_seconds` | `120` | From 30 to 3600. The time between two runs of the tickers of a venue. The venues are the sources `binance`, `okx`, `kraken`, `coinbase`, `nobitex`, and `wallex`; see [Tickers](market-data.md#tickers). |
+| `tickers.stale_after_seconds` | `600` | From `interval_seconds` to 86400. A ticker observed longer ago is stale. |
+| `tickers.outlier_percent` | `5` | From 1 to 100. A price further than this from the median of the venues is an outlier. |
+| `tickers.min_venues` | `3` | From 2 to 20. The fewest venues with a fresh price of the same quote that make a median. |
+| `tickers.map_rank_limit` | `1000` | From 1 to 50000. A pair whose symbol several assets share maps to the only one ranked within this limit, or stays unmapped. |
+| `tickers.deactivate_pairs_after_hours` | `24` | From 1 to 8760. Pairs that a venue has not listed for this long become inactive. |
 
 ### `platform`
 

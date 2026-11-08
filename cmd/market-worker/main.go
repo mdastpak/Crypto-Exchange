@@ -31,6 +31,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coingecko"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coinmarketcap"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/exchange"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/tickers"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 )
 
@@ -159,6 +161,26 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 			return nil, err
 		}
 		specs = append(specs, jobs.Spec{Job: job, Interval: time.Duration(cfg.Catalog.IntervalHours) * time.Hour, Timeout: catalogRunTimeout})
+	}
+	// One ticker job per venue, so that one venue never holds up another.
+	for _, name := range exchange.Names {
+		if !cfg.Reachable(name) {
+			continue
+		}
+		settings, _ := exchange.Settings(name)
+		client, err := source.ClientFromConfig(conn, name, settings)
+		if err != nil {
+			return nil, err
+		}
+		src, err := exchange.New(name, client)
+		if err != nil {
+			return nil, err
+		}
+		interval := time.Duration(cfg.Tickers.IntervalSeconds) * time.Second
+		specs = append(specs, jobs.Spec{Job: tickers.New(src, store, tickers.Options{
+			MapRankLimit:    cfg.Tickers.MapRankLimit,
+			DeactivateAfter: time.Duration(cfg.Tickers.DeactivatePairsAfterHours) * time.Hour,
+		}), Interval: interval, Timeout: max(interval, time.Minute)})
 	}
 	return specs, nil
 }

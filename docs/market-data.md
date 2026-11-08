@@ -14,7 +14,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Job runner: each run once across workers, pause, dry run, jobs by reachable source | [#264](https://github.com/mdastpak/Crypto-Exchange/issues/264) | Done |
 | Source interfaces, rate-limited HTTP client with egress per node, stub source | [#265](https://github.com/mdastpak/Crypto-Exchange/issues/265) | Done |
 | Catalog from CoinGecko and CoinMarketCap | [#266](https://github.com/mdastpak/Crypto-Exchange/issues/266) | Done |
-| Tickers of global and Iranian exchanges | [#267](https://github.com/mdastpak/Crypto-Exchange/issues/267) | Planned |
+| Tickers of global and Iranian exchanges | [#267](https://github.com/mdastpak/Crypto-Exchange/issues/267) | Done |
 | Candles | [#268](https://github.com/mdastpak/Crypto-Exchange/issues/268) | Planned |
 | Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Planned |
 | Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Planned |
@@ -148,6 +148,36 @@ A full record that gives a token's contract that the catalog has under another a
 | CoinMarketCap | Every plan, the free Basic plan too, needs a key in `X-CMC_PRO_API_KEY`; set `MARKET_DATA_COINMARKETCAP_API_KEY` | `/v1/cryptocurrency/listings/latest` (one credit per 200 assets), `/v2/cryptocurrency/info` (100 records per request) |
 
 Descriptions are stored as plain text, without HTML; only `https` links and logos are kept. Each asset carries the attribution that the source's terms ask for. The tests read recorded answers in the documented format of each API, since CI has no network; run a new source in `dry_run` first and check its runs.
+
+## Tickers
+
+The ticker jobs ([#267](https://github.com/mdastpak/Crypto-Exchange/issues/267)) are one job per venue, `tickers:binance`, `tickers:nobitex`, every `market_data.tickers.interval_seconds` (120), so that the workers share the venues and a venue that fails or is out of reach stops none of the others. A venue is collected on the nodes where its source is enabled and reachable, and only while it is enabled in `market_venues`: a new venue starts enabled, and the job never turns a venue back on that an administrator turned off.
+
+| Venue | Region | Endpoints (public, no key) | Notes |
+| --- | --- | --- | --- |
+| `binance` | global | `/api/v3/ticker/24hr`, `/api/v3/exchangeInfo` (read once an hour) | Trading spot pairs only |
+| `okx` | global | `/api/v5/market/tickers?instType=SPOT` | |
+| `kraken` | global | `/0/public/Ticker`, `/0/public/AssetPairs` (read once an hour) | `XBT` is `BTC` and `XDG` is `DOGE`; no time and no 24-hour open |
+| `coinbase` | global | `/api/v3/brokerage/market/products?product_type=SPOT` | Last price and 24-hour volume only; no time |
+| `nobitex` | ir | `/market/stats` | Rial markets are reported in tomans (`IRT`), divided by 10 exactly |
+| `wallex` | ir | `/v1/markets` | `TMN` markets are reported as `IRT` |
+
+Where a venue gives no time, the time the ticker is read is its time. A ticker with no positive last price is skipped, and a bid above the ask, which a book shows between two updates, is left out.
+
+A run reads every ticker of the venue, adds the pairs it does not know, and writes the pairs and the tickers in batches of 500, one statement each. A ticker only replaces an older observation. Pairs that the venue has not listed for `deactivate_pairs_after_hours` (24) become inactive.
+
+### Mapping pairs
+
+The base and quote of a new pair are mapped to the catalog by symbol: to the only asset with that symbol that is not hidden, or, when several assets share it, to the only one ranked within `map_rank_limit` (1000) by market cap. Otherwise the pair stays unmapped for review ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)). A pair keeps its mapping once set, so that a run never undoes an administrator's mapping. Fiat quotes such as `USD`, `EUR`, and `IRT` are not catalog assets and stay unmapped.
+
+### Stale prices and outliers
+
+Whether a ticker is stale or an outlier is decided when it is read (`marketdata.Flag`), since both change with time and with the other venues:
+
+- **Stale**: observed more than `stale_after_seconds` (600) ago.
+- **Outlier**: its last price differs from the median of the fresh prices of the same quote by more than `outlier_percent` (5 %). The median counts one price per venue, and needs at least `min_venues` (3) venues; with fewer, nothing is an outlier. A stale price never moves the median and is never an outlier. The median is exact in decimals.
+
+Prices in different quotes (`USDT`, `USD`, `IRT`) are never compared with each other.
 
 ## Data model
 
