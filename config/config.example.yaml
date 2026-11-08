@@ -65,6 +65,14 @@ postgres:
   lock_timeout_ms: 5000                  # A request past it gets 503 database_busy
   idle_in_transaction_timeout_ms: 60000
   migration_lock_timeout_seconds: 300    # Startup stops, naming the holder, after this
+  # Database roles (#180): the server runs as user, which cannot change the
+  # schema; the migrations run as migrations.user. "startup" migrates when an
+  # instance starts; "external", which release mode needs, leaves it to
+  # "admin migrate" as a step of the release.
+  migrations:
+    mode: "startup"
+    user: ""      # Empty: migrate as user, which then owns the schema
+    password: ""  # Set with POSTGRES_MIGRATIONS_PASSWORD, only for admin migrate
 
 redis:
   # standalone (host and port), sentinel, or cluster; see

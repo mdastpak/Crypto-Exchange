@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -126,6 +127,35 @@ func resetE2EDatabase(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The runtime role of the end-to-end tests. It is created once in the
+// cluster and kept; each reset of the schema removes its privileges.
+const (
+	e2eRuntimeRole     = "testdb_server_e2e_runtime"
+	e2eRuntimePassword = "runtime-test"
+)
+
+func ensureE2ERuntimeRole(t *testing.T) {
+	t.Helper()
+	admin, err := sql.Open("pgx", e2ePostgresDS+"postgres")
+	require.NoError(t, err)
+	defer admin.Close()
+	_, err = admin.Exec(fmt.Sprintf(`DO $$ BEGIN
+		CREATE ROLE %s LOGIN PASSWORD '%s';
+	EXCEPTION WHEN duplicate_object THEN NULL;
+	END $$`, e2eRuntimeRole, e2eRuntimePassword))
+	require.NoError(t, err)
+}
+
+// e2eOwnerDB connects to the test database as postgres, which owns it, for
+// the fixtures that the server's runtime role may not create.
+func e2eOwnerDB(t *testing.T) *sql.DB {
+	t.Helper()
+	conn, err := sql.Open("pgx", e2ePostgresDS+e2eDBName)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
 func pemKeyPair(t *testing.T) auth.KeyPair {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -153,7 +183,12 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	})
 	config.Config = config.Configuration{}
 	c := &config.Config
-	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.Password = "localhost", "5432", "postgres", "test"
+	// The server runs with a runtime role that cannot change the schema,
+	// and migrates with postgres, as production does (#180); so every
+	// end-to-end test also checks that the grants are enough.
+	ensureE2ERuntimeRole(t)
+	c.Postgres.Host, c.Postgres.Port, c.Postgres.User, c.Postgres.Password = "localhost", "5432", e2eRuntimeRole, e2eRuntimePassword
+	c.Postgres.Migrations.User, c.Postgres.Migrations.Password = "postgres", "test"
 	c.Postgres.DBName, c.Postgres.SSLMode = e2eDBName, "disable"
 	c.Postgres.ConnectRetries, c.Postgres.ConnectRetryDelayMs = 1, 10
 	c.Redis.Host, c.Redis.Port, c.Redis.DB = "localhost", "6379", e2eRedisDB

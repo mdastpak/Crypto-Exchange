@@ -162,6 +162,12 @@ func (c *Configuration) rangeProblems(p *problems) {
 		}
 	}
 	atLeast("postgres.migration_lock_timeout_seconds", c.Postgres.MigrationLockTimeoutSeconds, 1)
+	if !contains(MigrationsModes, c.Postgres.Migrations.Mode) {
+		p.add("postgres.migrations.mode", "is %q; it must be one of %s", c.Postgres.Migrations.Mode, strings.Join(MigrationsModes, ", "))
+	}
+	if c.Postgres.Migrations.Password != "" && c.Postgres.Migrations.User == "" {
+		p.add("postgres.migrations.password", "is set without postgres.migrations.user; set the user of the migration role too")
+	}
 	atLeast("postgres.conn_max_lifetime_minutes", c.Postgres.ConnMaxLifetime, 0)
 	atLeast("postgres.conn_max_idle_time_minutes", c.Postgres.ConnMaxIdleTime, 0)
 	atLeast("redis.db", c.Redis.DB, 0)
@@ -280,6 +286,16 @@ func (c *Configuration) releaseProblems(p *problems) {
 	}
 	if c.Postgres.Password == "" || c.Postgres.Password == "postgres" {
 		p.add("postgres.password", "is empty or the default \"postgres\"; release mode needs a password of its own")
+	}
+	// The server must not be able to change the schema (#180): the
+	// migrations run as a release step with a role of their own, and the
+	// server checks at startup that its own role owns nothing.
+	if c.Postgres.Migrations.Mode == MigrationsModeStartup {
+		p.add("postgres.migrations.mode", "is %q; release mode needs %q: run \"admin migrate\" with the migration role as a step of the release, before the new instances start (docs/configuration.md#database-roles)",
+			c.Postgres.Migrations.Mode, MigrationsModeExternal)
+	}
+	if c.Postgres.Migrations.Password != "" {
+		p.add("postgres.migrations.password", "is set; in release mode only the release step that runs \"admin migrate\" may hold the migration role's password, never a server instance")
 	}
 	if c.Redis.Password == "" {
 		p.add("redis.password", "is empty; release mode needs Redis to require a password")

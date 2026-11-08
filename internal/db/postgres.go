@@ -113,35 +113,39 @@ func migrationLockHolder(ctx context.Context, conn *sql.Conn) string {
 	return fmt.Sprintf("pid %d (application_name %s, client %s, state %s, for %s)", pid, app, addr, state, held)
 }
 
+// NewPostgresService connects the server's pool, with the runtime role of
+// postgres.user, and makes sure that the schema is current (#180): in the
+// "startup" mode of postgres.migrations.mode, it migrates first, with the
+// migration role, under the migration lock; in the "external" mode, it
+// only checks that the release step migrated the database. It then checks
+// the runtime role, which release mode refuses when the role could change
+// the schema.
 func NewPostgresService() (*PostgresService, error) {
+	ctx := context.Background()
+	if config.Config.Postgres.Migrations.Mode != config.MigrationsModeExternal {
+		// Migrations run on connections of their own, without the timeouts
+		// of the pool, which would stop a long migration, and with their
+		// own application_name. The lock serializes the replicas of this
+		// service that start at the same time.
+		if err := Migrate(ctx); err != nil {
+			return nil, fmt.Errorf("error running migrations: %w", err)
+		}
+	}
+
 	service, err := ConnectPostgres()
 	if err != nil {
 		return nil, err
 	}
 	db := service.DB
-
-	// Migrations run on a connection of their own, without the timeouts
-	// of the pool, which would stop a long migration, and with their own
-	// application_name.
-	migrations, err := openMigrations()
-	if err != nil {
+	if config.Config.Postgres.Migrations.Mode == config.MigrationsModeExternal {
+		if err := checkSchema(ctx, db); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	if err := checkRole(ctx, db); err != nil {
 		db.Close()
 		return nil, err
-	}
-	defer migrations.Close()
-
-	// Serialize migrations via a Postgres advisory lock, so that replicas of
-	// this service that start at the same time do not migrate the same
-	// database simultaneously.
-	wait := time.Duration(config.Config.Postgres.MigrationLockTimeoutSeconds) * time.Second
-	if wait <= 0 {
-		wait = time.Duration(config.DefaultPostgresMigrationLockTimeoutSeconds) * time.Second
-	}
-	if err := withMigrationLock(context.Background(), migrations, wait, func() error {
-		return runMigrations(migrations)
-	}); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("error running migrations: %w", err)
 	}
 
 	db.SetMaxOpenConns(config.Config.Postgres.MaxOpenConns)
@@ -149,7 +153,7 @@ func NewPostgresService() (*PostgresService, error) {
 	db.SetConnMaxLifetime(time.Duration(config.Config.Postgres.ConnMaxLifetime) * time.Minute)
 	db.SetConnMaxIdleTime(time.Duration(config.Config.Postgres.ConnMaxIdleTime) * time.Minute)
 
-	log.Println("PostgreSQL connected and migrations applied successfully.")
+	log.Println("PostgreSQL connected and the schema is current.")
 
 	return service, nil
 }
@@ -186,11 +190,12 @@ func ConnectPostgres() (*PostgresService, error) {
 // application_name of ApplicationName as run-time parameters.
 func PostgresConfig() (*pgx.ConnConfig, error) {
 	pg := config.Config.Postgres
-	return connConfig(pg.StatementTimeoutMs, pg.LockTimeoutMs, pg.IdleInTransactionTimeoutMs, ApplicationName)
+	return connConfig(pg.User, pg.Password, pg.StatementTimeoutMs, pg.LockTimeoutMs, pg.IdleInTransactionTimeoutMs, ApplicationName)
 }
 
-// connConfig builds the configuration with the given timeouts and name.
-func connConfig(statementMs, lockMs, idleMs int, name string) (*pgx.ConnConfig, error) {
+// connConfig builds the configuration of the role user, with the given
+// timeouts and name.
+func connConfig(user, password string, statementMs, lockMs, idleMs int, name string) (*pgx.ConnConfig, error) {
 	pg := config.Config.Postgres
 	hosts := net.JoinHostPort(pg.Host, pg.Port)
 	if len(pg.Hosts) > 0 {
@@ -221,7 +226,7 @@ func connConfig(statementMs, lockMs, idleMs int, name string) (*pgx.ConnConfig, 
 	}
 	dsn := url.URL{
 		Scheme:   "postgres",
-		User:     url.User(pg.User),
+		User:     url.User(user),
 		Host:     hosts,
 		Path:     "/" + pg.DBName,
 		RawQuery: params.Encode(),
@@ -232,18 +237,19 @@ func connConfig(statementMs, lockMs, idleMs int, name string) (*pgx.ConnConfig, 
 	}
 	// The fallbacks, one per address and TLS mode, take the password of
 	// cfg, so setting it here covers every attempt.
-	cfg.Password = pg.Password
+	cfg.Password = password
 	cfg.Tracer = busyTracer{}
 	return cfg, nil
 }
 
-// openMigrations opens the connections that migrations run on, without
-// statement or lock timeouts, named crypto-exchange-migrate. The advisory
-// lock holds one connection, and golang-migrate takes others, so the pool
-// is small but not one.
+// openMigrations opens the connections that migrations run on, with the
+// migration role (#180), without statement or lock timeouts, named
+// crypto-exchange-migrate. The advisory lock holds one connection, and
+// golang-migrate takes others, so the pool is small but not one.
 func openMigrations() (*sql.DB, error) {
 	pg := config.Config.Postgres
-	cfg, err := connConfig(-1, -1, pg.IdleInTransactionTimeoutMs, migrationApplicationName())
+	user, password := migrationRole()
+	cfg, err := connConfig(user, password, -1, -1, pg.IdleInTransactionTimeoutMs, migrationApplicationName())
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,9 @@ server:
 postgres:
   host: "postgres"
   port: "5432"
-  user: "postgres"
+  # The runtime role; the migrate service migrates with the migration role
+  # (POSTGRES_MIGRATIONS_USER) and grants this one (#180).
+  user: "exchange_app"
   dbname: "exchange"
   sslmode: "disable"
 

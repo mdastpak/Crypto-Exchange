@@ -13,13 +13,22 @@ services:
     image: timescale/timescaledb:latest-pg16
     container_name: crypto-exchange-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # The superuser of the container, which only creates the two roles of
+      # the service below (#180); neither the server nor the migrations use it.
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-exchange}
+      EXCHANGE_MIGRATIONS_USER: ${POSTGRES_MIGRATIONS_USER:-exchange_owner}
+      EXCHANGE_MIGRATIONS_PASSWORD: ${POSTGRES_MIGRATIONS_PASSWORD:-exchange_owner}
+      EXCHANGE_RUNTIME_USER: ${POSTGRES_USER:-exchange_app}
+      EXCHANGE_RUNTIME_PASSWORD: ${POSTGRES_PASSWORD:-exchange_app}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Runs once, on an empty volume. A volume created before #180 keeps its
+      # single role: remove it with "docker compose down -v" to start over.
+      - ./scripts/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
@@ -73,6 +82,29 @@ services:
     networks:
       - crypto-exchange-network
 
+  # The release step (#180): applies the migrations with the migration role
+  # and grants the runtime role, then exits; the app starts after it.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/admin", "-config", "config/config.compose.yaml", "migrate"]
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-exchange_app}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-exchange_app}
+      - POSTGRES_DB=${POSTGRES_DB:-exchange}
+      - POSTGRES_MIGRATIONS_USER=${POSTGRES_MIGRATIONS_USER:-exchange_owner}
+      - POSTGRES_MIGRATIONS_PASSWORD=${POSTGRES_MIGRATIONS_PASSWORD:-exchange_owner}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - crypto-exchange-network
+
   app:
     build:
       context: .
@@ -97,8 +129,13 @@ services:
       - SERVER_PORT=8080
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_USER=${POSTGRES_USER:-exchange_app}
       - POSTGRES_DB=${POSTGRES_DB:-exchange}
+      # The migrate service has migrated; the server only checks the version,
+      # and never receives the migration role's password, even from .env.
+      - POSTGRES_MIGRATIONS_MODE=external
+      - POSTGRES_MIGRATIONS_USER=
+      - POSTGRES_MIGRATIONS_PASSWORD=
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - RABBITMQ_HOST=rabbitmq
@@ -109,7 +146,7 @@ services:
       # config.compose.yaml, which has none.
       - JWT_SSL_ADMIN_PRIVATE_KEY=
       - JWT_SSL_ADMIN_PUBLIC_KEY=
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-exchange_app}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-redis}
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
@@ -123,8 +160,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       rabbitmq:

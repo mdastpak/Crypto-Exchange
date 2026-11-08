@@ -28,6 +28,9 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `server.trusted_proxies` | Not empty when `server.tls.behind_proxy` is set, so that clients are not all seen with the proxy's address, also by the rate limits |
 | `postgres.sslmode` | `require`, `verify-ca`, or `verify-full`. `disable`, `allow`, and `prefer` can talk to PostgreSQL without encryption. |
 | `postgres.password` | Not empty, and not the default `postgres` |
+| `postgres.migrations.mode` | `external`: the migrations are a step of the release, `admin migrate`, never part of a server's start. See [Database roles](#database-roles). |
+| `postgres.migrations.password` | Empty: only the release step holds the migration role's password, never a server instance |
+| `postgres.user` | Checked at startup, against the database: a role that cannot change the schema. It owns no table and not the schema, cannot create in the schema or the database, is not a superuser and has no `CREATEROLE`, `CREATEDB`, or `BYPASSRLS`, has no `TRUNCATE`, `REFERENCES`, or `TRIGGER` on any table, and can only read and insert into `audit_events`. |
 | `redis.password` | Not empty |
 | `rabbitmq.username`, `rabbitmq.password` | Not the default `guest` account |
 | `redis.tls.enabled`, `rabbitmq.tls.enabled` | TLS to Redis and to RabbitMQ, or `tls.private_network: true`, which states that only a trusted private network, such as a service mesh that encrypts every hop, carries the connection. Sign-in codes and raw contacts cross RabbitMQ on their way to the delivery worker, and the Redis password and the token blacklist cross Redis, so neither may travel in the clear between hosts. |
@@ -88,10 +91,39 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `lock_timeout_ms` | `5000` | The longest a statement waits for a lock. `-1` turns it off. A request whose statement hits this or `statement_timeout_ms` gets `503 database_busy` with `Retry-After: 1`, not a request that hangs. |
 | `idle_in_transaction_timeout_ms` | `60000` | Ends a session that leaves a transaction open and idle this long, which would hold its locks. `-1` turns it off. |
 | `migration_lock_timeout_seconds` | `300` | The longest an instance waits at startup for the migration lock, which another instance holds while it migrates. It logs the holder every 10 seconds, and then stops with an error that names it (process ID, `application_name`, client, and for how long). |
+| `migrations.mode` | `startup` | When the migrations run ([#180](https://github.com/mdastpak/Crypto-Exchange/issues/180)). `startup` migrates at the start of every instance, under the migration lock. `external` never migrates in the server: `admin migrate` does, as a step of the release, and an instance refuses to start while the database misses migrations of its build, or holds a failed one. Release mode needs `external`. |
+| `migrations.user`, `migrations.password` | none | The migration role, which owns the schema. Empty, the migrations use `user` and `password`, which then own everything; that suits development, and release mode refuses it. Set the password with `POSTGRES_MIGRATIONS_PASSWORD`, only where `admin migrate` runs. |
 
-Migrations are applied automatically at startup while a PostgreSQL advisory lock is held. They run on connections of their own, without the statement and lock timeouts, which would stop a long migration.
+Migrations run while a PostgreSQL advisory lock is held, on connections of their own, without the statement and lock timeouts, which would stop a long migration: at the start of every instance in the `startup` mode, and in `admin migrate` in the `external` mode.
 
 Every connection names itself in `pg_stat_activity` with `application_name`: `crypto-exchange-server/<host>` for a server instance, `crypto-exchange-admin` for `cmd/admin`, and `crypto-exchange-migrate` for the migrations.
+
+#### Database roles
+
+The server and the migrations use two roles ([#180](https://github.com/mdastpak/Crypto-Exchange/issues/180)), so that neither the server nor anyone who obtains its credentials can change the schema: drop the triggers that keep the audit log append-only, alter a constraint, or drop a table.
+
+| Role | Setting | What it may do |
+| --- | --- | --- |
+| Migration role | `postgres.migrations.user` | Owns the database and its `public` schema, and creates every object in it. Used only by `admin migrate`. |
+| Runtime role | `postgres.user` | Owns nothing. `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on the tables, only `SELECT` and `INSERT` on `audit_events`, only `SELECT` on `schema_migrations`, and `USAGE` on the schema and the sequences. No `CREATE`, `TRUNCATE`, `REFERENCES`, or `TRIGGER`. |
+
+Create the roles once per environment, as a superuser, with passwords of their own:
+
+```sql
+CREATE ROLE exchange_owner LOGIN PASSWORD '...';
+CREATE ROLE exchange_app LOGIN PASSWORD '...';
+CREATE DATABASE exchange OWNER exchange_owner;
+REVOKE ALL ON DATABASE exchange FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE exchange TO exchange_app;
+-- In the database exchange; PostgreSQL 15 and later already do this.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+```
+
+On a database that one role owns already, transfer it: `ALTER DATABASE exchange OWNER TO exchange_owner`, and, in the database, `REASSIGN OWNED BY <old role> TO exchange_owner`, then make the old role the runtime role or drop it.
+
+The migrations grant the runtime role its privileges after every run, and take back any others, so a table that a migration adds is covered, and a privilege granted by hand does not last past the next release. `admin migrate status` shows the schema version and anything the runtime role could change.
+
+**Releases with several instances.** In the `external` mode, migrating is a step of the release: run `admin migrate` once, as a job or an init container with the migration role's credentials, and start the new instances when it has succeeded. Running it twice, or from two places at once, is safe: the migration lock lets one migrate, and the other finds nothing to do. Instances check the version at startup and refuse a database that is behind their build. A database ahead of their build is accepted, with a warning, so the instances of the previous release keep running, and can restart, while the release rolls out; so each migration must keep working for the release before it (expand first, contract in a later release). The Docker Compose setup does the same: its `migrate` service runs `admin migrate`, and the `app` service starts once it has completed.
 
 #### High availability
 
@@ -109,11 +141,11 @@ If a migration fails, golang-migrate marks its version as dirty and the server r
 
 ```bash
 migrate -path internal/db/migrations \
-  -database "postgres://USER:PASSWORD@HOST:5432/exchange?sslmode=disable" \
+  -database "postgres://MIGRATION_USER:PASSWORD@HOST:5432/exchange?sslmode=disable" \
   force 10
 ```
 
-Replace `10` with the version before the failed migration.
+Replace `10` with the version before the failed migration, and connect as the migration role.
 
 ### `redis`
 
@@ -392,6 +424,9 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `POSTGRES_LOCK_TIMEOUT_MS` | `postgres.lock_timeout_ms` |
 | `POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS` | `postgres.idle_in_transaction_timeout_ms` |
 | `POSTGRES_MIGRATION_LOCK_TIMEOUT_SECONDS` | `postgres.migration_lock_timeout_seconds` |
+| `POSTGRES_MIGRATIONS_MODE` | `postgres.migrations.mode` |
+| `POSTGRES_MIGRATIONS_USER` | `postgres.migrations.user` |
+| `POSTGRES_MIGRATIONS_PASSWORD` | `postgres.migrations.password` |
 | `POSTGRES_MAX_OPEN_CONNS` | `postgres.max_open_conns` |
 | `POSTGRES_MAX_IDLE_CONNS` | `postgres.max_idle_conns` |
 | `POSTGRES_CONN_MAX_LIFETIME_MINUTES` | `postgres.conn_max_lifetime_minutes` |

@@ -175,6 +175,7 @@ docker compose up -d --build
 curl http://localhost:8080/system/ready
 ```
 
+- The `migrate` service applies the migrations with the migration role (`POSTGRES_MIGRATIONS_USER`) and exits, and the `app` service then starts with the runtime role (`POSTGRES_USER`), which cannot change the schema ([Database roles](docs/configuration.md#database-roles)). Both roles are created when the PostgreSQL volume is created; a volume from before them keeps its single role until `docker compose down -v` removes it.
 - Sign-in codes appear in the log of the `app` service (`docker compose logs app`), because the Compose configuration enables `dev_log_codes`.
 - On Linux, run the server as your own user so that it can read the key files without widening their permissions: `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build`.
 - `JWT_USER_PRIVATE_KEY_FILE` and `JWT_USER_PUBLIC_KEY_FILE` select other key files.
