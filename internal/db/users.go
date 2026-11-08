@@ -9,8 +9,9 @@ import (
 // with the type in $1 and the value in $2. It compares them the way the
 // index user_contacts_value_unique does, so every lookup uses that index:
 // emails and usernames case-insensitively, with ASCII-only case folding
-// that does not depend on the database locale.
-const ContactMatch = `c.type = $1::contact_type AND lower(c.value COLLATE "C") = lower($2 COLLATE "C")`
+// that does not depend on the database locale. A contact that its user
+// removed (removed_at, #248) matches nothing.
+const ContactMatch = `c.type = $1::contact_type AND lower(c.value COLLATE "C") = lower($2 COLLATE "C") AND c.removed_at IS NULL`
 
 // InsertContact adds a primary contact to a user within tx. verified says
 // that the user has just proven control of it, as a correct sign-in code

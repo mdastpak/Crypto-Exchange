@@ -70,7 +70,7 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 	}
 	var current bool
 	if err == nil {
-		err = tx.QueryRowContext(ctx, `SELECT current FROM currency_symbols WHERE symbol = $1 AND currency_hk = $2`, symbol, hk).Scan(&current)
+		err = tx.QueryRowContext(ctx, `SELECT current FROM currency_symbols WHERE symbol = $1 AND currency_hk = $2 AND released_at IS NULL`, symbol, hk).Scan(&current)
 	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -84,7 +84,9 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 		helpers.SendError(c, http.StatusConflict, "symbol_current", "This is the current symbol of the currency; change it first.", nil)
 		return
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM currency_symbols WHERE symbol = $1 AND currency_hk = $2 AND NOT current`, symbol, hk); err != nil {
+	// The instances of the release before #248 do not know released_at, so
+	// this release still deletes; the next one marks the row.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM currency_symbols WHERE symbol = $1 AND currency_hk = $2 AND NOT current AND released_at IS NULL`, symbol, hk); err != nil {
 		log.Printf("Error releasing the symbol %s of %s: %v", symbol, hk, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to release the symbol.", nil)
 		return
