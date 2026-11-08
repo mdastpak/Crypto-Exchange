@@ -540,7 +540,25 @@ type KeysConfig struct {
 	// version starts writing. Every instance reads with it from its next
 	// reload, so it must be at least twice the reload interval.
 	ActivationDelaySeconds int `yaml:"activation_delay_seconds"`
+	// LegacySecrets says what admin.totp_key and otp.auth.secret are still
+	// used for, while they are set (#146): "write" (the default) seals new
+	// authenticator secrets and sign-in codes with them, as the previous
+	// release does, and "read" only opens what they sealed, while the data
+	// keys seal everything new. Data keys are read in both modes, so an
+	// instance of this release reads what any other instance wrote.
+	LegacySecrets string `yaml:"legacy_secrets"`
 }
+
+// WritesWithLegacySecrets reports whether new authenticator secrets and
+// sign-in codes are sealed with admin.totp_key and otp.auth.secret while
+// those are set: keys.legacy_secrets is not "read".
+func (k KeysConfig) WritesWithLegacySecrets() bool { return k.LegacySecrets != LegacySecretsRead }
+
+// The modes of keys.legacy_secrets.
+const (
+	LegacySecretsWrite = "write"
+	LegacySecretsRead  = "read"
+)
 
 // Defaults and bounds of the reloading of the data keys (#233).
 const (
@@ -897,6 +915,17 @@ func (c *Configuration) validateKeys() error {
 		return fmt.Errorf("keys.activation_delay_seconds (%s) is %d; it must be at least twice keys.reload_interval_seconds (%d), so that every instance loads a new key before any writes with it",
 			envVarFor("keys.activation_delay_seconds"), c.Keys.ActivationDelaySeconds, 2*reload)
 	}
+	switch c.Keys.LegacySecrets {
+	case "", LegacySecretsWrite:
+	case LegacySecretsRead:
+		if c.Keys.Provider == "" {
+			return fmt.Errorf("keys.legacy_secrets (%s) is %q, which seals new secrets with the data keys, but keys.provider is not set",
+				envVarFor("keys.legacy_secrets"), c.Keys.LegacySecrets)
+		}
+	default:
+		return fmt.Errorf("keys.legacy_secrets (%s) is %q; it must be %q or %q",
+			envVarFor("keys.legacy_secrets"), c.Keys.LegacySecrets, LegacySecretsWrite, LegacySecretsRead)
+	}
 	return nil
 }
 
@@ -1043,6 +1072,9 @@ func setDefaults() {
 	}
 	if Config.Keys.Transit.Timeout == 0 {
 		Config.Keys.Transit.Timeout = 10
+	}
+	if Config.Keys.LegacySecrets == "" {
+		Config.Keys.LegacySecrets = LegacySecretsWrite
 	}
 
 	if Config.WebSocket.PingInterval == 0 {

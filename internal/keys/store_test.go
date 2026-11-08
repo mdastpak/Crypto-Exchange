@@ -58,7 +58,7 @@ func TestStore_LoadCreatesTheFirstKeysOnce(t *testing.T) {
 	var kekID string
 	var wrapped []byte
 	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys`).Scan(&rows))
-	assert.Equal(t, 3, rows)
+	assert.Equal(t, len(Purposes), rows)
 	require.NoError(t, conn.QueryRow(`SELECT kek_id, wrapped_key FROM data_keys WHERE purpose = 'row-mac'`).Scan(&kekID, &wrapped))
 	assert.Equal(t, provider.ID(), kekID)
 
@@ -71,7 +71,7 @@ func TestStore_LoadCreatesTheFirstKeysOnce(t *testing.T) {
 		assert.Equal(t, first[purpose], fingerprint(t, key), "%s must survive a restart", purpose)
 	}
 	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys`).Scan(&rows))
-	assert.Equal(t, 3, rows)
+	assert.Equal(t, len(Purposes), rows)
 }
 
 func TestStore_ConcurrentFirstLoadsCreateOneKeyPerPurpose(t *testing.T) {
@@ -99,7 +99,7 @@ func TestStore_ConcurrentFirstLoadsCreateOneKeyPerPurpose(t *testing.T) {
 	}
 	var rows int
 	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys`).Scan(&rows))
-	assert.Equal(t, 3, rows)
+	assert.Equal(t, len(Purposes), rows)
 	for _, purpose := range Purposes {
 		want, err := rings[0].Current(purpose)
 		require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestStore_RotateAndRetire(t *testing.T) {
 
 	infos, err := store.List(ctx)
 	require.NoError(t, err)
-	require.Len(t, infos, 4)
+	require.Len(t, infos, len(Purposes)+1)
 	states := make(map[string]bool)
 	for _, info := range infos {
 		states[fmt.Sprintf("%s/v%d", info.Purpose, info.Version)] = info.Current
@@ -164,7 +164,7 @@ func TestStore_RotateAndRetire(t *testing.T) {
 			assert.NotNil(t, info.RetiredAt)
 		}
 	}
-	assert.Equal(t, map[string]bool{"row-mac/v1": false, "row-mac/v2": true, "field-enc/v1": true, "blind-index/v1": true}, states)
+	assert.Equal(t, map[string]bool{"row-mac/v1": false, "row-mac/v2": true, "field-enc/v1": true, "blind-index/v1": true, "otp-mac/v1": true}, states)
 }
 
 func TestStore_LoadRefusesKeysItCannotTrust(t *testing.T) {
@@ -238,7 +238,7 @@ func TestStore_RewrapMovesTheKeysToAnotherKEK(t *testing.T) {
 	moved := &Store{DB: conn, Provider: newKEK}
 	count, err := moved.Rewrap(ctx, oldKEK)
 	require.NoError(t, err)
-	assert.Equal(t, 4, count, "retired keys are re-wrapped too")
+	assert.Equal(t, len(Purposes)+1, count, "retired keys are re-wrapped too")
 
 	ring, err = moved.Load(ctx)
 	require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestStore_WithOpenBao(t *testing.T) {
 	post("keys/data-keys/rotate", "")
 	count, err := store.Rewrap(ctx, provider)
 	require.NoError(t, err)
-	assert.Equal(t, 3, count)
+	assert.Equal(t, len(Purposes), count)
 	post("keys/data-keys/config", `{"min_decryption_version":2}`)
 
 	ring, err = store.Load(ctx)
@@ -307,7 +307,7 @@ func TestStore_TheFirstKeysAreAudited(t *testing.T) {
 		assert.Equal(t, store.Provider.ID(), kek)
 		got = append(got, target)
 	}
-	assert.Equal(t, []string{"blind-index/v1", "field-enc/v1", "row-mac/v1"}, got)
+	assert.Equal(t, []string{"blind-index/v1", "field-enc/v1", "otp-mac/v1", "row-mac/v1"}, got)
 }
 
 // TestStore_VerifyUnwrapsWithoutCreating checks the restore-drill check of
@@ -334,4 +334,31 @@ func TestStore_VerifyUnwrapsWithoutCreating(t *testing.T) {
 	other := &Store{DB: conn, Provider: localProvider(t)}
 	_, err = other.Verify(ctx)
 	require.Error(t, err, "a database restored without its KEK fails the check")
+}
+
+// TestStore_LoadExistingCreatesNothing loads the keys as cmd/admin does:
+// it never creates one, also not for a purpose that a newer release added
+// before any instance of that release has started.
+func TestStore_LoadExistingCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	store, conn := newTestStore(t, localProvider(t))
+
+	_, err := store.LoadExisting(ctx)
+	require.ErrorIs(t, err, ErrNoKey, "no keys at all")
+	var rows int
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys`).Scan(&rows))
+	assert.Zero(t, rows)
+
+	_, err = store.Load(ctx)
+	require.NoError(t, err)
+	_, err = conn.Exec(`DELETE FROM data_keys WHERE purpose = $1`, PurposeOTPMAC)
+	require.NoError(t, err, "as before the release that added otp-mac")
+	ring, err := store.LoadExisting(ctx)
+	require.NoError(t, err)
+	_, err = ring.Current(PurposeFieldEnc)
+	assert.NoError(t, err)
+	_, err = ring.Current(PurposeOTPMAC)
+	assert.ErrorIs(t, err, ErrNoKey)
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys`).Scan(&rows))
+	assert.Equal(t, len(Purposes)-1, rows)
 }

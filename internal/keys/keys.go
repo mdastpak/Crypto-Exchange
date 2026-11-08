@@ -31,10 +31,16 @@ const (
 	// PurposeBlindIndex computes HMAC-SHA-256 blind indexes of encrypted
 	// values that must be searchable by equality.
 	PurposeBlindIndex Purpose = "blind-index"
+	// PurposeOTPMAC is the root of the keys of sign-in codes in Redis
+	// (#146): the HMAC of codes, contacts, and clients, and the encryption
+	// of contacts, each derived from it with HMAC-SHA-256 and a label of
+	// its own. The values it protects live for minutes, so a rotation
+	// needs no re-encryption.
+	PurposeOTPMAC Purpose = "otp-mac"
 )
 
 // Purposes lists every purpose, in a fixed order.
-var Purposes = []Purpose{PurposeRowMAC, PurposeFieldEnc, PurposeBlindIndex}
+var Purposes = []Purpose{PurposeRowMAC, PurposeFieldEnc, PurposeBlindIndex, PurposeOTPMAC}
 
 // Valid reports whether p is one of Purposes.
 func (p Purpose) Valid() bool {
@@ -46,7 +52,9 @@ func (p Purpose) Valid() bool {
 	return false
 }
 
-func (p Purpose) isMAC() bool { return p == PurposeRowMAC || p == PurposeBlindIndex }
+func (p Purpose) isMAC() bool {
+	return p == PurposeRowMAC || p == PurposeBlindIndex || p == PurposeOTPMAC
+}
 
 // KeySize is the size of every data key: 256 bits.
 const KeySize = 32

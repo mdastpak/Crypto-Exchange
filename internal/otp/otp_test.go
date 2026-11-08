@@ -95,6 +95,8 @@ func TestSettingsFromConfig(t *testing.T) {
 	config.Config.OTP.Auth.RetryLimit = 4
 	config.Config.OTP.Auth.ContactRequestsPerHour = 6
 	config.Config.OTP.Auth.ContactAttemptsPerHour = 12
+	config.Config.Keys.Provider = config.KeysProviderLocal
+	config.Config.Keys.LegacySecrets = config.LegacySecretsWrite
 
 	assert.Equal(t, Settings{
 		Secret:                 "configured-secret",
@@ -103,5 +105,16 @@ func TestSettingsFromConfig(t *testing.T) {
 		AttemptsPerCode:        4,
 		ContactRequestsPerHour: 6,
 		ContactAttemptsPerHour: 12,
+		LegacyWrites:           true,
+		DataKeys:               true,
 	}, SettingsFromConfig())
+
+	config.Config.Keys.LegacySecrets = config.LegacySecretsRead
+	assert.False(t, SettingsFromConfig().LegacyWrites, "keys.legacy_secrets read")
+}
+
+func TestSettings_DataKeysReplaceTheSecretInReleaseMode(t *testing.T) {
+	assert.ErrorIs(t, Settings{}.Validate(true), ErrSecretRequired)
+	assert.NoError(t, Settings{DataKeys: true}.Validate(true))
+	assert.NoError(t, Settings{}.Validate(false), "outside release mode a random secret is used")
 }

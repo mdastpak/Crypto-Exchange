@@ -264,6 +264,12 @@ keys:
     timeout_seconds: 10
   reload_interval_seconds: 60    # How often each instance loads a change of data_keys
   activation_delay_seconds: 300  # A rotated key writes only after this; at least 2x the reload interval
+  # What admin.totp_key and otp.auth.secret still do while they are set
+  # (docs/data-protection.md#moving-off-the-legacy-secrets): "write" seals
+  # new authenticator secrets and sign-in codes with them, as releases
+  # before #146 do; "read" seals them with the data keys and only reads the
+  # old ones. Set "read" once every instance runs this release.
+  legacy_secrets: "write"
 
 websocket:
   # Origins accepted by the WebSocket origin check; empty allows same-origin

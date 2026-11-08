@@ -2,16 +2,12 @@ package otp
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/contact"
@@ -56,22 +52,30 @@ const (
 	fieldContactID = "contact_id" // HMAC of the normalized contact
 	fieldClientID  = "client_id"  // HMAC of the client that requested the code
 	fieldAttempts  = "attempts"
+	// fieldKey is the version of the otp-mac data key that protects the
+	// session (#146). A session without it is protected by otp.auth.secret.
+	fieldKey = "key"
 )
 
 // Store keeps sign-in sessions in Redis. A session holds an HMAC of its code,
-// never the code itself, and the contact encrypted with a key derived from the
-// secret, so reading Redis reveals neither.
+// never the code itself, and the contact encrypted, so reading Redis reveals
+// neither. The keys are derived from otp.auth.secret, or from the otp-mac data
+// keys once UseDataKeys is called (#146); a session records which.
 type Store struct {
 	client    redis.UniversalClient
 	settings  Settings
 	keyPrefix string
-	macKey    []byte
-	contacts  cipher.AEAD
+	// legacy are the keys of otp.auth.secret, or of a random secret when it
+	// is not set; legacySet says whether it is.
+	legacy    *sessionKeys
+	legacySet bool
+	dataKeys  atomic.Pointer[keySource]
 }
 
-// NewStore returns a store with the given settings. Without a secret it uses
-// a random one, which only works while a single process issues and verifies
-// the codes; Settings.Validate refuses that in release mode.
+// NewStore returns a store with the given settings. Without a secret, and
+// until UseDataKeys is called, it uses a random one, which only works while a
+// single process issues and verifies the codes; Settings.Validate refuses
+// that in release mode.
 //
 // client may be a standalone, sentinel, or cluster client (#231).
 func NewStore(client redis.UniversalClient, settings Settings) *Store {
@@ -81,15 +85,6 @@ func NewStore(client redis.UniversalClient, settings Settings) *Store {
 		secret = make([]byte, MinSecretLength)
 		_, _ = rand.Read(secret) // never fails since Go 1.24
 	}
-
-	block, err := aes.NewCipher(deriveKey(secret, "otp contact encryption"))
-	if err != nil {
-		panic(err) // unreachable: the derived key is always 32 bytes
-	}
-	contacts, err := cipher.NewGCM(block)
-	if err != nil {
-		panic(err) // unreachable for AES
-	}
 	keyPrefix := "otp:"
 	if settings.Namespace != "" {
 		keyPrefix += settings.Namespace + ":"
@@ -98,39 +93,15 @@ func NewStore(client redis.UniversalClient, settings Settings) *Store {
 		client:    client,
 		settings:  settings,
 		keyPrefix: keyPrefix,
-		macKey:    deriveKey(secret, "otp code and contact hashing"),
-		contacts:  contacts,
+		legacy:    legacySessionKeys(secret),
+		legacySet: settings.Secret != "",
 	}
 }
 
 // TTL is how long a code of the store is valid.
 func (s *Store) TTL() time.Duration { return s.settings.TTL }
 
-// deriveKey derives an independent 32-byte key for each purpose.
-func deriveKey(secret []byte, purpose string) []byte {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(purpose))
-	return mac.Sum(nil)
-}
-
-func (s *Store) mac(parts ...string) []byte {
-	mac := hmac.New(sha256.New, s.macKey)
-	mac.Write([]byte(strings.Join(parts, "\x00")))
-	return mac.Sum(nil)
-}
-
-// contactID identifies a contact in Redis keys. Email addresses are matched
-// case-insensitively, like the users table does.
-func (s *Store) contactID(contact string) string {
-	return hex.EncodeToString(s.mac("contact", strings.ToLower(contact)))
-}
-
 func (s *Store) sessionKey(sessionID string) string { return s.keyPrefix + "session:" + sessionID }
-
-// clientID identifies a client in Redis keys, without its address.
-func (s *Store) clientID(client string) string {
-	return hex.EncodeToString(s.mac("client", client))
-}
 
 // The per-contact limits (#187). The requests and the attempts are counted
 // per contact and client, so that a stranger who fails codes for a contact,
@@ -209,11 +180,15 @@ return 1
 // address as clientip.Key groups it; every instance must pass the same
 // identity for the same client. An empty client is one client of its own.
 func (s *Store) Issue(ctx context.Context, contact, client string) (Issued, error) {
-	contactID, clientID := s.contactID(contact), s.clientID(client)
+	keys, err := s.writer()
+	if err != nil {
+		return Issued{}, err
+	}
+	contactID, clientID := keys.contactID(contact), keys.clientID(client)
 	// The request counters bound the codes sent to a contact, and with them
 	// the cost of the SMS: a failover must not reset them either.
 	var result int
-	err := s.settings.Durability.Run(ctx, s.client, s.contactTotalKey(contactID), func(c redis.Cmdable) error {
+	err = s.settings.Durability.Run(ctx, s.client, s.contactTotalKey(contactID), func(c redis.Cmdable) error {
 		var err error
 		result, err = issueScript.Run(ctx, c,
 			[]string{
@@ -240,20 +215,24 @@ func (s *Store) Issue(ctx context.Context, contact, client string) (Issued, erro
 		return Issued{}, err
 	}
 	sessionID := uuid.NewString()
-	encrypted, err := s.encryptContact(sessionID, contact)
+	encrypted, err := keys.encryptContact(sessionID, contact)
 	if err != nil {
 		return Issued{}, err
 	}
 
 	key := s.sessionKey(sessionID)
 	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, key,
-			fieldCode, hex.EncodeToString(s.mac("code", sessionID, code)),
+		values := []interface{}{
+			fieldCode, hex.EncodeToString(keys.mac("code", sessionID, code)),
 			fieldContact, encrypted,
 			fieldContactID, contactID,
 			fieldClientID, clientID,
 			fieldAttempts, 0,
-		)
+		}
+		if version := keys.storedVersion(); version != "" {
+			values = append(values, fieldKey, version)
+		}
+		pipe.HSet(ctx, key, values...)
 		pipe.Expire(ctx, key, s.settings.TTL)
 		return nil
 	})
@@ -318,19 +297,24 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 		return "", ErrInvalidCode
 	}
 	key := s.sessionKey(sessionID)
-	ids, err := s.client.HMGet(ctx, key, fieldContactID, fieldClientID).Result()
+	ids, err := s.client.HMGet(ctx, key, fieldContactID, fieldClientID, fieldKey).Result()
 	if err != nil {
 		return "", fmt.Errorf("load the session: %w", err)
 	}
 	contactID, _ := ids[0].(string)
 	clientID, _ := ids[1].(string)
+	version, _ := ids[2].(string)
 	if contactID == "" {
 		return "", ErrInvalidCode
+	}
+	keys, err := s.reader(ctx, version)
+	if err != nil {
+		return "", err
 	}
 	if clientID == "" {
 		// A session issued before #187 counted its attempts per contact
 		// only; it expires within otp.auth.ttl_seconds of the upgrade.
-		clientID = s.clientID("")
+		clientID = keys.clientID("")
 	}
 
 	attempt, storedMAC, encrypted, err := s.reserveAttempt(ctx, key, s.contactAttemptsKey(contactID, clientID))
@@ -342,7 +326,7 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("decode the stored code: %w", err)
 	}
-	if !hmac.Equal(expected, s.mac("code", sessionID, code)) {
+	if !hmac.Equal(expected, keys.mac("code", sessionID, code)) {
 		if attempt >= int64(s.settings.AttemptsPerCode) {
 			// The last attempt failed: erase the code and the contact now.
 			// The session stays until it expires, so later attempts are
@@ -370,7 +354,7 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("reset the contact attempts: %w", err)
 	}
-	return s.decryptContact(sessionID, encrypted)
+	return keys.decryptContact(sessionID, encrypted)
 }
 
 // reserveAttempt counts one attempt for the session and in attemptsKey, the
@@ -418,30 +402,4 @@ func (s *Store) reserveAttempt(ctx context.Context, key, attemptsKey string) (at
 		return 0, "", "", ErrTooManyAttempts
 	}
 	return attempt, storedMAC, encrypted, nil
-}
-
-// encryptContact encrypts contact with AES-GCM. The session ID is
-// authenticated data, so a ciphertext cannot be moved to another session.
-func (s *Store) encryptContact(sessionID, contact string) (string, error) {
-	nonce := make([]byte, s.contacts.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	sealed := s.contacts.Seal(nonce, nonce, []byte(contact), []byte(sessionID))
-	return base64.StdEncoding.EncodeToString(sealed), nil
-}
-
-func (s *Store) decryptContact(sessionID, encrypted string) (string, error) {
-	sealed, err := base64.StdEncoding.DecodeString(encrypted)
-	if err != nil || len(sealed) < s.contacts.NonceSize() {
-		return "", errors.New("decrypt the contact: malformed ciphertext")
-	}
-	nonce, ciphertext := sealed[:s.contacts.NonceSize()], sealed[s.contacts.NonceSize():]
-	contact, err := s.contacts.Open(nil, nonce, ciphertext, []byte(sessionID))
-	if err != nil {
-		// Usually a changed secret: sessions created before the change
-		// cannot be read anymore.
-		return "", fmt.Errorf("decrypt the contact: %w", err)
-	}
-	return string(contact), nil
 }

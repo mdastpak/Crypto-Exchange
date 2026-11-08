@@ -36,7 +36,7 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `redis.tls.enabled`, `rabbitmq.tls.enabled` | TLS to Redis and to RabbitMQ, or `tls.private_network: true`, which states that only a trusted private network, such as a service mesh that encrypts every hop, carries the connection. Sign-in codes and raw contacts cross RabbitMQ on their way to the delivery worker, and the Redis password and the token blacklist cross Redis, so neither may travel in the clear between hosts. |
 | `server.cors.allowed_origins`, `websocket.allowed_origins` | No `"*"`, and only `https://` origins |
 | `jwt.ssl.user.private_key`, `jwt.ssl.admin.private_key`, `server.tls.key_file` | Files that only their owner may write to (not checked on Windows). Read access is not checked, because container platforms mount secrets readable by every user of the container. |
-| `otp.auth.secret` | Set, at least 32 bytes |
+| `otp.auth.secret` | Set, at least 32 bytes, unless `keys.provider` is set |
 | `otp.auth.dev_log_codes` | `false` |
 | `keys.provider` | Not `local`, and a Transit address with `https` |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
@@ -241,7 +241,7 @@ Skipping phase 1 signs users out at random during the restart: an instance that 
 | `auth.length` | `6` | Number of digits, from 4 to 10 |
 | `auth.ttl_seconds` | `60` | Lifetime of a code and of its sign-in session |
 | `auth.retry_limit` | `3` | Verification attempts per code. After the last failed attempt, the code is erased and further attempts are refused until the session expires. |
-| `auth.secret` | **required** in release mode | Key for the HMAC of each code and the encryption of contacts in Redis, so that reading Redis reveals neither. At least 32 bytes, for example from `openssl rand -base64 48`, and the same on every server instance. `OTP_SECRET` overrides it. Changing it only invalidates the codes that are pending. Outside release mode, an empty secret is replaced by a random one at startup, which works only with a single server process. |
+| `auth.secret` | none | The legacy key of sign-in codes ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)). With [`keys.provider`](#keys) set, the `otp-mac` data keys protect the codes and contacts in Redis instead, and this setting is only needed while `keys.legacy_secrets` is `write`, or until the codes it protected expire; see [moving off the legacy secrets](data-protection.md#moving-off-the-legacy-secrets). Without `keys.provider`, it is **required** in release mode: the key of the HMAC of each code and the encryption of contacts, at least 32 bytes, for example from `openssl rand -base64 48`, and the same on every server instance. `OTP_SECRET` overrides it. Changing it only invalidates the codes that are pending. Outside release mode, with neither set, a random secret is used, which works only with a single server process. |
 | `auth.contact_requests_per_hour` | `5` | Codes issued to one email address or mobile number per hour, for one client. A client is its address, with IPv6 grouped by `rate_limits.ipv6_prefix_length`. |
 | `auth.contact_attempts_per_hour` | `10` | Verification attempts for one contact per hour, across all of its codes, from the client that requested them, so that requesting a new code does not bring new attempts. A successful sign-in resets the count. It must be at least `retry_limit`. Because the count is per client, a stranger who knows a contact and fails its codes locks out only the stranger's own client, not the contact's owner ([#187](https://github.com/mdastpak/Crypto-Exchange/issues/187)). |
 | `auth.contact_requests_total_per_hour` | `20` | Codes issued to one contact per hour from every client together, which bounds the codes, and the SMS, that strangers can send to it. A client that signed in with the contact in the last 30 days is exempt, so strangers who use up the total do not lock out its owner on the owner's usual network. At least `contact_requests_per_hour`; the default is never below it. |
@@ -287,12 +287,12 @@ Failed attempts and abandoned codes are also logged with the masked contact. Del
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `totp_key` | none | Encrypts the authenticator (TOTP) secrets of administrators in the database with AES-256-GCM: 32 random bytes, base64-encoded, for example from `openssl rand -base64 32`. `ADMIN_TOTP_KEY` overrides it. Without it, admin sign-in is disabled. The server and the `cmd/admin` command must use the same key. If it changes, every administrator must be enrolled again with `reset-totp`. |
+| `totp_key` | none | The legacy key of the authenticator (TOTP) secrets of administrators ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)): AES-256-GCM, 32 random bytes, base64-encoded, for example from `openssl rand -base64 32`. `ADMIN_TOTP_KEY` overrides it. With [`keys.provider`](#keys) set, secrets are sealed with a `field-enc` data key instead, and this setting is only needed while `keys.legacy_secrets` is `write` or a secret still uses it (`admin totp-secrets status`); see [moving off the legacy secrets](data-protection.md#moving-off-the-legacy-secrets). With neither set, admin sign-in is disabled. The server and the `cmd/admin` command must use the same settings. If the key changes, every administrator sealed with it must be enrolled again with `reset-totp`. |
 | `sign_in_min_response_ms` | `400` | The least time, from 1 to 5000 ms, that an answer to `POST /admin/auth` takes once the address is valid, so that its duration does not tell an administrator's address from an unknown one. It must be longer than the work for an administrator, which includes the confirm of the broker for the email; check the latency of that route in production and raise the setting if it comes close. |
 
 Authenticator apps show `exchange.name` as the issuer of the account. Each encrypted secret is bound to its administrator's ID, so it cannot be copied to another user row.
 
-Writing to the database is not enough to create an administrator: changing `users.role` to `admin` does not enable admin sign-in without a secret sealed with this key. Someone with both database access and this key could, so keep it in a secret manager, apart from database credentials.
+Writing to the database is not enough to create an administrator: changing `users.role` to `admin` does not enable admin sign-in without a secret sealed with this key or a data key. Someone with both database access and this key could, so keep it in a secret manager, apart from database credentials, or better, remove it once the data keys seal every secret: a data key is unwrapped only by the key management service, which logs it.
 
 ### `contacts`
 
@@ -358,6 +358,7 @@ The data-protection keys seal rows and encrypt fields, so that someone with acce
 | `transit.timeout_seconds` | `10` | Timeout of each request to the server |
 | `reload_interval_seconds` | `60` | From 5 to 3600. How often each instance checks `data_keys`, and loads a rotation, a retirement, or a re-wrap without a restart ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)). An instance that meets a value sealed with a version it does not hold also reloads at once, at most every 5 seconds. |
 | `activation_delay_seconds` | `300` | How long after `admin keys rotate` the new version starts writing. Until then every instance only reads with it. At least twice `reload_interval_seconds`, so that every instance has loaded a version before any writes with it. `admin keys rotate` reads it from the configuration it is given. |
+| `legacy_secrets` | `write` | What [`admin.totp_key`](#admin) and [`otp.auth.secret`](#otp) still do while they are set ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)). `write` seals new authenticator secrets and sign-in codes with them, as releases before #146 do, so that those can still read them during a rolling upgrade. `read` seals them with the data keys and opens the old ones only; set it once every instance runs a release with #146. Both modes read the data keys. `read` needs `keys.provider`. `KEYS_LEGACY_SECRETS` overrides it. |
 
 The key service is contacted at startup, when `data_keys` changed, and by the `admin keys` commands. A running server keeps the keys in memory: when a reload fails, because the key service is unreachable, it keeps the keys it has and logs the failure, so it does not depend on the key service between changes.
 
@@ -540,6 +541,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `KEYS_TRANSIT_TIMEOUT_SECONDS` | `keys.transit.timeout_seconds` |
 | `KEYS_RELOAD_INTERVAL_SECONDS` | `keys.reload_interval_seconds` |
 | `KEYS_ACTIVATION_DELAY_SECONDS` | `keys.activation_delay_seconds` |
+| `KEYS_LEGACY_SECRETS` | `keys.legacy_secrets` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |
