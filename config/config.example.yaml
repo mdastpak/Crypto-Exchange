@@ -314,6 +314,16 @@ market_data:
     hot_listed: true           # Pairs of currencies listed on this exchange are hot
     active_top: 200            # Next pairs by 24-hour volume in USD, over every venue
     hysteresis_percent: 20     # An active pair leaves only past rank active_top + 20 %
+  # Live tickers of the hot pairs from the venues' WebSocket streams
+  # (docs/market-data.md#live-tickers).
+  streams:
+    enabled: true
+    tiers: [hot]
+    max_pairs: 200             # Pairs of one venue's stream
+    max_per_worker: 2          # Streams one worker holds, apart from max_concurrent_jobs
+    run_minutes: 60            # A worker holds a stream this long, then the workers share it again
+    flush_millis: 1000         # A pair is written at most once in this time
+    quiet_seconds: 60          # A quiet stream reconnects after this
   # The public routes of the server (docs/market-data.md#public-api). The
   # server reads this and the quality rules of tickers above.
   api:

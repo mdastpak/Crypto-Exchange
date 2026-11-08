@@ -33,6 +33,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coingecko"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/coinmarketcap"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source/exchange"
+	"github.com/mdastpak/crypto-exchange/internal/marketdata/stream"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tickers"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tiers"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
@@ -85,7 +86,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("invalid market data jobs: %w", err)
 		}
-		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, specs); err != nil {
+		streams, err := streamSpecs(postgres.DB)
+		if err != nil {
+			return fmt.Errorf("invalid market data streams: %w", err)
+		}
+		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, specs, streams); err != nil {
 			return err
 		}
 		log.Printf("Market worker started in %s mode", cfg.Mode)
@@ -213,6 +218,40 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 	return specs, nil
 }
 
+// streamSpecs are the streams of the venues that have one and that this
+// node reaches (#281). A run holds its stream for run_minutes; the next is
+// due a second after, on whichever worker claims it.
+func streamSpecs(conn *sql.DB) ([]jobs.Spec, error) {
+	cfg := config.Config.MarketData
+	if cfg.Streams.Enabled != nil && !*cfg.Streams.Enabled {
+		return nil, nil
+	}
+	protocols := stream.Protocols()
+	var specs []jobs.Spec
+	for _, name := range exchange.Names {
+		proto, ok := protocols[name]
+		if !ok || !cfg.Reachable(name) {
+			continue
+		}
+		proxy := ""
+		if cfg.Route(name) == config.EgressProxy {
+			proxy = cfg.Egress.ProxyURL
+		}
+		dial, err := stream.NewDialer(proxy, time.Duration(cfg.Streams.QuietSeconds)*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("stream %s: %w", name, err)
+		}
+		job := stream.New(proto, dial, marketdata.NewStore(conn), stream.Options{
+			Tiers:    cfg.Streams.Tiers,
+			MaxPairs: cfg.Streams.MaxPairs,
+			RunFor:   time.Duration(cfg.Streams.RunMinutes) * time.Minute,
+			Flush:    time.Duration(cfg.Streams.FlushMillis) * time.Millisecond,
+		})
+		specs = append(specs, jobs.Spec{Job: job, Interval: time.Second, Timeout: job.Timeout()})
+	}
+	return specs, nil
+}
+
 // candleRunTimeout bounds one run of the candles of a venue.
 const candleRunTimeout = 30 * time.Minute
 
@@ -277,7 +316,7 @@ func catalogSource(conn *sql.DB, name string) (source.CatalogSource, []string, e
 // startJobs starts the platform watcher, whose lockdown of market_data
 // pauses the jobs on every worker, and the runner of the jobs. It returns
 // the function that stops both.
-func startJobs(conn *sql.DB, node string, specs []jobs.Spec) (func(ctx context.Context) error, error) {
+func startJobs(conn *sql.DB, node string, specs, streams []jobs.Spec) (func(ctx context.Context) error, error) {
 	settings, err := platform.SettingsFromConfig()
 	if err != nil {
 		return nil, fmt.Errorf("invalid platform configuration: %w", err)
@@ -299,12 +338,38 @@ func startJobs(conn *sql.DB, node string, specs []jobs.Spec) (func(ctx context.C
 	if err != nil {
 		return nil, err
 	}
+	// The streams hold their runs for long, so they have runners of their
+	// own, with slots of their own: they never take the slots of the jobs,
+	// and one worker holds at most max_per_worker of them.
+	var streamRunner *jobs.Runner
+	if len(streams) > 0 {
+		streamRunner, err = jobs.NewRunner(conn, jobs.Options{
+			Node:          node,
+			Mode:          cfg.Mode,
+			Poll:          time.Duration(cfg.PollSeconds) * time.Second,
+			Lease:         time.Duration(cfg.LeaseSeconds) * time.Second,
+			MaxConcurrent: cfg.Streams.MaxPerWorker,
+			RetryBase:     time.Duration(cfg.RetryBaseSeconds) * time.Second,
+			Paused:        func() bool { return watcher.Paused(platform.FeatureMarketData) },
+			Reachable:     cfg.Reachable,
+		}, streams...)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	watcher.Start(ctx)
 	runner.Start()
+	if streamRunner != nil {
+		streamRunner.Start()
+	}
 	return func(ctx context.Context) error {
-		return errors.Join(runner.Stop(ctx), watcher.Stop(ctx))
+		var streamsStopped error
+		if streamRunner != nil {
+			streamsStopped = streamRunner.Stop(ctx)
+		}
+		return errors.Join(runner.Stop(ctx), streamsStopped, watcher.Stop(ctx))
 	}, nil
 }
 

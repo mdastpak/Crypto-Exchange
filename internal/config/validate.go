@@ -537,12 +537,22 @@ func (c *Configuration) marketDataProblems(p *problems) {
 		{"market_data.tiers.interval_hours", tiers.IntervalHours, 1, 24 * 7},
 		{"market_data.tiers.active_top", tiers.ActiveTop, 1, MaxTiersActiveTop},
 		{"market_data.tiers.hysteresis_percent", tiers.HysteresisPercent, 1, 100},
+		{"market_data.streams.max_pairs", c.MarketData.Streams.MaxPairs, 1, MaxStreamsMaxPairs},
+		{"market_data.streams.max_per_worker", c.MarketData.Streams.MaxPerWorker, 1, 16},
+		{"market_data.streams.run_minutes", c.MarketData.Streams.RunMinutes, 1, 24 * 60},
+		{"market_data.streams.flush_millis", c.MarketData.Streams.FlushMillis, 250, 60000},
+		{"market_data.streams.quiet_seconds", c.MarketData.Streams.QuietSeconds, 10, 600},
 	} {
 		if r.value < r.lo || r.value > r.hi {
 			p.add(r.key, "is %d; it must be from %d to %d", r.value, r.lo, r.hi)
 		}
 	}
 	c.marketDataAPIProblems(p)
+	for _, tier := range c.MarketData.Streams.Tiers {
+		if !slices.Contains(Tiers, tier) {
+			p.add("market_data.streams.tiers", "has %q; the tiers are hot, active, and other", tier)
+		}
+	}
 	if tk.StaleAfterSeconds > 0 && tk.StaleAfterSeconds < tk.IntervalSeconds {
 		p.add("market_data.tickers.stale_after_seconds", "is %d; it must be at least interval_seconds (%d), or every ticker turns stale between two runs",
 			tk.StaleAfterSeconds, tk.IntervalSeconds)

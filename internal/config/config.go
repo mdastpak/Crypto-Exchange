@@ -834,6 +834,9 @@ type MarketDataConfig struct {
 	Candles MarketDataCandles `yaml:"candles"`
 	// Tiers configures the collection tiers of the pairs (#279).
 	Tiers MarketDataTiers `yaml:"tiers"`
+	// Streams configures the live tickers of the venues' WebSocket
+	// streams (#281).
+	Streams MarketDataStreams `yaml:"streams"`
 	// API configures the public read API of the server (#269), which
 	// also applies Tickers' rules of quality.
 	API MarketDataAPI `yaml:"api"`
@@ -908,6 +911,40 @@ const (
 	DefaultTiersActiveTop         = 200
 	MaxTiersActiveTop             = 10000
 	DefaultTiersHysteresisPercent = 20
+)
+
+// MarketDataStreams configures the WebSocket streams of the venues, which
+// keep the tickers of the hot pairs seconds old (#281).
+type MarketDataStreams struct {
+	// Enabled runs the streams of the venues that have one and that this
+	// node reaches.
+	Enabled *bool `yaml:"enabled"`
+	// Tiers are the tiers of the pairs that the streams follow.
+	Tiers []string `yaml:"tiers"`
+	// MaxPairs bounds the pairs of a venue's stream.
+	MaxPairs int `yaml:"max_pairs"`
+	// MaxPerWorker bounds the streams that one worker holds, apart from
+	// max_concurrent_jobs, so that the workers share them.
+	MaxPerWorker int `yaml:"max_per_worker"`
+	// RunMinutes is how long a worker holds a stream before it lets the
+	// workers take it again.
+	RunMinutes int `yaml:"run_minutes"`
+	// FlushMillis is how often the tickers received are written: a pair is
+	// written at most once per this time.
+	FlushMillis int `yaml:"flush_millis"`
+	// QuietSeconds is how long a stream may stay quiet before it counts as
+	// dead and reconnects.
+	QuietSeconds int `yaml:"quiet_seconds"`
+}
+
+// The defaults and bounds of market_data.streams.
+const (
+	DefaultStreamsMaxPairs     = 200
+	MaxStreamsMaxPairs         = 1000
+	DefaultStreamsMaxPerWorker = 2
+	DefaultStreamsRunMinutes   = 60
+	DefaultStreamsFlushMillis  = 1000
+	DefaultStreamsQuietSeconds = 60
 )
 
 // DefaultHotAssets are the hot assets when the configuration sets none.
@@ -1491,6 +1528,14 @@ func setDefaults() {
 		hotListed := true
 		tiers.HotListed = &hotListed
 	}
+	streams := &Config.MarketData.Streams
+	if streams.Enabled == nil {
+		enabled := true
+		streams.Enabled = &enabled
+	}
+	if streams.Tiers == nil {
+		streams.Tiers = []string{TierHot}
+	}
 	catalog := &Config.MarketData.Catalog
 	if len(catalog.Priority) == 0 {
 		catalog.Priority = slices.Clone(CatalogSources)
@@ -1517,6 +1562,11 @@ func setDefaults() {
 		{&Config.MarketData.Candles.RequestsPerRun, DefaultCandlesRequestsPerRun},
 		{&Config.MarketData.API.CacheSeconds, DefaultMarketDataAPICacheSeconds},
 		{&Config.MarketData.Tiers.IntervalHours, DefaultTiersIntervalHours},
+		{&Config.MarketData.Streams.MaxPairs, DefaultStreamsMaxPairs},
+		{&Config.MarketData.Streams.MaxPerWorker, DefaultStreamsMaxPerWorker},
+		{&Config.MarketData.Streams.RunMinutes, DefaultStreamsRunMinutes},
+		{&Config.MarketData.Streams.FlushMillis, DefaultStreamsFlushMillis},
+		{&Config.MarketData.Streams.QuietSeconds, DefaultStreamsQuietSeconds},
 		{&Config.MarketData.Tiers.ActiveTop, DefaultTiersActiveTop},
 		{&Config.MarketData.Tiers.HysteresisPercent, DefaultTiersHysteresisPercent},
 	} {

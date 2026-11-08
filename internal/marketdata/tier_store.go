@@ -141,3 +141,39 @@ func (s *Store) PairTier(ctx context.Context, pairID int64) (string, error) {
 	}
 	return tier, err
 }
+
+// StreamPair is a pair that a venue stream follows (#281).
+type StreamPair struct {
+	PairID      int64
+	VenueSymbol string
+	BaseSymbol  string
+	QuoteSymbol string
+}
+
+// StreamPairs returns the active pairs of an enabled venue whose base is a
+// catalog asset that is not hidden and whose tier is one of tiers, the
+// better-ranked base first, at most limit.
+func (s *Store) StreamPairs(ctx context.Context, venueID string, tiers []string, limit int) ([]StreamPair, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.id, p.venue_symbol, p.base_symbol, p.quote_symbol
+		FROM market_venue_pairs p
+		JOIN market_venues v ON v.id = p.venue_id
+		JOIN market_assets a ON a.id = p.base_asset_id
+		WHERE p.venue_id = $1 AND p.active AND v.enabled AND a.status <> 'hidden'
+			AND `+effectiveTier+` = ANY($2::text[])
+		ORDER BY a.market_cap_rank NULLS LAST, p.id
+		LIMIT $3`, venueID, tiers, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StreamPair
+	for rows.Next() {
+		var p StreamPair
+		if err := rows.Scan(&p.PairID, &p.VenueSymbol, &p.BaseSymbol, &p.QuoteSymbol); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
