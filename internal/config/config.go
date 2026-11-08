@@ -756,6 +756,22 @@ type MobileOwnershipConfig struct {
 	RecheckDays int `yaml:"recheck_days"`
 }
 
+// Timeout is TimeoutSeconds, or ten seconds when it is not set.
+func (m MobileOwnershipConfig) Timeout() time.Duration {
+	if m.TimeoutSeconds <= 0 {
+		return 10 * time.Second
+	}
+	return time.Duration(m.TimeoutSeconds) * time.Second
+}
+
+// Recheck is RecheckDays, or thirty days when it is not set.
+func (m MobileOwnershipConfig) Recheck() time.Duration {
+	if m.RecheckDays <= 0 {
+		return 30 * 24 * time.Hour
+	}
+	return time.Duration(m.RecheckDays) * 24 * time.Hour
+}
+
 // DefaultJibitEndpoint is the base URL of the Jibit identity API.
 const DefaultJibitEndpoint = "https://napi.jibit.ir/ide"
 

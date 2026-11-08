@@ -276,6 +276,8 @@ Errors:
 
 The first successful verification for a contact creates the user. Each email address and mobile number belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
 
+A mobile number of an account with a verified national ID is checked again at sign-in once its last check is older than `identity.mobile_ownership.recheck_days` ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)). Mobile numbers are recycled, so a number that the provider no longer matches to that national ID is taken off the account. The account keeps its data, every one of its sessions ends, and a [security hold](#security-hold) starts. The sign-in then continues as for an unknown number, with a new, empty account: the new subscriber never sees the previous owner's account. When the check is due and the provider cannot answer, the sign-in answers `503 identity_unavailable`; request a new code later, or sign in with the email address.
+
 ### Sign-in limits
 
 These limits apply on top of the per-IP [rate limits](#rate-limiting):
@@ -1013,9 +1015,17 @@ Errors of both routes, with their `code`:
 | `409` | `contact_not_found` | Replacing or removing a type the user does not have, or verifying with one |
 | `409` | `same_contact` | Replacing a contact with itself |
 | `409` | `last_contact` | Removing the last verified contact |
-| `409` | `contact_in_use` | The new contact belongs to another account. This is only said once the code proved control of it. Starting the change does not tell. |
+| `409` | `contact_in_use` | The new contact is a mobile number of another account that the provider still matches to that account's national ID. This is only said once the code proved control of it. Starting the change does not tell. See [Contacts of another account](#contacts-of-another-account). |
 | `409` | `channel_unavailable` | Codes cannot be sent to that type of contact |
 | `429` | `rate_limited` | Too many codes, or too many wrong codes, which also end the change |
+
+#### Contacts of another account
+
+A contact belongs to one account at a time. When the new contact of a change is held by another account, and the codes prove that the user controls it, it moves to the user ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)):
+
+- The other account loses the contact. Its row is kept, marked removed. Every session of that account ends, a [security hold](#security-hold) starts on it, and it is audited as `user.contact_claimed` with the reason `claimed_by_another_account`. The account keeps its data and its other contacts, and recovers through support if that was its last one.
+- A mobile number of an account with a verified national ID moves only when the provider no longer matches it to that ID. One that still matches stays, and the change answers `409 contact_in_use`. When the provider cannot answer, it answers `503 identity_unavailable`, and nothing moves.
+- Both accounts are locked, in a fixed order, while the contact moves, so two claims of one contact on any instances leave it on exactly one account.
 
 #### Mobile ownership
 

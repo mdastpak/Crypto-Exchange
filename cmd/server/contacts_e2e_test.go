@@ -10,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/identitytest"
@@ -162,19 +163,147 @@ func TestUserContacts_Refusals(t *testing.T) {
 }
 
 // TestUserContacts_ContactOfAnotherAccount adds a contact that another
-// account holds. Starting the change does not tell that it is taken; once the
-// code proves control of it, the refusal may.
+// account holds (#252). Starting the change does not tell that it is
+// taken. Once the code proves control of it, it moves: the previous
+// account loses it and every session, and gets a security hold, and a code
+// to the contact signs in to the new holder.
 func TestUserContacts_ContactOfAnotherAccount(t *testing.T) {
 	env := newE2EEnv(t)
 	const taken = "09121110004"
-	env.signedIn(t, taken)
+	previousToken, _ := env.signedIn(t, taken)
+	previous := userOf(t, previousToken)
 	token, _ := env.signedIn(t, "taker@example.com")
+	taker := userOf(t, token)
 
 	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": taken}, "taker@example.com", taken)
+	status, resp := env.confirmChange(t, token, id, accountCode, newCode)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	assert.Equal(t, []string{"email", "mobile"}, env.contactTypes(t, token))
+
+	again, _ := env.signedIn(t, taken)
+	assert.Equal(t, taker, userOf(t, again), "the number reaches its new holder")
+	status, _ = env.sessionCall(t, http.MethodGet, "/api/v1/user/profile", previousToken)
+	assert.Equal(t, http.StatusUnauthorized, status, "the sessions of the previous account ended")
+
+	var removed int
+	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM user_contacts WHERE user_hk = $1 AND removed_at IS NOT NULL`, previous).Scan(&removed))
+	assert.Equal(t, 1, removed, "the row is marked, not deleted")
+	var reason string
+	require.NoError(t, env.db.QueryRow(`SELECT reason FROM audit_events WHERE target_id = $1 AND action = $2`,
+		previous, audit.ActionUserContactClaimed).Scan(&reason))
+	assert.Equal(t, contactclaim.ReasonClaimed, reason)
+	var refusal *restrictions.Refusal
+	require.ErrorAs(t, restrictions.Check(context.Background(), env.db, previous, restrictions.OpWithdraw, ""), &refusal)
+	assert.Equal(t, restrictions.CodeSecurityHold, refusal.Code, "the previous account is held")
+	var claimedFrom string
+	require.NoError(t, env.db.QueryRow(`SELECT changes->'after'->>'claimed_from' FROM audit_events
+		WHERE target_id = $1 AND action = $2 AND outcome = 'success'`, taker, audit.ActionUserContactAdd).Scan(&claimedFrom))
+	assert.Equal(t, previous, claimedFrom)
+}
+
+// TestUserContacts_ContactStillOwnedStays refuses to move a mobile number
+// that the provider still matches to the national ID of its account, and
+// moves one that it no longer matches.
+func TestUserContacts_ContactStillOwnedStays(t *testing.T) {
+	env := newE2EEnv(t)
+	const number, ownerID = "09121110014", "0012345679"
+	ownerToken, _ := env.signedIn(t, number)
+	owner := userOf(t, ownerToken)
+	stub := env.withNationalID(t, owner, ownerID)
+	stub.SetOwner(number, ownerID)
+	token, _ := env.signedIn(t, "claimer@example.com")
+
+	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": number}, "claimer@example.com", number)
 	status, resp := env.confirmChange(t, token, id, accountCode, newCode)
 	assert.Equal(t, http.StatusConflict, status)
 	assert.Equal(t, "contact_in_use", resp.Code)
 	assert.Equal(t, []string{"email"}, env.contactTypes(t, token))
+
+	stub.SetUnavailable(true)
+	status, resp = env.confirmChange(t, token, id, "", "")
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Equal(t, "identity_unavailable", resp.Code, "an outage moves nothing")
+
+	stub.SetUnavailable(false)
+	stub.SetOwner(number, "9876543210") // the number was recycled
+	status, resp = env.confirmChange(t, token, id, "", "")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	assert.Equal(t, []string{"email", "mobile"}, env.contactTypes(t, token))
+}
+
+// TestSignIn_RecycledNumberReachesANewAccount checks #252 at sign-in: a
+// number that no longer belongs to the national ID of its account is taken
+// off it, and its new subscriber gets a new, empty account.
+func TestSignIn_RecycledNumberReachesANewAccount(t *testing.T) {
+	env := newE2EEnv(t, func(c *config.Configuration) { c.Identity.MobileOwnership.RecheckDays = 30 })
+	const number, ownerID = "09121110015", "0012345679"
+	ownerToken, _ := env.signedIn(t, number)
+	owner := userOf(t, ownerToken)
+	stub := env.withNationalID(t, owner, ownerID)
+	stub.SetOwner(number, ownerID)
+
+	// A check that matches is recorded, and not repeated for a while.
+	again, _ := env.signedIn(t, number)
+	assert.Equal(t, owner, userOf(t, again))
+	calls := stub.Calls
+	assert.Equal(t, 1, calls)
+	again, _ = env.signedIn(t, number)
+	assert.Equal(t, owner, userOf(t, again))
+	assert.Equal(t, calls, stub.Calls, "the check counts for recheck_days")
+
+	// Once it is due, a provider that cannot answer refuses the sign-in.
+	_, err := env.db.Exec(`UPDATE user_contacts SET ownership_checked_at = NOW() - interval '31 days' WHERE user_hk = $1`, owner)
+	require.NoError(t, err)
+	stub.SetUnavailable(true)
+	status, resp := env.signInUser(t, number)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Equal(t, "identity_unavailable", resp.Code)
+
+	// The number was given to someone else.
+	stub.SetUnavailable(false)
+	stub.SetOwner(number, "9876543210")
+	newToken, _ := env.signedIn(t, number)
+	newcomer := userOf(t, newToken)
+	assert.NotEqual(t, owner, newcomer, "the new subscriber never reaches the previous account")
+	status, body := env.sessionCall(t, http.MethodGet, "/api/v1/user/profile", newToken)
+	require.Equal(t, http.StatusOK, status, body)
+	status, _ = env.sessionCall(t, http.MethodGet, "/api/v1/user/profile", ownerToken)
+	assert.Equal(t, http.StatusUnauthorized, status, "the previous account's sessions ended")
+	var reason string
+	require.NoError(t, env.db.QueryRow(`SELECT reason FROM audit_events WHERE target_id = $1 AND action = $2`,
+		owner, audit.ActionUserContactClaimed).Scan(&reason))
+	assert.Equal(t, contactclaim.ReasonOwnershipMismatch, reason)
+	var nationalIDs int
+	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM user_national_ids WHERE user_hk = $1`, newcomer).Scan(&nationalIDs))
+	assert.Zero(t, nationalIDs, "the new account starts empty")
+}
+
+// TestUserContacts_ConcurrentClaimsLeaveOneHolder confirms two claims of
+// one contact at once, as two instances would: the contact ends on
+// exactly one account.
+func TestUserContacts_ConcurrentClaimsLeaveOneHolder(t *testing.T) {
+	env := newE2EEnv(t)
+	const taken = "shared@example.com"
+	env.signedIn(t, taken)
+	first, _ := env.signedIn(t, "09121110016")
+	second, _ := env.signedIn(t, "09121110017")
+	a, aAccount, aNew := env.startChange(t, first, map[string]string{"action": "add", "value": taken}, "09121110016", taken)
+	b, bAccount, bNew := env.startChange(t, second, map[string]string{"action": "add", "value": taken}, "09121110017", taken)
+
+	statuses := make([]int, 2)
+	var wg sync.WaitGroup
+	for i, change := range [][4]string{{first, a, aAccount, aNew}, {second, b, bAccount, bNew}} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses[i], _ = env.confirmChange(t, change[0], change[1], change[2], change[3])
+		}()
+	}
+	wg.Wait()
+	var holders int
+	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM user_contacts WHERE lower(value) = $1 AND removed_at IS NULL`, taken).Scan(&holders))
+	assert.Equal(t, 1, holders)
+	assert.Contains(t, statuses, http.StatusOK)
 }
 
 // TestUserContacts_ConcurrentChangesApplyOneAtATime starts two additions of a
@@ -300,12 +429,20 @@ func TestUserContacts_ChangeStartsASecurityHold(t *testing.T) {
 }
 
 // withNationalID gives the user a verified national ID, sealed with the
-// test sealer that the handlers read it with, and a stub provider.
+// test sealer that the handlers read it with, and returns the stub provider
+// that the handlers check numbers with. Every call of one test shares them.
 func (e *e2eEnv) withNationalID(t *testing.T, userID, nationalID string) *identity.Stub {
 	t.Helper()
-	sealer := identitytest.NewSealer()
-	stub := &identity.Stub{}
+	sealer, ok := e.handlers.User.Sealer.(*identitytest.Sealer)
+	if !ok {
+		sealer = identitytest.NewSealer()
+	}
+	stub, ok := e.handlers.User.Ownership.(*identity.Stub)
+	if !ok {
+		stub = &identity.Stub{}
+	}
 	e.handlers.User.Sealer, e.handlers.User.Ownership = sealer, stub
+	e.handlers.Public.Sealer, e.handlers.Public.Ownership = sealer, stub
 	require.NoError(t, identity.SaveNationalID(context.Background(), e.db, sealer, userID, nationalID, "stub", "", time.Now()))
 	return stub
 }
