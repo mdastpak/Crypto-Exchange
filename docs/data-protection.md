@@ -40,6 +40,7 @@ Every key has one purpose and only offers the operation of that purpose. A MAC k
 | `kek_id` | The KEK that wrapped the key, such as `transit:transit/crypto-exchange-data-keys` or `local:<fingerprint>` |
 | `wrapped_key` | The key, wrapped by the KEK. With Transit, a `vault:v<n>:` ciphertext. |
 | `created_at`, `retired_at` | A retired key is no longer loaded. |
+| `active_from` | When the version starts writing ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)). Until then, instances only read with it. The first version of a purpose is active at once. |
 
 The wrapped plaintext contains the purpose and the version besides the key. After unwrapping, the server checks that both match the row, so a wrapped key copied to another row is refused. For example, copying a MAC key into the row of the current encryption key does not work.
 
@@ -49,7 +50,7 @@ The wrapped plaintext contains the purpose and the version besides the key. Afte
 
 ### Versions
 
-New seals and ciphertexts use the current version of their purpose: the newest one that is not retired. Each seal and ciphertext stores the version it used, so older versions stay readable after a rotation until they are retired.
+New seals and ciphertexts use the current version of their purpose: the newest one that is not retired and whose `active_from` has passed. A newer version that is not active yet is already loaded, so data that another instance writes with it once it is active can be read. Each seal and ciphertext stores the version it used, so older versions stay readable after a rotation until they are retired.
 
 ### At startup
 
@@ -66,7 +67,7 @@ It refuses to start when any of the following holds:
 - a key belongs to another row;
 - the newest version of a purpose is retired, which the key commands never do.
 
-The key management service is only needed at startup and by the `admin keys` commands. A running server keeps working while the service is unavailable.
+Afterwards it checks `data_keys` every `keys.reload_interval_seconds` (60 by default), and loads the keys again when a row changed: a rotation, a retirement, or a re-wrap. A value sealed with a version it has not loaded makes it reload at once, at most every 5 seconds. A reload that fails keeps the keys loaded before and is logged, so a running server keeps working while the key management service is unavailable; it needs the service only at startup, after a change of `data_keys`, and for the `admin keys` commands.
 
 ## Setup
 
@@ -136,17 +137,20 @@ Every change, and the creation of the first keys by the server, records a `data_
 
 ### Rotating a data key
 
-Rotate a data key on a schedule, such as once a year, and whenever it may have leaked.
+Rotate a data key on a schedule, such as once a year, and whenever it may have leaked. A rotation needs no restart. It has two phases, so that no instance writes with a version that another instance cannot read yet ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)):
 
-1. Run `admin keys rotate -purpose field-enc`.
-2. Restart the server instances one by one. Each instance uses the new version after its restart. Until then, it writes with the older version, which stays valid.
-3. Once the background jobs of [#139](https://github.com/mdastpak/Crypto-Exchange/issues/139) and [#140](https://github.com/mdastpak/Crypto-Exchange/issues/140) have re-sealed or re-encrypted every row, run `admin keys retire -purpose field-enc -version 1`, and restart the instances again. Never retire a version that data still uses: that data can then no longer be checked or read.
+1. Run `admin keys rotate -purpose field-enc`, with the same `keys` settings as the servers. It writes the new version with `active_from` set `keys.activation_delay_seconds` (300 by default) ahead, and prints that time.
+2. **Phase 1: every instance learns the version.** Within `keys.reload_interval_seconds`, every instance loads it and can read values sealed with it. An instance started meanwhile loads it at startup. `admin keys list` shows the version as `pending`.
+3. **Phase 2: every instance writes with it.** From `active_from`, every instance seals with the new version, which the others already read. `admin keys list` shows it as `current`. The activation delay must be at least twice the reload interval, which the server checks at startup, so an instance whose reload failed once still loads the version in time.
+4. Once the background jobs of [#139](https://github.com/mdastpak/Crypto-Exchange/issues/139) and [#140](https://github.com/mdastpak/Crypto-Exchange/issues/140) have re-sealed or re-encrypted every row, run `admin keys retire -purpose field-enc -version 1`. The instances drop it at their next reload. Never retire a version that data still uses: that data can then no longer be checked or read. `retire` refuses the version that writes, until the newer version is active.
+
+If an instance cannot load the new version, because it cannot reach the key management service, it keeps writing with the older version, which every instance still reads, and logs the failure.
 
 Rotating a `blind-index` key also needs a second index during the change ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)).
 
 ### Rotating the KEK
 
-Rotating the KEK needs no restart, because the data keys do not change.
+Rotating the KEK needs no restart, because the data keys do not change. The instances load the re-wrapped keys at their next reload.
 
 1. Rotate the Transit key: `vault write -f transit/keys/crypto-exchange-data-keys/rotate`.
 2. Run `admin keys rewrap`. Every wrapped key now starts with the new KEK version, such as `vault:v2:`.
@@ -181,4 +185,4 @@ If the Transit key is deleted, or the storage of Vault or OpenBao is lost withou
 - **Process memory.** The unwrapped keys live in process memory. Disable core dumps in production (`ulimit -c 0`; containers have none by default), and do not attach debuggers to production processes.
 - **Other secrets.** `otp.auth.secret` and `admin.totp_key` are still secrets of their own, configured directly. Moving them onto these keys is [#146](https://github.com/mdastpak/Crypto-Exchange/issues/146).
 - **Other key services.** Only Transit is implemented. AWS KMS, Google Cloud KMS, and Azure Key Vault fit the same `keys.Provider` interface.
-- **Reloading.** Instances pick up a rotation only when they restart.
+- **Reloading.** Instances pick up a change of `data_keys` within `keys.reload_interval_seconds`. A change of the `keys` settings themselves, such as a new KEK provider, still needs a restart.

@@ -368,3 +368,31 @@ func TestKeys_DefaultsAndValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "keys.transit.timeout_seconds (KEYS_TRANSIT_TIMEOUT_SECONDS) is -1")
 }
+
+// TestKeys_ReloadAndActivation checks the settings of the two-phase
+// rotation of the data keys (#233).
+func TestKeys_ReloadAndActivation(t *testing.T) {
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
+	assert.Equal(t, DefaultKeysReloadIntervalSeconds, Config.Keys.ReloadIntervalSeconds)
+	assert.Equal(t, DefaultKeysActivationDelaySeconds, Config.Keys.ActivationDelaySeconds)
+
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{"KEYS_RELOAD_INTERVAL_SECONDS": "600"}))
+	assert.Equal(t, 1200, Config.Keys.ActivationDelaySeconds, "the default delay follows a long interval")
+
+	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
+		"KEYS_RELOAD_INTERVAL_SECONDS": "10", "KEYS_ACTIVATION_DELAY_SECONDS": "20",
+	}))
+	assert.Equal(t, 10, Config.Keys.ReloadIntervalSeconds)
+	assert.Equal(t, 20, Config.Keys.ActivationDelaySeconds)
+
+	for env, want := range map[string]string{
+		"KEYS_RELOAD_INTERVAL_SECONDS=4":    "keys.reload_interval_seconds (KEYS_RELOAD_INTERVAL_SECONDS) is 4",
+		"KEYS_RELOAD_INTERVAL_SECONDS=3601": "keys.reload_interval_seconds (KEYS_RELOAD_INTERVAL_SECONDS) is 3601",
+		"KEYS_ACTIVATION_DELAY_SECONDS=119": "keys.activation_delay_seconds (KEYS_ACTIVATION_DELAY_SECONDS) is 119; it must be at least twice",
+	} {
+		name, value, _ := strings.Cut(env, "=")
+		err := loadFile(t, configFile("config.compose.yaml"), map[string]string{name: value})
+		require.Error(t, err, env)
+		assert.Contains(t, err.Error(), want)
+	}
+}

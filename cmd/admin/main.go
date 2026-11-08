@@ -353,7 +353,9 @@ func runKeys(cmd command, stdout, stderr io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := executeKeys(ctx, &keys.Store{DB: postgres.DB, Provider: provider, Origin: operator(cmd)}, cmd, stdout); err != nil {
+	store := &keys.Store{DB: postgres.DB, Provider: provider, Origin: operator(cmd),
+		ActivationDelay: time.Duration(config.Config.Keys.ActivationDelaySeconds) * time.Second}
+	if err := executeKeys(ctx, store, cmd, stdout); err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
@@ -373,17 +375,20 @@ func executeKeys(ctx context.Context, store *keys.Store, cmd command, stdout io.
 			return nil
 		}
 		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "PURPOSE\tVERSION\tSTATE\tKEK\tCREATED\tRETIRED")
+		fmt.Fprintln(w, "PURPOSE\tVERSION\tSTATE\tKEK\tCREATED\tACTIVE FROM\tRETIRED")
+		now := time.Now()
 		for _, info := range infos {
 			state, retired := "readable", "-"
-			if info.Current {
-				state = "current"
-			}
-			if info.RetiredAt != nil {
+			switch {
+			case info.RetiredAt != nil:
 				state, retired = "retired", info.RetiredAt.UTC().Format(time.RFC3339)
+			case info.Current:
+				state = "current"
+			case info.ActiveFrom.After(now):
+				state = "pending"
 			}
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", info.Purpose, info.Version, state, info.KEKID,
-				info.CreatedAt.UTC().Format(time.RFC3339), retired)
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\n", info.Purpose, info.Version, state, info.KEKID,
+				info.CreatedAt.UTC().Format(time.RFC3339), info.ActiveFrom.UTC().Format(time.RFC3339), retired)
 		}
 		return w.Flush()
 	case "keys rotate":
@@ -391,12 +396,13 @@ func executeKeys(ctx context.Context, store *keys.Store, cmd command, stdout io.
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "Created data key %s/v%d. Each server instance uses it after its next restart; older versions stay readable until they are retired.\n", cmd.purpose, version)
+		fmt.Fprintf(stdout, "Created data key %s/v%d. Every server instance can read with it after its next reload (keys.reload_interval_seconds), and writes with it from %s, after keys.activation_delay_seconds; older versions stay readable until they are retired.\n",
+			cmd.purpose, version, time.Now().Add(store.ActivationDelay).UTC().Format(time.RFC3339))
 	case "keys retire":
 		if err := store.Retire(ctx, cmd.purpose, cmd.version); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "Retired data key %s/v%d. Server instances stop loading it at their next restart.\n", cmd.purpose, cmd.version)
+		fmt.Fprintf(stdout, "Retired data key %s/v%d. Server instances drop it at their next reload.\n", cmd.purpose, cmd.version)
 	case "keys rewrap":
 		count, err := store.Rewrap(ctx, store.Provider)
 		if err != nil {
