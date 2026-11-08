@@ -13,10 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The removal marks of #248. This release only reads them: the next one
-// writes them in place of a delete, so these tests mark rows as it will,
-// with an UPDATE of the runtime role, and check that every reader treats a
-// marked row as gone and that its value can be taken again.
+// The removal marks of #248: the server, as the runtime role, which cannot
+// delete these rows, marks them, and every reader treats a marked row as
+// gone, while its value can be taken again.
 
 // TestRemovalMarks_ARemovedContactIsGone: a contact marked removed is not
 // listed, is not in the profile, does not sign in to its account, and can
@@ -31,11 +30,13 @@ func TestRemovalMarks_ARemovedContactIsGone(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	require.Equal(t, []string{"email", "mobile"}, env.contactTypes(t, token))
 
-	res, err := env.db.Exec(`UPDATE user_contacts SET removed_at = NOW() WHERE user_hk = $1 AND type = 'mobile'`, userID)
-	require.NoError(t, err)
-	n, err := res.RowsAffected()
-	require.NoError(t, err)
-	require.EqualValues(t, 1, n)
+	id, accountCode, _ = env.startChange(t, token, map[string]string{"action": "remove", "type": "mobile"}, mobile, "")
+	status, resp = env.confirmChange(t, token, id, accountCode, "")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	var marked int
+	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM user_contacts
+		WHERE user_hk = $1 AND type = 'mobile' AND removed_at IS NOT NULL`, userID).Scan(&marked))
+	require.Equal(t, 1, marked, "the removed contact is marked, not deleted")
 
 	assert.Equal(t, []string{"email"}, env.contactTypes(t, token))
 	status, profile := env.profile(t, http.MethodGet, nil, token)
@@ -86,10 +87,12 @@ func TestRemovalMarks_AReleasedSymbolIsFree(t *testing.T) {
 	status, _ = create("OMG", "contract-omg-2")
 	require.Equal(t, http.StatusConflict, status, "a previous symbol is reserved")
 
-	_, err = env.db.Exec(`UPDATE currency_symbols SET released_at = NOW(), released_by = gen_random_uuid()
-		WHERE currency_hk = $1 AND symbol = 'OMG'`, old)
-	require.NoError(t, err)
-	require.NoError(t, env.handlers.Public.Currencies.Invalidate(ctx))
+	status, raw = env.call(t, http.MethodDelete, "/api/v1/admin/currencies/"+old+"/symbols/OMG", nil, admin)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var releasedBy string
+	require.NoError(t, env.db.QueryRow(`SELECT released_by FROM currency_symbols
+		WHERE currency_hk = $1 AND symbol = 'OMG' AND released_at IS NOT NULL`, old).Scan(&releasedBy))
+	assert.NotEmpty(t, releasedBy, "the released symbol is marked with who released it")
 
 	w := httptest.NewRecorder()
 	env.router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/public/currencies?symbol=OMGX", nil))

@@ -94,7 +94,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		require.NoError(t, err)
 		_, resp = env.profile(t, http.MethodGet, nil, aliceToken)
 		assert.Equal(t, map[string]string{"email": "ali*****@example.com"}, resp.Info.Contact, "only primary contacts are shown")
-		_, err = env.db.Exec(`DELETE FROM user_contacts WHERE value = 'zzz.pending@example.com'`)
+		_, err = env.db.Exec(`UPDATE user_contacts SET removed_at = NOW() WHERE value = 'zzz.pending@example.com'`)
 		require.NoError(t, err)
 		assert.Equal(t, "PENDING", resp.Info.KYCStatus)
 		assert.Equal(t, "NONE", resp.Info.KYCTier)

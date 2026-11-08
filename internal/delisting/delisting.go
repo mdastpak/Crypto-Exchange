@@ -462,9 +462,9 @@ func Override(ctx context.Context, db *sql.DB, currencyHK string, k currencies.C
 		return nil, Change{}, fmt.Errorf("failed to read the override: %w", err)
 	}
 	if allowed == nil {
-		// The instances of the release before #248 do not know cleared_at,
-		// so this release still deletes; the next one marks the row.
-		_, err = tx.ExecContext(ctx, `DELETE FROM currency_capability_overrides WHERE currency_hk = $1 AND capability = $2`, currencyHK, k)
+		// The row stays, marked, for the record (#248).
+		_, err = tx.ExecContext(ctx, `UPDATE currency_capability_overrides SET cleared_at = NOW(), cleared_by = $3
+			WHERE currency_hk = $1 AND capability = $2 AND cleared_at IS NULL`, currencyHK, k, origin.ActorID)
 	} else {
 		_, err = tx.ExecContext(ctx, `INSERT INTO currency_capability_overrides (currency_hk, capability, allowed, note, created_by)
 			VALUES ($1, $2, $3, NULLIF($4, ''), $5)

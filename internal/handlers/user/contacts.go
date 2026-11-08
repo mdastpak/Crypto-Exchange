@@ -716,9 +716,9 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 			After:  map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)},
 		}
 	case contactRemove:
-		// The instances of the release before #248 do not know removed_at,
-		// so this release still deletes; the next one marks the row.
-		_, err = tx.ExecContext(ctx, `DELETE FROM user_contacts c WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`,
+		// The row stays, marked, for the record (#248).
+		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET removed_at = NOW(), updated_at = NOW()
+			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`,
 			ch.UserID, plan.typ)
 		e.Changes = &audit.Changes{Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)}}
 	}
