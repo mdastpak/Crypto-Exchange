@@ -41,6 +41,30 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `keys.provider` | Not `local`, and a Transit address with `https` |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
 
+## Region of a release
+
+A release is built for one region, set by `deployment.region` (`DEPLOYMENT_REGION`): `ir` (the default) for Iran, or `international` for everywhere else. The binaries are the same; the region decides which features may be configured, and some defaults. A feature of one region is still turned on by its own settings, so an Iranian release can leave any of them off.
+
+In an international release, the server and the market data worker refuse to start while a setting turns on a feature of the `ir` region, and list every such setting at once, with what to set instead:
+
+| Feature | Setting that turns it on | Checked by |
+| --- | --- | --- |
+| The Shahkar check of Iranian mobile numbers ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) | `identity.mobile_ownership.provider` other than `none` | server |
+| Sign-in codes by SMS through Kavenegar | `notifications.sms.provider: kavenegar`. An international release has no SMS until another provider is added. | server |
+| The Iranian exchanges, Nobitex and Wallex | `market_data.sources.nobitex.enabled`, `market_data.sources.wallex.enabled` | market data worker |
+| The Iranian venues on the public market data routes | `ir` in `market_data.api.regions` | server |
+| Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
+| A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
+
+The defaults that depend on the region:
+
+| Setting | `ir` | `international` |
+| --- | --- | --- |
+| `market_data.api.regions` | empty: every region | `[global]` |
+| `market_data.candles.quotes` | `[USDT, USD, IRT]` | `[USDT, USD]` |
+
+A new feature that only one region may have adds itself to the table `regionFeatures` in `internal/config/region.go`, so that the check, and this list, cover it. Code that behaves differently by region reads `config.Config.Region()` (package `internal/region`), never the raw string.
+
 ## Command-line flags and process environment
 
 | Name | Default | Description |
@@ -49,6 +73,12 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 | `-migrations` | `file://internal/db/migrations` | golang-migrate source URL. The default is relative to the working directory, so start the server from the repository root. |
 
 ## Settings in use
+
+### `deployment`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `region` | `ir` | `ir` or `international`, case-insensitive. See [Region of a release](#region-of-a-release). Any other value stops the server and the worker. |
 
 ### `server`
 
@@ -528,6 +558,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 
 | Variable | Setting |
 | --- | --- |
+| `DEPLOYMENT_REGION` | `deployment.region` |
 | `GIN_MODE` | `server.mode`. Older name of `SERVER_MODE`, which takes precedence. |
 | `SERVER_MODE` | `server.mode` |
 | `SERVER_IP` | `server.ip` |

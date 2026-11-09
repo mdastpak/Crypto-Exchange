@@ -74,6 +74,7 @@ docs: document the OTP sign-in flow
 - Never log secrets, tokens, one-time codes, or unmasked personal data.
 - Write comments in English that explain *why* something is done, not *what* the code does.
 - Keep handlers thin. New business logic belongs in services with interface-based dependencies ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)).
+- A feature that only releases for Iran may have, such as an Iranian provider, exchange, or currency, adds itself to `regionFeatures` in `internal/config/region.go`, so that an international release refuses it ([Region of a release](docs/configuration.md#region-of-a-release)). Branch on `config.Config.Region()`, never on the raw setting.
 - Paginate a list endpoint that can grow with `internal/pagination`: keyset pages with an opaque cursor, by a sort key with an index ([API conventions](docs/api.md#pagination)). Never use `OFFSET`, which gets slower the deeper the page and shifts items as rows are added. A cursor can be decoded, so its sort key holds only what the client may see: break ties with a public identifier, never an internal serial id.
 
 ## Database migrations

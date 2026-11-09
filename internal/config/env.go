@@ -118,6 +118,7 @@ func sourceKeyVar(name, source string) EnvVar {
 // the order they are applied. docs/configuration.md documents each one, and
 // the tests check that every variable in .env.example is listed here.
 var envVars = []EnvVar{
+	stringVar("DEPLOYMENT_REGION", "deployment.region", func(c *Configuration) *string { return &c.Deployment.Region }),
 	// GIN_MODE is an alias of SERVER_MODE, which comes later and wins.
 	stringVar("GIN_MODE", "server.mode", func(c *Configuration) *string { return &c.Server.Mode }),
 	stringVar("SERVER_MODE", "server.mode", func(c *Configuration) *string { return &c.Server.Mode }),

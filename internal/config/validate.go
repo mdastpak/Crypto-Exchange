@@ -226,6 +226,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	c.i18nProblems(p)
 	c.geoIPProblems(p)
 	c.marketDataProblems(p)
+	c.regionProblems(p, false)
 	if v := c.Delisting.IntervalSeconds; v < 1 || v > MaxDelistingIntervalSeconds {
 		p.add("delisting.interval_seconds", "is %d; it must be from 1 to %d", v, MaxDelistingIntervalSeconds)
 	}
@@ -459,6 +460,7 @@ func ValidateMarketWorker() error {
 		p = append(p, "required settings are not set: "+strings.Join(missing, ", "))
 	}
 	c.marketDataProblems(&p)
+	c.regionProblems(&p, true)
 	return p.err()
 }
 
