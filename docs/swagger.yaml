@@ -1804,7 +1804,24 @@ definitions:
         type: string
       last_name:
         type: string
+      locale:
+        description: |-
+          Locale is the language the user chose (#286), a tag of GET
+          /public/locales, or null for none: each request then negotiates it.
+          It applies to every signed-in request that names no locale itself.
+        example: fa
+        type: string
       status:
+        type: string
+      theme:
+        description: |-
+          Theme is the colour theme for the frontends: light, dark, or system,
+          which follows the device.
+        enum:
+        - light
+        - dark
+        - system
+        example: system
         type: string
       uuid:
         type: string
@@ -1836,6 +1853,20 @@ definitions:
       first_name:
         type: string
       last_name:
+        type: string
+      locale:
+        description: |-
+          Locale is a tag of GET /public/locales, or "" to clear the choice
+          (#286).
+        example: fa
+        type: string
+      theme:
+        description: Theme is light, dark, or system.
+        enum:
+        - light
+        - dark
+        - system
+        example: dark
         type: string
     type: object
 info:
@@ -4731,8 +4762,11 @@ paths:
     patch:
       consumes:
       - application/json
+      description: A saved locale applies at once to every later signed-in request
+        that names no locale of its own, on every device and domain, and to the answer
+        of this request.
       parameters:
-      - description: The names to change
+      - description: The fields to change
         in: body
         name: body
         required: true
@@ -4768,7 +4802,7 @@ paths:
             $ref: '#/definitions/models.APIResponse'
       security:
       - BearerAuth: []
-      summary: Change the names in the profile
+      summary: Change the names and the preferences in the profile
       tags:
       - user
   /api/v1/user/restrictions:

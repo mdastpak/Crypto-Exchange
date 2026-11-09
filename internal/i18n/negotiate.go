@@ -29,6 +29,10 @@ const (
 	SourceHeader         = "header"
 	SourceCookie         = "cookie"
 	SourceAcceptLanguage = "accept_language"
+	// SourceProfile is the locale that a signed-in user saved in their
+	// profile (#286). It comes after the explicit choices of the request
+	// and before Accept-Language.
+	SourceProfile = "profile"
 	// SourceSite is the default locale of the site that the request is
 	// on (#285), when the request names no supported locale.
 	SourceSite    = "site"
@@ -147,4 +151,24 @@ func FromGin(c *gin.Context) (Negotiated, bool) {
 func FromContext(ctx context.Context) (Negotiated, bool) {
 	n, ok := ctx.Value(contextKey{}).(Negotiated)
 	return n, ok
+}
+
+// Prefer applies the locale that a signed-in user saved (#286) to the
+// request, once the user is known: it wins over Accept-Language, the site,
+// and the default, but not over an explicit choice of the request. A code
+// that is empty or no longer supported changes nothing. It reports whether
+// the locale changed.
+func Prefer(c *gin.Context, code string) bool {
+	n, ok := FromGin(c)
+	if !ok || code == "" || n.Explicit() || n.registry == nil {
+		return false
+	}
+	l, ok := n.registry.Lookup(code)
+	if !ok {
+		return false
+	}
+	n.Locale, n.Source = l, SourceProfile
+	c.Set(ginKey, n)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), contextKey{}, n))
+	return true
 }

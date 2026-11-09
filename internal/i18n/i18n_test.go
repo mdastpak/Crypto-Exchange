@@ -333,3 +333,50 @@ func isKeyFunc(fun ast.Expr) bool {
 	}
 	return false
 }
+
+func TestPrefer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := MustNew("en", "en", "fa")
+	run := func(target string, header map[string]string, saved string) (Negotiated, bool) {
+		var got Negotiated
+		var changed bool
+		engine := gin.New()
+		engine.Use(Middleware(r))
+		engine.GET("/x", func(c *gin.Context) {
+			changed = Prefer(c, saved)
+			got, _ = FromContext(c.Request.Context())
+			fromGin, _ := FromGin(c)
+			assert.Equal(t, got.Locale.Code, fromGin.Locale.Code)
+		})
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		for k, v := range header {
+			req.Header.Set(k, v)
+		}
+		engine.ServeHTTP(httptest.NewRecorder(), req)
+		return got, changed
+	}
+
+	n, changed := run("/x", map[string]string{"Accept-Language": "en"}, "fa")
+	assert.True(t, changed)
+	assert.Equal(t, "fa", n.Locale.Code)
+	assert.Equal(t, SourceProfile, n.Source)
+	assert.False(t, n.Explicit())
+
+	n, _ = run("/x", nil, "fa")
+	assert.Equal(t, SourceProfile, n.Source, "over the default")
+
+	for _, header := range []map[string]string{{"X-Locale": "en"}, {"Cookie": "locale=en"}} {
+		n, changed = run("/x", header, "fa")
+		assert.False(t, changed, "%v", header)
+		assert.Equal(t, "en", n.Locale.Code)
+	}
+	n, changed = run("/x?lang=en", nil, "fa")
+	assert.False(t, changed)
+	assert.Equal(t, "en", n.Locale.Code)
+
+	_, changed = run("/x", nil, "")
+	assert.False(t, changed, "no saved locale")
+	_, changed = run("/x", nil, "de")
+	assert.False(t, changed, "a locale that is no longer supported")
+	assert.False(t, Prefer(nil, "fa"))
+}

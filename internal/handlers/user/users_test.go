@@ -58,23 +58,23 @@ func TestProfileUpdate_Validate(t *testing.T) {
 	// U+0628 is a letter that takes two bytes in UTF-8.
 	long := strings.Repeat("\u0628", maxNameLength+1)
 
-	assert.Nil(t, profileUpdate{FirstName: text("  Ali  ")}.validate())
-	assert.Nil(t, profileUpdate{DisplayName: text("")}.validate(), "an empty name clears the field")
-	assert.Nil(t, profileUpdate{LastName: text("Ab\u200Ccd")}.validate(), "the zero-width non-joiner (U+200C), which Persian names need, is allowed")
-	assert.Nil(t, profileUpdate{LastName: text(strings.Repeat("\u0628", maxNameLength))}.validate(), "the limit counts characters, not bytes")
+	assert.Nil(t, profileUpdate{FirstName: text("  Ali  ")}.validate(nil))
+	assert.Nil(t, profileUpdate{DisplayName: text("")}.validate(nil), "an empty name clears the field")
+	assert.Nil(t, profileUpdate{LastName: text("Ab\u200Ccd")}.validate(nil), "the zero-width non-joiner (U+200C), which Persian names need, is allowed")
+	assert.Nil(t, profileUpdate{LastName: text(strings.Repeat("\u0628", maxNameLength))}.validate(nil), "the limit counts characters, not bytes")
 
-	assert.Equal(t, fieldErrors{"body": "send at least one of first_name, last_name, and display_name"}, profileUpdate{}.validate())
-	assert.Equal(t, fieldErrors{"first_name": "must be at most 100 characters"}, profileUpdate{FirstName: &long}.validate())
-	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("a\nb")}.validate())
-	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("admin\u202Egnp.exe")}.validate())
-	assert.Equal(t, fieldErrors{"display_name": "must contain a visible character"}, profileUpdate{DisplayName: text("\u200B\u2060\u200C")}.validate())
+	assert.Equal(t, fieldErrors{"body": "send at least one of first_name, last_name, display_name, locale, and theme"}, profileUpdate{}.validate(nil))
+	assert.Equal(t, fieldErrors{"first_name": "must be at most 100 characters"}, profileUpdate{FirstName: &long}.validate(nil))
+	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("a\nb")}.validate(nil))
+	assert.Equal(t, fieldErrors{"display_name": "must not contain control characters"}, profileUpdate{DisplayName: text("admin\u202Egnp.exe")}.validate(nil))
+	assert.Equal(t, fieldErrors{"display_name": "must contain a visible character"}, profileUpdate{DisplayName: text("\u200B\u2060\u200C")}.validate(nil))
 }
 
 func TestProfileUpdate_Apply(t *testing.T) {
 	text := func(s string) *string { return &s }
 	p := Profile{FirstName: text("Ali"), LastName: text("Rezaei"), DisplayName: text("ali")}
 
-	profileUpdate{FirstName: text("  Sara "), DisplayName: text("")}.apply(&p)
+	profileUpdate{FirstName: text("  Sara "), DisplayName: text("")}.apply(&p, nil)
 
 	assert.Equal(t, "Sara", *p.FirstName, "names are trimmed")
 	assert.Equal(t, "Rezaei", *p.LastName, "a field that is not sent keeps its value")

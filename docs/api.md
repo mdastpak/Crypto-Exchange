@@ -1023,6 +1023,8 @@ Returns the profile of the signed-in user:
     "first_name": "Ali",
     "last_name": null,
     "display_name": null,
+    "locale": "fa",
+    "theme": "system",
     "kyc_status": "PENDING",
     "kyc_tier": "NONE",
     "created_at": "2026-11-05T09:30:00Z"
@@ -1032,21 +1034,25 @@ Returns the profile of the signed-in user:
 
 `status` is `ACTIVE`, or `PENDING_VERIFICATION` for an account whose contact is not verified yet: accounts with any other status cannot read their profile. `contact` holds the primary email address and mobile number the user signs in with, masked: the first three characters stay visible, with the domain of an email address or the last three digits of a mobile number. Names that are not set, and a creation time that was not recorded, are `null`.
 
+`locale` and `theme` are the user's preferences, which follow them across devices and domains ([#286](https://github.com/mdastpak/Crypto-Exchange/issues/286)). `locale` is a tag of [`GET /public/locales`](#get-publiclocales), or `null` when the user made no choice. `theme` is `light`, `dark`, or `system` (the default), which tells a frontend to follow the device (`prefers-color-scheme`); the server renders nothing with it.
+
 Errors: `401` for a missing or invalid token, or one whose session has ended; `403` when the account became `INACTIVE`, `SUSPENDED`, or `BANNED`, was deleted, or became an administrator account after the token was issued (`This account is not available. Please contact support.`). See [Authentication](#authentication).
 
 ### `PATCH /user/profile`
 
-Changes the names in the profile and returns the updated profile, as `GET` does.
+Changes the names and the preferences in the profile and returns the updated profile, as `GET` does.
 
 ```json
-{ "first_name": "Ali", "display_name": "" }
+{ "first_name": "Ali", "display_name": "", "locale": "fa", "theme": "dark" }
 ```
 
 | Field | Rules |
 | --- | --- |
 | `first_name`, `last_name`, `display_name` | Optional. Spaces around the name are trimmed, and an empty string clears the field. At most 100 characters, without control characters or characters that reorder text (U+202A to U+202E and U+2066 to U+2069), and with at least one visible character. The zero-width non-joiner is allowed. |
+| `locale` | Optional. A tag of `GET /public/locales`, in any case, saved as listed; an empty string clears the choice. The saved locale applies at once, from the answer of this request on, to every signed-in request that names no locale of its own ([the locale of a request](i18n.md#the-locale-of-a-request)). |
+| `theme` | Optional. `light`, `dark`, or `system`. |
 
-Only the fields sent change, and at least one must be sent. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401` and `403` as for `GET`.
+Only the fields sent change, and at least one must be sent; a change is audited like the names. Any other field, such as `uuid`, `contact`, `status`, or `kyc_tier`, is rejected. Errors: `400` for an invalid body, or with `Validation failed` and a message per field in `info.errors`; `401` and `403` as for `GET`.
 
 ### Favorites
 

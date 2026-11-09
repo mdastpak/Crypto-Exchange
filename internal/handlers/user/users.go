@@ -31,9 +31,16 @@ type Profile struct {
 	FirstName   *string           `json:"first_name"`
 	LastName    *string           `json:"last_name"`
 	DisplayName *string           `json:"display_name"`
-	KYCStatus   string            `json:"kyc_status"`
-	KYCTier     string            `json:"kyc_tier"`
-	CreatedAt   *time.Time        `json:"created_at"`
+	// Locale is the language the user chose (#286), a tag of GET
+	// /public/locales, or null for none: each request then negotiates it.
+	// It applies to every signed-in request that names no locale itself.
+	Locale *string `json:"locale" example:"fa"`
+	// Theme is the colour theme for the frontends: light, dark, or system,
+	// which follows the device.
+	Theme     string     `json:"theme" enums:"light,dark,system" example:"system"`
+	KYCStatus string     `json:"kyc_status"`
+	KYCTier   string     `json:"kyc_tier"`
+	CreatedAt *time.Time `json:"created_at"`
 }
 
 var (
@@ -52,7 +59,7 @@ type queryRower interface {
 // The contacts come as one JSON object of the primary contact of each type.
 const profileQuery = `SELECT hk, status, role,
 	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary AND c.removed_at IS NULL), '{}'),
-	first_name, last_name, display_name, kyc_status, kyc_tier,
+	first_name, last_name, display_name, locale, theme, kyc_status, kyc_tier,
 	created_at AT TIME ZONE current_setting('TimeZone')
 	FROM users WHERE hk = $1 AND deleted_at IS NULL`
 
@@ -69,7 +76,7 @@ func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool
 	var role string
 	var contact []byte
 	err := db.QueryRowContext(ctx, query, userID).Scan(&p.UUID, &p.Status, &role, &contact,
-		&p.FirstName, &p.LastName, &p.DisplayName, &p.KYCStatus, &p.KYCTier, &p.CreatedAt)
+		&p.FirstName, &p.LastName, &p.DisplayName, &p.Locale, &p.Theme, &p.KYCStatus, &p.KYCTier, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, errProfileNotFound
 	}
@@ -168,15 +175,17 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, i18n.M("PROFILE_RETRIEVED_SUCCESSFULLY"), profile)
 }
 
-// UpdateProfile changes the names in the profile of the signed-in user and
-// returns the updated profile. Only the fields in the request change.
+// UpdateProfile changes the names and the preferences in the profile of the
+// signed-in user and returns the updated profile. Only the fields in the
+// request change.
 //
-// @Summary Change the names in the profile
+// @Summary Change the names and the preferences in the profile
+// @Description A saved locale applies at once to every later signed-in request that names no locale of its own, on every device and domain, and to the answer of this request.
 // @Tags user
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body profileUpdate true "The names to change"
+// @Param body body profileUpdate true "The fields to change"
 // @Success 200 {object} models.APIResponse{info=Profile}
 // @Failure 400 {object} models.APIResponse
 // @Failure 401 {object} models.APIResponse
@@ -198,7 +207,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 	if errs == nil {
-		errs = update.validate()
+		errs = update.validate(h.Locales)
 	}
 	if errs != nil {
 		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
@@ -222,12 +231,12 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 	before := profile
-	update.apply(&profile)
+	update.apply(&profile, h.Locales)
 	_, err = tx.ExecContext(ctx,
-		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, updated_at = NOW() WHERE hk = $4",
-		profile.FirstName, profile.LastName, profile.DisplayName, userID,
+		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, locale = $4, theme = $5, updated_at = NOW() WHERE hk = $6",
+		profile.FirstName, profile.LastName, profile.DisplayName, profile.Locale, profile.Theme, userID,
 	)
-	if changes := nameChanges(before, profile); err == nil && changes != nil {
+	if changes := profileChanges(before, profile); err == nil && changes != nil {
 		// The change commits only with its event (#195).
 		e := audit.FromRequest(c)
 		e.ActorType, e.ActorID = audit.ActorUser, userID.String()
@@ -243,6 +252,9 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		log.Printf("Error updating a profile: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_UPDATE_PROFILE"), nil)
 		return
+	}
+	if profile.Locale != nil {
+		i18n.Prefer(c, *profile.Locale)
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("PROFILE_UPDATED_SUCCESSFULLY"), profile)
 }

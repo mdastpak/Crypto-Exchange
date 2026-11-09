@@ -1062,6 +1062,9 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		}
 		ih.Locales = locales
 	}
+	if ih.User != nil && ih.User.Locales == nil {
+		ih.User.Locales = ih.Locales
+	}
 	if ih.Sites == nil {
 		registry, err := config.Config.SiteRegistry(ih.Locales)
 		if err != nil {

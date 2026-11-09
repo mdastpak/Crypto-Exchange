@@ -113,9 +113,17 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 			unauthorized(c, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"))
 			return
 		}
-		err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID)
+		var locale string
+		var err error
+		if v, ok := sessions.(LocaleVerifier); ok {
+			locale, err = v.VerifyLocale(c.Request.Context(), claims.SessionID, claims.UUID)
+		} else {
+			err = sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID)
+		}
 		switch {
 		case err == nil:
+			// The user's saved locale applies from here on (#286).
+			i18n.Prefer(c, locale)
 			c.Next()
 		case errors.Is(err, ErrSessionInvalid):
 			unauthorized(c, reasonSessionInactive, i18n.M("UNAUTHORIZED_SESSION_IS_NOT_ACTIVE"))
