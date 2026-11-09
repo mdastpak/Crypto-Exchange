@@ -3387,6 +3387,158 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/public/site": {
+            "get": {
+                "description": "The visitor's country (GeoIP), the site they are on (by the Origin of the call, X-Forwarded-Host through a trusted proxy, or Host), the site they belong to and why, the locale to show with its direction, whether to redirect and where, every site for a switcher, and the alternates of the page for hreflang links (#285). A site that enforces the visitor's country comes first; then a crawler stays where it is; then the site the visitor picked (site cookie); then the site they are on when they chose a locale it offers; then the site of their country; then the default site. The locale is the one the visitor or their browser asked for when the site offers it, else the site's default.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Show the site and locale the visitor belongs to",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "/",
+                        "description": "The page, a local path such as /markets?tab=spot",
+                        "name": "path",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SiteInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_path",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/site/choice": {
+            "post": {
+                "description": "Saves the visitor's explicit choice as the site and locale cookies of the API's host, for a year, so that GeoIP no longer moves them, except to a site that enforces their country (#285). An empty value clears that cookie. Answers what GET /public/site answers after the choice, for the root page.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Save the site and locale the visitor picked",
+                "parameters": [
+                    {
+                        "description": "The site and locale",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.SiteChoice"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SiteChoice"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request, unknown_site, or unknown_locale",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/site/redirect": {
+            "get": {
+                "description": "302 to the same page on the site the visitor belongs to, chosen as GET /public/site chooses it, or 204 when they are already on it, or when there are no sites (#285). Frontends, or an edge function, call it on the first page view. Only the configured domains are ever targets, and crawlers are never redirected.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Redirect the visitor to their site",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "/",
+                        "description": "The page, a local path such as /markets",
+                        "name": "path",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "The visitor is on their site"
+                    },
+                    "302": {
+                        "description": "To the visitor's site; Location names the page there"
+                    },
+                    "400": {
+                        "description": "invalid_path",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/status": {
             "get": {
                 "description": "Whether the exchange is open or under maintenance, the features that are locked now, and the maintenances and lockdowns that are announced, with their messages in Persian and English, for the apps to show a banner or a countdown (#235). It answers during a maintenance too, from the memory of the instance, so it never needs the database. Over the WebSocket, every connection receives the same status as a platform.status event when it changes.",
@@ -6374,13 +6526,14 @@ const docTemplate = `{
                     }
                 },
                 "source": {
-                    "description": "Source is where the current locale came from: query, header, cookie,\naccept_language, or default.",
+                    "description": "Source is where the current locale came from: query, header, cookie,\naccept_language, site (the default of the site the request comes\nfrom), or default.",
                     "type": "string",
                     "enum": [
                         "query",
                         "header",
                         "cookie",
                         "accept_language",
+                        "site",
                         "default"
                     ],
                     "example": "accept_language"
@@ -6431,6 +6584,121 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/auth.SessionInfo"
                     }
+                }
+            }
+        },
+        "public.SiteChoice": {
+            "type": "object",
+            "properties": {
+                "locale": {
+                    "description": "Locale is the code of the locale they picked, or \"\" for none.",
+                    "type": "string",
+                    "example": "en"
+                },
+                "site": {
+                    "description": "Site is the ID of the site the visitor picked, or \"\" for none.",
+                    "type": "string",
+                    "example": "global"
+                }
+            }
+        },
+        "public.SiteInfo": {
+            "type": "object",
+            "properties": {
+                "alternates": {
+                    "description": "Alternates are the URLs of the page on every site and locale, for\nhreflang links.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sites.Alternate"
+                    }
+                },
+                "country": {
+                    "description": "Country of the visitor, \"\" when it is not known, and its source.",
+                    "type": "string",
+                    "example": "IR"
+                },
+                "country_source": {
+                    "type": "string",
+                    "enum": [
+                        "header",
+                        "database",
+                        "override",
+                        "none"
+                    ],
+                    "example": "database"
+                },
+                "current_site": {
+                    "description": "CurrentSite is the ID of the site the visitor is on, or null.",
+                    "type": "string",
+                    "example": "global"
+                },
+                "locale": {
+                    "description": "Locale is the locale to show on it, with its direction.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/i18n.Locale"
+                        }
+                    ]
+                },
+                "locale_source": {
+                    "type": "string",
+                    "enum": [
+                        "query",
+                        "header",
+                        "cookie",
+                        "accept_language",
+                        "site",
+                        "default"
+                    ],
+                    "example": "site"
+                },
+                "reason": {
+                    "description": "Reason says why: enforced, choice, stay, crawler, country, or\ndefault.",
+                    "type": "string",
+                    "enum": [
+                        "enforced",
+                        "choice",
+                        "stay",
+                        "crawler",
+                        "country",
+                        "default"
+                    ],
+                    "example": "country"
+                },
+                "redirect": {
+                    "description": "Redirect says whether to send the visitor to URL.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/public.SiteRedirect"
+                        }
+                    ]
+                },
+                "site": {
+                    "description": "Site is the site the visitor belongs to, or null without sites.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/sites.Site"
+                        }
+                    ]
+                },
+                "sites": {
+                    "description": "Sites are every site, for a site switcher.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sites.Site"
+                    }
+                }
+            }
+        },
+        "public.SiteRedirect": {
+            "type": "object",
+            "properties": {
+                "needed": {
+                    "type": "boolean"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.ir/markets"
                 }
             }
         },
@@ -6770,6 +7038,74 @@ const docTemplate = `{
                 "ScopeOperation",
                 "ScopeAsset"
             ]
+        },
+        "sites.Alternate": {
+            "type": "object",
+            "properties": {
+                "hreflang": {
+                    "type": "string",
+                    "example": "fa-IR"
+                },
+                "locale": {
+                    "type": "string",
+                    "example": "fa"
+                },
+                "site": {
+                    "type": "string",
+                    "example": "ir"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.ir/markets"
+                }
+            }
+        },
+        "sites.Site": {
+            "type": "object",
+            "properties": {
+                "countries": {
+                    "description": "Countries are the ISO 3166-1 alpha-2 codes of the countries it\nserves; empty for a site that serves the rest of the world.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default_locale": {
+                    "description": "DefaultLocale is the first of Locales.",
+                    "type": "string",
+                    "example": "fa"
+                },
+                "domain": {
+                    "description": "Domain is its canonical host, such as \"example.ir\".",
+                    "type": "string",
+                    "example": "example.ir"
+                },
+                "enforce": {
+                    "description": "Enforce keeps the visitors of its countries on it, whatever they\nchose, for a legal requirement.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "description": "ID names the site, such as \"global\" or \"ir\".",
+                    "type": "string",
+                    "example": "ir"
+                },
+                "locales": {
+                    "description": "Locales are the codes of its locales; the first is its default.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "fa",
+                        "en"
+                    ]
+                },
+                "url": {
+                    "description": "URL is the origin of the site, such as \"https://example.ir\".",
+                    "type": "string",
+                    "example": "https://example.ir"
+                }
+            }
         },
         "system.HealthStatus": {
             "type": "object",

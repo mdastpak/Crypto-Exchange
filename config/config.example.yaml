@@ -385,6 +385,16 @@ i18n:
   locales: [en, fa]                # BCP 47 tags; en is required
   default_locale: en               # For a request that names no supported locale
 
+# The sites per country (#285): the domain, countries, and locales of each.
+# Empty: one site, no redirects. See docs/i18n.md.
+sites:
+  default: ""                      # The id of the site of every other country
+  scheme: https                    # http only for development
+  list: []
+  # list:
+  #   - {id: global, domain: example.com, aliases: [www.example.com], locales: [en]}
+  #   - {id: ir, domain: example.ir, countries: [IR], locales: [fa, en]}
+
 # Maintenance and lockdown controls (#235). The controls are created with the
 # admin API or cmd/admin; these settings say how each instance applies them.
 platform:

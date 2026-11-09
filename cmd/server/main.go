@@ -42,6 +42,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
+	"github.com/mdastpak/crypto-exchange/internal/sites"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -72,6 +73,9 @@ type InfraHandlers struct {
 	Locales *i18n.Registry
 	// GeoIP finds the country of a request (#284). Nil knows no country.
 	GeoIP *geoip.Resolver
+	// Sites are the domains and locales per country (#285). RouteHandler
+	// fills it from the configuration when it is nil.
+	Sites *sites.Registry
 }
 
 var (
@@ -254,6 +258,21 @@ func run() error {
 	ctx, stop := stopSignals()
 	defer stop()
 	return serve(ctx, srv, listen, handlers, workers, shutdownTimeout(), drainTime())
+}
+
+// newSiteHandler builds the handler of the site routes (#285).
+func newSiteHandler(ih *InfraHandlers) *public.SiteHandler {
+	h := &public.SiteHandler{
+		Sites:   ih.Sites,
+		Locales: ih.Locales,
+		GeoIP:   ih.GeoIP,
+	}
+	for _, entry := range config.Config.Server.TrustedProxies {
+		if prefix, err := geoip.ParsePrefix(entry); err == nil {
+			h.TrustedProxies = append(h.TrustedProxies, prefix)
+		}
+	}
+	return h
 }
 
 // startGeoIP builds the resolver of client countries (#284) and starts the
@@ -924,6 +943,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	{
 		publicGroup.GET("/status", ih.Public.PlatformStatus)
 		publicGroup.GET("/locales", public.Locales(ih.Locales))
+		siteHandler := newSiteHandler(ih)
+		publicGroup.GET("/site", siteHandler.Site)
+		publicGroup.GET("/site/redirect", siteHandler.Redirect)
+		publicGroup.POST("/site/choice", siteHandler.Choice)
 		publicGroup.GET("/currencies", service, ih.Public.GetActiveCurrencies)
 		publicGroup.GET("/currencies/:hk", service, ih.Public.GetCurrencyByHK)
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
@@ -1025,7 +1048,9 @@ var probeRoutes = []string{"/system/live", "/system/ready", "/system/healthcheck
 // be registered before this function runs.
 func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	rl := middleware.NewRateLimiter(ih.Redis)
-	cors, err := middleware.NewCORSMiddleware(config.Config.Server.CORS.AllowedOrigins)
+	// The pages of every site call the API (#285).
+	origins := append(append([]string(nil), config.Config.Server.CORS.AllowedOrigins...), config.Config.SiteOrigins()...)
+	cors, err := middleware.NewCORSMiddleware(origins)
 	if err != nil {
 		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
 	}
@@ -1037,12 +1062,21 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		}
 		ih.Locales = locales
 	}
+	if ih.Sites == nil {
+		registry, err := config.Config.SiteRegistry(ih.Locales)
+		if err != nil {
+			return fmt.Errorf("invalid sites: %w", err)
+		}
+		ih.Sites = registry
+	}
 
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.RequestID())
 	// Every answer after this point, refusals of the limits included, is
 	// in the visitor's language where it has a translation (#283).
-	r.Use(i18n.Middleware(ih.Locales))
+	// A request that names no locale gets the default locale of the site
+	// it comes from (#285).
+	r.Use(i18n.Middleware(ih.Locales, ih.Sites.LocaleOfHost))
 	security := middleware.SecurityOptions{
 		HSTS:                  config.Config.HSTSEnabled(),
 		HSTSMaxAge:            config.Config.Server.HSTS.MaxAgeSeconds,

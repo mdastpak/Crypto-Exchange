@@ -36,7 +36,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
 | Backups and disaster recovery | Partial | The checks, the monthly restore drill, and the runbook are in the repository ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)); WAL archiving and base backups are set up per environment with the backup tool, as [docs/disaster-recovery.md](docs/disaster-recovery.md) describes. |
 | Global market data catalog | Foundation | `cmd/market-worker` and the `market_` tables of unverified assets, global and Iranian exchanges, pairs, and tickers; the jobs and sources follow in [#262](https://github.com/mdastpak/Crypto-Exchange/issues/262). See [docs/market-data.md](docs/market-data.md). |
-| Languages and text direction | Partial | Supported locales with their direction (RTL or LTR), the locale of each request from its query, headers, cookie, or browser, and Persian translations of the messages users see ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)). The country of each client from a trusted edge header or a GeoIP database ([#284](https://github.com/mdastpak/Crypto-Exchange/issues/284), [docs/geoip.md](docs/geoip.md)). A domain per country and saved preferences follow in [#285](https://github.com/mdastpak/Crypto-Exchange/issues/285) and [#286](https://github.com/mdastpak/Crypto-Exchange/issues/286). See [docs/i18n.md](docs/i18n.md). |
+| Languages and text direction | Partial | Supported locales with their direction (RTL or LTR), the locale of each request from its query, headers, cookie, or browser, and Persian translations of the messages users see ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)). The country of each client from a trusted edge header or a GeoIP database ([#284](https://github.com/mdastpak/Crypto-Exchange/issues/284), [docs/geoip.md](docs/geoip.md)). A site per country with its own domain and locales, redirects that respect the visitor's choice, and the fallback to the global site in English ([#285](https://github.com/mdastpak/Crypto-Exchange/issues/285)). Saved preferences follow in [#286](https://github.com/mdastpak/Crypto-Exchange/issues/286). See [docs/i18n.md](docs/i18n.md). |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL or Redis is unavailable, and `200` with the status `degraded` while RabbitMQ is ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33), [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
@@ -249,6 +249,7 @@ Run the unit tests, which need no infrastructure:
 ```bash
 go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./internal/config/... \
   ./internal/assetregistry/... ./internal/clientip/... ./internal/contact/... ./internal/pagination/... ./internal/totp/... \
+  ./internal/i18n/... ./internal/geoip/... ./internal/sites/... \
   ./internal/testutil/openapitest/... ./internal/testutil/tcpproxy/... ./pkg/...
 ```
 
@@ -333,6 +334,7 @@ internal/rebrand/        Currency migrations: rebrands, redenominations, mergers
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and
                         currency holds, the security hold after a security change, and
                         the check that operations call
+internal/sites/         The sites per country: domains, locales, redirects
 internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
                         checks, users, a field sealer, and network proxies

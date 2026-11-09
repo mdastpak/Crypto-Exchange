@@ -292,6 +292,9 @@ var postgresTLSModes = []string{"require", "verify-ca", "verify-full"}
 // releaseProblems refuses settings that are acceptable for development but
 // not in production.
 func (c *Configuration) releaseProblems(p *problems) {
+	if len(c.Sites.List) > 0 && c.Sites.Scheme != "https" {
+		p.add("sites.scheme", "is %q; release mode serves the sites over https", c.Sites.Scheme)
+	}
 	if len(c.GeoIP.Overrides) > 0 {
 		p.add("geoip.overrides", "is set; it fixes the country of addresses for local tests, and release mode refuses it")
 	}
@@ -701,8 +704,13 @@ func (c *Configuration) marketDataAPIProblems(p *problems) {
 // i18nProblems checks the i18n section by building the registry of its
 // locales, which the server builds the same way at start.
 func (c *Configuration) i18nProblems(p *problems) {
-	if _, err := c.Locales(); err != nil {
+	locales, err := c.Locales()
+	if err != nil {
 		p.add("i18n.locales", "and i18n.default_locale (%s) are not valid: %v", envVarFor("i18n.default_locale"), err)
+		return
+	}
+	if _, err := c.SiteRegistry(locales); err != nil {
+		p.add("sites", "is not valid: %v", err)
 	}
 }
 

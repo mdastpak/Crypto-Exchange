@@ -239,6 +239,8 @@ var envVars = []EnvVar{
 	stringVar("GEOIP_DATABASE_PATH", "geoip.database_path", func(c *Configuration) *string { return &c.GeoIP.DatabasePath }),
 	intVar("GEOIP_RELOAD_INTERVAL_SECONDS", "geoip.reload_interval_seconds", func(c *Configuration) *int { return &c.GeoIP.ReloadIntervalSeconds }),
 	intVar("GEOIP_MAX_AGE_DAYS", "geoip.max_age_days", func(c *Configuration) *int { return &c.GeoIP.MaxAgeDays }),
+	stringVar("SITES_DEFAULT", "sites.default", func(c *Configuration) *string { return &c.Sites.Default }),
+	stringVar("SITES_SCHEME", "sites.scheme", func(c *Configuration) *string { return &c.Sites.Scheme }),
 	stringVar("I18N_DEFAULT_LOCALE", "i18n.default_locale", func(c *Configuration) *string { return &c.I18n.DefaultLocale }),
 	listVar("I18N_LOCALES", "i18n.locales", func(c *Configuration) *[]string { return &c.I18n.Locales }),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
