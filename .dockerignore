@@ -12,7 +12,6 @@ config/config.yaml
 # Not needed to build the binaries.
 .git
 .github
-.kilo
 .vscode
 .idea
 **/*_test.go

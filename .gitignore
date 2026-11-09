@@ -29,3 +29,11 @@ config/config.local.yaml
 
 # SSL keys
 internal/ssl/**/*.pem
+
+# Binaries built at the repository root with `go build ./cmd/...`
+/admin
+/server
+/market-worker
+
+# Redis snapshots written by a local redis-server
+dump.rdb

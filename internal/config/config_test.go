@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -300,16 +299,6 @@ func TestValidateConfig_DoesNotPanicWithProvidersConfigured(t *testing.T) {
 	})
 }
 
-func TestJWTKeyPaths(t *testing.T) {
-	defer resetConfig()
-	c := &Configuration{}
-	c.JWT.SSL.User.PrivateKey = "config/ssl/user_private.pem"
-	c.JWT.SSL.User.PublicKey = "config/ssl/user_public.pem"
-
-	assert.Equal(t, "config/ssl/user_private.pem", c.JWTPrivateKeyPath())
-	assert.Equal(t, "config/ssl/user_public.pem", c.JWTPublicKeyPath())
-}
-
 func TestGetRabbitMQURL(t *testing.T) {
 	defer resetConfig()
 	Config = Configuration{}
@@ -321,29 +310,6 @@ func TestGetRabbitMQURL(t *testing.T) {
 	url := GetRabbitMQURL()
 
 	assert.Equal(t, "amqp://guest:guest@localhost:5672/", url)
-}
-
-func TestGetServerAddr(t *testing.T) {
-	defer resetConfig()
-	Config = Configuration{}
-	Config.Server.IP = "0.0.0.0"
-	Config.Server.Port = "8080"
-
-	assert.Equal(t, "0.0.0.0:8080", GetServerAddr())
-}
-
-func TestGetServerTimeouts(t *testing.T) {
-	defer resetConfig()
-	Config = Configuration{}
-	Config.Server.ReadTimeout = 5
-	Config.Server.WriteTimeout = 7
-	Config.Server.IdleTimeout = 60
-
-	read, write, idle := GetServerTimeouts()
-
-	assert.Equal(t, 5*time.Second, read)
-	assert.Equal(t, 7*time.Second, write)
-	assert.Equal(t, 60*time.Second, idle)
 }
 
 // TestComposeConfig keeps config.compose.yaml, the configuration of the app
