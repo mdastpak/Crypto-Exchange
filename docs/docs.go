@@ -4627,6 +4627,76 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/market-data/feed/assets": {
+            "get": {
+                "description": "The assets of the catalog in the order they last changed, for a service that keeps a copy, such as the blog. Start with updated_since, or from the beginning, then follow next_cursor, which every page has; keep the last one and ask with it later. An asset is listed again each time it changes, with all its fields; one that an administrator hid is listed as removed. An asset appears once its change is a minute old, so that no change is missed. Cached for market_data.api.cache_seconds, with an ETag.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market data"
+                ],
+                "summary": "Follow the changes of the market data catalog",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "The first change to list, RFC 3339; ignored with a cursor",
+                        "name": "updated_since",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of assets, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/marketdata.FeedPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "304": {
+                        "description": "Not modified: the If-None-Match matches"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth": {
             "post": {
                 "description": "Sends a one-time code to an email address or a mobile number. Limited per hour and client address.",
@@ -7687,6 +7757,17 @@ const docTemplate = `{
                 }
             }
         },
+        "marketdata.Attribution": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "marketdata.CandlePoint": {
             "type": "object",
             "properties": {
@@ -7754,6 +7835,59 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "network": {
+                    "type": "string"
+                }
+            }
+        },
+        "marketdata.FeedItem": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "description": "Asset is the asset with its description, links, and contracts, as\nGET /market-data/assets/{slug} serves it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/marketdata.AssetView"
+                        }
+                    ]
+                },
+                "attribution": {
+                    "description": "Attribution must be shown with the data of the asset.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/marketdata.Attribution"
+                        }
+                    ]
+                },
+                "removed": {
+                    "type": "boolean"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "structured_data": {
+                    "description": "StructuredData is a schema.org description of the asset, for the\nJSON-LD of a page. The page adds its own url.",
+                    "type": "object"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "marketdata.FeedPage": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "description": "HasMore says that more assets changed already: ask again at once.",
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/marketdata.FeedItem"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor resumes the feed after the last item. It is set on every\npage, the last one too: keep it, and ask with it later for the\nassets that change after.",
                     "type": "string"
                 }
             }

@@ -662,6 +662,22 @@ The closed candles of the asset's pair at a venue, oldest first: `{"t": open tim
 
 `400 validation_failed` for a missing or invalid parameter, or a range of more than 1000 candles; `404 market_pair_not_found` when the venue has no such pair, or is not shown in this release.
 
+### `GET /market-data/feed/assets`
+
+The assets in the order they last changed, for a service that keeps a copy of the catalog, such as the blog ([Feed for the blog](market-data.md#feed-for-the-blog)). Start from the beginning or from `updated_since` (RFC 3339), read while `has_more` is true, then keep `next_cursor`, which every page has, the last one too, and ask with it later. `limit` is 1 to 200 (50).
+
+```json
+{"items": [
+  {"slug": "bitcoin", "updated_at": "2026-11-09T09:00:00Z", "removed": false,
+   "asset": {"slug": "bitcoin", "symbol": "BTC", "name": "Bitcoin", "verified": false, "label": "unverified", "description": "…", "links": {"website": "https://bitcoin.org"}, "contracts": []},
+   "attribution": {"text": "Data provided by CoinGecko", "url": "https://www.coingecko.com"},
+   "structured_data": {"@context": "https://schema.org", "@type": "Thing", "name": "Bitcoin", "alternateName": "BTC", "sameAs": ["https://bitcoin.org"]}},
+  {"slug": "scam", "updated_at": "2026-11-09T09:01:00Z", "removed": true}],
+ "next_cursor": "eyJ2IjoxLCJhIjp7…", "has_more": false}
+```
+
+A `removed` asset was hidden by an administrator: take its page down. An asset is listed once its change is a minute old, and again after each change. `400 validation_failed` for an invalid `updated_since`, `cursor`, or `limit`.
+
 ## Market data administration
 
 The administration of the [market data catalog](market-data.md#administration) ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)), under `/admin/market-data`, for active administrators. Assets, pairs, conflicts, and runs are named by their numeric `id`. The lists of assets, pairs, conflicts, and runs are [paginated](#pagination). Each change is audited as a `market_data.*` action, and drops the cache of the public market data routes on every instance. A change that would change nothing answers `200` with the row as it is and records nothing. The changes take an optional JSON body with `reason`, which a pause and a hide require.
