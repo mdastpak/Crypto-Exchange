@@ -4360,6 +4360,7 @@
                         "BearerAuth": []
                     }
                 ],
+                "description": "A saved locale applies at once to every later signed-in request that names no locale of its own, on every device and domain, and to the answer of this request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4369,10 +4370,10 @@
                 "tags": [
                     "user"
                 ],
-                "summary": "Change the names in the profile",
+                "summary": "Change the names and the preferences in the profile",
                 "parameters": [
                     {
-                        "description": "The names to change",
+                        "description": "The fields to change",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -7283,8 +7284,23 @@
                 "last_name": {
                     "type": "string"
                 },
+                "locale": {
+                    "description": "Locale is the language the user chose (#286), a tag of GET\n/public/locales, or null for none: each request then negotiates it.\nIt applies to every signed-in request that names no locale itself.",
+                    "type": "string",
+                    "example": "fa"
+                },
                 "status": {
                     "type": "string"
+                },
+                "theme": {
+                    "description": "Theme is the colour theme for the frontends: light, dark, or system,\nwhich follows the device.",
+                    "type": "string",
+                    "enum": [
+                        "light",
+                        "dark",
+                        "system"
+                    ],
+                    "example": "system"
                 },
                 "uuid": {
                     "type": "string"
@@ -7326,6 +7342,21 @@
                 },
                 "last_name": {
                     "type": "string"
+                },
+                "locale": {
+                    "description": "Locale is a tag of GET /public/locales, or \"\" to clear the choice\n(#286).",
+                    "type": "string",
+                    "example": "fa"
+                },
+                "theme": {
+                    "description": "Theme is light, dark, or system.",
+                    "type": "string",
+                    "enum": [
+                        "light",
+                        "dark",
+                        "system"
+                    ],
+                    "example": "dark"
                 }
             }
         }
