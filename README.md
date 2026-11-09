@@ -339,7 +339,6 @@ internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
                         checks, users, a field sealer, and network proxies
 internal/totp/          Time-based one-time passwords (RFC 6238)
-pkg/utils/              Shared utilities
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
 scripts/rabbitmq-ha/    The RabbitMQ failover drill: a three-node cluster on Docker
 scripts/redis-ha/       The Redis failover drill: Sentinel and Cluster on Docker

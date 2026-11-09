@@ -1800,14 +1800,6 @@ func validateConfig() {
 	}
 }
 
-func (c *Configuration) JWTPrivateKeyPath() string {
-	return string(c.JWT.SSL.User.PrivateKey)
-}
-
-func (c *Configuration) JWTPublicKeyPath() string {
-	return string(c.JWT.SSL.User.PublicKey)
-}
-
 func GetRabbitMQURL() string {
 	return RabbitMQURL(Config.RabbitMQ.Username, Config.RabbitMQ.Password,
 		Config.RabbitMQ.Host, Config.RabbitMQ.Port, Config.RabbitMQ.VHost, Config.RabbitMQ.TLS.Enabled)
@@ -1997,16 +1989,6 @@ func (c *Configuration) SwaggerEnabled() bool {
 		return *c.Server.Swagger.Enabled
 	}
 	return c.Server.Mode != "release"
-}
-
-func GetServerAddr() string {
-	return fmt.Sprintf("%s:%s", Config.Server.IP, Config.Server.Port)
-}
-
-func GetServerTimeouts() (readTimeout, writeTimeout, idleTimeout time.Duration) {
-	return time.Duration(Config.Server.ReadTimeout) * time.Second,
-		time.Duration(Config.Server.WriteTimeout) * time.Second,
-		time.Duration(Config.Server.IdleTimeout) * time.Second
 }
 
 // The modes of redis.mode.
