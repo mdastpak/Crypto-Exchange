@@ -1111,7 +1111,7 @@ Liveness: `200` with `{"status": "ok"}` while the process serves requests. It ch
 
 ### `GET /system/ready`
 
-Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two seconds. It answers `503` while PostgreSQL or Redis is unavailable, so that load balancers and orchestrators send no traffic to an instance that cannot serve it, and `200` otherwise. Without RabbitMQ the instance stays ready, with the status `degraded` ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)): every instance shares the broker, and only the delivery of sign-in codes needs it at once, so a sign-in code request answers `503 delivery_unavailable` while it is away, and everything else keeps working. The Docker image's `HEALTHCHECK` uses it.
+Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two seconds. It answers `503` while PostgreSQL or Redis is unavailable, so that load balancers and orchestrators send no traffic to an instance that cannot serve it, and `200` otherwise. Without RabbitMQ the instance stays ready, with the status `degraded` ([#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)): every instance shares the broker, and only the delivery of sign-in codes needs it at once, so a sign-in code request answers `503 delivery_unavailable` while it is away, and everything else keeps working. The Docker image's `HEALTHCHECK` uses it. With GeoIP and a database configured, `geoip` is checked too, also as optional: a database that is not loaded, failed to reload, or is older than `geoip.max_age_days` makes the status `degraded` ([docs/geoip.md](geoip.md#health)).
 
 ```json
 {

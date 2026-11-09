@@ -22,6 +22,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
 	marketdataapi "github.com/mdastpak/crypto-exchange/internal/handlers/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/public"
@@ -69,6 +70,8 @@ type InfraHandlers struct {
 	// Locales are the supported locales (#283). RouteHandler fills it from
 	// the configuration when it is nil.
 	Locales *i18n.Registry
+	// GeoIP finds the country of a request (#284). Nil knows no country.
+	GeoIP *geoip.Resolver
 }
 
 var (
@@ -163,6 +166,14 @@ func run() error {
 	}
 	relay := newOutboxRelay(services, handlers, watcher)
 	workers := []worker{{"outbox relay", relay.Stop}, {"platform watcher", watcher.Stop}}
+	geoIP, geoIPWorker, err := startGeoIP()
+	if err != nil {
+		return fmt.Errorf("invalid GeoIP configuration: %w", err)
+	}
+	handlers.GeoIP, handlers.System.GeoIP = geoIP, geoIP
+	if geoIPWorker != nil {
+		workers = append(workers, *geoIPWorker)
+	}
 	scheduler := newDelistingScheduler(services, handlers, relay)
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
@@ -243,6 +254,55 @@ func run() error {
 	ctx, stop := stopSignals()
 	defer stop()
 	return serve(ctx, srv, listen, handlers, workers, shutdownTimeout(), drainTime())
+}
+
+// startGeoIP builds the resolver of client countries (#284) and starts the
+// reloader of its database, which each instance runs on its own copy of
+// the file. A database that does not load stops a release, since the sites
+// of the countries (#285) would silently fall back to the default site; in
+// development the server starts without it.
+func startGeoIP() (*geoip.Resolver, *worker, error) {
+	g := config.Config.GeoIP
+	if !g.Enabled {
+		return nil, nil, nil
+	}
+	resolver, err := geoip.New(geoip.Options{
+		Header:         g.Header,
+		TrustedProxies: config.Config.Server.TrustedProxies,
+		DatabasePath:   g.DatabasePath,
+		Overrides:      g.Overrides,
+		MaxAge:         time.Duration(g.MaxAgeDays) * 24 * time.Hour,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := resolver.Load(); err != nil {
+		if config.Config.Server.Mode == "release" {
+			return nil, nil, err
+		}
+		log.Printf("WARNING: GeoIP starts without its database: %v", err)
+	}
+	if err := resolver.Check(time.Now()); err != nil {
+		log.Printf("WARNING: GeoIP: %v", err)
+	}
+	if g.DatabasePath == "" {
+		return resolver, nil, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		resolver.Watch(ctx, time.Duration(g.ReloadIntervalSeconds)*time.Second)
+	}()
+	return resolver, &worker{"GeoIP reloader", func(stopCtx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-stopCtx.Done():
+			return stopCtx.Err()
+		}
+	}}, nil
 }
 
 // stopSignals returns a context that a SIGINT or SIGTERM cancels.

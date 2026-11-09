@@ -320,6 +320,28 @@ type Configuration struct {
 		Locales []string `yaml:"locales"`
 	} `yaml:"i18n"`
 
+	// GeoIP finds the country of a client (#284), for the site of their
+	// country (#285). Off by default: no request has a country.
+	GeoIP struct {
+		Enabled bool `yaml:"enabled"`
+		// Header names the request header in which a CDN or load balancer
+		// in front of the server sends the country, such as CF-IPCountry.
+		// It is trusted only from server.trusted_proxies.
+		Header string `yaml:"header"`
+		// DatabasePath is a MaxMind-format country or city database
+		// (.mmdb), such as GeoLite2-Country or DB-IP Lite Country.
+		DatabasePath string `yaml:"database_path"`
+		// ReloadIntervalSeconds is how often the file is checked for a new
+		// version, which is then loaded without a restart.
+		ReloadIntervalSeconds int `yaml:"reload_interval_seconds"`
+		// MaxAgeDays is the age of the database after which the readiness
+		// check reports it as stale.
+		MaxAgeDays int `yaml:"max_age_days"`
+		// Overrides map addresses or networks to countries, to try the
+		// flow locally. Release mode refuses them.
+		Overrides map[string]string `yaml:"overrides"`
+	} `yaml:"geoip"`
+
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
 		// (#217), together.
@@ -1351,6 +1373,12 @@ func setDefaults() {
 		Config.Server.ShutdownTimeout = DefaultShutdownTimeoutSeconds
 	}
 
+	if Config.GeoIP.ReloadIntervalSeconds == 0 {
+		Config.GeoIP.ReloadIntervalSeconds = DefaultGeoIPReloadIntervalSeconds
+	}
+	if Config.GeoIP.MaxAgeDays == 0 {
+		Config.GeoIP.MaxAgeDays = DefaultGeoIPMaxAgeDays
+	}
 	if Config.I18n.DefaultLocale == "" {
 		Config.I18n.DefaultLocale = DefaultLocale
 	}
@@ -1996,3 +2024,12 @@ func (c *Configuration) Locales() (*i18n.Registry, error) {
 	}
 	return i18n.New(def, codes)
 }
+
+// The GeoIP defaults and limits (#284).
+const (
+	DefaultGeoIPReloadIntervalSeconds = 300
+	MinGeoIPReloadIntervalSeconds     = 10
+	MaxGeoIPReloadIntervalSeconds     = 86400
+	DefaultGeoIPMaxAgeDays            = 45
+	MaxGeoIPMaxAgeDays                = 365
+)
