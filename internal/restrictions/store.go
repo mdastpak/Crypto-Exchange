@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // ReasonAccountFrozen is the audit reason of a session that a freeze ended.
@@ -165,6 +166,9 @@ func Create(ctx context.Context, db *sql.DB, n New, origin audit.Event) (Created
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return Created{}, fmt.Errorf("failed to end the sessions: %w", err)
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = ANY($1::uuid[])", ended); err != nil {
+			return Created{}, err
 		}
 		for _, id := range ended {
 			e := audit.Of(origin, audit.ActionUserSessionRevoke, audit.TargetSession, id)

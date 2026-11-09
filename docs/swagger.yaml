@@ -166,6 +166,17 @@ definitions:
           $ref: '#/definitions/delisting.Delisting'
         type: array
     type: object
+  admin.FindingPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/rowseal.Finding'
+        type: array
+      next_cursor:
+        description: NextCursor asks for the next page. It is left out on the last
+          page.
+        type: string
+    type: object
   admin.LiftControlRequest:
     properties:
       note:
@@ -193,6 +204,17 @@ definitions:
         type: array
       status:
         $ref: '#/definitions/platform.Status'
+    type: object
+  admin.ResealRequest:
+    properties:
+      reason:
+        description: |-
+          Reason says why the current values of the row are right, such as the
+          reviewed data fix that changed it.
+        maxLength: 1000
+        type: string
+    required:
+    - reason
     type: object
   admin.RestrictionList:
     properties:
@@ -1922,6 +1944,44 @@ definitions:
     - ScopeAccount
     - ScopeOperation
     - ScopeAsset
+  rowseal.Finding:
+    properties:
+      check:
+        enum:
+        - missing
+        - mismatch
+        - unknown_key
+        type: string
+      detected_at:
+        type: string
+      detected_by:
+        enum:
+        - read
+        - verifier
+        type: string
+      id:
+        type: integer
+      last_seen_at:
+        type: string
+      reason:
+        type: string
+      resolution:
+        enum:
+        - resealed
+        - report_mode
+        - row_gone
+        type: string
+      resolved_at:
+        type: string
+      resolved_by:
+        type: string
+      row_key:
+        type: string
+      seen_count:
+        type: integer
+      table:
+        type: string
+    type: object
   sites.Alternate:
     properties:
       hreflang:
@@ -3332,6 +3392,128 @@ paths:
       summary: Release a previous symbol of a currency
       tags:
       - admin currencies
+  /api/v1/admin/integrity/findings:
+    get:
+      description: 'The protected rows (accounts, contacts, sessions) that did not
+        match their seal (#139), found by a request or by the background verifier,
+        newest first: open ones only, unless all is true. Pages follow the pagination
+        convention of docs/api.md.'
+      parameters:
+      - description: Include the resolved findings
+        in: query
+        name: all
+        type: boolean
+      - description: The number of findings, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.FindingPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the integrity findings
+      tags:
+      - admin integrity
+  /api/v1/admin/integrity/findings/{id}/reseal:
+    post:
+      consumes:
+      - application/json
+      description: After an administrator reviewed a row that did not match its seal
+        and found its current values right, as after a reviewed data fix, seals the
+        row again with the current row-mac key and closes the finding. The reason
+        is required. Audited as integrity.reseal with the values sealed now, secret
+        ones masked. A finding that is already resolved answers 409 already_resolved;
+        without data keys, 503.
+      parameters:
+      - description: The finding's id
+        in: path
+        minimum: 1
+        name: id
+        required: true
+        type: integer
+      - description: Why the row is right
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.ResealRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/rowseal.Finding'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Re-seal the row of an integrity finding
+      tags:
+      - admin integrity
   /api/v1/admin/logout:
     post:
       produces:

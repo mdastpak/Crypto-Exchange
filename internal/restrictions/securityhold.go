@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // The security hold (#251). A change of a security setting of a user, such
@@ -57,6 +58,9 @@ func StartSecurityHold(ctx context.Context, tx *sql.Tx, userHK string, d time.Du
 	}
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to start the security hold: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", userHK); err != nil {
+		return time.Time{}, err
 	}
 	return until, nil
 }

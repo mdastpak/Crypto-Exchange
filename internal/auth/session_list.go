@@ -8,6 +8,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // SessionInfo is an active session, as its user sees it in the session
@@ -118,6 +119,9 @@ func (s *PostgresSessionStore) RevokeOwn(ctx context.Context, sessionID, userID 
 		} else if rows == 0 {
 			return nil, false, ErrSessionInvalid
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1", sessionID); err != nil {
+			return nil, false, err
+		}
 		return &event, true, nil
 	})
 }
@@ -149,6 +153,9 @@ func (s *PostgresSessionStore) RevokeOthers(ctx context.Context, userID, keep st
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("failed to revoke sessions: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = ANY($1::uuid[])", revoked); err != nil {
+		return 0, err
 	}
 	// One event per session, each under its own savepoint, so that the
 	// revocations commit even when the audit log cannot take them.

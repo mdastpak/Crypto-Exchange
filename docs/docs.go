@@ -1727,6 +1727,190 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/integrity/findings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The protected rows (accounts, contacts, sessions) that did not match their seal (#139), found by a request or by the background verifier, newest first: open ones only, unless all is true. Pages follow the pagination convention of docs/api.md.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin integrity"
+                ],
+                "summary": "List the integrity findings",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Include the resolved findings",
+                        "name": "all",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of findings, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.FindingPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integrity/findings/{id}/reseal": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "After an administrator reviewed a row that did not match its seal and found its current values right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. The reason is required. Audited as integrity.reseal with the values sealed now, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin integrity"
+                ],
+                "summary": "Re-seal the row of an integrity finding",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The finding's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Why the row is right",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.ResealRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/rowseal.Finding"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/logout": {
             "post": {
                 "security": [
@@ -6761,6 +6945,21 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.FindingPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rowseal.Finding"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor asks for the next page. It is left out on the last page.",
+                    "type": "string"
+                }
+            }
+        },
         "admin.LiftControlRequest": {
             "type": "object",
             "properties": {
@@ -6801,6 +7000,19 @@ const docTemplate = `{
                 },
                 "status": {
                     "$ref": "#/definitions/platform.Status"
+                }
+            }
+        },
+        "admin.ResealRequest": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "description": "Reason says why the current values of the row are right, such as the\nreviewed data fix that changed it.",
+                    "type": "string",
+                    "maxLength": 1000
                 }
             }
         },
@@ -9187,6 +9399,61 @@ const docTemplate = `{
                 "ScopeOperation",
                 "ScopeAsset"
             ]
+        },
+        "rowseal.Finding": {
+            "type": "object",
+            "properties": {
+                "check": {
+                    "type": "string",
+                    "enum": [
+                        "missing",
+                        "mismatch",
+                        "unknown_key"
+                    ]
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "detected_by": {
+                    "type": "string",
+                    "enum": [
+                        "read",
+                        "verifier"
+                    ]
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "resolution": {
+                    "type": "string",
+                    "enum": [
+                        "resealed",
+                        "report_mode",
+                        "row_gone"
+                    ]
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string"
+                },
+                "row_key": {
+                    "type": "string"
+                },
+                "seen_count": {
+                    "type": "integer"
+                },
+                "table": {
+                    "type": "string"
+                }
+            }
         },
         "sites.Alternate": {
             "type": "object",

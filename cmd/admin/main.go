@@ -133,6 +133,11 @@ Market data catalog (see docs/market-data.md#administration):
     The changes take -reason, for the audit log. The public API shows them within
     market_data.api.cache_seconds; the admin routes show them at once.
 
+Row seals (see docs/data-protection.md#row-seals):
+  row-seals findings [-all] [-limit n]     Show the rows that did not match their seal, newest first.
+  row-seals reseal -id <n> -reason <text>  Seal the row of a finding again after a review, and close it.
+  row-seals verify                         Check every protected row now, as the server's verifier does.
+
 Backups and restores (read only; exit status 1 when a check fails; see docs/disaster-recovery.md):
   backup status [-rpo 5m]                  Check WAL archiving on the primary against the RPO.
   restore verify [-not-before t] [-not-after t] [-keys]
@@ -172,6 +177,8 @@ type command struct {
 	format adminauth.Format
 	// market holds the flags of the market-data commands.
 	market marketArgs
+	// rowSeals holds the flags of the row-seals commands.
+	rowSeals rowSealArgs
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -209,6 +216,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseMigrateArgs(cmd, global.Args()[1:], stderr)
 	case "totp-secrets":
 		return parseTOTPSecretsArgs(cmd, global.Args()[1:], stderr)
+	case "row-seals":
+		return parseRowSealArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -369,6 +378,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if strings.HasPrefix(cmd.name, "migrate ") {
 		return runMigrate(cmd, stdout, stderr)
 	}
+	if strings.HasPrefix(cmd.name, "row-seals ") {
+		return runRowSeals(cmd, stdout, stderr)
+	}
 	if config.Config.Admin.TOTPKey == "" && config.Config.Keys.Provider == "" {
 		fmt.Fprintln(stderr, "Error: authenticator secrets need keys.provider (KEYS_PROVIDER, see docs/data-protection.md) or admin.totp_key (ADMIN_TOTP_KEY)")
 		return 1
@@ -470,6 +482,8 @@ func totpSecrets(ctx context.Context, conn *sql.DB, cmd command) (adminauth.Secr
 		return secrets, fmt.Errorf("load the data keys: %w", err)
 	}
 	secrets.DataKeys = ring
+	// What the commands write is sealed as the server seals it (#139).
+	useRing(conn, ring)
 	return secrets, nil
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -236,6 +237,9 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, locale = $4, theme = $5, updated_at = NOW() WHERE hk = $6",
 		profile.FirstName, profile.LastName, profile.DisplayName, profile.Locale, profile.Theme, userID,
 	)
+	if err == nil {
+		err = rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", userID)
+	}
 	if changes := profileChanges(before, profile); err == nil && changes != nil {
 		// The change commits only with its event (#195).
 		e := audit.FromRequest(c)

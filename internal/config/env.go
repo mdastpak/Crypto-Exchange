@@ -262,6 +262,8 @@ var envVars = []EnvVar{
 	intVar("KEYS_RELOAD_INTERVAL_SECONDS", "keys.reload_interval_seconds", func(c *Configuration) *int { return &c.Keys.ReloadIntervalSeconds }),
 	intVar("KEYS_ACTIVATION_DELAY_SECONDS", "keys.activation_delay_seconds", func(c *Configuration) *int { return &c.Keys.ActivationDelaySeconds }),
 	stringVar("KEYS_LEGACY_SECRETS", "keys.legacy_secrets", func(c *Configuration) *string { return &c.Keys.LegacySecrets }),
+	stringVar("KEYS_ROW_SEALS_MODE", "keys.row_seals.mode", func(c *Configuration) *string { return &c.Keys.RowSeals.Mode }),
+	intVar("KEYS_ROW_SEALS_VERIFY_INTERVAL_MINUTES", "keys.row_seals.verify_interval_minutes", func(c *Configuration) *int { return &c.Keys.RowSeals.VerifyIntervalMinutes }),
 
 	stringVar("SMTP_PASSWORD", "notifications.email.password", func(c *Configuration) *string { return &c.Notifications.Email.Password }),
 	stringVar("KAVENEGAR_API_KEY", "notifications.sms.kavenegar.api_key", func(c *Configuration) *string { return &c.Notifications.SMS.Kavenegar.APIKey }),

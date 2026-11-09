@@ -12,12 +12,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"net/mail"
 	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 
 	"github.com/google/uuid"
@@ -159,6 +161,9 @@ func (s *Service) Create(ctx context.Context, email string) (Enrollment, error) 
 		adminID, sealed,
 	)
 	if err == nil {
+		err = rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", adminID)
+	}
+	if err == nil {
 		// The address is verified at the first sign-in, by its code; see
 		// ConfirmEmail.
 		err = db.InsertContact(ctx, tx, adminID, emailContact, email, false)
@@ -212,6 +217,9 @@ func (s *Service) ResetTOTP(ctx context.Context, email string) (Enrollment, erro
 		); err != nil {
 			return err
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", adminID); err != nil {
+			return err
+		}
 		// The event says that the secret changed, never what it is.
 		return audit.Record(ctx, tx, audit.Of(s.Origin, audit.ActionAdminTOTPReset, audit.TargetUser, adminID))
 	})
@@ -256,6 +264,9 @@ func (s *Service) Disable(ctx context.Context, email string) error {
 		if err != nil {
 			return fmt.Errorf("disable the administrator: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", adminID); err != nil {
+			return err
+		}
 		e := audit.Of(s.Origin, audit.ActionAdminDisable, audit.TargetUser, adminID)
 		e.Changes = &audit.Changes{Before: map[string]interface{}{"status": before}, After: map[string]interface{}{"status": "INACTIVE"}}
 		if err := audit.Record(ctx, tx, e); err != nil {
@@ -291,17 +302,27 @@ func (s *Service) FindActive(ctx context.Context, email string) (Admin, error) {
 // IsActive reports whether adminID is still an administrator who may sign in.
 // Admin requests check it, so demoting or disabling an administrator, also
 // directly in the database, revokes its tokens at once.
+//
+// The row must also match its seal (#139): in enforce mode, an
+// administrator made, or kept, active outside the backend is not.
 func (s *Service) IsActive(ctx context.Context, adminID string) (bool, error) {
-	var active bool
+	row := rowseal.Users.NewRow()
 	err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM users
-		 WHERE hk = $1 AND role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL)`,
+		`SELECT `+rowseal.Users.Fields("")+` FROM users
+		 WHERE hk = $1 AND role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL`,
 		adminID,
-	).Scan(&active)
+	).Scan(row.Dest()...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("check the administrator: %w", err)
 	}
-	return active, nil
+	if err := rowseal.Check(ctx, rowseal.Users, row); err != nil {
+		log.Printf("Administrator %s does not match its seal: %v", adminID, err)
+		return false, nil
+	}
+	return true, nil
 }
 
 // VerifyTOTP checks an authenticator code of an active administrator. Each
@@ -309,16 +330,23 @@ func (s *Service) IsActive(ctx context.Context, adminID string) (bool, error) {
 // accepted one, which the update checks atomically.
 func (s *Service) VerifyTOTP(ctx context.Context, adminID, code string) error {
 	var sealed sql.NullString
+	row := rowseal.Users.NewRow()
 	err := s.db.QueryRowContext(ctx,
-		`SELECT totp_secret FROM users
+		`SELECT totp_secret, `+rowseal.Users.Fields("")+` FROM users
 		 WHERE hk = $1 AND role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL`,
 		adminID,
-	).Scan(&sealed)
+	).Scan(append([]any{&sealed}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !sealed.Valid) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("load the authenticator secret: %w", err)
+	}
+	// A secret, or an account, replaced outside the backend is not used
+	// in enforce mode (#139).
+	if err := rowseal.Check(ctx, rowseal.Users, row); err != nil {
+		log.Printf("Administrator %s does not match its seal: %v", adminID, err)
+		return ErrNotFound
 	}
 	secret, err := s.open(adminID, sealed.String)
 	if err != nil {
@@ -348,11 +376,16 @@ func (s *Service) VerifyTOTP(ctx context.Context, adminID, code string) error {
 // email address, by the code of a successful sign-in. The first sign-in
 // verifies the address that the operator entered.
 func (s *Service) ConfirmEmail(ctx context.Context, adminID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE user_contacts c SET verified_at = NOW(), updated_at = NOW()
-		 WHERE user_hk = $1 AND type = 'email' AND verified_at IS NULL AND c.removed_at IS NULL`,
-		adminID,
-	)
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE user_contacts c SET verified_at = NOW(), updated_at = NOW()
+			 WHERE user_hk = $1 AND type = 'email' AND verified_at IS NULL AND c.removed_at IS NULL`,
+			adminID,
+		); err != nil {
+			return err
+		}
+		return rowseal.Reseal(ctx, tx, rowseal.UserContacts, "user_hk = $1 AND updated_at = NOW()", adminID)
+	})
 	if err != nil {
 		return fmt.Errorf("confirm the email address: %w", err)
 	}

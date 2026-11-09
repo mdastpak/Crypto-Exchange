@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -34,6 +35,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // Reasons of a claim, as the audit event records them.
@@ -122,17 +124,29 @@ func Check(ctx context.Context, ownership identity.MobileOwnership, sealer ident
 }
 
 // RecordCheck stores a successful check of the mobile number of an
-// account, so that a sign-in does not ask again for a while.
-func RecordCheck(ctx context.Context, q interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}, ownerHK, mobile, provider, ref string) error {
-	_, err := q.ExecContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $3, ownership_ref = NULLIF($4, '')
+// account, so that a sign-in does not ask again for a while. It seals the
+// contact again (#139), in the same transaction.
+func RecordCheck(ctx context.Context, conn *sql.DB, ownerHK, mobile, provider, ref string) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to record the ownership check: %w", err)
+	}
+	defer tx.Rollback()
+	//nolint:gosec // G202: db.ContactMatch is a constant fragment; every value is an argument.
+	_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $3, ownership_ref = NULLIF($4, '')
 		WHERE c.user_hk = $5 AND `+db.ContactMatch, string(contactMobile), mobile, provider, ref, ownerHK)
 	if err != nil {
 		return fmt.Errorf("failed to record the ownership check: %w", err)
 	}
-	return nil
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, `user_hk = $3 AND `+contactMatchUnqualified, string(contactMobile), mobile, ownerHK); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
+
+// contactMatchUnqualified is db.ContactMatch without the alias, for a
+// statement on user_contacts itself.
+var contactMatchUnqualified = strings.ReplaceAll(db.ContactMatch, "c.", "")
 
 const contactMobile = "mobile"
 
@@ -166,6 +180,11 @@ func Detach(ctx context.Context, tx *sql.Tx, ownerHK, contactType, value, reason
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
 		return 0, false, err
 	}
+	// The removed row no longer matches the contact; it is the row of the
+	// account that this transaction changed.
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, "user_hk = $1 AND updated_at = NOW()", ownerHK); err != nil {
+		return 0, false, err
+	}
 
 	rows, err := tx.QueryContext(ctx, `UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
 		WHERE user_id = $1 AND status = 'ACTIVE' RETURNING id`, ownerHK)
@@ -184,6 +203,9 @@ func Detach(ctx context.Context, tx *sql.Tx, ownerHK, contactType, value, reason
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, false, fmt.Errorf("failed to end the sessions: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = ANY($1::uuid[])", ended); err != nil {
+		return 0, false, err
 	}
 
 	until, err := restrictions.StartSecurityHold(ctx, tx, ownerHK, hold)
