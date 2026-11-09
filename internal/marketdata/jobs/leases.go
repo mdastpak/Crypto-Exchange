@@ -24,14 +24,18 @@ func (l leases) ensure(ctx context.Context, job string) error {
 // returns its new token, or false when the job is not due or is held. Of
 // several workers that claim at once, the row lock lets one win; the others
 // find the lease taken.
-func (l leases) claim(ctx context.Context, job, holder string, lease time.Duration) (int64, bool, error) {
+//
+// A job that calls a source that an administrator paused (#270) is not
+// claimed; it stays due, and runs once the source is resumed.
+func (l leases) claim(ctx context.Context, job, holder string, lease time.Duration, sources []string) (int64, bool, error) {
 	var token int64
 	err := l.db.QueryRowContext(ctx, `
 		UPDATE market_job_leases
 		SET holder = $2, token = token + 1, lease_until = NOW() + make_interval(secs => $3),
 			last_started_at = NOW()
 		WHERE job = $1 AND lease_until < NOW() AND next_run_at <= NOW()
-		RETURNING token`, job, holder, lease.Seconds()).Scan(&token)
+			AND NOT EXISTS (SELECT 1 FROM market_source_controls WHERE paused AND source = ANY($4))
+		RETURNING token`, job, holder, lease.Seconds(), nonNil(sources)).Scan(&token)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -51,13 +55,23 @@ func (l leases) renew(ctx context.Context, job string, token int64, lease time.D
 	return n == 1, err
 }
 
-// holds reports whether token still holds the lease of job.
-func (l leases) holds(ctx context.Context, job string, token int64) (bool, error) {
-	var ok bool
-	err := l.db.QueryRowContext(ctx, `
-		SELECT EXISTS (SELECT 1 FROM market_job_leases WHERE job = $1 AND token = $2 AND lease_until > NOW())`,
-		job, token).Scan(&ok)
-	return ok, err
+// holds reports whether token still holds the lease of job, and whether an
+// administrator paused one of its sources.
+func (l leases) holds(ctx context.Context, job string, token int64, sources []string) (held, paused bool, err error) {
+	err = l.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM market_job_leases WHERE job = $1 AND token = $2 AND lease_until > NOW()),
+			EXISTS (SELECT 1 FROM market_source_controls WHERE paused AND source = ANY($3))`,
+		job, token, nonNil(sources)).Scan(&held, &paused)
+	return held, paused, err
+}
+
+// nonNil returns sources, or an empty list for nil, which PostgreSQL would
+// read as NULL.
+func nonNil(sources []string) []string {
+	if sources == nil {
+		return []string{}
+	}
+	return sources
 }
 
 // outcome is how a run ended, which sets when the job is due again.

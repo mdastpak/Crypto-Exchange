@@ -19,7 +19,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Public read API | [#269](https://github.com/mdastpak/Crypto-Exchange/issues/269) | Done |
 | Collection tiers: finer candles for the pairs that matter | [#279](https://github.com/mdastpak/Crypto-Exchange/issues/279) | Done |
 | Live prices of hot pairs from WebSocket streams | [#281](https://github.com/mdastpak/Crypto-Exchange/issues/281) | Done |
-| Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Planned |
+| Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Done |
 | Feed for the blog | [#271](https://github.com/mdastpak/Crypto-Exchange/issues/271) | Planned |
 
 ## Running the worker
@@ -140,7 +140,7 @@ A symbol alone never merges two assets, since symbols collide (`UNI` is several 
 
 `market_data.catalog.priority` orders the sources, primary first (`coingecko`, then `coinmarketcap`). The primary source writes the fields of the assets it knows; a secondary source links its identities to them, and writes the fields of the assets that only it knows. When the primary source is not enabled on any node, put the other first.
 
-A full record that gives a token's contract that the catalog has under another asset records a `contract` conflict, and the contract stays with its first asset. Conflicts are kept in `market_identity_conflicts`, once while they are open, for an administrator to resolve ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)).
+A full record that gives a token's contract that the catalog has under another asset records a `contract` conflict, and the contract stays with its first asset. Conflicts are kept in `market_identity_conflicts`, once while they are open, for an administrator to [resolve](#administration).
 
 ### Sources of the catalog
 
@@ -170,7 +170,7 @@ A run reads every ticker of the venue, adds the pairs it does not know, and writ
 
 ### Mapping pairs
 
-The base and quote of a new pair are mapped to the catalog by symbol: to the only asset with that symbol that is not hidden, or, when several assets share it, to the only one ranked within `map_rank_limit` (1000) by market cap. Otherwise the pair stays unmapped for review ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)). A pair keeps its mapping once set, so that a run never undoes an administrator's mapping. Fiat quotes such as `USD`, `EUR`, and `IRT` are not catalog assets and stay unmapped.
+The base and quote of a new pair are mapped to the catalog by symbol: to the only asset with that symbol that is not hidden, or, when several assets share it, to the only one ranked within `map_rank_limit` (1000) by market cap. Otherwise the pair stays unmapped, for an administrator to [map](#administration). A pair keeps its mapping once set, so that a run never undoes an administrator's mapping. Fiat quotes such as `USD`, `EUR`, and `IRT` are not catalog assets and stay unmapped.
 
 ### Stale prices and outliers
 
@@ -252,7 +252,7 @@ The pairs are in collection tiers ([#279](https://github.com/mdastpak/Crypto-Exc
 
 - **Volume in USD.** The quote volume of the latest ticker, or the base volume at the last price, times the price of the quote in USD: one for `USD`, `USDT`, `USDC`, and other dollar coins; for `IRT`, from the USDT/IRT price at the same venue; for a coin such as `BTC`, from its dollar pair at the same venue. Without such a pair at the venue, the median over the venues is used.
 - **Hysteresis.** A pair enters `active` within the top `active_top`, and leaves only when its rank passes `active_top` by `hysteresis_percent` (20 %): with the defaults, it stays until rank 240. So a pair near the boundary does not move between tiers every day, and the tier can hold up to 20 % more pairs than `active_top`.
-- **Overrides.** An administrator's tier on a pair, or on its base asset for all its pairs, overrides the automatic one (`tier_override`; the routes come with [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)). The pair's own override wins over its asset's. The job still records the automatic tier, which applies again once the override is cleared.
+- **Overrides.** An administrator's tier on a pair, or on its base asset for all its pairs, overrides the automatic one (`tier_override`, set through the [administration](#administration)). The pair's own override wins over its asset's. The job still records the automatic tier, which applies again once the override is cleared.
 - **Tickers.** The REST ticker endpoints of the venues give every pair in one request, so the tiers change nothing in what tickers cost. The hot pairs get second-level prices from the venues' [WebSocket streams](#live-tickers).
 
 A pair that moves to a finer tier starts its finer candles from the latest ones, then backfills, as a new pair does. A pair that leaves a tier keeps the candles it has until their retention.
@@ -292,9 +292,37 @@ The server serves the catalog read only, without sign-in, under `/api/v1/market-
 
 - **Unverified by default.** Every asset carries `verified` and `label`: `unverified`, unless an administrator linked it to a listed currency. A hidden asset is not found, in the list, the search, or by its slug.
 - **Regions.** `market_data.api.regions` limits the venues shown, so that an international release leaves out the Iranian venues ([#272](https://github.com/mdastpak/Crypto-Exchange/issues/272)).
-- **Cache.** Each answer is cached in Redis for `market_data.api.cache_seconds` (30), shared by every instance, under a key that holds a generation number. `Invalidate` raises the generation (`INCR`), so that every instance stops serving the answers cached before at once; the administration ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)) calls it after hiding or linking an asset. Only successful answers are cached. Without Redis, the answers are built on every request.
+- **Cache.** Each answer is cached in Redis for `market_data.api.cache_seconds` (30), shared by every instance, under a key that holds a generation number. `Invalidate` raises the generation (`INCR`), so that every instance stops serving the answers cached before at once; the [administration](#administration) calls it after each change. Only successful answers are cached. Without Redis, the answers are built on every request.
 - **ETag.** Every answer has an `ETag`, the same on every instance for the same answer, and `Cache-Control: public, max-age=<cache_seconds>`; a request with a matching `If-None-Match` gets `304 Not Modified`.
 - **Limits.** The routes fall under the REST rate limit of the public routes, and close during a full maintenance, as the other public routes do.
+
+## Administration
+
+Administrators run the catalog through the admin routes under `/api/v1/admin/market-data` ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)), which the [API reference](api.md#market-data-administration) describes, or `cmd/admin market-data` when the server is unhealthy. Both work on the same store, and every change is written with its audit event in one transaction (`market_data.*`, see [the audit log](architecture.md#the-audit-log)). A change that would change nothing, such as pausing a paused source, records nothing.
+
+| Task | Route | Command |
+| --- | --- | --- |
+| See each source: paused, its jobs and their failures, its requests this minute and month | `GET /sources` | `market-data sources` |
+| Pause a source, or resume it | `POST /sources/{source}/pause`, `/resume` | `market-data pause -source s -reason …`, `resume` |
+| See the jobs: who runs each, its failures, its next run | `GET /jobs` | `market-data jobs` |
+| Run a job now | `POST /jobs/{job}/run` | `market-data run -job j` |
+| See the runs, newest first | `GET /runs?job=&status=` | `market-data runs` |
+| Enable or disable a venue | `GET /venues`, `POST /venues/{id}/enable`, `/disable` | `market-data venues`, `venue-enable`, `venue-disable` |
+| Find assets, hidden ones too | `GET /assets?status=&q=`, `GET /assets/{id}` | `market-data assets` |
+| Hide an asset, or show it again | `POST /assets/{id}/hide`, `/unhide` | `market-data hide -asset n -reason …`, `unhide` |
+| Link an asset to a listed currency, or unlink it | `POST /assets/{id}/link`, `/unlink` | `market-data link -asset n -currency hk`, `unlink` |
+| Set or clear the tier of an asset or a pair | `PUT /assets/{id}/tier`, `PUT /pairs/{id}/tier` | `market-data tier -asset n` or `-pair n -tier …` |
+| Map a pair that the jobs could not map | `GET /pairs?unmapped=true`, `PUT /pairs/{id}/mapping` | `market-data map -pair n -base n -quote n` |
+| Resolve a conflict of identity | `GET /conflicts`, `POST /conflicts/{id}/resolve` | `market-data conflicts`, `resolve -id n -note …` |
+
+- **Pausing a source.** A pause, in `market_source_controls` (migration 45), stops every worker from claiming the jobs that call the source, `catalog:coingecko` or `tickers:binance`, `candles:binance:1h`, and `stream:binance` alike, at its next poll; a run in progress, a stream too, stops at its next batch of writes, and is not counted as a failure. The jobs stay due, and run once the source is resumed. Pausing a source on every node at once, whatever its configuration, is for a source that must be left alone now: a changed API, a complaint, a plan running out. The configuration still decides which sources a node uses; a lockdown of `market_data` pauses every job.
+- **Disabling a venue.** The jobs of a disabled venue collect nothing, and the public API leaves it out. Its data is kept.
+- **Hiding an asset.** The public API never serves a hidden asset, in the list, the search, or by its slug. The jobs keep collecting it, and it can be shown again.
+- **Linking an asset.** A link says that a catalog asset is the same as a currency listed on this exchange; the public API then labels it verified, and with `tiers.hot_listed` its pairs are hot. The link only reads the currency, which must exist and not be deleted, and never changes it. A currency is linked to one asset at most, a linked asset is unlinked before it is linked to another currency or hidden, and a hidden asset is shown before it is linked.
+- **Mapping a pair.** A pair that the [tickers job](#mapping-pairs) could not map to one asset by its symbols waits, unmapped, out of the comparison. An administrator maps it to its base and quote assets; the jobs keep a mapping once set.
+- **Conflicts.** A conflict of identity is closed with a note of what was decided; the fix itself, such as hiding an asset or mapping a pair, is its own change. A conflict that the sync meets again later opens anew.
+- **Running a job now.** The job becomes due now, and the first worker that polls and reaches its sources runs it, within `poll_seconds`. A job that a worker runs now answers `409 market_job_running`, since the end of that run sets the next one.
+- **Cache.** A change through the routes drops the cache of the public API on every instance at once. `cmd/admin` does not reach Redis, so the public API shows its changes once the cached answers expire, within `api.cache_seconds`.
 
 ## Data model
 
@@ -312,6 +340,7 @@ The tables have the `market_` prefix, and no other table refers to them, so that
 | `market_candles` | The OHLCV candles of a pair at a resolution (`1m`, `5m`, `15m`, `1h`, `1d`), partitioned by resolution and time. |
 | `market_candle_cursors` | Per pair and resolution, the range of candles that was asked of the venue. |
 | `market_sync_runs` | One row per job run: job, worker, mode, status, items read and written, and the error. |
+| `market_source_controls` | The sources that an administrator paused, with the reason ([Administration](#administration)). |
 
 ### Writes from several workers
 

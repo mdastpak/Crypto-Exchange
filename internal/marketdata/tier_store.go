@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
@@ -102,32 +104,41 @@ func (s *Store) SetTiers(ctx context.Context, tiers map[int64]string) (int, erro
 }
 
 // SetPairTierOverride sets the administrator's tier of a pair, or clears it
-// with nil (#270).
-func (s *Store) SetPairTierOverride(ctx context.Context, pairID int64, tier *string) error {
-	return s.setTierOverride(ctx, "market_venue_pairs", pairID, tier)
+// with nil (#270), with its audit event from origin.
+func (s *Store) SetPairTierOverride(ctx context.Context, pairID int64, tier *string, origin audit.Event) error {
+	return s.setTierOverride(ctx, "market_venue_pairs", audit.TargetMarketPair, pairID, tier, origin)
 }
 
 // SetAssetTierOverride sets the administrator's tier of the pairs of an
-// asset, or clears it with nil (#270). A tier on a pair wins over it.
-func (s *Store) SetAssetTierOverride(ctx context.Context, assetID int64, tier *string) error {
-	return s.setTierOverride(ctx, "market_assets", assetID, tier)
+// asset, or clears it with nil (#270), with its audit event from origin. A
+// tier on a pair wins over it.
+func (s *Store) SetAssetTierOverride(ctx context.Context, assetID int64, tier *string, origin audit.Event) error {
+	return s.setTierOverride(ctx, "market_assets", audit.TargetMarketAsset, assetID, tier, origin)
 }
 
-func (s *Store) setTierOverride(ctx context.Context, table string, id int64, tier *string) error {
+func (s *Store) setTierOverride(ctx context.Context, table, target string, id int64, tier *string, origin audit.Event) error {
 	if tier != nil && !slices.Contains(Tiers, *tier) {
-		return fmt.Errorf("marketdata: unknown tier %q", *tier)
+		return fmt.Errorf("%w: unknown tier %q", ErrInvalid, *tier)
 	}
-	// table is one of two constants.
-	res, err := s.db.ExecContext(ctx, `UPDATE `+table+` SET tier_override = $2 WHERE id = $1`, id, tier) //nolint:gosec // G202: a constant table name
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var before *string
+		// table is one of two constants.
+		err := tx.QueryRowContext(ctx, `SELECT tier_override FROM `+table+` WHERE id = $1 FOR UPDATE`, id).Scan(&before)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if (before == nil && tier == nil) || (before != nil && tier != nil && *before == *tier) {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET tier_override = $2 WHERE id = $1`, id, tier); err != nil { //nolint:gosec // G202: a constant table name
+			return err
+		}
+		return record(ctx, tx, origin, audit.ActionMarketTierOverride, target, strconv.FormatInt(id, 10),
+			map[string]any{"tier_override": before}, map[string]any{"tier_override": tier})
+	})
 }
 
 // PairTier returns the tier in which a pair is collected.

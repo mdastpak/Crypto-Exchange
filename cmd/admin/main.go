@@ -20,6 +20,7 @@
 //	admin [-config path] [-migrations url] platform maintenance -reason <text> [flags]
 //	admin [-config path] [-migrations url] platform lockdown -feature <feature> -reason <text> [flags]
 //	admin [-config path] [-migrations url] platform lift -id <uuid> -note <text>
+//	admin [-config path] [-migrations url] market-data <command> [flags]
 //	admin [-config path] backup status [-rpo 5m]
 //	admin [-config path] [-migrations url] restore verify [-not-before t] [-not-after t] [-keys]
 //	admin [-config path] [-migrations url] migrate [up|status]
@@ -34,7 +35,10 @@
 // commands handle the messages that the server could not publish (#192).
 // The platform commands put the service under maintenance or lock a
 // feature (#235) without the HTTP API, for when it is unhealthy; every
-// server instance applies a change within platform.poll_interval_ms.
+// server instance applies a change within platform.poll_interval_ms. The
+// market-data commands administer the market data catalog (#270): they pause
+// sources, enable venues, hide assets and link them to listed currencies,
+// set tiers, map pairs, resolve conflicts, run jobs, and show the runs.
 // backup status and restore verify check WAL archiving and a restored
 // database (#236); they only read, never migrate, and exit with 1 when a
 // check fails, for monitoring and restore drills. migrate applies the
@@ -103,6 +107,32 @@ Platform controls (every instance applies a change within platform.poll_interval
     maintenance also takes -allow-networks and -allow-users (comma-separated).
   platform lift -id <uuid> -note <text>    End a control now, or cancel one that has not started.
 
+Market data catalog (see docs/market-data.md#administration):
+  market-data sources                      Show each source: paused or not, its jobs, failures, and requests.
+  market-data pause -source <s> -reason <text>
+                                           Stop every worker from running the jobs of a source.
+  market-data resume -source <s>           Let the workers run them again.
+  market-data jobs                         Show each job: who runs it, its failures, and its next run.
+  market-data run -job <name>              Run a job at the next poll of a worker.
+  market-data runs [-job j] [-status s] [-limit n]
+                                           Show the latest runs, newest first.
+  market-data venues                       Show the venues.
+  market-data venue-enable -venue <v>      Collect a venue; venue-disable stops it.
+  market-data assets [-status s] [-q text] Show the assets, hidden ones included.
+  market-data hide -asset <id> -reason <text>
+                                           Never serve an asset; unhide -asset <id> serves it again.
+  market-data link -asset <id> -currency <hk>
+                                           Link an asset to a listed currency, which is not changed;
+                                           unlink -asset <id> ends the link.
+  market-data tier -asset <id>|-pair <id> -tier <hot|active|other|none>
+                                           Set or clear the collection tier of an asset or a pair.
+  market-data map -pair <id> -base <id> -quote <id>
+                                           Map a pair to the assets of the catalog.
+  market-data conflicts [-source s]        Show the open conflicts of identity.
+  market-data resolve -id <n> -note <text> Close a conflict with what was decided.
+    The changes take -reason, for the audit log. The public API shows them within
+    market_data.api.cache_seconds; the admin routes show them at once.
+
 Backups and restores (read only; exit status 1 when a check fails; see docs/disaster-recovery.md):
   backup status [-rpo 5m]                  Check WAL archiving on the primary against the RPO.
   restore verify [-not-before t] [-not-after t] [-keys]
@@ -140,6 +170,8 @@ type command struct {
 	recovery recoveryArgs
 	// format is the -to of totp-secrets reseal.
 	format adminauth.Format
+	// market holds the flags of the market-data commands.
+	market marketArgs
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -167,6 +199,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseOutboxArgs(cmd, global.Args()[1:], stderr)
 	case "platform":
 		return parsePlatformArgs(cmd, global.Args()[1:], stderr)
+	case "market-data":
+		return parseMarketArgs(cmd, global.Args()[1:], stderr)
 	case "backup":
 		return parseBackupArgs(cmd, global.Args()[1:], stderr)
 	case "restore":
@@ -325,6 +359,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "platform ") {
 		return runPlatform(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "market-data ") {
+		return runMarket(cmd, stdout, stderr)
 	}
 	if strings.HasPrefix(cmd.name, "backup ") || strings.HasPrefix(cmd.name, "restore ") {
 		return runRecovery(cmd, stdout, stderr)

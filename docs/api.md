@@ -662,6 +662,32 @@ The closed candles of the asset's pair at a venue, oldest first: `{"t": open tim
 
 `400 validation_failed` for a missing or invalid parameter, or a range of more than 1000 candles; `404 market_pair_not_found` when the venue has no such pair, or is not shown in this release.
 
+## Market data administration
+
+The administration of the [market data catalog](market-data.md#administration) ([#270](https://github.com/mdastpak/Crypto-Exchange/issues/270)), under `/admin/market-data`, for active administrators. Assets, pairs, conflicts, and runs are named by their numeric `id`. The lists of assets, pairs, conflicts, and runs are [paginated](#pagination). Each change is audited as a `market_data.*` action, and drops the cache of the public market data routes on every instance. A change that would change nothing answers `200` with the row as it is and records nothing. The changes take an optional JSON body with `reason`, which a pause and a hide require.
+
+| Route | |
+| --- | --- |
+| `GET /admin/market-data/sources` | Each source: `paused`, `reason`, `requests_this_minute`, `requests_this_month`, `healthy` (no job failed its last run), and its `jobs`. |
+| `POST /admin/market-data/sources/{source}/pause`, `/resume` | Every worker stops, or starts again, running the jobs of the source. |
+| `GET /admin/market-data/jobs` | Each job: `running`, `holder`, `failures`, `next_run_at`, and its last start, end, and success. |
+| `POST /admin/market-data/jobs/{job}/run` | `202`: a worker runs the job at its next poll. `404 market_not_found` for a job that no worker has claimed, `409 market_job_running` while one runs it. |
+| `GET /admin/market-data/runs?job=&status=` | The runs, newest first, with what each read and wrote and its `error`. |
+| `GET /admin/market-data/venues` | The venues, enabled or not. |
+| `POST /admin/market-data/venues/{id}/enable`, `/disable` | Collect a venue, and show it in the public API, or stop. |
+| `GET /admin/market-data/assets?status=&q=` | The assets, hidden ones too, in the order they were added; `q` matches the symbol, or the start of the slug or name. |
+| `GET /admin/market-data/assets/{id}` | One asset, with its `tier_override`. |
+| `POST /admin/market-data/assets/{id}/hide`, `/unhide` | Never serve an asset, or serve it again as unverified. `409 market_asset_linked` for a linked asset. |
+| `POST /admin/market-data/assets/{id}/link` | `{"currency_hk": "…", "reason": "…"}` links the asset to a listed currency, which is not changed. `422 market_currency_not_found`, `409 market_currency_linked` when another asset is linked to it, `409 market_asset_linked` when the asset is linked to another, `409 market_asset_hidden`. |
+| `POST /admin/market-data/assets/{id}/unlink` | Ends the link. `409 market_asset_not_linked`. |
+| `PUT /admin/market-data/assets/{id}/tier`, `PUT /admin/market-data/pairs/{id}/tier` | `{"tier": "hot"}` sets the [collection tier](market-data.md#collection-tiers) of an asset's pairs or of a pair, `{"tier": null}` clears it. |
+| `GET /admin/market-data/pairs?venue=&unmapped=` | The pairs, with their assets and tiers; `unmapped=true` selects those without a base or quote asset. |
+| `PUT /admin/market-data/pairs/{id}/mapping` | `{"base_asset_id": 1, "quote_asset_id": 2}` maps a pair. |
+| `GET /admin/market-data/conflicts?source=&resolved=` | The open conflicts of identity, or the resolved ones, oldest first. |
+| `POST /admin/market-data/conflicts/{id}/resolve` | `{"note": "…"}`, required, closes a conflict. `409 market_conflict_resolved`. |
+
+An unknown source, venue, asset, pair, or conflict answers `404 market_not_found`, an invalid parameter or body `400 validation_failed`.
+
 ## Currency migrations
 
 A migration moves the holders of one or more source currencies to one target, each source at its ratio: the units of the target that one unit of the source becomes ([#215](https://github.com/mdastpak/Crypto-Exchange/issues/215)). It models a rebrand with a new token (MATIC to POL, 1), a redenomination (100 LEND = 1 AAVE, 0.01; 1 MKR = 24,000 SKY, 24000), and a merger (AGIX and OCEAN into FET, each at its own ratio). Ratios are decimals with at most 18 digits after the point, never floats.

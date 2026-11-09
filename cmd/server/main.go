@@ -25,6 +25,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
 	marketdataapi "github.com/mdastpak/crypto-exchange/internal/handlers/marketdata"
+	"github.com/mdastpak/crypto-exchange/internal/handlers/marketdataadmin"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/public"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/socket"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
@@ -58,10 +59,12 @@ type InfraHandlers struct {
 	Public *public.PublicHandler
 	User   *user.UserHandler
 	// MarketData serves the global market data catalog (#269).
-	MarketData     *marketdataapi.Handler
-	Redis          *db.RedisService
-	TokenBlacklist *auth.TokenBlacklist
-	Sessions       auth.SessionStore
+	MarketData *marketdataapi.Handler
+	// MarketDataAdmin administers the catalog (#270).
+	MarketDataAdmin *marketdataadmin.Handler
+	Redis           *db.RedisService
+	TokenBlacklist  *auth.TokenBlacklist
+	Sessions        auth.SessionStore
 	// DataKeys holds the data-protection keys for row seals (#139) and
 	// field encryption (#140). It is nil without keys.provider.
 	DataKeys *keys.Live
@@ -841,16 +844,20 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	userHandler.Sessions = sessions
 	publicHandler := public.NewHandler(services)
 	publicHandler.Blacklist = tb
+	marketData := newMarketDataAPI(services)
 	return &InfraHandlers{
-		Socket:         ws,
-		System:         system.NewHandler(services),
-		Admin:          admin.NewHandler(services),
-		Public:         publicHandler,
-		User:           userHandler,
-		MarketData:     newMarketDataAPI(services),
-		Redis:          services.Redis,
-		TokenBlacklist: tb,
-		Sessions:       sessions,
+		Socket:     ws,
+		System:     system.NewHandler(services),
+		Admin:      admin.NewHandler(services),
+		Public:     publicHandler,
+		User:       userHandler,
+		MarketData: marketData,
+		// A change of the administrators drops the cache of the public
+		// routes on every instance.
+		MarketDataAdmin: marketdataadmin.New(marketdata.NewStore(services.Postgres.DB), marketData.Invalidate),
+		Redis:           services.Redis,
+		TokenBlacklist:  tb,
+		Sessions:        sessions,
 	}
 }
 
@@ -1000,6 +1007,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.PATCH("/platform/controls/:id", ih.Admin.UpdateControl)
 		adminGroup.POST("/platform/controls/:id/lift", ih.Admin.LiftControl)
 		adminGroup.POST("/logout", adminLogout(ih))
+		// The administration of the market data catalog (#270). A change
+		// drops the cache of the public routes on every instance.
+		if ih.MarketDataAdmin != nil {
+			ih.MarketDataAdmin.Register(adminGroup)
+		}
 	}
 
 	userGroup := g.Group("/user")

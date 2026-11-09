@@ -34,6 +34,10 @@ var ErrLeaseLost = errors.New("jobs: the lease of the job was lost")
 // ErrPaused stops a run when a lockdown pauses the jobs.
 var ErrPaused = errors.New("jobs: the jobs are paused")
 
+// ErrSourcePaused stops a run when an administrator pauses one of the
+// sources of its job (#270). It is an ErrPaused.
+var ErrSourcePaused = fmt.Errorf("%w: an administrator paused a source of the job", ErrPaused)
+
 // errStopping stops the runs when the worker stops.
 var errStopping = errors.New("jobs: the worker is stopping")
 
@@ -235,7 +239,7 @@ func (r *Runner) tick() {
 		default:
 			return // every slot is taken
 		}
-		token, ok := r.claim(name)
+		token, ok := r.claim(name, spec.Job.Sources())
 		if !ok {
 			<-r.slots
 			continue
@@ -251,14 +255,14 @@ func (r *Runner) tick() {
 	}
 }
 
-func (r *Runner) claim(name string) (int64, bool) {
+func (r *Runner) claim(name string, sources []string) (int64, bool) {
 	ctx, cancel := context.WithTimeout(r.ctx, r.opts.Lease/2)
 	defer cancel()
 	if err := r.leases.ensure(ctx, name); err != nil {
 		r.opts.Logger.Printf("market data job %s: adding its lease: %v", name, err)
 		return 0, false
 	}
-	token, ok, err := r.leases.claim(ctx, name, r.opts.Node, r.opts.Lease)
+	token, ok, err := r.leases.claim(ctx, name, r.opts.Node, r.opts.Lease, sources)
 	if err != nil {
 		r.opts.Logger.Printf("market data job %s: claiming its lease: %v", name, err)
 		return 0, false
@@ -289,12 +293,15 @@ func (r *Runner) execute(spec Spec, token int64) {
 		if err := context.Cause(ctx); err != nil {
 			return err
 		}
-		ok, err := r.leases.holds(ctx, name, token)
+		held, paused, err := r.leases.holds(ctx, name, token, spec.Job.Sources())
 		if err != nil {
 			return fmt.Errorf("jobs: checking the lease: %w", err)
 		}
-		if !ok {
+		if !held {
 			return ErrLeaseLost
+		}
+		if paused {
+			return ErrSourcePaused
 		}
 		return nil
 	}
