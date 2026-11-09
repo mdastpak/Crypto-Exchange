@@ -591,6 +591,30 @@ definitions:
         example: ACTIVE
         type: string
     type: object
+  i18n.Locale:
+    properties:
+      code:
+        description: Code is the canonical BCP 47 tag, such as "fa" or "en-GB".
+        example: fa
+        type: string
+      dir:
+        description: 'Dir is the direction of its text: "ltr" or "rtl".'
+        enum:
+        - ltr
+        - rtl
+        example: rtl
+        type: string
+      name:
+        description: Name is the name of the language in English.
+        example: Persian
+        type: string
+      native_name:
+        description: |-
+          NativeName is the name of the language in itself, for a language
+          switcher.
+        example: فارسی
+        type: string
+    type: object
   marketdata.AssetPage:
     properties:
       items:
@@ -1192,6 +1216,36 @@ definitions:
       next_cursor:
         description: NextCursor asks for the next page. It is left out on the last
           page.
+        type: string
+    type: object
+  public.LocalesInfo:
+    properties:
+      current:
+        allOf:
+        - $ref: '#/definitions/i18n.Locale'
+        description: Current is the locale of this request, for <html lang dir>.
+      default:
+        description: Default is the code of the fallback locale.
+        example: en
+        type: string
+      locales:
+        description: |-
+          Locales are the supported locales, in the order of the language
+          switcher.
+        items:
+          $ref: '#/definitions/i18n.Locale'
+        type: array
+      source:
+        description: |-
+          Source is where the current locale came from: query, header, cookie,
+          accept_language, or default.
+        enum:
+        - query
+        - header
+        - cookie
+        - accept_language
+        - default
+        example: accept_language
         type: string
     type: object
   public.OTPRequest:
@@ -3865,6 +3919,41 @@ paths:
       summary: Get a public currency
       tags:
       - currencies
+  /api/v1/public/locales:
+    get:
+      description: 'The locales the product supports, each with its names and its
+        direction (ltr or rtl), the default, and the locale this request negotiated:
+        from the lang query parameter, the X-Locale header, the locale cookie, Accept-Language,
+        or the default, in that order (#283). Frontends build the language switcher
+        from it and set lang and dir on the root element from current.'
+      parameters:
+      - description: A locale for this request, such as fa
+        in: query
+        name: lang
+        type: string
+      - description: The locale an app chose
+        in: header
+        name: X-Locale
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/public.LocalesInfo'
+              type: object
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: List the supported languages and their text direction
+      tags:
+      - system
   /api/v1/public/status:
     get:
       description: Whether the exchange is open or under maintenance, the features

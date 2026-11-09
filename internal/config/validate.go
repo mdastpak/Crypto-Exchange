@@ -221,6 +221,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)
 	}
+	c.i18nProblems(p)
 	c.marketDataProblems(p)
 	if v := c.Delisting.IntervalSeconds; v < 1 || v > MaxDelistingIntervalSeconds {
 		p.add("delisting.interval_seconds", "is %d; it must be from 1 to %d", v, MaxDelistingIntervalSeconds)
@@ -688,5 +689,13 @@ func (c *Configuration) marketDataAPIProblems(p *problems) {
 	}
 	if api.CacheSeconds < 1 || api.CacheSeconds > MaxMarketDataAPICacheSeconds {
 		p.add("market_data.api.cache_seconds", "is %d; it must be from 1 to %d", api.CacheSeconds, MaxMarketDataAPICacheSeconds)
+	}
+}
+
+// i18nProblems checks the i18n section by building the registry of its
+// locales, which the server builds the same way at start.
+func (c *Configuration) i18nProblems(p *problems) {
+	if _, err := c.Locales(); err != nil {
+		p.add("i18n.locales", "and i18n.default_locale (%s) are not valid: %v", envVarFor("i18n.default_locale"), err)
 	}
 }

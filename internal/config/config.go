@@ -14,6 +14,7 @@ import (
 
 	configfiles "github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -306,6 +307,18 @@ type Configuration struct {
 		// Communications Regulatory Authority answers it.
 		MobileOwnership MobileOwnershipConfig `yaml:"mobile_ownership"`
 	} `yaml:"identity"`
+
+	// I18n lists the locales that the product supports and its fallback
+	// (#283). The direction (RTL or LTR) and the names of each locale come
+	// from its language.
+	I18n struct {
+		// DefaultLocale answers a request that names no supported locale.
+		DefaultLocale string `yaml:"default_locale"`
+		// Locales are BCP 47 tags, in the order a language switcher lists
+		// them. "en" is required: it is the language of every message that
+		// has no translation.
+		Locales []string `yaml:"locales"`
+	} `yaml:"i18n"`
 
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
@@ -1338,6 +1351,13 @@ func setDefaults() {
 		Config.Server.ShutdownTimeout = DefaultShutdownTimeoutSeconds
 	}
 
+	if Config.I18n.DefaultLocale == "" {
+		Config.I18n.DefaultLocale = DefaultLocale
+	}
+	if len(Config.I18n.Locales) == 0 {
+		Config.I18n.Locales = append([]string(nil), DefaultLocales...)
+	}
+
 	if Config.JWT.Issuer == "" {
 		Config.JWT.Issuer = DefaultJWTIssuer
 	}
@@ -1955,3 +1975,24 @@ const (
 
 // RedisModes lists the values of redis.mode.
 var RedisModes = []string{RedisModeStandalone, RedisModeSentinel, RedisModeCluster}
+
+// The locales of a configuration that lists none (#283): English, the
+// fallback of every message, and Persian. A release outside Iran may list
+// only the languages of its markets.
+const DefaultLocale = "en"
+
+var DefaultLocales = []string{"en", "fa"}
+
+// Locales builds the registry of the configured locales (#283). A
+// configuration that lists none, such as one built by a test, gets the
+// defaults.
+func (c *Configuration) Locales() (*i18n.Registry, error) {
+	def, codes := c.I18n.DefaultLocale, c.I18n.Locales
+	if def == "" {
+		def = DefaultLocale
+	}
+	if len(codes) == 0 {
+		codes = DefaultLocales
+	}
+	return i18n.New(def, codes)
+}

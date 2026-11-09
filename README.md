@@ -36,6 +36,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
 | Backups and disaster recovery | Partial | The checks, the monthly restore drill, and the runbook are in the repository ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)); WAL archiving and base backups are set up per environment with the backup tool, as [docs/disaster-recovery.md](docs/disaster-recovery.md) describes. |
 | Global market data catalog | Foundation | `cmd/market-worker` and the `market_` tables of unverified assets, global and Iranian exchanges, pairs, and tickers; the jobs and sources follow in [#262](https://github.com/mdastpak/Crypto-Exchange/issues/262). See [docs/market-data.md](docs/market-data.md). |
+| Languages and text direction | Partial | Supported locales with their direction (RTL or LTR), the locale of each request from its query, headers, cookie, or browser, and Persian translations of the messages users see ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)). GeoIP, a domain per country, and saved preferences follow in [#284](https://github.com/mdastpak/Crypto-Exchange/issues/284)–[#286](https://github.com/mdastpak/Crypto-Exchange/issues/286). See [docs/i18n.md](docs/i18n.md). |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL or Redis is unavailable, and `200` with the status `degraded` while RabbitMQ is ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33), [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
@@ -311,6 +312,7 @@ internal/domain/        Exchange domain model: asset, market, order, trade, bala
 internal/favorites/     Personal favorites of currencies and trading pairs
 internal/handlers/      HTTP and WebSocket handlers (admin, public, socket, system, user)
 internal/helpers/       Response helpers
+internal/i18n/          Locales, text direction, negotiation, and translated messages
 internal/identity/      Identity checks with a KYC provider: mobile ownership against the
                         national ID (Jibit client and a stub), sealed national IDs
 internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit

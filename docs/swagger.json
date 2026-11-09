@@ -3328,6 +3328,58 @@
                 }
             }
         },
+        "/api/v1/public/locales": {
+            "get": {
+                "description": "The locales the product supports, each with its names and its direction (ltr or rtl), the default, and the locale this request negotiated: from the lang query parameter, the X-Locale header, the locale cookie, Accept-Language, or the default, in that order (#283). Frontends build the language switcher from it and set lang and dir on the root element from current.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "List the supported languages and their text direction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "A locale for this request, such as fa",
+                        "name": "lang",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The locale an app chose",
+                        "name": "X-Locale",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.LocalesInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/status": {
             "get": {
                 "description": "Whether the exchange is open or under maintenance, the features that are locked now, and the maintenances and lockdowns that are announced, with their messages in Persian and English, for the apps to show a banner or a countdown (#235). It answers during a maintenance too, from the memory of the instance, so it never needs the database. Over the WebSocket, every connection receives the same status as a platform.status event when it changes.",
@@ -5445,6 +5497,35 @@
                 }
             }
         },
+        "i18n.Locale": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "Code is the canonical BCP 47 tag, such as \"fa\" or \"en-GB\".",
+                    "type": "string",
+                    "example": "fa"
+                },
+                "dir": {
+                    "description": "Dir is the direction of its text: \"ltr\" or \"rtl\".",
+                    "type": "string",
+                    "enum": [
+                        "ltr",
+                        "rtl"
+                    ],
+                    "example": "rtl"
+                },
+                "name": {
+                    "description": "Name is the name of the language in English.",
+                    "type": "string",
+                    "example": "Persian"
+                },
+                "native_name": {
+                    "description": "NativeName is the name of the language in itself, for a language\nswitcher.",
+                    "type": "string",
+                    "example": "فارسی"
+                }
+            }
+        },
         "marketdata.AssetPage": {
             "type": "object",
             "properties": {
@@ -6259,6 +6340,43 @@
                 "next_cursor": {
                     "description": "NextCursor asks for the next page. It is left out on the last page.",
                     "type": "string"
+                }
+            }
+        },
+        "public.LocalesInfo": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "description": "Current is the locale of this request, for \u003chtml lang dir\u003e.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/i18n.Locale"
+                        }
+                    ]
+                },
+                "default": {
+                    "description": "Default is the code of the fallback locale.",
+                    "type": "string",
+                    "example": "en"
+                },
+                "locales": {
+                    "description": "Locales are the supported locales, in the order of the language\nswitcher.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/i18n.Locale"
+                    }
+                },
+                "source": {
+                    "description": "Source is where the current locale came from: query, header, cookie,\naccept_language, or default.",
+                    "type": "string",
+                    "enum": [
+                        "query",
+                        "header",
+                        "cookie",
+                        "accept_language",
+                        "default"
+                    ],
+                    "example": "accept_language"
                 }
             }
         },
