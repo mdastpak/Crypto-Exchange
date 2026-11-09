@@ -28,6 +28,8 @@ func TestRoutes_MatchTheOpenAPIDocument(t *testing.T) {
 		"/api/v1/market-data/assets/bitcoin/candles?venue=binance&quote=USDT&interval=1h",
 		"/api/v1/market-data/assets/bitcoin/candles?venue=binance&quote=USDT&interval=2h",
 		"/api/v1/market-data/assets/bitcoin/candles?venue=binance&quote=IRT&interval=1h",
+		"/api/v1/market-data/feed/assets?updated_since=2026-01-01T00:00:00Z",
+		"/api/v1/market-data/feed/assets?cursor=nothing",
 	} {
 		res := get(t, r, path)
 		route, _, _ := strings.Cut(path, "?")

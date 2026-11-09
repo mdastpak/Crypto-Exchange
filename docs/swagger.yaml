@@ -694,6 +694,13 @@ definitions:
           currency listed on this exchange; Label says the same for display.
         type: boolean
     type: object
+  marketdata.Attribution:
+    properties:
+      text:
+        type: string
+      url:
+        type: string
+    type: object
   marketdata.CandlePoint:
     properties:
       c:
@@ -739,6 +746,47 @@ definitions:
       address:
         type: string
       network:
+        type: string
+    type: object
+  marketdata.FeedItem:
+    properties:
+      asset:
+        allOf:
+        - $ref: '#/definitions/marketdata.AssetView'
+        description: |-
+          Asset is the asset with its description, links, and contracts, as
+          GET /market-data/assets/{slug} serves it.
+      attribution:
+        allOf:
+        - $ref: '#/definitions/marketdata.Attribution'
+        description: Attribution must be shown with the data of the asset.
+      removed:
+        type: boolean
+      slug:
+        type: string
+      structured_data:
+        description: |-
+          StructuredData is a schema.org description of the asset, for the
+          JSON-LD of a page. The page adds its own url.
+        type: object
+      updated_at:
+        type: string
+    type: object
+  marketdata.FeedPage:
+    properties:
+      has_more:
+        description: 'HasMore says that more assets changed already: ask again at
+          once.'
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/marketdata.FeedItem'
+        type: array
+      next_cursor:
+        description: |-
+          NextCursor resumes the feed after the last item. It is set on every
+          page, the last one too: keep it, and ask with it later for the
+          assets that change after.
         type: string
     type: object
   marketdata.VenueComparison:
@@ -5267,6 +5315,56 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
       summary: Compare the prices of an asset across exchanges
+      tags:
+      - market data
+  /api/v1/market-data/feed/assets:
+    get:
+      description: The assets of the catalog in the order they last changed, for a
+        service that keeps a copy, such as the blog. Start with updated_since, or
+        from the beginning, then follow next_cursor, which every page has; keep the
+        last one and ask with it later. An asset is listed again each time it changes,
+        with all its fields; one that an administrator hid is listed as removed. An
+        asset appears once its change is a minute old, so that no change is missed.
+        Cached for market_data.api.cache_seconds, with an ETag.
+      parameters:
+      - description: The first change to list, RFC 3339; ignored with a cursor
+        format: date-time
+        in: query
+        name: updated_since
+        type: string
+      - description: The number of assets, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdata.FeedPage'
+              type: object
+        "304":
+          description: 'Not modified: the If-None-Match matches'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Follow the changes of the market data catalog
       tags:
       - market data
   /api/v1/public/auth:

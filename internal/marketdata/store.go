@@ -143,9 +143,13 @@ func (s *Store) AddContract(ctx context.Context, assetID int64, network, address
 	if network == "" || address == "" {
 		return 0, errors.New("marketdata: a contract needs a network and an address")
 	}
+	// A new contract changes the asset for the feed (#271).
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO market_asset_contracts (network, address, asset_id, source) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (network, address) DO NOTHING`, network, address, assetID, source); err != nil {
+		WITH added AS (
+			INSERT INTO market_asset_contracts (network, address, asset_id, source) VALUES ($1, $2, $3, $4)
+			ON CONFLICT (network, address) DO NOTHING RETURNING asset_id)
+		UPDATE market_assets SET updated_at = NOW() WHERE id IN (SELECT asset_id FROM added)`,
+		network, address, assetID, source); err != nil {
 		return 0, err
 	}
 	return s.AssetByContract(ctx, network, address)

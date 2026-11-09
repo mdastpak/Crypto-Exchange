@@ -59,8 +59,14 @@ type Options struct {
 	CacheTTL time.Duration
 	// Rules say when a ticker is stale or an outlier.
 	Rules marketdata.QualityRules
-	Now   func() time.Time
+	// FeedDelay is how long ago an asset must have changed to be in the
+	// feed (#271), so that the writes in progress commit first.
+	FeedDelay time.Duration
+	Now       func() time.Time
 }
+
+// DefaultFeedDelay is the FeedDelay of an Options without one.
+const DefaultFeedDelay = time.Minute
 
 // Handler serves the routes of the API.
 type Handler struct {
@@ -78,6 +84,9 @@ func New(store *marketdata.Store, cache Cache, opts Options) *Handler {
 	if opts.CacheTTL <= 0 {
 		opts.CacheTTL = 30 * time.Second
 	}
+	if opts.FeedDelay <= 0 {
+		opts.FeedDelay = DefaultFeedDelay
+	}
 	return &Handler{store: store, cache: cache, opts: opts}
 }
 
@@ -88,6 +97,7 @@ func (h *Handler) Register(g *gin.RouterGroup, middlewares ...gin.HandlerFunc) {
 	group.GET("/assets/:slug", h.GetAsset)
 	group.GET("/assets/:slug/venues", h.GetVenues)
 	group.GET("/assets/:slug/candles", h.GetCandles)
+	group.GET("/feed/assets", h.FeedAssets)
 }
 
 // Invalidate makes every instance build its answers again, such as after

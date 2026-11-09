@@ -20,7 +20,7 @@ This is not the realtime price aggregator of trading ([#58](https://github.com/m
 | Collection tiers: finer candles for the pairs that matter | [#279](https://github.com/mdastpak/Crypto-Exchange/issues/279) | Done |
 | Live prices of hot pairs from WebSocket streams | [#281](https://github.com/mdastpak/Crypto-Exchange/issues/281) | Done |
 | Administration | [#270](https://github.com/mdastpak/Crypto-Exchange/issues/270) | Done |
-| Feed for the blog | [#271](https://github.com/mdastpak/Crypto-Exchange/issues/271) | Planned |
+| Feed for the blog | [#271](https://github.com/mdastpak/Crypto-Exchange/issues/271) | Done |
 
 ## Running the worker
 
@@ -289,12 +289,27 @@ The server serves the catalog read only, without sign-in, under `/api/v1/market-
 | `GET /market-data/assets/{slug}` | An asset with its description, links, supply, contracts, and attribution. |
 | `GET /market-data/assets/{slug}/venues` | The latest ticker at each venue, with `stale`, `outlier`, and the `median` of its quote ([Stale prices and outliers](#stale-prices-and-outliers)). |
 | `GET /market-data/assets/{slug}/candles?venue=&quote=&interval=&from=&to=` | The candles of the asset's pair at a venue, at most 1000; the last 500 by default. |
+| `GET /market-data/feed/assets?updated_since=&limit=&cursor=` | The assets in the order they changed, for a service that keeps a copy, such as the blog ([Feed for the blog](#feed-for-the-blog)). |
 
 - **Unverified by default.** Every asset carries `verified` and `label`: `unverified`, unless an administrator linked it to a listed currency. A hidden asset is not found, in the list, the search, or by its slug.
 - **Regions.** `market_data.api.regions` limits the venues shown, so that an international release leaves out the Iranian venues. An international release (`deployment.region: international`) defaults it to `[global]` and refuses `ir`, the Iranian exchanges, and `IRT` candles ([#272](https://github.com/mdastpak/Crypto-Exchange/issues/272), see [Region of a release](configuration.md#region-of-a-release)).
 - **Cache.** Each answer is cached in Redis for `market_data.api.cache_seconds` (30), shared by every instance, under a key that holds a generation number. `Invalidate` raises the generation (`INCR`), so that every instance stops serving the answers cached before at once; the [administration](#administration) calls it after each change. Only successful answers are cached. Without Redis, the answers are built on every request.
 - **ETag.** Every answer has an `ETag`, the same on every instance for the same answer, and `Cache-Control: public, max-age=<cache_seconds>`; a request with a matching `If-None-Match` gets `304 Not Modified`.
 - **Limits.** The routes fall under the REST rate limit of the public routes, and close during a full maintenance, as the other public routes do.
+
+## Feed for the blog
+
+The blog service keeps its own copy of the catalog for its pages, and follows the changes with `GET /market-data/feed/assets` ([#271](https://github.com/mdastpak/Crypto-Exchange/issues/271)), a read API rather than events, so that it needs no queue and any server instance can answer it:
+
+1. The first time, it reads from the beginning, or from `updated_since`, page after page while `has_more` is true.
+2. It keeps the `next_cursor` of the last page, which every page has, and asks with it again later, such as every few minutes, for what changed since.
+
+Each item is an asset that changed, in the order of `updated_at`, then the slug:
+
+- **An asset** has every field of `GET /market-data/assets/{slug}`, its `attribution` with the link that the license of its source asks for (CoinGecko or CoinMarketCap), and `structured_data`, a schema.org `Thing` for the JSON-LD of its page, with its name, symbol, description, logo, official links as `sameAs`, and contracts as identifiers. The blog adds the URL of its page. Every asset is still `unverified` unless linked, and the page must say so.
+- **A removed asset** is one that an administrator hid: only `slug`, `updated_at`, and `removed: true`. The blog takes its page down; if the asset is shown again, it comes back in the feed.
+
+An asset comes again each time it changes, so the blog writes each item over its copy. The writes of the catalog set `updated_at` to the start of their transaction, so a change appears in the feed only once it is a minute old: a transaction that started earlier and commits later then still lands after the cursor, and no change is missed. A new contract of an asset changes it too (migration 47 adds the index of the feed). Answers are cached like the other routes, which delays a change by at most `market_data.api.cache_seconds` more.
 
 ## Administration
 
