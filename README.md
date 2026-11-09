@@ -331,6 +331,7 @@ internal/recovery/      Backup and restore checks: WAL archiving age, restored-d
                         verification
 internal/rabbitmq/      RabbitMQ connection, publishing with confirms, reconnect
 internal/rebrand/        Currency migrations: rebrands, redenominations, mergers, by phase
+internal/region/        The regions of a release: Iran or international (docs/configuration.md)
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and
                         currency holds, the security hold after a security change, and
                         the check that operations call
