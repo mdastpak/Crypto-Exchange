@@ -15,6 +15,7 @@ import (
 	configfiles "github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/region"
 	"github.com/mdastpak/crypto-exchange/internal/sites"
 
 	"go.yaml.in/yaml/v3"
@@ -42,6 +43,13 @@ func MigrationsPath() string {
 }
 
 type Configuration struct {
+	// Deployment describes the release.
+	Deployment struct {
+		// Region is the market that the release serves (#272): ir (the
+		// default) for users in Iran, or international for users outside
+		// it, where the Iran-only features must be off. See Region.
+		Region string `yaml:"region"`
+	} `yaml:"deployment"`
 	Server struct {
 		IP           string `yaml:"ip"`
 		Port         string `yaml:"port"`
@@ -1280,6 +1288,9 @@ func Load() error {
 	if err := Config.validateMode(); err != nil {
 		return err
 	}
+	if _, err := region.Parse(Config.Deployment.Region); err != nil {
+		return fmt.Errorf("deployment.region (%s): %w", envVarFor("deployment.region"), err)
+	}
 	if err := Config.validateRateLimits(); err != nil {
 		return err
 	}
@@ -1403,7 +1414,30 @@ func ValidateServer() error {
 	return Config.validateServer()
 }
 
+// Region returns the market that the release serves (#272). Load refuses
+// a value that is not a region, so this is always one.
+func (c *Configuration) Region() region.Region {
+	r, err := region.Parse(c.Deployment.Region)
+	if err != nil {
+		return region.Default
+	}
+	return r
+}
+
+// DefaultCandleQuotes are the quotes of market_data.candles.quotes when it
+// is not set: the dollar quotes, and tomans (IRT) for a release in Iran.
+func DefaultCandleQuotes(r region.Region) []string {
+	if r.Iran() {
+		return []string{"USDT", "USD", "IRT"}
+	}
+	return []string{"USDT", "USD"}
+}
+
 func setDefaults() {
+	Config.Deployment.Region = strings.ToLower(strings.TrimSpace(Config.Deployment.Region))
+	if Config.Deployment.Region == "" {
+		Config.Deployment.Region = string(region.Default)
+	}
 	if Config.Server.ReadTimeout == 0 {
 		Config.Server.ReadTimeout = 10
 	}
@@ -1607,7 +1641,11 @@ func setDefaults() {
 	}
 	candles := &Config.MarketData.Candles
 	if len(candles.Quotes) == 0 {
-		candles.Quotes = []string{"USDT", "USD", "IRT"}
+		candles.Quotes = DefaultCandleQuotes(Config.Region())
+	}
+	// An international release shows the global venues only (#272).
+	if len(Config.MarketData.API.Regions) == 0 && Config.Region().International() {
+		Config.MarketData.API.Regions = []string{"global"}
 	}
 	// A resolution that the file does not name takes its default; one it
 	// names keeps its own settings, with defaults for those left at zero.

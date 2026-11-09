@@ -13,6 +13,13 @@
 # sslmode "disable", or default credentials, and lists every problem at once;
 # see "Release mode" in docs/configuration.md.
 
+deployment:
+  # The region of this release: "ir" (Iran, the default) or "international".
+  # An international release refuses the features of Iran, such as Shahkar,
+  # Kavenegar, the Iranian exchanges, and toman prices; see "Region of a
+  # release" in docs/configuration.md. DEPLOYMENT_REGION overrides it.
+  region: ir
+
 server:
   ip: "0.0.0.0"                # Listen address; empty listens on every interface
   port: "8080"
