@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 )
@@ -30,15 +31,18 @@ func (h *WebSocketHandler) platformLocked(subject platform.Subject) *platform.Lo
 
 // rejectLocked answers an upgrade that a control refuses, as the REST routes
 // answer: 503, the code, and Retry-After when the control has an end.
-func rejectLocked(w http.ResponseWriter, locked *platform.Locked) {
+func rejectLocked(w http.ResponseWriter, locale i18n.Negotiated, locked *platform.Locked) {
 	if wait := locked.RetryAfter(time.Now()); wait > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)))
 	}
-	message := "The exchange is under maintenance. Please try again later."
+	message := i18n.M("MAINTENANCE")
 	if locked.Kind != platform.KindMaintenance {
-		message = "Live updates are temporarily unavailable. Please try again later."
+		message = i18n.M("LIVE_UPDATES_UNAVAILABLE")
 	}
+	text, language := locale.Render(message)
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Language", language)
+	w.Header().Add("Vary", i18n.VaryHeaders)
 	w.WriteHeader(http.StatusServiceUnavailable)
 	info := platform.LockedInfo{Kind: locked.Kind, Feature: locked.Feature, Message: locked.Message, StateUnknown: locked.StateUnknown}
 	if locked.EndsAt != nil {
@@ -46,7 +50,7 @@ func rejectLocked(w http.ResponseWriter, locked *platform.Locked) {
 		info.EndsAt = &end
 	}
 	_ = json.NewEncoder(w).Encode(models.APIResponse{
-		Status: http.StatusServiceUnavailable, Message: message, Code: locked.Code(),
+		Status: http.StatusServiceUnavailable, Message: text, Code: locked.Code(),
 		RequestID: w.Header().Get(requestIDHeader), Info: info,
 	})
 }

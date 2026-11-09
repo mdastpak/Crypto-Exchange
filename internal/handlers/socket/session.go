@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gorilla/websocket"
 )
@@ -42,6 +43,8 @@ func (h *WebSocketHandler) authorize(client *Client, claims *auth.Claims) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	client.UserID, client.SessionID = claims.UUID, claims.SessionID
+	// A reauth brings the user's saved locale as it is now (#296).
+	client.locale, _ = client.locale.Preferring(claims.Locale)
 	if client.expiry != nil {
 		client.expiry.Stop()
 		client.expiry = nil
@@ -181,7 +184,7 @@ func (h *WebSocketHandler) handleReauth(client *Client, event map[string]interfa
 	if err != nil {
 		if !h.closeFor(client, err) {
 			log.Printf("WebSocket: could not check a reauth token: %v", err)
-			h.send(client, map[string]interface{}{"event": "error", "code": "unavailable", "message": "Could not check the token; try again"})
+			h.send(client, map[string]interface{}{"event": "error", "code": "unavailable", "message": client.render(i18n.M("TOKEN_CHECK_UNAVAILABLE"))})
 		}
 		return
 	}
@@ -204,6 +207,15 @@ func (h *WebSocketHandler) handleReauth(client *Client, event map[string]interfa
 		reply["expires_at"] = claims.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	h.send(client, reply)
+}
+
+// render returns m in the locale of the connection (#296).
+func (c *Client) render(m i18n.Message) string {
+	c.mu.Lock()
+	locale := c.locale
+	c.mu.Unlock()
+	text, _ := locale.Render(m)
+	return text
 }
 
 // send queues message for client, or drops it when its buffer is full.

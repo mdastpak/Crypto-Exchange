@@ -1042,3 +1042,33 @@ func TestSetKeys_RejectsAnInvalidNextKey(t *testing.T) {
 	pair.Next = [][]byte{publicKeyToPEM(&adminTestKey.PublicKey)}
 	assert.Error(t, SetKeys(map[string]KeyPair{RoleUser: pair, RoleAdmin: pairOf(adminTestKey)}), "a next key may not belong to another role")
 }
+
+// localeSessionStore is a session store that also returns a saved locale.
+type localeSessionStore struct {
+	fakeSessionStore
+	locale string
+}
+
+func (s *localeSessionStore) VerifyLocale(ctx context.Context, sessionID, userID string) (string, error) {
+	if err := s.Verify(ctx, sessionID, userID); err != nil {
+		return "", err
+	}
+	return s.locale, nil
+}
+
+// TestAuthenticateUserToken_CarriesTheSavedLocale checks that the claims of
+// a connection token carry the user's saved locale (#286, #296), read with
+// the session.
+func TestAuthenticateUserToken_CarriesTheSavedLocale(t *testing.T) {
+	setupTestKeys(t)
+	ctx := context.Background()
+	sessions := &localeSessionStore{locale: "fa"}
+	claims, err := AuthenticateUserToken(ctx, mustToken(t, RoleUser), nil, sessions)
+	require.NoError(t, err)
+	assert.Equal(t, "fa", claims.Locale)
+	assert.Equal(t, []string{"test-session/user-123"}, sessions.verified)
+
+	sessions = &localeSessionStore{fakeSessionStore: fakeSessionStore{verifyErr: ErrSessionInvalid}, locale: "fa"}
+	_, err = AuthenticateUserToken(ctx, mustToken(t, RoleUser), nil, sessions)
+	assert.ErrorIs(t, err, ErrSessionInvalid)
+}

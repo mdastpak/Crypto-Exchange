@@ -14,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 
@@ -107,9 +108,13 @@ func (h *WebSocketHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip string) {
 	addr := ip
 	ip = h.addressKey(ip)
+	// The locale of the connection is negotiated once, at the upgrade, as
+	// for a REST request (#296). Without the locale middleware it is
+	// English.
+	locale, _ := i18n.FromContext(r.Context())
 	select {
 	case <-h.ShutdownCh:
-		reject(w, http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), "The server is shutting down")
+		reject(w, locale, http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), i18n.M("SERVER_SHUTTING_DOWN"))
 		return
 	default:
 	}
@@ -121,26 +126,30 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 		}
-		reject(w, status, code, message)
+		reject(w, locale, status, code, message)
 		return
+	}
+	if claims != nil {
+		// The user's saved locale (#286), after the explicit choices.
+		locale, _ = locale.Preferring(claims.Locale)
 	}
 	subject := platform.Subject{IP: addr}
 	if claims != nil {
 		subject.UserHK = claims.UUID
 	}
 	if locked := h.platformLocked(subject); locked != nil {
-		rejectLocked(w, locked)
+		rejectLocked(w, locale, locked)
 		return
 	}
 	if status, code, message := h.reserve(ip, subject.UserHK); status != 0 {
-		reject(w, status, code, message)
+		reject(w, locale, status, code, message)
 		return
 	}
 	// The connections of the other instances count too (#234).
 	slots, status, code, message := h.reserveShared(r.Context(), ip, subject.UserHK)
 	if status != 0 {
 		h.release(ip, subject.UserHK)
-		reject(w, status, code, message)
+		reject(w, locale, status, code, message)
 		return
 	}
 
@@ -162,6 +171,7 @@ func (h *WebSocketHandler) serve(w http.ResponseWriter, r *http.Request, ip stri
 		// The connection counts against its user from the start.
 		countedUser: subject.UserHK,
 		slots:       slots,
+		locale:      locale,
 	}
 	if claims != nil {
 		h.authorize(client, claims)
@@ -212,28 +222,28 @@ func connectionToken(r *http.Request) (token string, present bool, err error) {
 // It returns a status, an error code, and a message to refuse the request
 // with, or a zero status. A connection without a token is anonymous. The
 // codes are those of the REST routes for the same failures.
-func (h *WebSocketHandler) authenticate(r *http.Request) (*auth.Claims, int, string, string) {
+func (h *WebSocketHandler) authenticate(r *http.Request) (*auth.Claims, int, string, i18n.Message) {
 	token, present, err := connectionToken(r)
 	if !present {
-		return nil, 0, "", ""
+		return nil, 0, "", i18n.Message{}
 	}
 	if err != nil || h.Authenticate == nil {
-		return nil, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token"
+		return nil, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN")
 	}
 	claims, err := h.Authenticate(r.Context(), token)
 	switch {
 	case err == nil:
-		return claims, 0, "", ""
+		return claims, 0, "", i18n.Message{}
 	case errors.Is(err, auth.ErrAccountUnavailable):
 		code, message := auth.AccountError(err)
-		return nil, http.StatusForbidden, code, message.String()
+		return nil, http.StatusForbidden, code, message
 	case errors.Is(err, auth.ErrSessionInvalid):
-		return nil, http.StatusUnauthorized, "session_inactive", "Unauthorized - Session is not active"
+		return nil, http.StatusUnauthorized, "session_inactive", i18n.M("UNAUTHORIZED_SESSION_IS_NOT_ACTIVE")
 	case errors.Is(err, auth.ErrInvalidToken), errors.Is(err, auth.ErrWrongTokenType), errors.Is(err, auth.ErrWrongRole):
-		return nil, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token"
+		return nil, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN")
 	default:
 		log.Printf("Failed to authenticate a WebSocket connection: %v", err)
-		return nil, http.StatusInternalServerError, helpers.StatusCode(http.StatusInternalServerError), "Failed to authenticate the connection"
+		return nil, http.StatusInternalServerError, helpers.StatusCode(http.StatusInternalServerError), i18n.M("FAILED_TO_AUTHENTICATE_CONNECTION")
 	}
 }
 
@@ -249,7 +259,7 @@ func (h *WebSocketHandler) addressKey(ip string) string {
 // has websocket.max_connections_per_ip, or the user has
 // websocket.max_connections_per_user here. It returns the status, error
 // code, and message to refuse the connection with, or a zero status.
-func (h *WebSocketHandler) reserve(ip, userID string) (int, string, string) {
+func (h *WebSocketHandler) reserve(ip, userID string) (int, string, i18n.Message) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 	if h.openPerIP == nil {
@@ -259,20 +269,20 @@ func (h *WebSocketHandler) reserve(ip, userID string) (int, string, string) {
 		h.openPerUser = make(map[string]int)
 	}
 	if h.open >= h.limits.maxConnections {
-		return http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), "Too many connections, try again later"
+		return http.StatusServiceUnavailable, helpers.StatusCode(http.StatusServiceUnavailable), i18n.M("TOO_MANY_CONNECTIONS")
 	}
 	if h.openPerIP[ip] >= h.limits.maxPerIP {
-		return http.StatusTooManyRequests, helpers.StatusCode(http.StatusTooManyRequests), "Too many connections from this address"
+		return http.StatusTooManyRequests, helpers.StatusCode(http.StatusTooManyRequests), i18n.M("TOO_MANY_CONNECTIONS_FROM_ADDRESS")
 	}
 	if userID != "" && h.openPerUser[userID] >= h.limits.maxPerUser {
-		return http.StatusTooManyRequests, CodeTooManyConnections, "Too many connections for this user"
+		return http.StatusTooManyRequests, CodeTooManyConnections, i18n.M("TOO_MANY_CONNECTIONS_FOR_USER")
 	}
 	h.open++
 	h.openPerIP[ip]++
 	if userID != "" {
 		h.openPerUser[userID]++
 	}
-	return 0, "", ""
+	return 0, "", i18n.Message{}
 }
 
 // release forgets a connection that reserve counted.
@@ -310,13 +320,17 @@ func (c *Client) counted() string {
 }
 
 // reject answers an upgrade request that is refused, in the error envelope
-// of the REST API: with a code and the request ID, which the request ID
-// middleware has set as a response header.
-func reject(w http.ResponseWriter, status int, code, message string) {
+// of the REST API: with a code, the request ID, which the request ID
+// middleware has set as a response header, and the message in the locale
+// of the request, with Content-Language and Vary as the envelope has them.
+func reject(w http.ResponseWriter, locale i18n.Negotiated, status int, code string, message i18n.Message) {
+	text, language := locale.Render(message)
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Language", language)
+	w.Header().Add("Vary", i18n.VaryHeaders)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(models.APIResponse{
-		Status: status, Message: message, Code: code, RequestID: w.Header().Get(requestIDHeader),
+		Status: status, Message: text, Code: code, RequestID: w.Header().Get(requestIDHeader),
 	})
 }
 
@@ -327,9 +341,10 @@ const requestIDHeader = "X-Request-ID"
 // handshakeError answers an upgrade request that is not a valid WebSocket
 // handshake, as the upgrader finds it, in the same envelope instead of the
 // upgrader's plain text. Like the upgrader, it names the supported version.
-func handshakeError(w http.ResponseWriter, _ *http.Request, status int, reason error) {
+func handshakeError(w http.ResponseWriter, r *http.Request, status int, reason error) {
 	w.Header().Set("Sec-Websocket-Version", "13")
-	reject(w, status, helpers.StatusCode(status), reason.Error())
+	locale, _ := i18n.FromContext(r.Context())
+	reject(w, locale, status, helpers.StatusCode(status), i18n.M("WEBSOCKET_HANDSHAKE_INVALID", i18n.A("reason", reason.Error())))
 }
 
 // maxTimezoneLength bounds a time zone name from a client; IANA names are

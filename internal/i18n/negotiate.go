@@ -160,15 +160,29 @@ func FromContext(ctx context.Context) (Negotiated, bool) {
 // the locale changed.
 func Prefer(c *gin.Context, code string) bool {
 	n, ok := FromGin(c)
-	if !ok || code == "" || n.Explicit() || n.registry == nil {
-		return false
-	}
-	l, ok := n.registry.Lookup(code)
 	if !ok {
 		return false
 	}
-	n.Locale, n.Source = l, SourceProfile
-	c.Set(ginKey, n)
-	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), contextKey{}, n))
+	preferred, changed := n.Preferring(code)
+	if !changed {
+		return false
+	}
+	c.Set(ginKey, preferred)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), contextKey{}, preferred))
 	return true
+}
+
+// Preferring returns n with the locale that a signed-in user saved, by the
+// rules of Prefer, for code that keeps a locale of its own, such as a
+// WebSocket connection (#296). It reports whether the locale changed.
+func (n Negotiated) Preferring(code string) (Negotiated, bool) {
+	if code == "" || n.Explicit() || n.registry == nil {
+		return n, false
+	}
+	l, ok := n.registry.Lookup(code)
+	if !ok {
+		return n, false
+	}
+	n.Locale, n.Source = l, SourceProfile
+	return n, true
 }

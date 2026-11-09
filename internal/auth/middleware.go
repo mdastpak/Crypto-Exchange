@@ -142,7 +142,8 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 // and RequireActiveSession do together, for callers outside an HTTP route,
 // such as the WebSocket gateway. It returns ErrInvalidToken for a token that
 // does not verify or is blacklisted, ErrSessionInvalid for an ended session,
-// and ErrAccountUnavailable for a user who can no longer sign in.
+// and ErrAccountUnavailable for a user who can no longer sign in. With a
+// LocaleVerifier, the claims carry the user's saved locale.
 func AuthenticateUserToken(ctx context.Context, token string, tb *TokenBlacklist, sessions SessionStore) (*Claims, error) {
 	claims, err := ParseToken(token, RoleUser, TokenTypeAccess)
 	if err != nil {
@@ -159,6 +160,14 @@ func AuthenticateUserToken(ctx context.Context, token string, tb *TokenBlacklist
 	}
 	if claims.SessionID == "" || sessions == nil {
 		return nil, ErrInvalidToken
+	}
+	if v, ok := sessions.(LocaleVerifier); ok {
+		locale, err := v.VerifyLocale(ctx, claims.SessionID, claims.UUID)
+		if err != nil {
+			return nil, err
+		}
+		claims.Locale = locale
+		return claims, nil
 	}
 	if err := sessions.Verify(ctx, claims.SessionID, claims.UUID); err != nil {
 		return nil, err

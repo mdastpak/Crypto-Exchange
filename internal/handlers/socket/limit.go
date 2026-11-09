@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 )
 
 // The connection limits of websocket.max_connections_per_ip and
@@ -154,33 +156,33 @@ func (h *WebSocketHandler) newMember() string {
 // it logs it and lets the connection through with the slots taken so far:
 // the local counts, which reserve already checked, then bound the
 // connections of this instance.
-func (h *WebSocketHandler) reserveShared(ctx context.Context, ip, userID string) ([]Slot, int, string, string) {
+func (h *WebSocketHandler) reserveShared(ctx context.Context, ip, userID string) ([]Slot, int, string, i18n.Message) {
 	if h.Counter == nil {
-		return nil, 0, "", ""
+		return nil, 0, "", i18n.Message{}
 	}
 	member := h.newMember()
 	ipSlot := Slot{Key: ipCountKey(ip), Member: member}
 	ok, err := h.acquire(ctx, ipSlot, h.limits.maxPerIP)
 	if err != nil {
-		return nil, 0, "", ""
+		return nil, 0, "", i18n.Message{}
 	}
 	if !ok {
-		return nil, http.StatusTooManyRequests, "rate_limited", "Too many connections from this address"
+		return nil, http.StatusTooManyRequests, "rate_limited", i18n.M("TOO_MANY_CONNECTIONS_FROM_ADDRESS")
 	}
 	slots := []Slot{ipSlot}
 	if userID == "" {
-		return slots, 0, "", ""
+		return slots, 0, "", i18n.Message{}
 	}
 	userSlot := Slot{Key: userCountKey(userID), Member: member}
 	ok, err = h.acquire(ctx, userSlot, h.limits.maxPerUser)
 	if err != nil {
-		return slots, 0, "", ""
+		return slots, 0, "", i18n.Message{}
 	}
 	if !ok {
 		h.releaseShared(slots)
-		return nil, http.StatusTooManyRequests, CodeTooManyConnections, "Too many connections for this user"
+		return nil, http.StatusTooManyRequests, CodeTooManyConnections, i18n.M("TOO_MANY_CONNECTIONS_FOR_USER")
 	}
-	return append(slots, userSlot), 0, "", ""
+	return append(slots, userSlot), 0, "", i18n.Message{}
 }
 
 // acquire takes one slot within sharedCountTimeout, and logs a failure.

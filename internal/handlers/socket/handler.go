@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
@@ -79,6 +80,9 @@ type Client struct {
 	// openPerUser, and slots are its places in the shared counts (#234).
 	countedUser string
 	slots       []Slot
+	// locale is the locale of the connection, negotiated at the upgrade
+	// and updated by the user's saved locale (#296).
+	locale i18n.Negotiated
 
 	ip string
 	// addr is the client address itself; ip may be the prefix of an IPv6

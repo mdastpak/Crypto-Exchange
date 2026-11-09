@@ -64,6 +64,10 @@ type Claims struct {
 	Role      string `json:"role"`
 	Type      string `json:"typ"`
 	SessionID string `json:"sid,omitempty"`
+	// Locale is the locale that the user saved in their profile (#286),
+	// which AuthenticateUserToken reads with the session; it is never in
+	// the token.
+	Locale string `json:"-"`
 	jwt.RegisteredClaims
 }
 
