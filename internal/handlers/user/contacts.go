@@ -21,6 +21,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -951,6 +952,11 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 		return nil, errContactInUse
 	}
 	if err != nil {
+		return nil, err
+	}
+	// Seal the contact rows that this transaction wrote (#139): their
+	// updated_at is the transaction's NOW().
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, "user_hk = $1 AND updated_at = NOW()", ch.UserID); err != nil {
 		return nil, err
 	}
 	// A change of a contact is a security change: it holds withdrawals

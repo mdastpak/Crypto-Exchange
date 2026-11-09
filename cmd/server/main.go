@@ -43,6 +43,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/sites"
 
 	"github.com/gin-gonic/gin"
@@ -191,6 +192,8 @@ func run() error {
 	if handlers.DataKeys != nil {
 		handlers.DataKeys.Start()
 		workers = append(workers, worker{"data key reloader", handlers.DataKeys.Stop})
+		verifier := useRowSeals(services, handlers.DataKeys)
+		workers = append(workers, worker{"row seal verifier", verifier.Stop})
 	}
 	// Stops the workers and the WebSocket event consumer, which start below,
 	// before the services close when startup fails after them. Otherwise
@@ -499,6 +502,18 @@ func legacyTOTPKey() ([]byte, error) {
 		return nil, nil
 	}
 	return adminauth.DecodeKey(config.Config.Admin.TOTPKey)
+}
+
+// useRowSeals seals the protected rows with the row-mac data keys (#139),
+// and starts the background verifier. Without data keys, no row is sealed.
+func useRowSeals(services *models.InfraServices, dataKeys *keys.Live) *rowseal.Verifier {
+	mode := config.Config.Keys.RowSeals.Mode
+	sealer := rowseal.New(services.Postgres.DB, dataKeys, mode)
+	rowseal.Use(sealer)
+	log.Printf("Row seals are on, in %s mode", sealer.Mode())
+	verifier := rowseal.NewVerifier(sealer, time.Duration(config.Config.Keys.RowSeals.VerifyIntervalMinutes)*time.Minute)
+	verifier.Start()
+	return verifier
 }
 
 // useDataKeysForOTP makes every sign-in code store read, and unless
@@ -986,6 +1001,8 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/currencies", ih.Admin.ListCurrencies)
 		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)
 		adminGroup.GET("/audit", ih.Admin.ListAuditEvents)
+		adminGroup.GET("/integrity/findings", ih.Admin.ListIntegrityFindings)
+		adminGroup.POST("/integrity/findings/:id/reseal", ih.Admin.ResealIntegrityFinding)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)

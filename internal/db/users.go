@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
+
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // ContactMatch is the SQL condition that finds the row c of user_contacts
@@ -23,5 +25,9 @@ func InsertContact(ctx context.Context, tx *sql.Tx, userHK, contactType, value s
 		 VALUES ($1, $2::contact_type, $3, CASE WHEN $4::boolean THEN NOW() END)`,
 		userHK, contactType, value, verified,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// The new row is the user's contact that this transaction wrote (#139).
+	return rowseal.Reseal(ctx, tx, rowseal.UserContacts, "user_hk = $1 AND updated_at = NOW()", userHK)
 }

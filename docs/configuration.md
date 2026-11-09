@@ -464,6 +464,8 @@ The data-protection keys seal rows and encrypt fields, so that someone with acce
 | `reload_interval_seconds` | `60` | From 5 to 3600. How often each instance checks `data_keys`, and loads a rotation, a retirement, or a re-wrap without a restart ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)). An instance that meets a value sealed with a version it does not hold also reloads at once, at most every 5 seconds. |
 | `activation_delay_seconds` | `300` | How long after `admin keys rotate` the new version starts writing. Until then every instance only reads with it. At least twice `reload_interval_seconds`, so that every instance has loaded a version before any writes with it. `admin keys rotate` reads it from the configuration it is given. |
 | `legacy_secrets` | `write` | What [`admin.totp_key`](#admin) and [`otp.auth.secret`](#otp) still do while they are set ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)). `write` seals new authenticator secrets and sign-in codes with them, as releases before #146 do, so that those can still read them during a rolling upgrade. `read` seals them with the data keys and opens the old ones only; set it once every instance runs a release with #146. Both modes read the data keys. `read` needs `keys.provider`. `KEYS_LEGACY_SECRETS` overrides it. |
+| `row_seals.mode` | `report` | What a [protected row](data-protection.md#row-seals) that does not match its seal does ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). `report` records the finding and still serves the row, and the background verifier seals it again; it is the mode to start with, while a release that seals rows rolls out and the rows written before it are adopted. `enforce` records the finding and refuses the row (a session, an account, or a contact) until an administrator reviews the finding and re-seals the row. `enforce` needs `provider`. Without `provider`, no row is sealed or checked. |
+| `row_seals.verify_interval_minutes` | `60` | From 1 to 10080. How often the background verifier walks the protected tables, in batches, on one instance at a time. |
 
 The key service is contacted at startup, when `data_keys` changed, and by the `admin keys` commands. A running server keeps the keys in memory: when a reload fails, because the key service is unreachable, it keeps the keys it has and logs the failure, so it does not depend on the key service between changes.
 
@@ -662,6 +664,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `KEYS_RELOAD_INTERVAL_SECONDS` | `keys.reload_interval_seconds` |
 | `KEYS_ACTIVATION_DELAY_SECONDS` | `keys.activation_delay_seconds` |
 | `KEYS_LEGACY_SECRETS` | `keys.legacy_secrets` |
+| `KEYS_ROW_SEALS_MODE` | `keys.row_seals.mode` |
+| `KEYS_ROW_SEALS_VERIFY_INTERVAL_MINUTES` | `keys.row_seals.verify_interval_minutes` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |

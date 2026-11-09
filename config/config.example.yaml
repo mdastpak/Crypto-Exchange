@@ -354,6 +354,10 @@ keys:
   # before #146 do; "read" seals them with the data keys and only reads the
   # old ones. Set "read" once every instance runs this release.
   legacy_secrets: "write"
+  # Row seals (#139): a keyed MAC over the protected rows, with the row-mac key.
+  row_seals:
+    mode: "report"                # report records a row that does not match its seal; enforce also refuses it
+    verify_interval_minutes: 60   # How often the background verifier walks the protected tables
 
 websocket:
   # Origins accepted by the WebSocket origin check; empty allows same-origin

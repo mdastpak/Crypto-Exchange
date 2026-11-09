@@ -133,6 +133,11 @@ const (
 	ActionMarketPairMap         = "market_data.pair_map"
 	ActionMarketConflictResolve = "market_data.conflict_resolve"
 	ActionMarketJobRun          = "market_data.job_run"
+	// The row seals (#139): a row that does not match its seal, found by a
+	// read or by the verifier, and an administrator's re-seal of it after
+	// review. The target is the table, and the row's primary key.
+	ActionIntegritySealMismatch = "integrity.seal_mismatch"
+	ActionIntegrityReseal       = "integrity.reseal"
 )
 
 // Target types.

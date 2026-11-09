@@ -599,7 +599,33 @@ type KeysConfig struct {
 	// keys seal everything new. Data keys are read in both modes, so an
 	// instance of this release reads what any other instance wrote.
 	LegacySecrets string `yaml:"legacy_secrets"`
+	// RowSeals configures the row seals (#139), which need a provider.
+	RowSeals RowSealsConfig `yaml:"row_seals"`
 }
+
+// RowSealsConfig configures the row seals (#139).
+type RowSealsConfig struct {
+	// Mode is what a row that does not match its seal does: "report", the
+	// default, records it and still serves it, and the verifier seals it
+	// again; "enforce" records it and refuses it until an administrator
+	// re-seals it.
+	Mode string `yaml:"mode"`
+	// VerifyIntervalMinutes is how often the background verifier walks the
+	// protected tables.
+	VerifyIntervalMinutes int `yaml:"verify_interval_minutes"`
+}
+
+// The modes of keys.row_seals.mode, as internal/rowseal names them.
+const (
+	RowSealsReport  = "report"
+	RowSealsEnforce = "enforce"
+)
+
+// Defaults and bounds of keys.row_seals.verify_interval_minutes.
+const (
+	DefaultRowSealsVerifyIntervalMinutes = 60
+	MaxRowSealsVerifyIntervalMinutes     = 7 * 24 * 60
+)
 
 // WritesWithLegacySecrets reports whether new authenticator secrets and
 // sign-in codes are sealed with admin.totp_key and otp.auth.secret while
@@ -1340,6 +1366,21 @@ func (c *Configuration) validateKeys() error {
 		return fmt.Errorf("keys.legacy_secrets (%s) is %q; it must be %q or %q",
 			envVarFor("keys.legacy_secrets"), c.Keys.LegacySecrets, LegacySecretsWrite, LegacySecretsRead)
 	}
+	switch c.Keys.RowSeals.Mode {
+	case "", RowSealsReport:
+	case RowSealsEnforce:
+		if c.Keys.Provider == "" {
+			return fmt.Errorf("keys.row_seals.mode (%s) is %q, but keys.provider is not set, so no row is sealed",
+				envVarFor("keys.row_seals.mode"), c.Keys.RowSeals.Mode)
+		}
+	default:
+		return fmt.Errorf("keys.row_seals.mode (%s) is %q; it must be %q or %q",
+			envVarFor("keys.row_seals.mode"), c.Keys.RowSeals.Mode, RowSealsReport, RowSealsEnforce)
+	}
+	if v := c.Keys.RowSeals.VerifyIntervalMinutes; v < 1 || v > MaxRowSealsVerifyIntervalMinutes {
+		return fmt.Errorf("keys.row_seals.verify_interval_minutes (%s) is %d; it must be from 1 to %d",
+			envVarFor("keys.row_seals.verify_interval_minutes"), v, MaxRowSealsVerifyIntervalMinutes)
+	}
 	return nil
 }
 
@@ -1493,6 +1534,9 @@ func setDefaults() {
 
 	if Config.Keys.Transit.Mount == "" {
 		Config.Keys.Transit.Mount = "transit"
+	}
+	if Config.Keys.RowSeals.VerifyIntervalMinutes == 0 {
+		Config.Keys.RowSeals.VerifyIntervalMinutes = DefaultRowSealsVerifyIntervalMinutes
 	}
 	if Config.Keys.ReloadIntervalSeconds == 0 {
 		Config.Keys.ReloadIntervalSeconds = DefaultKeysReloadIntervalSeconds

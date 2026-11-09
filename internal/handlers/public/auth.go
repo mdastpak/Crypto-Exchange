@@ -33,6 +33,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -299,10 +300,9 @@ func (h *PublicHandler) contactOwner(ctx context.Context, contactType, contact s
 	if h.PostgresDB == nil || !signInContactTypes[contactType] {
 		return audit.ActorAnonymous, ""
 	}
-	var hk uuid.UUID
-	var status, role string
-	var deleted, frozen bool
-	err := h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&hk, &status, &role, &deleted, &frozen)
+	var o contactOwnerRow
+	err := o.find(ctx, h.PostgresDB.DB, contactType, contact)
+	hk, role := o.hk, o.role
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("Failed to look up the account of a sign-in for the audit log: %v", err)
@@ -316,9 +316,35 @@ func (h *PublicHandler) contactOwner(ctx context.Context, contactType, contact s
 }
 
 // userByContactQuery finds the user that owns a contact, through the unique
-// index of user_contacts.
-var userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL, ` + restrictions.FrozenSQL("u.hk") + `
+// index of user_contacts, with the sealed columns of both rows (#139).
+var userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL, ` + restrictions.FrozenSQL("u.hk") + `,
+	` + rowseal.UserContacts.Fields("c") + `, ` + rowseal.Users.Fields("u") + `
 	FROM user_contacts c JOIN users u ON u.hk = c.user_hk WHERE ` + db.ContactMatch
+
+// contactOwnerRow is a row of userByContactQuery.
+type contactOwnerRow struct {
+	hk              uuid.UUID
+	status, role    string
+	deleted, frozen bool
+	contact, user   *rowseal.Row
+}
+
+// find reads the account that owns a contact.
+func (o *contactOwnerRow) find(ctx context.Context, q *sql.DB, contactType, contact string) error {
+	o.contact, o.user = rowseal.UserContacts.NewRow(), rowseal.Users.NewRow()
+	dest := append([]any{&o.hk, &o.status, &o.role, &o.deleted, &o.frozen}, o.contact.Dest()...)
+	return q.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(append(dest, o.user.Dest()...)...)
+}
+
+// verified checks the seals of the contact and its account (#139): a
+// contact moved to another account, or an account changed, outside the
+// backend is refused in enforce mode.
+func (o *contactOwnerRow) verified(ctx context.Context) error {
+	if err := rowseal.Check(ctx, rowseal.UserContacts, o.contact); err != nil {
+		return err
+	}
+	return rowseal.Check(ctx, rowseal.Users, o.user)
+}
 
 // signInContactTypes are the contacts that a user can sign in with.
 var signInContactTypes = map[string]bool{string(account.ContactEmail): true, string(account.ContactMobile): true}
@@ -362,12 +388,8 @@ func (h *PublicHandler) signInUser(ctx context.Context, origin audit.Event, cont
 	if !signInContactTypes[contactType] {
 		return uuid.Nil, fmt.Errorf("unsupported contact type: %s", contactType)
 	}
-	var userHK uuid.UUID
-	var status, role string
-	var deleted, frozen bool
-	find := func() error {
-		return h.PostgresDB.DB.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(&userHK, &status, &role, &deleted, &frozen)
-	}
+	var o contactOwnerRow
+	find := func() error { return o.find(ctx, h.PostgresDB.DB, contactType, contact) }
 
 	err := find()
 	if err == sql.ErrNoRows {
@@ -384,6 +406,10 @@ func (h *PublicHandler) signInUser(ctx context.Context, origin audit.Event, cont
 	if err != nil {
 		log.Printf("Database error: %v", err)
 		return uuid.Nil, fmt.Errorf("database error. please try again")
+	}
+	userHK, status, role, deleted, frozen := o.hk, o.status, o.role, o.deleted, o.frozen
+	if err := o.verified(ctx); err != nil {
+		return uuid.Nil, fmt.Errorf("%w: %w", errAccountUnavailable, err)
 	}
 
 	if deleted || !account.UserStatus(status).CanSignIn() {
@@ -500,6 +526,10 @@ func (h *PublicHandler) createUser(ctx context.Context, origin audit.Event, cont
 	var userHK uuid.UUID
 	if err := tx.QueryRowContext(ctx, `INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk`).Scan(&userHK); err != nil {
 		log.Printf("Failed to insert new user: %v", err)
+		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", userHK); err != nil {
+		log.Printf("Failed to seal a new user: %v", err)
 		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
 	}
 	if err := db.InsertContact(ctx, tx, userHK.String(), contactType, contact, true); err != nil {

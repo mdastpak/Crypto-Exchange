@@ -5,10 +5,10 @@ A crypto exchange holds identity documents and money, so access to its database 
 | Piece | Status |
 | --- | --- |
 | Key management: data-protection keys wrapped by a key-encryption key (KEK) in a key management service | Implemented ([#138](https://github.com/mdastpak/Crypto-Exchange/issues/138)), described here |
-| Row seals: a keyed MAC over each protected row, so that a change made outside the backend is detected | Planned ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) |
+| Row seals: a keyed MAC over each protected row, so that a change made outside the backend is detected | First step implemented ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)): accounts, contacts, and sessions; see [row seals](#row-seals) |
 | Field encryption: personal, identity, and financial fields stored as ciphertext, with blind indexes for lookups | Planned ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
 
-The data keys also protect the authenticator secrets of administrators (`users.totp_secret`, sealed with `field-enc`) and the sign-in codes in Redis (`otp-mac`), which `admin.totp_key` and `otp.auth.secret` protected before ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)); see [moving off the legacy secrets](#moving-off-the-legacy-secrets). The first use was the secret of HMAC API keys, which is stored sealed with a `field-enc` key ([#45](https://github.com/mdastpak/Crypto-Exchange/issues/45)). The API does not issue API keys yet ([#63](https://github.com/mdastpak/Crypto-Exchange/issues/63)). Until it does, and until row seals and field encryption land, the server loads the keys when a provider is configured, and only logs a warning when none is.
+The data keys also protect the authenticator secrets of administrators (`users.totp_secret`, sealed with `field-enc`) and the sign-in codes in Redis (`otp-mac`), which `admin.totp_key` and `otp.auth.secret` protected before ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)); see [moving off the legacy secrets](#moving-off-the-legacy-secrets). The first use was the secret of HMAC API keys, which is stored sealed with a `field-enc` key ([#45](https://github.com/mdastpak/Crypto-Exchange/issues/45)). The API does not issue API keys yet ([#63](https://github.com/mdastpak/Crypto-Exchange/issues/63)). Until it does, and until field encryption lands, the server loads the keys when a provider is configured, and only logs a warning when none is; without keys, rows are not sealed.
 
 ## Key hierarchy
 
@@ -69,6 +69,55 @@ It refuses to start when any of the following holds:
 - the newest version of a purpose is retired, which the key commands never do.
 
 Afterwards it checks `data_keys` every `keys.reload_interval_seconds` (60 by default), and loads the keys again when a row changed: a rotation, a retirement, or a re-wrap. A value sealed with a version it has not loaded makes it reload at once, at most every 5 seconds. A reload that fails keeps the keys loaded before and is logged, so a running server keeps working while the key management service is unavailable; it needs the service only at startup, after a change of `data_keys`, and for the `admin keys` commands.
+
+## Row seals
+
+A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protected columns of a row ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). The backend seals each row it writes, in the transaction of the write, and checks the seal where it reads the row to decide something. A change made outside the backend, such as an `UPDATE` by someone with database access or an SQL injection, does not carry a valid seal, because only the backend has the key. The first step covers the tables that decide who signs in to which account and with what rights:
+
+| Table | Columns sealed | Checked when |
+| --- | --- | --- |
+| `users` | `status`, `role`, `deleted_at`, `totp_secret`, `totp_enabled`, `security_hold_until`, `kyc_status`, `kyc_tier`, the names | every signed-in request (the session check), user sign-in, admin sign-in and its TOTP check |
+| `user_contacts` | `user_hk`, `type`, `value`, `is_primary`, `verified_at`, `removed_at`, `ownership_checked_at` | user sign-in, which finds the account by the contact |
+| `sessions` | `user_id`, `status`, the times, the three token hashes | every signed-in request and every refresh |
+
+Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Migration 46 adds three columns to each table: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
+
+### Modes
+
+`keys.row_seals.mode` (`KEYS_ROW_SEALS_MODE`) decides what a row without a valid seal does:
+
+- `report` (the default) records an [integrity finding](#integrity-findings) and serves the row. Use it while rolling out, since rows written before the release, or by an instance of the previous release, have no seal yet.
+- `enforce` records the finding and refuses the row until an administrator re-seals the row: a session that fails answers `401`, like a revoked one, and a sign-in or request of an account or contact that fails answers `403`, like a disabled account. Enforce needs `keys.provider`.
+
+Rows are sealed only when the server has data keys (`keys.provider` set). To roll out:
+
+1. Deploy the release with `report`. Every instance seals what it writes from then on.
+2. The verifier (below) seals every row that has no valid seal yet, and resolves its finding as `report_mode`. Wait until every instance runs the release and one verifier pass has finished after that: `admin row-seals findings` shows no open finding.
+3. Set `enforce` and roll it out.
+
+Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns. Migration 46 is reversed with the release.
+
+### The verifier
+
+Every `keys.row_seals.verify_interval_minutes` (60), one instance checks every row of the protected tables, in batches of 500, under a PostgreSQL advisory lock, so that several instances do not repeat the pass; an instance that does not get the lock skips the pass. It records a finding for each row without a valid seal, and audits the first detection. In `report` mode it seals such a row and resolves the finding as `report_mode`, unless the row changed meanwhile. It also seals again every row sealed with an older `row-mac` version, so that the version can be retired after a rotation. `admin row-seals verify` runs one pass at once and prints what it checked, found, re-sealed, and rotated.
+
+### Integrity findings
+
+A finding names the table, the row's key, and what failed: `missing` (no seal), `mismatch`, or `unknown_key` (a key version the server does not have). A row has at most one open finding; each new detection, on a read or by the verifier, increments its `seen_count`. The first detection is audited as `integrity.seal_mismatch`.
+
+An administrator checks the row, for example against the audit log and backups, and then either fixes it or confirms it:
+
+- `admin row-seals findings [-all] [-limit n]`, or `GET /api/v1/admin/integrity/findings`, lists the findings, newest first.
+- `admin row-seals reseal -id N -reason TEXT`, or `POST /api/v1/admin/integrity/findings/{id}/reseal` with `{"reason": "…"}`, seals the row as it now is and resolves the finding as `resealed`, or as `row_gone` if the row no longer exists. It records `integrity.reseal` with the reason and the sealed values, secret columns shown as `[secret]`.
+
+Re-sealing makes a row valid as it is, so re-seal only a row that is right. A row that someone changed must be fixed first, through the backend or in SQL followed by a re-seal.
+
+### Limits of row seals
+
+- **Replay.** Someone with write access to the database can put back an older version of a row with its seal, such as a session from before its revocation, and the seal matches. A later step of #139 detects that, with a hash-chained log of the seals.
+- **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it.
+- **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139.
+- **One administrator.** A re-seal needs one administrator. Four-eyes approval is not required yet.
 
 ## Setup
 
@@ -143,9 +192,11 @@ Rotate a data key on a schedule, such as once a year, and whenever it may have l
 1. Run `admin keys rotate -purpose field-enc`, with the same `keys` settings as the servers. It writes the new version with `active_from` set `keys.activation_delay_seconds` (300 by default) ahead, and prints that time.
 2. **Phase 1: every instance learns the version.** Within `keys.reload_interval_seconds`, every instance loads it and can read values sealed with it. An instance started meanwhile loads it at startup. `admin keys list` shows the version as `pending`.
 3. **Phase 2: every instance writes with it.** From `active_from`, every instance seals with the new version, which the others already read. `admin keys list` shows it as `current`. The activation delay must be at least twice the reload interval, which the server checks at startup, so an instance whose reload failed once still loads the version in time.
-4. Once the background jobs of [#139](https://github.com/mdastpak/Crypto-Exchange/issues/139) and [#140](https://github.com/mdastpak/Crypto-Exchange/issues/140) have re-sealed or re-encrypted every row, run `admin keys retire -purpose field-enc -version 1`. The instances drop it at their next reload. Never retire a version that data still uses: that data can then no longer be checked or read. `retire` refuses the version that writes, until the newer version is active.
+4. Once the background jobs have re-sealed or re-encrypted every row, run `admin keys retire -purpose field-enc -version 1`. The instances drop it at their next reload. Never retire a version that data still uses: that data can then no longer be checked or read. `retire` refuses the version that writes, until the newer version is active.
 
 If an instance cannot load the new version, because it cannot reach the key management service, it keeps writing with the older version, which every instance still reads, and logs the failure.
+
+For `row-mac`, the [verifier](#the-verifier) re-seals the rows: run `admin row-seals verify` after the activation, check that it reports no finding, and then retire the older version. Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will re-encrypt its rows in the same way.
 
 Rotating a `blind-index` key also needs a second index during the change ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)).
 

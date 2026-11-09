@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // FieldSealer seals values with the field-enc data keys (#146).
@@ -248,6 +249,9 @@ func (s *Service) resealOne(ctx context.Context, adminID string, format Format, 
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_secret = $2, updated_at = NOW() WHERE hk = $1`, adminID, sealed); err != nil {
+			return err
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", adminID); err != nil {
 			return err
 		}
 		e := audit.Of(s.Origin, audit.ActionAdminTOTPResealed, audit.TargetUser, adminID)

@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,6 +40,13 @@ var (
 	// It is an ErrAccountUnavailable, for callers that do not tell them
 	// apart.
 	ErrAccountFrozen = fmt.Errorf("%w: frozen", ErrAccountUnavailable)
+	// ErrAccountUnverified means the user's row does not match its seal,
+	// in enforce mode (#139): it was changed outside the backend. It is an
+	// ErrAccountUnavailable.
+	ErrAccountUnverified = fmt.Errorf("%w: the account does not match its seal", ErrAccountUnavailable)
+	// ErrSessionUnverified means the session's row does not match its seal,
+	// in enforce mode (#139). It is an ErrSessionInvalid.
+	ErrSessionUnverified = fmt.Errorf("%w: the session does not match its seal", ErrSessionInvalid)
 )
 
 // SessionStore persists sign-in sessions so that refresh tokens can be rotated
@@ -267,6 +275,9 @@ func (s *PostgresSessionStore) Create(ctx context.Context, session Session, even
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to create session: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1", session.ID); err != nil {
+			return nil, false, err
+		}
 		return &event, false, nil
 	})
 }
@@ -304,6 +315,9 @@ func limitSessions(ctx context.Context, tx *sql.Tx, session Session, event audit
 			return fmt.Errorf("failed to end the replaced session: %w", err)
 		} else if rows != 1 {
 			return ErrReplacedSessionNotFound
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1", session.Replace); err != nil {
+			return err
 		}
 		revoked := event
 		revoked.Action, revoked.Outcome, revoked.Reason = audit.ActionUserSessionRevoke, audit.Success, ReasonReplacedAtSignIn
@@ -353,6 +367,9 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 	if rows, err := res.RowsAffected(); err != nil {
 		return nil, false, fmt.Errorf("failed to rotate session: %w", err)
 	} else if rows == 1 {
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1", r.SessionID); err != nil {
+			return nil, false, err
+		}
 		return &event, false, nil
 	}
 
@@ -374,6 +391,9 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 		if rows, err := res.RowsAffected(); err != nil {
 			return nil, false, fmt.Errorf("failed to check a concurrent refresh: %w", err)
 		} else if rows == 1 {
+			if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1", r.SessionID); err != nil {
+				return nil, false, err
+			}
 			event.Reason = ReasonConcurrentRefresh
 			return &event, false, ErrConcurrentRefresh
 		}
@@ -394,6 +414,9 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 	if rows, err := res.RowsAffected(); err != nil {
 		return nil, false, fmt.Errorf("failed to revoke reused session: %w", err)
 	} else if rows == 1 {
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1", r.SessionID); err != nil {
+			return nil, false, err
+		}
 		event.Outcome, event.Reason = audit.Failure, ReasonRefreshTokenReused
 		return &event, true, ErrRefreshTokenReused
 	}
@@ -416,14 +439,21 @@ func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID str
 func (s *PostgresSessionStore) VerifyLocale(ctx context.Context, sessionID, userID string) (string, error) {
 	var active, deleted, frozen bool
 	var status, role, locale string
+	sessionRow, userRow := rowseal.Sessions.NewRow(), rowseal.Users.NewRow()
+	dest := append([]any{&active, &status, &role, &deleted, &frozen, &locale}, sessionRow.Dest()...)
+	dest = append(dest, userRow.Dest()...)
 	// The same statement records the use of an active session, at most
-	// once a minute, so that most requests write nothing (#193).
+	// once a minute, so that most requests write nothing (#193). It also
+	// reads the sealed columns of both rows (#139); last_used_at is not one
+	// of them, so recording the use needs no new seal.
 	err := s.DB.QueryRowContext(ctx, `
 		WITH found AS (
 			SELECT s.id, (`+liveSession("s")+`) AS active, s.last_used_at,
 				u.status AS user_status, u.role, u.deleted_at IS NOT NULL AS deleted,
 				COALESCE(u.locale, '') AS locale,
-				`+restrictions.FrozenSQL("u.hk")+` AS frozen
+				`+restrictions.FrozenSQL("u.hk")+` AS frozen,
+				`+rowseal.Sessions.FieldsAs("s", "sr")+`,
+				`+rowseal.Users.FieldsAs("u", "ur")+`
 			FROM sessions s JOIN users u ON u.hk = s.user_id
 			WHERE s.id = $1 AND s.user_id = $2
 		), touched AS (
@@ -431,14 +461,23 @@ func (s *PostgresSessionStore) VerifyLocale(ctx context.Context, sessionID, user
 			WHERE sessions.id = found.id AND found.active
 			  AND (found.last_used_at IS NULL OR found.last_used_at < NOW() - make_interval(secs => $3))
 		)
-		SELECT active, user_status, role, deleted, frozen, locale FROM found`,
+		SELECT active, user_status, role, deleted, frozen, locale,
+			`+rowseal.Sessions.Names("sr")+`, `+rowseal.Users.Names("ur")+` FROM found`,
 		sessionID, userID, sessionTouchInterval.Seconds(),
-	).Scan(&active, &status, &role, &deleted, &frozen, &locale)
+	).Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrSessionInvalid
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to verify session: %w", err)
+	}
+	// A row changed outside the backend, such as a revoked session or a
+	// banned user set back to active, is not trusted (#139).
+	if err := rowseal.Check(ctx, rowseal.Users, userRow); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrAccountUnverified, err)
+	}
+	if err := rowseal.Check(ctx, rowseal.Sessions, sessionRow); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrSessionUnverified, err)
 	}
 	// A freeze ends the sessions, and is reported before them, so that the
 	// user learns why their tokens stopped working.
@@ -463,6 +502,9 @@ func (s *PostgresSessionStore) Revoke(ctx context.Context, sessionID, userID str
 		)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to revoke session: %w", err)
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = $1 AND user_id = $2", sessionID, userID); err != nil {
+			return nil, false, err
 		}
 		return &event, true, nil
 	})

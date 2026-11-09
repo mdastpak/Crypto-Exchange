@@ -334,6 +334,7 @@ internal/rebrand/        Currency migrations: rebrands, redenominations, mergers
 internal/restrictions/  Compliance restrictions of users: account freeze, operation and
                         currency holds, the security hold after a security change, and
                         the check that operations call
+internal/rowseal/       Row seals: HMACs over protected rows, integrity findings, verifier
 internal/sites/         The sites per country: domains, locales, redirects
 internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
