@@ -1,9 +1,9 @@
 # Test Scenarios and Review
 
 > [!NOTE]
-> **Origin and status.** This catalog was written on 2026-09-16 during a test review of commit `33e80e0`, before pull requests [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1), [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4), and [#5](https://github.com/mdastpak/Crypto-Exchange/pull/5) were merged. File and line references point to that commit and may be outdated. The "Current review" columns and the [Known baseline](#known-baseline) describe that earlier state.
+> **Origin and status.** This catalog was written on 2026-09-16 during a test review of commit `33e80e0`, before pull requests [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1), [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4), and [#5](https://github.com/mdastpak/Crypto-Exchange/pull/5) were merged. The "Current review" columns describe the code as of 2026-11-09, with the change that fixed each gap and the tests that cover it ([#128](https://github.com/mdastpak/Crypto-Exchange/issues/128)). The [Known baseline](#known-baseline) and the original findings after [Finding status](#finding-status) describe the earlier state, and their file and line references point to that commit.
 >
-> The scenario IDs (`U-`, `C-`, `H-`, `A-`, `D-`, `M-`, `W-`, `S-`) are stable. Reference them from tests and issues. The current status of every review finding is listed in [Finding status](#finding-status). The work to automate these scenarios in hermetic tests is tracked in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
+> The scenario IDs (`U-`, `C-`, `H-`, `A-`, `D-`, `M-`, `W-`, `S-`) are stable. Reference them from tests and issues. The current status of every review finding is listed in [Finding status](#finding-status). The scenarios are automated in hermetic tests on the real migrations since [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37).
 
 ## Purpose
 
@@ -109,59 +109,59 @@ Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `
 | U-06 | P0 / contract | Valid claims but expired `exp` | `401`; no currency read | Covered by JWT parser |
 | U-07 | P0 / contract | Valid JWT signed with any algorithm other than RS256, including RS512 and HS256 keyed with the public key | `401`; signing algorithm must not be accepted | Covered by `ParseToken` |
 | U-08 | P0 / contract | Valid JWT with role `system` | `401`; message `Unauthorized - Invalid token` | Covered by `ParseToken`: the role must match the route ([#17](https://github.com/mdastpak/Crypto-Exchange/issues/17)) |
-| U-09 | P0 / contract | Valid JWT already present in the blacklist | `401`; message `Unauthorized - Token is blacklisted` | Requires a real Redis-backed test |
-| U-10 | P0 / contract | Blacklist Redis returns an error | `500`; message `Error checking blacklist`; handler not entered | Current behavior; verify no currency data is returned |
+| U-09 | P0 / contract | Valid JWT already present in the blacklist | `401`; code `token_revoked` | Passes on a real Redis: logout rejects every access token of the session (`TestUserSessions_EndToEnd`); `TestTokenBlacklist_DurableWrites` |
+| U-10 | P0 / contract | Blacklist Redis returns an error | `503 service_unavailable` with `Retry-After: 1`; handler not entered | Passes: a failed Redis call marks the request, and the envelope answers `503` instead of `500` ([#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)); `TestRedisUnavailable_RequestsAnswer503` |
 | U-11 | P0 / contract | Empty Redis currency cache | `200`; `info` is an empty JSON array `[]` | Passes: the list is loaded from PostgreSQL, and an empty one is `[]` ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
 | U-12 | P0 / contract | One valid cached currency | `200`; all currency fields map exactly from the fixture | Passes |
 | U-13 | P1 / contract | Two valid cached currencies | `200`; both HKs are present exactly once; order is not asserted | Passes: the list is one key, ordered oldest first ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
-| U-14 | P1 / contract | Duplicate HKs returned by the cache scan | Response contains one currency per HK | **Gap:** current code does not deduplicate |
+| U-14 | P1 / contract | Duplicate HKs returned by the cache scan | Response contains one currency per HK | Passes: the list is one Redis value loaded by one PostgreSQL query, so no key scan can return a currency twice ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
 | U-15 | P0 / contract | Cached currency has `status: suspended` | It is excluded from the active list | Passes: only approved currencies are cached, and reads skip any other entry ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
 | U-16 | P0 / contract | Cached currency has `deleted_at` or `status: deleted` | It is excluded from the active list | Passes ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
-| U-17 | P1 / contract | One cached value is invalid JSON | Valid entries are returned; corrupt entry is logged and skipped | **Gap:** user handler fails the whole request with `500` |
-| U-18 | P1 / contract | One cache key returns a Redis GET error | Valid entries are returned; failed entry is skipped | **Gap:** user handler fails the whole request with `500` |
-| U-19 | P0 / contract | Redis SCAN returns an error | `500`; message `Failed to retrieve currencies from cache.` | Current behavior |
-| U-20 | P0 / contract | Redis is unavailable | `500` with a bounded response time | **Gap:** no request-context timeout is used |
-| U-21 | P0 / contract | Client cancels the request while Redis is slow | Redis work stops and no goroutine remains blocked on the request | **Gap:** `context.Background()` is used |
+| U-17 | P1 / contract | One cached value is invalid JSON | The list is served; an unreadable cached value is logged and loaded again from PostgreSQL | Passes: the list is one cached value, and one that does not decode counts as a miss ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_LoadsAnUnreadableCacheAgain` |
+| U-18 | P1 / contract | One cache key returns a Redis GET error | The list is served from PostgreSQL | Passes: a Redis error reads the database instead ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_ReadsTheDatabaseWhileRedisIsDown` |
+| U-19 | P0 / contract | Redis SCAN returns an error | `200` from PostgreSQL; `503 service_unavailable` with `Retry-After` only when PostgreSQL fails too | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), [#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)); `TestList_ReportsADatabaseFailure`, `TestCurrencies_WhileTheDatabaseIsDown` |
+| U-20 | P0 / contract | Redis is unavailable | `200` from PostgreSQL within a bounded response time | Passes: each Redis call of a read is bounded at 250 ms, and the request at 10 seconds ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), [#119](https://github.com/mdastpak/Crypto-Exchange/issues/119)); `TestList_BoundsTheWaitForAnUnresponsiveRedis`, `TestRedisOutage_RequestsAnswerWithinTheirDeadlines` |
+| U-21 | P0 / contract | Client cancels the request while Redis is slow | Redis work stops and no goroutine remains blocked on the request | Passes: the read uses the request context; a load shared with other requests keeps running for at most 5 seconds for them, and the cancelled caller stops waiting ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_ACallerStopsWaitingWhenItsContextEnds` |
 | U-22 | P1 / contract | Cached JSON omits `deleted_at` | Field is omitted from the response | Current model uses `omitempty`; prior scenarios incorrectly expected `null` |
 | U-23 | P1 / contract | Cached JSON contains unknown fields | Unknown fields do not break known-field decoding | Current `encoding/json` behavior |
-| U-24 | P1 / contract | Cached JSON has wrong types for `id`, `status`, or `info` | Invalid entry is rejected or skipped without leaking an internal error | **Gap:** unmarshal errors currently produce a generic `500` |
-| U-25 | P1 / contract | `?limit=-1`, `?offset=-1`, or non-numeric pagination values | `400` with a validation error after pagination is introduced | **Gap:** query parameters are currently ignored |
-| U-26 | P1 / performance | More than 10,000 cached currencies | Response is paginated/capped and completes within the latency budget | **Gap:** current handler streams an unbounded result into memory |
+| U-24 | P1 / contract | Cached JSON has wrong types for `id`, `status`, or `info` | The cached value is treated as a miss and loaded again; no internal error reaches the client | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_LoadsAnUnreadableCacheAgain` |
+| U-25 | P1 / contract | `?limit=-1`, `?offset=-1`, or non-numeric pagination values | `limit` outside 1 to 200 or not a number, a cursor this list did not issue, or an unknown parameter such as `offset`: `400 validation_failed` with the field in `info.errors` | Passes: pages are by cursor, not by offset ([#218](https://github.com/mdastpak/Crypto-Exchange/issues/218)); `TestParse_Limits`, `TestParse_RefusesCursorsItDidNotIssue`, `TestParseQuery_Refusals` |
+| U-26 | P1 / performance | More than 10,000 cached currencies | Response is a page of at most `limit` currencies (50 by default, 200 at most) and completes within the latency budget | Passes for the page size ([#218](https://github.com/mdastpak/Crypto-Exchange/issues/218)). Every instance still reads the whole list from the shared cache in one round trip, which is meant for thousands of currencies, not millions; no benchmark exists yet |
 | U-27 | P1 / contract | `POST`, `PUT`, or `DELETE /user/profile` | `405` with an `Allow: GET, PATCH` header | Passes: `TestRouter_UnsupportedMethodsAnswer405` sends an unsupported method to every path of the router, which answers `405` in the envelope with an `Allow` header of exactly the path's methods ([#124](https://github.com/mdastpak/Crypto-Exchange/issues/124), [#53](https://github.com/mdastpak/Crypto-Exchange/issues/53)) |
 | U-28 | P1 / contract | Valid request with no body and no query | `200`; body content type is `application/json` | Passes |
-| U-29 | P1 / contract | Disallowed CORS origin | No permissive `Access-Control-Allow-Origin`; credentials are not exposed | **Gap:** default CORS reflects arbitrary origins |
+| U-29 | P1 / contract | Disallowed CORS origin | No permissive `Access-Control-Allow-Origin`; credentials are not exposed | Passes: an empty `server.cors.allowed_origins` grants no cross-origin access, and only listed origins are reflected ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)); `TestCORS_EmptyListGrantsNoCrossOriginAccess`, `TestCORS_AllowsOnlyListedOrigins` |
 | U-30 | P0 / product | Valid user JWT and user-specific profile data in PostgreSQL | Response contains the authenticated user's profile, never the global currency list | Passes: each user reads and changes only their own profile, and a body cannot name another user, tested end to end with two signed-in users ([#27](https://github.com/mdastpak/Crypto-Exchange/issues/27)) |
 | U-31 | P1 / contract | Valid request under the rate limit | `200`; `X-RateLimit-Limit` and `X-RateLimit-Remaining` are present | Passes: every limited response carries both headers ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | U-32 | P0 / contract | Requests exceed the trading burst | `429`; `Retry-After` is positive; handler is not entered | Passes: `Retry-After` is rounded up to whole seconds, so it is never `0`; the bucket is tested with controlled times ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | U-33 | P1 / contract | Two users send requests concurrently | Limits are isolated by user; one user cannot consume another user's quota | Passes: the limit is keyed by the subject and role of the access token, tested with two users behind one address ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
-| U-34 | P0 / security | Untrusted client supplies `X-Forwarded-For` | Rate-limit identity is based on a trusted proxy-derived IP, not a spoofable header | **Gap:** `getClientIP` trusts the header unconditionally |
+| U-34 | P0 / security | Untrusted client supplies `X-Forwarded-For` | Rate-limit identity is based on a trusted proxy-derived IP, not a spoofable header | Passes: forwarding headers are read only from `server.trusted_proxies`, none by default ([#11](https://github.com/mdastpak/Crypto-Exchange/issues/11)); `TestGetClientIP_IgnoresForwardingHeadersWithoutTrustedProxies`, `TestAuthRateLimit_SpoofedForwardedForDoesNotBypassTheLimit` |
 | U-35 | P0 / security | Redis rate-limit backend fails | Protected endpoint fails closed or returns a defined degradation response | Passes: `rate_limits.<limiter>.on_error` selects `allow` or `deny` (`503`); the user and admin limits allow by default ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 
 ---
 
 ## 2. Public Active Currencies
 
-Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/main.go:241`.
+Implementation: `PublicHandler.GetActiveCurrencies` in `internal/handlers/public/auth.go`, which reads `internal/currencies.Catalog`; routes in `RouteHandler` in `cmd/server/main.go`.
 
 > [!IMPORTANT]
-> **Cache-only reads versus the planned database fallback.** The expectations below assume that Redis is the only source, as it is today. [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) adds a read-through cache backed by PostgreSQL. Once it lands, the cache-miss and Redis-failure scenarios change: C-03 expects an empty list only when the database has no active currency either; H-02 expects `404` only when the database has no matching active row; and U-20 and C-09 (Redis unavailable) expect the data from the database instead of `500`, with `500` only when PostgreSQL is unavailable as well. The same applies to U-11 and U-19 for the shared listing.
+> **The cache and the database.** Since [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), Redis holds one copy of the whole list of public currencies, shared by every instance, and PostgreSQL is the source. A miss, an unreadable value, or an unavailable Redis reads the database, so these scenarios expect the data from PostgreSQL, and `503 service_unavailable` with `Retry-After` only when PostgreSQL fails as well ([#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)). The list is paged by cursor since [#218](https://github.com/mdastpak/Crypto-Exchange/issues/218).
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
 | C-01 | P0 / contract | No authorization header; one cached currency | `200`; currency is returned | Passes |
 | C-02 | P1 / contract | Arbitrary invalid authorization header | `200`; public endpoint ignores the header | Passes, subject to rate limiting |
-| C-03 | P0 / contract | Empty cache | `200`; `info` is `[]` | **Gap:** current response has `info: null` |
+| C-03 | P0 / contract | Empty cache and no public currency in PostgreSQL | `200`; `info.items` is `[]` | Passes ([#1](https://github.com/mdastpak/Crypto-Exchange/issues/1), [#4](https://github.com/mdastpak/Crypto-Exchange/issues/4), [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestGetActiveCurrencies_Empty` |
 | C-04 | P0 / contract | One approved cached currency | `200`; exact fixture mapping | Passes |
 | C-05 | P1 / contract | Multiple approved cached currencies | `200`; all unique HKs are returned | Passes functionally |
-| C-06 | P1 / contract | One invalid JSON cache value and one valid value | Valid value is returned; invalid value is logged and skipped | Passes |
-| C-07 | P1 / contract | One cache key returns a GET error | Valid values are returned; failed key is skipped | Passes |
-| C-08 | P0 / contract | Redis SCAN fails | `500`; message `Failed to retrieve currencies from cache.` | Passes |
-| C-09 | P0 / contract | Redis is unavailable | `500` within the configured request timeout | Passes with a 10-second context |
-| C-10 | P0 / contract | Client cancels the request during SCAN/GET | Work stops promptly and no leaked goroutine remains | Current context support should be verified under a slow fake |
+| C-06 | P1 / contract | The cached list is invalid JSON | The list is served; the unreadable value is logged and loaded again | Passes: the list is one cached value ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_LoadsAnUnreadableCacheAgain` |
+| C-07 | P1 / contract | The cache read returns an error | The list is served from PostgreSQL | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_ReadsTheDatabaseWhileRedisIsDown` |
+| C-08 | P0 / contract | Redis fails the read | `200` from PostgreSQL; `503 service_unavailable` with `Retry-After` only when PostgreSQL fails too | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), [#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)); `TestCurrencies_WhileTheDatabaseIsDown` |
+| C-09 | P0 / contract | Redis is unavailable | `200` from PostgreSQL within the request timeout (10 seconds) | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), [#119](https://github.com/mdastpak/Crypto-Exchange/issues/119)); `TestRedisOutage_RequestsAnswerWithinTheirDeadlines` |
+| C-10 | P0 / contract | Client cancels the request during the cache read or the load | The request stops waiting promptly; a load shared with other requests ends within 5 seconds | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_ACallerStopsWaitingWhenItsContextEnds` |
 | C-11 | P0 / contract | Suspended or deleted currency is cached | It is excluded from active currencies | Passes ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
-| C-12 | P1 / contract | Duplicate HKs are observed | Each HK appears once | **Gap:** no deduplication |
-| C-13 | P1 / contract | `limit=2&offset=1` after pagination is introduced | Correct page is returned with stable ordering | **Gap:** query parameters are ignored |
-| C-14 | P1 / contract | `limit` exceeds the configured maximum | Request is capped or rejected according to the documented API contract | No maximum exists today |
+| C-12 | P1 / contract | Duplicate HKs are observed | Each HK appears once | Passes: the list is one value loaded by one query ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)) |
+| C-13 | P1 / contract | `limit=2`, then `cursor=<next_cursor>` | `limit=2` returns the first two currencies and a `next_cursor`; the cursor returns the next page in the same stable order | Passes ([#218](https://github.com/mdastpak/Crypto-Exchange/issues/218)); `TestQuery_PagesAreStableUnderEverySort` |
+| C-14 | P1 / contract | `limit` exceeds the configured maximum | `400 validation_failed`; the largest `limit` is 200 | Passes ([#218](https://github.com/mdastpak/Crypto-Exchange/issues/218)); `TestParse_Limits` |
 | C-15 | P1 / contract | `GET /public/currencies` with a body | Body is ignored for the GET contract | Passes |
 | C-16 | P1 / contract | Wrong HTTP method | `405` | Gin default behavior |
 | C-17 | P0 / contract | Requests remain below the public REST limit | `200`; rate headers are accurate | Passes: only the REST limit applies ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26)) |
@@ -170,23 +170,23 @@ Implementation: `internal/handlers/public/auth.go:317`, route at `cmd/server/mai
 | C-20 | P1 / contract | Wait until the fixed window expires | Next request is allowed and the counter is reset | Passes, also when the client keeps retrying while blocked: the window is no longer extended by each request ([#26](https://github.com/mdastpak/Crypto-Exchange/issues/26), item 2 of [#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | C-21 | P0 / security | Redis rate-limit backend fails | Public endpoint fails closed or returns an explicit degraded response | Passes: the sign-in limits fail closed with `503` by default, and the other public routes fail open as configured ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | C-22 | P1 / contract | Allowed origin from configuration | CORS headers match the configured origin | Passes when config is set |
-| C-23 | P0 / security | Disallowed origin | No reflected `Access-Control-Allow-Origin` or credentials header | **Gap:** empty configuration reflects any origin |
-| C-24 | P1 / contract | `OPTIONS` preflight from an allowed origin | `204`; allowed methods and headers are present | Passes; verify disallowed-origin behavior too |
-| C-25 | P1 / contract | Response schema is compared with Swagger | Actual JSON matches the documented schema | **Gap:** Swagger documents a raw array, while handlers return `models.APIResponse` |
+| C-23 | P0 / security | Disallowed origin | No reflected `Access-Control-Allow-Origin` or credentials header | Passes ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)); `TestCORS_EmptyListGrantsNoCrossOriginAccess` |
+| C-24 | P1 / contract | `OPTIONS` preflight from an allowed origin | `204`; allowed methods and headers are present | Passes; a preflight from an origin that is not listed gets no CORS headers; `TestCORS_Preflight` |
+| C-25 | P1 / contract | Response schema is compared with Swagger | Actual JSON matches the documented schema | Passes: the document describes the envelope with its `info`, and the end-to-end tests check every response against `docs/swagger.json` ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53), [#54](https://github.com/mdastpak/Crypto-Exchange/issues/54)); `contractCheck` in `cmd/server/contract_e2e_test.go` |
 
 ### Currency by HK
 
-Implementation: `internal/handlers/public/auth.go:350`.
+Implementation: `PublicHandler.GetCurrencyByHK` in `internal/handlers/public/auth.go`.
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
 | H-01 | P0 / contract | Valid HK with a cached approved currency | `200`; exact currency object | Passes |
 | H-02 | P0 / contract | Valid HK with no cache entry | `404`; message `Currency not found` | Passes |
-| H-03 | P1 / contract | Non-UUID HK | `400`; message identifies invalid UUID format | **Gap:** current code treats it as a cache miss and returns `404` |
-| H-04 | P0 / contract | Redis GET returns a non-`Nil` error | `500`; message `Failed to retrieve currency from cache.` | Passes |
-| H-05 | P1 / contract | Cached value is invalid JSON | `500`; message `Failed to process currency information.` | Passes |
+| H-03 | P1 / contract | Non-UUID HK | `400`; message `INVALID_CURRENCY_ID` | Passes; `TestGetCurrencyByHK_RejectsAnInvalidUUID` |
+| H-04 | P0 / contract | The cache read returns an error | The currency is read from PostgreSQL; `503 service_unavailable` only when PostgreSQL fails too | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), [#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)); `TestRedisUnavailable_RequestsAnswer503` |
+| H-05 | P1 / contract | The cached list is invalid JSON | The list is loaded again, and the currency is served | Passes ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_LoadsAnUnreadableCacheAgain` |
 | H-06 | P0 / contract | Cached currency is suspended/deleted | `404` or an explicit inactive response | Passes: `404` with the message of a missing currency ([#24](https://github.com/mdastpak/Crypto-Exchange/issues/24)) |
-| H-07 | P0 / contract | Client cancels during Redis GET | Request terminates within the timeout | Current 5-second context should be tested |
+| H-07 | P0 / contract | Client cancels during the cache read | Request terminates within the timeout (10 seconds) | Passes: the read uses the request context ([#52](https://github.com/mdastpak/Crypto-Exchange/issues/52)); `TestList_ACallerStopsWaitingWhenItsContextEnds` |
 | H-08 | P1 / contract | Wrong HTTP method | `405` | Gin default behavior |
 
 ---
@@ -202,7 +202,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 | A-03 | P0 / security | Username instead of an email address or mobile number | `400 Invalid contact information`; no OTP key is created and no user can be created for a username | Passes ([#14](https://github.com/mdastpak/Crypto-Exchange/issues/14)) |
 | A-04 | P0 / contract | Empty, overlong, or invalid contact | `400`; no OTP key is created | Current validation occurs after OTP generation but before Redis write |
 | A-05 | P0 / security | Generate many OTPs rapidly | Values are unpredictable, uniformly distributed, and not all identical | Passes: `otp.GenerateCode` uses `crypto/rand` with rejection sampling, checked by a chi-squared test over 100,000 codes ([#15](https://github.com/mdastpak/Crypto-Exchange/issues/15)) |
-| A-06 | P0 / security | Capture application logs after OTP request | Logs contain neither the plaintext OTP nor the full contact | **Gap:** `RequestOTP` logs both |
+| A-06 | P0 / security | Capture application logs after OTP request | Logs contain neither the plaintext OTP nor the full contact | Passes ([#13](https://github.com/mdastpak/Crypto-Exchange/issues/13)): the code is delivered through the configured channel and never logged; `TestRequestOTP_RealSchema_DeliversTheCodeWithoutLoggingIt`, `TestRequestOTP_RealSchema_DefaultSenderLogsNothing` |
 | A-07 | P0 / contract | Redis SET fails | `500`; message `Failed to store OTP`; no success response | Passes |
 | A-08 | P0 / contract | Valid UUID, matching OTP, new user | `200`; access and refresh tokens are returned; secure HttpOnly cookie is set; OTP key is deleted | Passes when JWT keys are initialized |
 | A-09 | P0 / contract | Valid UUID, matching OTP, existing approved user | `200`; existing HK is reused; no duplicate row is created | Passes functionally |
@@ -217,7 +217,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 | A-18 | P0 / contract | Valid refresh cookie and initialized RSA keys | `200`; a new access token has the configured issuer, role, UUID, and expiry | Current handler parses the cookie only |
 | A-19 | P0 / contract | Missing refresh cookie | `401`; message `Refresh token not provided` | Passes |
 | A-20 | P0 / contract | Expired or invalid refresh token | `401`; no new access token | Passes |
-| A-21 | P0 / security | Refresh token is blacklisted after logout | `401`; no new access token can be minted | **Gap:** `RefreshTokenHandler` does not consult the blacklist |
+| A-21 | P0 / security | Refresh after logout | `401`; no new access token can be minted | Passes ([#10](https://github.com/mdastpak/Crypto-Exchange/issues/10)): logout revokes the session, and a refresh checks it; `TestSession_RealSchema_LogoutEndsTheSession` |
 | A-22 | P0 / contract | Valid raw access token sent to logout | Token is stored under the blacklist prefix with a TTL not exceeding its expiry | Passes with Redis |
 | A-23 | P0 / contract | Missing logout token | `401`; message `Unauthorized - Token not provided` | Passes |
 | A-24 | P0 / contract | Invalid logout token | `401`; message `Unauthorized - Invalid token` | Passes |
@@ -233,7 +233,7 @@ Relevant code: `internal/handlers/public/auth.go:62`, `internal/auth/auth.go:31`
 
 ## 4. Admin Currency and Cache Lifecycle
 
-Implementation: `internal/handlers/admin/currencies.go:71`.
+Implementation: `AdminHandler.CreateCurrency` and the other currency handlers in `internal/handlers/admin/`.
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
@@ -265,7 +265,7 @@ Relevant code: `internal/middleware/security.go:11`, `internal/middleware/valida
 | M-01 | P0 / contract | Any successful or error response | `Content-Type: application/json` where `SendResponse` is used | Passes for helper responses |
 | M-02 | P1 / security | Any response | Security headers include nosniff, frame, referrer, permissions, COOP, and CORP policies | Current headers are present; add CSP/HSTS after TLS is enforced |
 | M-03 | P0 / security | Origin in `AllowedOrigins` | Exact origin is reflected and credentials policy is consistent | Passes |
-| M-04 | P0 / security | Origin not in `AllowedOrigins` | Origin is not reflected; preflight is not granted | **Gap:** empty config reflects every origin |
+| M-04 | P0 / security | Origin not in `AllowedOrigins` | Origin is not reflected; preflight is not granted | Passes ([#12](https://github.com/mdastpak/Crypto-Exchange/issues/12)); `TestCORS_AllowsOnlyListedOrigins`, `TestCORS_Preflight` |
 | M-05 | P1 / contract | Allowed-origin `OPTIONS` request | `204`; methods and headers match the documented contract | Passes |
 | M-06 | P0 / contract | Required, email, min, max, UUID, and oneof tags | Each violation returns `400` with the field-specific message | Existing test covers a subset |
 | M-07 | P0 / contract | Invalid JSON body | `400`; no partial object is passed to the handler | Gin binding behavior; verify all handlers |
@@ -340,7 +340,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 
 ### Finding status
 
-Status as of 2026-11-05. The tables after this one are the original findings, unchanged.
+Status as of 2026-11-09. The tables after this one are the original findings, unchanged.
 
 | Finding | Status |
 | --- | --- |
@@ -356,16 +356,16 @@ Status as of 2026-11-05. The tables after this one are the original findings, un
 | User migration references the wrong table | Fixed in [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4) |
 | Public currency traffic consumes the login quota | Fixed in [#26](https://github.com/mdastpak/Crypto-Exchange/issues/26) |
 | CORS reflects arbitrary origins with credentials | Fixed in [#12](https://github.com/mdastpak/Crypto-Exchange/issues/12) |
-| List handlers have no pagination or response cap | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) and [#53](https://github.com/mdastpak/Crypto-Exchange/issues/53) |
-| Redis has no database fallback | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |
-| Duplicate SCAN results are not deduplicated | Open: [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52) |
+| List handlers have no pagination or response cap | Fixed in [#218](https://github.com/mdastpak/Crypto-Exchange/issues/218): the public list answers pages of at most 200 currencies, by cursor |
+| Redis has no database fallback | Fixed in [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52); an unavailable store answers `503` since [#130](https://github.com/mdastpak/Crypto-Exchange/issues/130) |
+| Duplicate SCAN results are not deduplicated | Fixed in [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52): the list is one value, and nothing scans keys |
 | Standard Bearer header is not normalized | Fixed in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17): every protected route, including logout, requires the `Bearer` scheme |
 | Key rotation verifier is not used by role middleware | Fixed in [#17](https://github.com/mdastpak/Crypto-Exchange/issues/17): `ParseToken` selects the key by `kid`, including retired keys |
-| Swagger does not match actual responses | Open: [#54](https://github.com/mdastpak/Crypto-Exchange/issues/54) |
-| Cache and event failures are silently non-fatal | Open: [#89](https://github.com/mdastpak/Crypto-Exchange/issues/89) |
-| Global config and RSA keys make tests order-dependent | Open: [#48](https://github.com/mdastpak/Crypto-Exchange/issues/48) and [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37) |
+| Swagger does not match actual responses | Fixed in [#53](https://github.com/mdastpak/Crypto-Exchange/issues/53) and [#54](https://github.com/mdastpak/Crypto-Exchange/issues/54): the end-to-end tests check every response against the document |
+| Cache and event failures are silently non-fatal | Fixed in [#89](https://github.com/mdastpak/Crypto-Exchange/issues/89): events go through the outbox in the transaction of the change, and the cache is invalidated after commit |
+| Global config and RSA keys make tests order-dependent | Partly fixed in [#37](https://github.com/mdastpak/Crypto-Exchange/issues/37) (hermetic databases per test); the global configuration remains, in [#48](https://github.com/mdastpak/Crypto-Exchange/issues/48) |
 | Observability and maintainability (P2) | Open: [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50) |
-| Minimum CI gates (section 9) | Open: [#36](https://github.com/mdastpak/Crypto-Exchange/issues/36) |
+| Minimum CI gates (section 9) | Fixed in [#36](https://github.com/mdastpak/Crypto-Exchange/issues/36) |
 
 ### P0 — Fix before merge
 
