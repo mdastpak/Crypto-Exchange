@@ -157,7 +157,7 @@ func TestRunner_AnotherWorkerTakesOverAfterTheLeasePasses(t *testing.T) {
 	ctx := context.Background()
 	// A worker claimed the job and died: it never renews or releases.
 	require.NoError(t, l.ensure(ctx, "catalog"))
-	_, ok, err := l.claim(ctx, "catalog", "dead", time.Second)
+	_, ok, err := l.claim(ctx, "catalog", "dead", time.Second, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -192,7 +192,7 @@ func TestRunner_AWorkerThatLostItsLeaseStopsWriting(t *testing.T) {
 	require.Eventually(t, func() bool { return job.runs.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
 	_, err := db.Exec(`UPDATE market_job_leases SET lease_until = NOW() - interval '1 second' WHERE job = 'catalog'`)
 	require.NoError(t, err)
-	token, ok, err := leases{db}.claim(context.Background(), "catalog", "other", time.Minute)
+	token, ok, err := leases{db}.claim(context.Background(), "catalog", "other", time.Minute, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	close(took)
@@ -259,6 +259,49 @@ func TestRunner_PauseStopsNewAndRunningRuns(t *testing.T) {
 	assert.False(t, l.held)
 	assert.LessOrEqual(t, l.nextIn, time.Duration(0), "a paused run is due again once the pause ends")
 	assert.Equal(t, 0, l.failures)
+}
+
+func TestRunner_APausedSourceStopsItsJobsOnly(t *testing.T) {
+	db := newDB(t)
+	setPaused := func(source string, paused bool) {
+		t.Helper()
+		_, err := db.Exec(`
+			INSERT INTO market_source_controls (source, paused) VALUES ($1, $2)
+			ON CONFLICT (source) DO UPDATE SET paused = excluded.paused`, source, paused)
+		require.NoError(t, err)
+	}
+	var fenceErr error
+	started := make(chan struct{})
+	resume := make(chan struct{})
+	binance := &fakeJob{name: "tickers:binance", sources: []string{"binance"}, run: func(ctx context.Context, r *Run) error {
+		close(started)
+		<-resume
+		fenceErr = r.Fence(ctx)
+		return fenceErr
+	}}
+	kraken := &fakeJob{name: "tickers:kraken", sources: []string{"kraken"}}
+	tiers := &fakeJob{name: "tiers"}
+	r := newRunner(t, db, options("a"), spec(binance), spec(kraken), spec(tiers))
+
+	setPaused("binance", true)
+	tickAndWait(r)
+	assert.Equal(t, int32(0), binance.runs.Load(), "a paused source's job is not claimed")
+	assert.Equal(t, int32(1), kraken.runs.Load(), "the other sources go on")
+	assert.Equal(t, int32(1), tiers.runs.Load(), "a job without a source goes on")
+	assert.LessOrEqual(t, leaseOf(t, db, "tickers:binance").nextIn, time.Duration(0), "it stays due")
+
+	setPaused("binance", false)
+	r.tick()
+	<-started
+	setPaused("binance", true)
+	close(resume)
+	r.runs.Wait()
+	assert.ErrorIs(t, fenceErr, ErrSourcePaused)
+	assert.ErrorIs(t, fenceErr, ErrPaused, "a stream ends its run on it")
+	l := leaseOf(t, db, "tickers:binance")
+	assert.False(t, l.held)
+	assert.LessOrEqual(t, l.nextIn, time.Duration(0), "due again once the source is resumed")
+	assert.Equal(t, 0, l.failures, "a pause is not a failure")
 }
 
 func TestRunner_RunsOnlyTheJobsOfReachableSources(t *testing.T) {

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,18 +52,18 @@ func TestTiers_AutomaticAndOverrides(t *testing.T) {
 
 	// An administrator's tier on the asset, then on the pair, wins.
 	active := TierActive
-	require.NoError(t, store.SetAssetTierOverride(ctx, doge, &active))
+	require.NoError(t, store.SetAssetTierOverride(ctx, doge, &active, audit.Event{}))
 	assert.Equal(t, TierActive, tierOf(ids["DOGEUSDT"]))
 	other := TierOther
-	require.NoError(t, store.SetPairTierOverride(ctx, ids["DOGEUSDT"], &other))
+	require.NoError(t, store.SetPairTierOverride(ctx, ids["DOGEUSDT"], &other, audit.Event{}))
 	assert.Equal(t, TierOther, tierOf(ids["DOGEUSDT"]))
-	require.NoError(t, store.SetPairTierOverride(ctx, ids["DOGEUSDT"], nil))
+	require.NoError(t, store.SetPairTierOverride(ctx, ids["DOGEUSDT"], nil, audit.Event{}))
 	assert.Equal(t, TierActive, tierOf(ids["DOGEUSDT"]))
 	pairs, err = store.TierPairs(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, TierActive, *pairs[1].Override)
-	assert.ErrorIs(t, store.SetPairTierOverride(ctx, 999999, &other), ErrNotFound)
-	assert.Error(t, store.SetAssetTierOverride(ctx, doge, new(string)))
+	assert.ErrorIs(t, store.SetPairTierOverride(ctx, 999999, &other, audit.Event{}), ErrNotFound)
+	assert.Error(t, store.SetAssetTierOverride(ctx, doge, new(string), audit.Event{}))
 
 	// The candle jobs read the tier in which a pair is collected.
 	fine, err := store.CandlePairs(ctx, "binance", Resolution1m, []string{"USDT"}, []string{TierHot}, 10)

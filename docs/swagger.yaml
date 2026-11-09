@@ -754,6 +754,314 @@ definitions:
       volume_quote:
         type: string
     type: object
+  marketdataadmin.AssetPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.AssetView'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  marketdataadmin.AssetView:
+    properties:
+      active:
+        type: boolean
+      currency_hk:
+        description: CurrencyHK is the listed currency of a linked asset.
+        type: string
+      id:
+        type: integer
+      kind:
+        enum:
+        - coin
+        - token
+        - unknown
+        type: string
+      market_cap_rank:
+        type: integer
+      name:
+        type: string
+      slug:
+        type: string
+      status:
+        enum:
+        - unverified
+        - hidden
+        - linked
+        type: string
+      symbol:
+        type: string
+      tier_override:
+        description: TierOverride is the administrators' tier of its pairs.
+        enum:
+        - hot
+        - active
+        - other
+        type: string
+      updated_at:
+        type: string
+    type: object
+  marketdataadmin.ConflictPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.ConflictView'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  marketdataadmin.ConflictView:
+    properties:
+      asset_id:
+        description: |-
+          AssetID is the asset that the catalog has; ClaimedBy, when known,
+          the asset that the source's record belongs to.
+        type: integer
+      claimed_by:
+        type: integer
+      created_at:
+        type: string
+      detail:
+        type: string
+      external_id:
+        type: string
+      id:
+        type: integer
+      kind:
+        enum:
+        - contract
+        - identity
+        - symbol
+        type: string
+      resolved_at:
+        type: string
+      resolved_note:
+        type: string
+      source:
+        type: string
+      subject:
+        description: |-
+          Subject is what conflicts: network:address for a contract, the
+          symbol for a symbol.
+        type: string
+    type: object
+  marketdataadmin.JobList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.JobView'
+        type: array
+    type: object
+  marketdataadmin.JobView:
+    properties:
+      failures:
+        description: Failures counts its failed runs in a row.
+        type: integer
+      holder:
+        type: string
+      job:
+        type: string
+      last_finished_at:
+        type: string
+      last_started_at:
+        type: string
+      last_success_at:
+        type: string
+      next_run_at:
+        type: string
+      running:
+        description: Running is true while a worker, Holder, runs it.
+        type: boolean
+      source:
+        type: string
+    type: object
+  marketdataadmin.LinkRequest:
+    properties:
+      currency_hk:
+        description: CurrencyHK is the hk of the listed currency.
+        format: uuid
+        type: string
+      reason:
+        description: Reason says why, at most 1000 characters.
+        type: string
+    type: object
+  marketdataadmin.MappingRequest:
+    properties:
+      base_asset_id:
+        type: integer
+      quote_asset_id:
+        type: integer
+    type: object
+  marketdataadmin.NoteRequest:
+    properties:
+      reason:
+        description: Reason says why, for the audit log, at most 1000 characters.
+        type: string
+    type: object
+  marketdataadmin.PairPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.PairView'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  marketdataadmin.PairView:
+    properties:
+      active:
+        type: boolean
+      base_asset_id:
+        type: integer
+      base_symbol:
+        type: string
+      id:
+        type: integer
+      quote_asset_id:
+        type: integer
+      quote_symbol:
+        type: string
+      tier:
+        description: |-
+          Tier is the tier that the tiers job gave it; TierOverride, when set,
+          wins over it.
+        enum:
+        - hot
+        - active
+        - other
+        type: string
+      tier_override:
+        enum:
+        - hot
+        - active
+        - other
+        type: string
+      venue:
+        type: string
+      venue_symbol:
+        type: string
+    type: object
+  marketdataadmin.ResolveRequest:
+    properties:
+      note:
+        description: Note says what was decided, at most 1000 characters.
+        type: string
+    type: object
+  marketdataadmin.RunPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.RunView'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  marketdataadmin.RunView:
+    properties:
+      error:
+        type: string
+      finished_at:
+        type: string
+      id:
+        type: integer
+      items_read:
+        type: integer
+      items_written:
+        type: integer
+      job:
+        type: string
+      mode:
+        enum:
+        - live
+        - dry_run
+        type: string
+      node:
+        type: string
+      started_at:
+        type: string
+      status:
+        enum:
+        - running
+        - succeeded
+        - failed
+        type: string
+    type: object
+  marketdataadmin.SourceList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.SourceView'
+        type: array
+    type: object
+  marketdataadmin.SourceView:
+    properties:
+      healthy:
+        description: Healthy is false while a job of the source failed its last run.
+        type: boolean
+      jobs:
+        items:
+          $ref: '#/definitions/marketdataadmin.JobView'
+        type: array
+      paused:
+        type: boolean
+      reason:
+        description: Reason is why it was paused.
+        type: string
+      requests_this_minute:
+        description: |-
+          RequestsThisMinute and RequestsThisMonth count the requests of every
+          worker in the current windows.
+        type: integer
+      requests_this_month:
+        type: integer
+      source:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  marketdataadmin.TierRequest:
+    properties:
+      tier:
+        description: |-
+          Tier is hot, active, or other; null clears the administrators' tier,
+          and the tiers job decides again.
+        enum:
+        - hot
+        - active
+        - other
+        type: string
+    type: object
+  marketdataadmin.VenueList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/marketdataadmin.VenueView'
+        type: array
+    type: object
+  marketdataadmin.VenueView:
+    properties:
+      country:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      kind:
+        enum:
+        - cex
+        - dex
+        type: string
+      name:
+        type: string
+      region:
+        enum:
+        - global
+        - ir
+        type: string
+      website:
+        type: string
+    type: object
   models.APIResponse:
     properties:
       code:
@@ -2820,6 +3128,1094 @@ paths:
       summary: Sign out an administrator
       tags:
       - admin sign-in
+  /api/v1/admin/market-data/assets:
+    get:
+      description: Every asset, hidden ones included, in the order they were added,
+        a page at a time.
+      parameters:
+      - description: The status
+        enum:
+        - unverified
+        - hidden
+        - linked
+        in: query
+        name: status
+        type: string
+      - description: A symbol, or the start of a slug or name
+        in: query
+        name: q
+        type: string
+      - description: The number of assets, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the assets of the market data catalog
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/assets/{id}:
+    get:
+      parameters:
+      - description: The asset
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show an asset of the market data catalog
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/assets/{id}/hide:
+    post:
+      consumes:
+      - application/json
+      description: The public API never serves it again, at once on every instance;
+        the jobs keep collecting it. The reason is required. A linked asset is refused
+        with 409 market_asset_linked. Audited as market_data.asset_hide.
+      parameters:
+      - description: The asset
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Why
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Hide an asset of the market data catalog
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/assets/{id}/link:
+    post:
+      consumes:
+      - application/json
+      description: The asset is then labeled verified, as the same asset as the currency.
+        The link only reads the currency, and never changes it. A currency is linked
+        to one asset at most (409 market_currency_linked); an asset linked to another
+        currency must be unlinked first (409 market_asset_linked), and a hidden asset
+        shown first (409 market_asset_hidden). A currency that does not exist, or
+        was deleted, answers 422 market_currency_not_found. Audited as market_data.asset_link.
+      parameters:
+      - description: The asset
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The currency
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.LinkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Link an asset to a listed currency
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/assets/{id}/tier:
+    put:
+      consumes:
+      - application/json
+      description: Sets the tier of every pair of the asset, or clears it with null;
+        a tier set on a pair wins over it. The tiers job applies it at its next run.
+        Audited as market_data.tier_override.
+      parameters:
+      - description: The asset
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The tier
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.TierRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Set the collection tier of an asset
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/assets/{id}/unhide:
+    post:
+      consumes:
+      - application/json
+      description: The asset is unverified again. Audited as market_data.asset_unhide.
+      parameters:
+      - description: The asset
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Why
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show a hidden asset again
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/assets/{id}/unlink:
+    post:
+      consumes:
+      - application/json
+      description: The asset is unverified again; the currency is not changed. An
+        asset that is not linked answers 409 market_asset_not_linked. Audited as market_data.asset_unlink.
+      parameters:
+      - description: The asset
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Why
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.AssetView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Unlink an asset from its listed currency
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/conflicts:
+    get:
+      description: 'What the catalog sync could not decide alone, oldest first, a
+        page at a time: the open conflicts, or the resolved ones with resolved=true.'
+      parameters:
+      - description: The conflicts of one source, such as coinmarketcap
+        in: query
+        name: source
+        type: string
+      - description: The resolved conflicts instead of the open ones
+        in: query
+        name: resolved
+        type: boolean
+      - description: The number of conflicts, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.ConflictPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the conflicts of identity of the catalog
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/conflicts/{id}/resolve:
+    post:
+      consumes:
+      - application/json
+      description: Closes the conflict with a note of what was decided. The fix itself,
+        such as hiding an asset or mapping a pair, is its own change. The note is
+        required; a resolved conflict answers 409 market_conflict_resolved. A conflict
+        that the sync meets again later opens anew. Audited as market_data.conflict_resolve.
+      parameters:
+      - description: The conflict
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The decision
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.ResolveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Resolve a conflict of identity
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/jobs:
+    get:
+      description: Every job that a worker has claimed, by name, with the worker that
+        runs it now, its failures in a row, and when it runs next.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.JobList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the market data jobs
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/jobs/{job}/run:
+    post:
+      description: 'Makes the job due now: the first worker that polls and reaches
+        its sources runs it, within market_data.poll_seconds. A job that a worker
+        runs now is refused with 409 market_job_running. Audited as market_data.job_run.'
+      parameters:
+      - description: The job, such as tickers:binance
+        in: path
+        name: job
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Run a market data job now
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/pairs:
+    get:
+      description: The pairs, in the order they were added, a page at a time. unmapped=true
+        selects the pairs that the jobs could not map to the assets of the catalog,
+        which the comparison leaves out.
+      parameters:
+      - description: The pairs of one venue, such as binance
+        in: query
+        name: venue
+        type: string
+      - description: Only the pairs without a base or quote asset
+        in: query
+        name: unmapped
+        type: boolean
+      - description: The number of pairs, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.PairPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the pairs of the market data venues
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/pairs/{id}/mapping:
+    put:
+      consumes:
+      - application/json
+      description: Sets the base and quote assets of a pair that the jobs could not
+        map, or mapped wrongly. The jobs keep the mapping. Audited as market_data.pair_map.
+      parameters:
+      - description: The pair
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The assets
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.MappingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Map a pair to the assets of the catalog
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/pairs/{id}/tier:
+    put:
+      consumes:
+      - application/json
+      description: Sets the tier of the pair, or clears it with null; it wins over
+        the tier of its asset. The tiers job applies it at its next run. Audited as
+        market_data.tier_override.
+      parameters:
+      - description: The pair
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The tier
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.TierRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Set the collection tier of a pair
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/runs:
+    get:
+      description: The runs, newest first, a page at a time, with what each read and
+        wrote and its error.
+      parameters:
+      - description: The runs of one job, such as tickers:binance
+        in: query
+        name: job
+        type: string
+      - description: The status
+        enum:
+        - running
+        - succeeded
+        - failed
+        in: query
+        name: status
+        type: string
+      - description: The number of runs, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.RunPage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the runs of the market data jobs
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/sources:
+    get:
+      description: Every source that a worker has used, that has a job, or that an
+        administrator paused, with its pause, its requests in the current minute and
+        month across every worker, and the state of its jobs. A source is healthy
+        while none of its jobs failed its last run.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.SourceList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the market data sources
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/sources/{source}/pause:
+    post:
+      consumes:
+      - application/json
+      description: Every worker stops claiming the jobs that call the source, such
+        as catalog:coingecko or tickers:binance, and a run in progress stops at its
+        next batch of writes. The jobs stay due and run once the source is resumed.
+        The reason is required. Pausing a paused source changes nothing. Audited as
+        market_data.source_pause.
+      parameters:
+      - description: The source, such as coingecko or binance
+        in: path
+        name: source
+        required: true
+        type: string
+      - description: Why
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.SourceView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Pause a market data source
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/sources/{source}/resume:
+    post:
+      consumes:
+      - application/json
+      description: The workers claim its jobs again at their next poll. Audited as
+        market_data.source_resume.
+      parameters:
+      - description: The source, such as coingecko or binance
+        in: path
+        name: source
+        required: true
+        type: string
+      - description: Why
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.SourceView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Resume a market data source
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/venues:
+    get:
+      description: Every exchange that the catalog knows, by id, enabled or not.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.VenueList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the market data venues
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/venues/{id}/disable:
+    post:
+      consumes:
+      - application/json
+      description: Its jobs collect nothing, and the public API leaves it out at once.
+        Its data is kept. Audited as market_data.venue_disable.
+      parameters:
+      - description: The venue, such as binance
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Why
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.VenueView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Disable a market data venue
+      tags:
+      - admin market data
+  /api/v1/admin/market-data/venues/{id}/enable:
+    post:
+      consumes:
+      - application/json
+      description: The jobs of the venue collect it again, and the public API shows
+        it. Audited as market_data.venue_enable.
+      parameters:
+      - description: The venue, such as binance
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Why
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/marketdataadmin.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/marketdataadmin.VenueView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Enable a market data venue
+      tags:
+      - admin market data
   /api/v1/admin/platform:
     get:
       description: What users see now (the status of GET /api/v1/public/status), and

@@ -114,6 +114,25 @@ const (
 	ActionDataKeyRewrap     = "data_key.rewrap"
 	ActionOutboxRetry       = "outbox.retry"
 	ActionOutboxDiscard     = "outbox.discard"
+
+	// The administration of the market data catalog (#270), by an
+	// administrator or cmd/admin market-data. Pausing or resuming a source,
+	// enabling or disabling a venue, hiding or showing an asset, linking it
+	// to a listed currency or unlinking it, setting or clearing the tier of
+	// an asset or a pair, mapping a pair to the assets of the catalog,
+	// resolving a conflict of identity, and running a job now.
+	ActionMarketSourcePause     = "market_data.source_pause"
+	ActionMarketSourceResume    = "market_data.source_resume"
+	ActionMarketVenueEnable     = "market_data.venue_enable"
+	ActionMarketVenueDisable    = "market_data.venue_disable"
+	ActionMarketAssetHide       = "market_data.asset_hide"
+	ActionMarketAssetUnhide     = "market_data.asset_unhide"
+	ActionMarketAssetLink       = "market_data.asset_link"
+	ActionMarketAssetUnlink     = "market_data.asset_unlink"
+	ActionMarketTierOverride    = "market_data.tier_override"
+	ActionMarketPairMap         = "market_data.pair_map"
+	ActionMarketConflictResolve = "market_data.conflict_resolve"
+	ActionMarketJobRun          = "market_data.job_run"
 )
 
 // Target types.
@@ -131,6 +150,15 @@ const (
 	TargetOutboxMessage = "outbox_message"
 	// TargetPlatformControl is a maintenance or a lockdown (#235).
 	TargetPlatformControl = "platform_control"
+	// The targets of the market data catalog (#270): a source by its name, a
+	// venue by its id, an asset, a pair, and a conflict by their ids, and a
+	// job by its name.
+	TargetMarketSource   = "market_source"
+	TargetMarketVenue    = "market_venue"
+	TargetMarketAsset    = "market_asset"
+	TargetMarketPair     = "market_pair"
+	TargetMarketConflict = "market_conflict"
+	TargetMarketJob      = "market_job"
 )
 
 // Operator returns the origin of the changes that an operator makes with a
