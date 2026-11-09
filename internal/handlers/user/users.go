@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -130,12 +131,12 @@ func callerID(c *gin.Context) (uuid.UUID, bool) {
 func sendProfileError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errProfileNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Profile not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("PROFILE_NOT_FOUND"), nil)
 	case errors.Is(err, errAccountUnavailable):
-		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account is not available. Please contact support.", nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_NOT_AVAILABLE_CONTACT_SUPPORT"), nil)
 	default:
 		log.Printf("Failed to load a profile: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to load the profile.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LOAD_PROFILE"), nil)
 	}
 }
 
@@ -156,7 +157,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 		return
 	}
 	profile, err := loadProfile(ctx, h.PostgresDB.DB, userID, false)
@@ -164,7 +165,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		sendProfileError(c, err)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Profile retrieved successfully.", profile)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("PROFILE_RETRIEVED_SUCCESSFULLY"), profile)
 }
 
 // UpdateProfile changes the names in the profile of the signed-in user and
@@ -188,19 +189,19 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 		return
 	}
 	update, errs, err := decodeProfileUpdate(c)
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request body", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_REQUEST_BODY"), nil)
 		return
 	}
 	if errs == nil {
 		errs = update.validate()
 	}
 	if errs != nil {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 
@@ -210,7 +211,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("Error starting a profile update: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update the profile.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_UPDATE_PROFILE"), nil)
 		return
 	}
 	defer tx.Rollback()
@@ -240,8 +241,8 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("Error updating a profile: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to update the profile.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_UPDATE_PROFILE"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Profile updated successfully.", profile)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("PROFILE_UPDATED_SUCCESSFULLY"), profile)
 }

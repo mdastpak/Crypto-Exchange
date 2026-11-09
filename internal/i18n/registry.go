@@ -123,27 +123,3 @@ func (r *Registry) Match(acceptLanguage string) (Locale, bool) {
 	}
 	return r.locales[index], true
 }
-
-// Translate returns message in locale l: the translation of the message
-// itself, or else of code, or else message unchanged. A code is only used
-// when it is specific to one kind of error, since the generic code of a
-// status covers messages of different meanings; the caller passes "" for
-// those.
-func (r *Registry) Translate(l Locale, code, message string) (string, bool) {
-	if l.Base() == English {
-		return message, false
-	}
-	c := catalogFor(l)
-	if c == nil {
-		return message, false
-	}
-	if t, ok := c.Messages[message]; ok {
-		return t, true
-	}
-	if code != "" {
-		if t, ok := c.Codes[code]; ok {
-			return t, true
-		}
-	}
-	return message, false
-}

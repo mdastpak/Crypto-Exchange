@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -308,10 +309,10 @@ func Public(r Restriction) PublicRestriction {
 
 // Messages of the refusals. They name no reason, since the user may be the
 // subject of a case.
-const (
-	MessageAccountFrozen       = "This account is frozen. Please contact support."
-	messageOperationRestricted = "This operation is not available on your account. Please contact support."
-	messageAssetRestricted     = "This operation is not available for this currency on your account. Please contact support."
+var (
+	MessageAccountFrozen       = i18n.M("ACCOUNT_FROZEN")
+	messageOperationRestricted = i18n.M("OPERATION_RESTRICTED")
+	messageAssetRestricted     = i18n.M("ASSET_RESTRICTED")
 )
 
 // Send answers a refusal with 403 and its code. It reports false, and sends

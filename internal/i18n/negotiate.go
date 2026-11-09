@@ -81,13 +81,13 @@ func (r *Registry) Negotiate(req *http.Request) Negotiated {
 	return n
 }
 
-// Translate returns message in the negotiated locale; see
-// Registry.Translate.
-func (n Negotiated) Translate(code, message string) (string, bool) {
+// Render returns m in the negotiated locale, and the language its text is
+// in; see Registry.Render.
+func (n Negotiated) Render(m Message) (text, language string) {
 	if n.registry == nil {
-		return message, false
+		return m.String(), English
 	}
-	return n.registry.Translate(n.Locale, code, message)
+	return n.registry.Render(n.Locale, m)
 }
 
 type contextKey struct{}

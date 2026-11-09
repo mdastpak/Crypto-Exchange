@@ -9,6 +9,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 
 	"github.com/gin-gonic/gin"
@@ -77,6 +78,13 @@ func (h *AdminHandler) refreshPlatform(ctx context.Context) {
 	}
 }
 
+// controlFailures are the messages of an unexpected failure, by action.
+var controlFailures = map[string]i18n.Message{
+	"create": i18n.M("CONTROL_CREATE_FAILED"),
+	"change": i18n.M("CONTROL_CHANGE_FAILED"),
+	"lift":   i18n.M("CONTROL_LIFT_FAILED"),
+}
+
 // sendControlError answers the errors of the changes of controls.
 func sendControlError(c *gin.Context, err error, action string) {
 	var invalid platform.Invalid
@@ -85,18 +93,18 @@ func sendControlError(c *gin.Context, err error, action string) {
 	case errors.As(err, &invalid):
 		sendValidationErrors(c, fieldErrors(invalid))
 	case errors.Is(err, platform.ErrNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Control not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CONTROL_NOT_FOUND"), nil)
 	case errors.As(err, &conflict):
-		helpers.SendError(c, http.StatusConflict, "version_conflict", "The control has changed since that version; read it again and retry.",
+		helpers.SendError(c, http.StatusConflict, "version_conflict", i18n.M("CONTROL_VERSION_CONFLICT"),
 			gin.H{"code": "version_conflict", "version": conflict.Current})
 	case errors.Is(err, platform.ErrEnded):
-		helpers.SendError(c, http.StatusConflict, "control_ended", "The control has already ended or been lifted.", nil)
+		helpers.SendError(c, http.StatusConflict, "control_ended", i18n.M("CONTROL_ENDED"), nil)
 	case errors.Is(err, platform.ErrSameApprover):
 		helpers.SendError(c, http.StatusConflict, "second_approval_required",
-			"You asked to lift this control; another administrator must approve the lift.", nil)
+			i18n.M("SECOND_APPROVAL_REQUIRED"), nil)
 	default:
 		log.Printf("Failed to %s a platform control: %v", action, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to "+action+" the control.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, controlFailures[action], nil)
 	}
 }
 
@@ -122,10 +130,10 @@ func (h *AdminHandler) GetPlatform(c *gin.Context) {
 	controls, err := platform.Open(ctx, h.PostgresDB.DB)
 	if err != nil {
 		log.Printf("Failed to read the platform controls: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to read the platform controls.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_CONTROLS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Platform controls retrieved successfully.",
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CONTROLS_RETRIEVED_SUCCESSFULLY"),
 		PlatformOverview{Status: platform.StatusOf(controls, time.Now()), Controls: controls})
 }
 
@@ -145,10 +153,10 @@ func (h *AdminHandler) ListControls(c *gin.Context) {
 	controls, err := platform.List(ctx, h.PostgresDB.DB, 0)
 	if err != nil {
 		log.Printf("Failed to list the platform controls: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list the platform controls.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CONTROLS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Platform controls retrieved successfully.", ControlList{Items: controls})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CONTROLS_RETRIEVED_SUCCESSFULLY"), ControlList{Items: controls})
 }
 
 // @Summary Put the service under maintenance, or lock a feature
@@ -173,7 +181,7 @@ func (h *AdminHandler) CreateControl(c *gin.Context) {
 	}
 	origin, adminHK, ok := adminOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	created, err := platform.Create(ctx, h.PostgresDB.DB, platform.New{
@@ -186,7 +194,7 @@ func (h *AdminHandler) CreateControl(c *gin.Context) {
 		return
 	}
 	h.refreshPlatform(ctx)
-	helpers.SendResponse(c, http.StatusCreated, "Control created.", created)
+	helpers.SendResponse(c, http.StatusCreated, i18n.M("CONTROL_CREATED"), created)
 }
 
 // @Summary Change the end or the message of a platform control
@@ -220,7 +228,7 @@ func (h *AdminHandler) UpdateControl(c *gin.Context) {
 	}
 	origin, _, ok := adminOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	updated, err := platform.Update(ctx, h.PostgresDB.DB, c.Param("id"),
@@ -230,7 +238,7 @@ func (h *AdminHandler) UpdateControl(c *gin.Context) {
 		return
 	}
 	h.refreshPlatform(ctx)
-	helpers.SendResponse(c, http.StatusOK, "Control changed.", updated)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CONTROL_CHANGED"), updated)
 }
 
 // @Summary Lift a platform control
@@ -265,7 +273,7 @@ func (h *AdminHandler) LiftControl(c *gin.Context) {
 	}
 	origin, adminHK, ok := adminOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	result, err := platform.Lift(ctx, h.PostgresDB.DB, platform.LiftRequest{
@@ -276,9 +284,9 @@ func (h *AdminHandler) LiftControl(c *gin.Context) {
 		return
 	}
 	if result.Pending {
-		helpers.SendResponse(c, http.StatusAccepted, "Lift requested; another administrator must approve it.", result.Control)
+		helpers.SendResponse(c, http.StatusAccepted, i18n.M("LIFT_REQUESTED"), result.Control)
 		return
 	}
 	h.refreshPlatform(ctx)
-	helpers.SendResponse(c, http.StatusOK, "Control lifted.", result.Control)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CONTROL_LIFTED"), result.Control)
 }

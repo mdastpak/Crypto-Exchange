@@ -138,38 +138,70 @@ func TestNegotiate_Order(t *testing.T) {
 	}
 }
 
-func TestTranslate(t *testing.T) {
+func TestRender(t *testing.T) {
 	r := MustNew("en", "en", "fa", "fa-AF", "ar")
 	fa, _ := r.Lookup("fa")
 	en, _ := r.Lookup("en")
 	ar, _ := r.Lookup("ar")
 	dari, _ := r.Lookup("fa-AF")
 
-	got, ok := r.Translate(fa, "", "Invalid request body")
-	assert.True(t, ok)
+	got, lang := r.Render(fa, M("INVALID_REQUEST_BODY"))
+	assert.Equal(t, "fa", lang)
 	assert.Equal(t, "بدنه درخواست نامعتبر است.", got)
+	got, lang = r.Render(en, M("INVALID_REQUEST_BODY"))
+	assert.Equal(t, "en", lang)
+	assert.Equal(t, "Invalid request body", got)
 
-	// A message that varies falls back to its code.
-	got, ok = r.Translate(fa, "account_frozen", "Some text that varies: 42")
-	assert.True(t, ok)
-	assert.Equal(t, catalogs["fa"].Codes["account_frozen"], got)
-
-	// Neither: the English message stays.
-	got, ok = r.Translate(fa, "", "Nothing like this is translated")
-	assert.False(t, ok)
-	assert.Equal(t, "Nothing like this is translated", got)
-
-	// English is never translated, and a locale without a catalog stays
-	// English, while one of a language with a catalog uses it.
-	_, ok = r.Translate(en, "account_frozen", "Invalid request body")
-	assert.False(t, ok)
-	_, ok = r.Translate(ar, "", "Invalid request body")
-	assert.False(t, ok)
+	// A locale without a catalog answers in English, and one of a language
+	// with a catalog uses it.
+	got, lang = r.Render(ar, M("INVALID_REQUEST_BODY"))
+	assert.Equal(t, "en", lang)
+	assert.Equal(t, "Invalid request body", got)
 	assert.False(t, HasCatalog(ar))
 	assert.True(t, HasCatalog(en))
-	got, ok = r.Translate(dari, "", "Invalid request body")
-	assert.True(t, ok)
+	got, lang = r.Render(dari, M("INVALID_REQUEST_BODY"))
+	assert.Equal(t, "fa-AF", lang)
 	assert.Equal(t, "بدنه درخواست نامعتبر است.", got)
+
+	// A key that no catalog has renders as itself, never as nothing.
+	got, lang = r.Render(fa, M("NO_SUCH_KEY_ANYWHERE"))
+	assert.Equal(t, "en", lang)
+	assert.Equal(t, "NO_SUCH_KEY_ANYWHERE", got)
+}
+
+func TestRender_Parameters(t *testing.T) {
+	r := MustNew("en", "en", "fa")
+	fa, _ := r.Lookup("fa")
+	en, _ := r.Lookup("en")
+	m := M("CURRENCY_OPERATION_UNAVAILABLE", A("operation", Key("CAPABILITY_BUY")), A("currency", "BTC"))
+
+	// A nested key is translated, and a literal is inserted as it is: in
+	// RTL text inside isolates, so that BTC/USDT or an amount keeps its
+	// own direction.
+	got, _ := r.Render(fa, m)
+	assert.Equal(t, "خرید ارز \u2068BTC\u2069 در حال حاضر در دسترس نیست.", got)
+	got, _ = r.Render(en, m)
+	assert.Equal(t, "The buying of BTC is not available now.", got)
+	assert.Equal(t, got, m.String())
+
+	// A nested message, and a parameter without a value.
+	nested := M("CODES_CANNOT_BE_SENT_BY", A("channel", M("CHANNEL_MOBILE")))
+	got, _ = r.Render(fa, nested)
+	assert.Equal(t, "امکان ارسال کد از راه شماره\u200cی موبایل وجود ندارد.", got)
+	assert.Equal(t, "Codes cannot be sent by .", M("CODES_CANNOT_BE_SENT_BY").String())
+	assert.True(t, Message{}.IsZero())
+}
+
+func TestParseTemplate(t *testing.T) {
+	tpl, err := parseTemplate("{{literal}} {name} and {other_2}")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"name": true, "other_2": true}, tpl.params())
+	assert.Equal(t, "{literal} a and b", tpl.execute(map[string]string{"name": "a", "other_2": "b"}))
+
+	for _, text := range []string{"", "  ", "{open", "close}", "{Upper}", "{with space}", "{}"} {
+		_, err := parseTemplate(text)
+		assert.Error(t, err, "%q", text)
+	}
 }
 
 func TestMiddleware_KeepsTheLocaleOnTheRequest(t *testing.T) {
@@ -183,7 +215,7 @@ func TestMiddleware_KeepsTheLocaleOnTheRequest(t *testing.T) {
 		fromCtx, ok := FromContext(c.Request.Context())
 		require.True(t, ok)
 		assert.Equal(t, n.Locale.Code, fromCtx.Locale.Code)
-		msg, _ := n.Translate("", "Not found")
+		msg, _ := n.Render(M("NOT_FOUND"))
 		c.String(http.StatusOK, n.Locale.Code+" "+msg)
 	})
 	w := httptest.NewRecorder()
@@ -193,43 +225,61 @@ func TestMiddleware_KeepsTheLocaleOnTheRequest(t *testing.T) {
 
 	_, ok := FromGin(nil)
 	assert.False(t, ok)
-	msg, ok := Negotiated{}.Translate("", "Not found")
-	assert.False(t, ok)
+	msg, lang := Negotiated{}.Render(M("NOT_FOUND"))
+	assert.Equal(t, "en", lang)
 	assert.Equal(t, "Not found", msg)
 }
 
 // TestCatalogs checks every catalog: it parses, is named by a valid tag,
-// has no empty translation, keeps the format verbs and the info.* names of
-// the English text, and translates only messages and codes that the
-// server still writes, so that a reworded message does not leave a stale
-// entry behind unnoticed.
+// defines only keys of the English catalog with the same parameters, and
+// the fa catalog translates every key. It also checks that every key the
+// server sends is defined, and that every defined key is still sent, so
+// that a removed message does not leave a stale entry behind.
 func TestCatalogs(t *testing.T) {
 	all, err := loadCatalogs()
 	require.NoError(t, err)
+	english := all[English]
+	require.NotEmpty(t, english)
 	require.Contains(t, all, "fa")
-	_, hasEnglish := all[English]
-	assert.False(t, hasEnglish, "English needs no catalog")
 
-	literals := stringLiterals(t, filepath.Join("..", ".."))
 	for code, c := range all {
-		require.NotEmpty(t, c.Messages, code)
-		for message, translation := range c.Messages {
-			assert.NotEmpty(t, strings.TrimSpace(translation), "%s: %q", code, message)
-			assert.Equal(t, strings.Count(message, "%"), strings.Count(translation, "%"), "%s: %q", code, message)
-			assert.True(t, literals[message], "%s translates %q, which no Go file of the server writes", code, message)
+		for key, tpl := range c {
+			source, ok := english[key]
+			if !assert.True(t, ok, "%s.json has %s, which en.json lacks", code, key) {
+				continue
+			}
+			assert.Equal(t, source.params(), tpl.params(), "%s.json: %s has other parameters than in en.json", code, key)
 		}
-		for errorCode, translation := range c.Codes {
-			assert.NotEmpty(t, strings.TrimSpace(translation), "%s: %q", code, errorCode)
-			assert.True(t, literals[errorCode], "%s translates code %q, which no Go file of the server defines", code, errorCode)
+	}
+	for key := range english {
+		assert.Contains(t, all["fa"], key, "fa.json lacks %s", key)
+	}
+
+	used, families := messageKeys(t, filepath.Join("..", ".."))
+	for key, where := range used {
+		assert.Contains(t, english, key, "%s sends %s, which en.json lacks", where, key)
+	}
+	for key := range english {
+		if _, ok := used[key]; ok {
+			continue
 		}
+		family := false
+		for _, prefix := range families {
+			family = family || strings.HasPrefix(string(key), prefix)
+		}
+		assert.True(t, family, "en.json has %s, which no Go file of the server sends", key)
 	}
 }
 
-// stringLiterals returns the string literals of the non-test Go files of
-// the module under root.
-func stringLiterals(t *testing.T, root string) map[string]bool {
+// messageKeys returns the keys that the non-test Go files of the module
+// under root name in i18n.M and i18n.Key, with the file of each, and the
+// prefixes of the keys that they build, such as "CAPABILITY_" in
+// i18n.Key("CAPABILITY_" + ...). The packages that build keys test that
+// each of their values has one.
+func messageKeys(t *testing.T, root string) (map[Key]string, []string) {
 	t.Helper()
-	literals := map[string]bool{}
+	used := map[Key]string{}
+	var prefixes []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -248,9 +298,20 @@ func stringLiterals(t *testing.T, root string) map[string]bool {
 			return err
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
-			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-				if s, err := strconv.Unquote(lit.Value); err == nil {
-					literals[s] = true
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 || !isKeyFunc(call.Fun) {
+				return true
+			}
+			switch arg := call.Args[0].(type) {
+			case *ast.BasicLit:
+				if s, err := strconv.Unquote(arg.Value); err == nil {
+					used[Key(s)] = path
+				}
+			case *ast.BinaryExpr:
+				if lit, ok := arg.X.(*ast.BasicLit); ok {
+					if s, err := strconv.Unquote(lit.Value); err == nil {
+						prefixes = append(prefixes, s)
+					}
 				}
 			}
 			return true
@@ -258,5 +319,17 @@ func stringLiterals(t *testing.T, root string) map[string]bool {
 		return nil
 	})
 	require.NoError(t, err)
-	return literals
+	return used, prefixes
+}
+
+// isKeyFunc reports a call of M or Key, of this package or as i18n.M.
+func isKeyFunc(fun ast.Expr) bool {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return f.Name == "M" || f.Name == "Key"
+	case *ast.SelectorExpr:
+		pkg, ok := f.X.(*ast.Ident)
+		return ok && pkg.Name == "i18n" && (f.Sel.Name == "M" || f.Sel.Name == "Key")
+	}
+	return false
 }

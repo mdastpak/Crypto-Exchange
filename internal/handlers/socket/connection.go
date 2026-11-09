@@ -226,7 +226,7 @@ func (h *WebSocketHandler) authenticate(r *http.Request) (*auth.Claims, int, str
 		return claims, 0, "", ""
 	case errors.Is(err, auth.ErrAccountUnavailable):
 		code, message := auth.AccountError(err)
-		return nil, http.StatusForbidden, code, message
+		return nil, http.StatusForbidden, code, message.String()
 	case errors.Is(err, auth.ErrSessionInvalid):
 		return nil, http.StatusUnauthorized, "session_inactive", "Unauthorized - Session is not active"
 	case errors.Is(err, auth.ErrInvalidToken), errors.Is(err, auth.ErrWrongTokenType), errors.Is(err, auth.ErrWrongRole):

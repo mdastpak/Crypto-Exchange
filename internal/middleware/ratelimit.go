@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -153,7 +154,7 @@ func limiterUnavailable(c *gin.Context, prefix string, failClosed bool, err erro
 	logLimiterError(prefix, err)
 	if failClosed {
 		c.Header("Retry-After", "1")
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Service temporarily unavailable", nil)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SERVICE_TEMPORARILY_UNAVAILABLE"), nil)
 		c.Abort()
 		return
 	}
@@ -170,7 +171,7 @@ func rejectRateLimited(c *gin.Context, limit int, wait time.Duration) {
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 	c.Header("X-RateLimit-Remaining", "0")
 	c.Header("Retry-After", retryAfterSeconds(wait))
-	helpers.SendResponse(c, http.StatusTooManyRequests, "Rate limit exceeded", nil)
+	helpers.SendResponse(c, http.StatusTooManyRequests, i18n.M("RATE_LIMIT_EXCEEDED"), nil)
 	c.Abort()
 }
 

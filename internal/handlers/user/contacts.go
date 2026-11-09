@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -151,7 +151,7 @@ type pendingChange struct {
 func (h *UserHandler) ListContacts(c *gin.Context) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -159,14 +159,14 @@ func (h *UserHandler) ListContacts(c *gin.Context) {
 	contacts, _, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the contacts of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list contacts.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CONTACTS"), nil)
 		return
 	}
 	list := ContactList{Items: make([]Contact, 0, len(contacts))}
 	for _, ct := range contacts {
 		list.Items = append(list.Items, Contact{Type: ct.typ, Value: maskContact(ct.typ, ct.value), VerifiedAt: ct.verifiedAt.UTC()})
 	}
-	helpers.SendResponse(c, http.StatusOK, "Contacts retrieved successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CONTACTS_RETRIEVED_SUCCESSFULLY"), list)
 }
 
 // storedContact is a verified contact as the database holds it.
@@ -221,12 +221,13 @@ type contactChange struct {
 // errChange is a refusal of a change, with its status, code, and message,
 // and the info of the answer, if any.
 type errChange struct {
-	status        int
-	code, message string
-	info          gin.H
+	status  int
+	code    string
+	message i18n.Message
+	info    gin.H
 }
 
-func (e *errChange) Error() string { return e.message }
+func (e *errChange) Error() string { return e.message.String() }
 
 // planChange checks a change against the current contacts of the user, as
 // the database read them at now. It runs when the change starts, and again
@@ -238,21 +239,21 @@ func planChange(req ContactChangeRequest, contacts []storedContact, now time.Tim
 	switch ch.action {
 	case contactAdd:
 		if has {
-			return ch, &errChange{status: http.StatusConflict, code: codeContactExists, message: "You already have a contact of this type; replace it instead."}
+			return ch, &errChange{status: http.StatusConflict, code: codeContactExists, message: i18n.M("CONTACT_TYPE_EXISTS")}
 		}
 	case contactReplace:
 		if !has {
-			return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "You have no contact of this type to replace."}
+			return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: i18n.M("NO_CONTACT_TO_REPLACE")}
 		}
 		if strings.EqualFold(current.value, ch.value) {
-			return ch, &errChange{status: http.StatusConflict, code: codeSameContact, message: "The new contact is the one you already have."}
+			return ch, &errChange{status: http.StatusConflict, code: codeSameContact, message: i18n.M("CONTACT_UNCHANGED")}
 		}
 	case contactRemove:
 		if !has {
-			return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "You have no contact of this type to remove."}
+			return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: i18n.M("NO_CONTACT_TO_REMOVE")}
 		}
 		if len(contacts) < 2 {
-			return ch, &errChange{status: http.StatusConflict, code: codeLastContact, message: "Your last verified contact cannot be removed."}
+			return ch, &errChange{status: http.StatusConflict, code: codeLastContact, message: i18n.M("LAST_CONTACT_CANNOT_BE_REMOVED")}
 		}
 	}
 
@@ -266,7 +267,7 @@ func planChange(req ContactChangeRequest, contacts []storedContact, now time.Tim
 	}
 	account, ok := findContact(contacts, verifyWith)
 	if !ok {
-		return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "The contact to verify with is not one of your verified contacts."}
+		return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: i18n.M("VERIFYING_CONTACT_NOT_YOURS")}
 	}
 	if err := checkCooldown(ch, account, current, now); err != nil {
 		return ch, err
@@ -299,7 +300,7 @@ func checkCooldown(ch contactChange, account, target storedContact, now time.Tim
 	return &errChange{
 		status:  http.StatusForbidden,
 		code:    codeContactTooNew,
-		message: "The contact you verify with was added recently and cannot change your other contacts yet. Use the contact you are changing, or an older one, or try again later.",
+		message: i18n.M("VERIFYING_CONTACT_TOO_RECENT"),
 		info:    gin.H{"available_at": availableAt.UTC().Format(time.RFC3339)},
 	}
 }
@@ -338,13 +339,13 @@ func validateChangeRequest(req *ContactChangeRequest) map[string]string {
 }
 
 func sendContactValidation(c *gin.Context, errs map[string]string) {
-	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 }
 
 // contactsReady reports whether the contact routes have what they need.
 func (h *UserHandler) contactsReady(c *gin.Context) bool {
 	if h.ContactOTP == nil || h.OTPSender == nil || h.PostgresDB == nil || h.RedisClient == nil {
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Contact changes are not available.", nil)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("CONTACT_CHANGES_ARE_NOT_AVAILABLE"), nil)
 		return false
 	}
 	return true
@@ -371,7 +372,7 @@ func (h *UserHandler) contactsReady(c *gin.Context) bool {
 func (h *UserHandler) StartContactChange(c *gin.Context) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	if !h.contactsReady(c) {
@@ -379,7 +380,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	}
 	var req ContactChangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 	if errs := validateChangeRequest(&req); errs != nil {
@@ -392,7 +393,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	contacts, now, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to read the contacts of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_START_THE_CHANGE"), nil)
 		return
 	}
 	plan, err := planChange(req, contacts, now)
@@ -409,7 +410,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 		}
 		if err != nil {
 			log.Printf("Failed to read the national ID of a user: %v", err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the change.", nil)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_START_THE_CHANGE"), nil)
 			return
 		}
 		if has {
@@ -419,7 +420,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	}
 	for _, typ := range []string{plan.account.typ, plan.newType()} {
 		if typ != "" && !h.OTPSender.Supports(typ) {
-			helpers.SendError(c, http.StatusConflict, codeChannelMissing, fmt.Sprintf("Codes cannot be sent by %s.", typ), nil)
+			helpers.SendError(c, http.StatusConflict, codeChannelMissing, i18n.M("CODES_CANNOT_BE_SENT_BY", i18n.A("channel", i18n.Key("CHANNEL_"+strings.ToUpper(typ)))), nil)
 			return
 		}
 	}
@@ -449,10 +450,10 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	started.ChangeID = uuid.NewString()
 	if err := h.saveChange(ctx, started.ChangeID, change); err != nil {
 		log.Printf("Failed to store a contact change: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to start the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_START_THE_CHANGE"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Codes sent. Confirm the change with them.", started)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CHANGE_CODES_SENT"), started)
 }
 
 func (p contactChange) newType() string {
@@ -493,10 +494,10 @@ func sendIssueError(c *gin.Context, err error) bool {
 	case err == nil:
 		return false
 	case errors.Is(err, otp.ErrTooManyRequests), errors.Is(err, otp.ErrTooManyAttempts):
-		helpers.SendError(c, http.StatusTooManyRequests, codeRateLimited, "Too many codes requested. Please try again later.", nil)
+		helpers.SendError(c, http.StatusTooManyRequests, codeRateLimited, i18n.M("TOO_MANY_CODES_REQUESTED"), nil)
 	default:
 		log.Printf("Failed to send a contact change code: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to send the code.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_SEND_THE_CODE"), nil)
 	}
 	return true
 }
@@ -564,7 +565,7 @@ func (h *UserHandler) loadChange(ctx context.Context, id, userID string) (pendin
 func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	if !h.contactsReady(c) {
@@ -572,12 +573,12 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if _, err := uuid.Parse(id); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for the change", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_CHANGE_ID"), nil)
 		return
 	}
 	var req ContactChangeConfirmation
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 
@@ -586,11 +587,11 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	change, found, err := h.loadChange(ctx, id, userID.String())
 	if err != nil {
 		log.Printf("Failed to read a contact change: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CONFIRM_THE_CHANGE"), nil)
 		return
 	}
 	if !found {
-		helpers.SendError(c, http.StatusNotFound, codeChangeNotFound, "The change is unknown or has expired; start it again.", nil)
+		helpers.SendError(c, http.StatusNotFound, codeChangeNotFound, i18n.M("CHANGE_UNKNOWN_OR_EXPIRED"), nil)
 		return
 	}
 
@@ -621,11 +622,11 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 			continue
 		case errors.Is(err, otp.ErrTooManyAttempts):
 			h.RedisClient.Client.Del(ctx, h.changeKey(id))
-			helpers.SendError(c, http.StatusTooManyRequests, codeRateLimited, "Too many wrong codes. Start the change again later.", nil)
+			helpers.SendError(c, http.StatusTooManyRequests, codeRateLimited, i18n.M("TOO_MANY_WRONG_CODES"), nil)
 			return
 		case err != nil:
 			log.Printf("Failed to verify a contact change code: %v", err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CONFIRM_THE_CHANGE"), nil)
 			return
 		}
 		if !strings.EqualFold(got, p.expected) {
@@ -639,7 +640,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	}
 	if len(invalid) > 0 {
 		h.recordContactAttempt(ctx, c, userID.String(), change, invalid)
-		helpers.SendError(c, http.StatusUnauthorized, codeCodeInvalid, "Invalid or expired code.", gin.H{"field": strings.Join(invalid, ",")})
+		helpers.SendError(c, http.StatusUnauthorized, codeCodeInvalid, i18n.M("INVALID_OR_EXPIRED_CODE"), gin.H{"field": strings.Join(invalid, ",")})
 		return
 	}
 
@@ -658,7 +659,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("Failed to check the ownership of a mobile number: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CONFIRM_THE_CHANGE"), nil)
 		return
 	}
 	// A contact that another account holds moves to this user, who proved
@@ -669,7 +670,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("Failed to check the account that holds a contact: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CONFIRM_THE_CHANGE"), nil)
 		return
 	}
 
@@ -678,11 +679,11 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	deleted, err := h.RedisClient.Client.Del(ctx, h.changeKey(id)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Failed to claim a contact change: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to confirm the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CONFIRM_THE_CHANGE"), nil)
 		return
 	}
 	if deleted == 0 {
-		helpers.SendError(c, http.StatusNotFound, codeChangeNotFound, "The change is unknown or has expired; start it again.", nil)
+		helpers.SendError(c, http.StatusNotFound, codeChangeNotFound, i18n.M("CHANGE_UNKNOWN_OR_EXPIRED"), nil)
 		return
 	}
 
@@ -692,14 +693,14 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("Failed to apply a contact change: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to apply the change.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_APPLY_THE_CHANGE"), nil)
 		return
 	}
 	list := ContactList{Items: make([]Contact, 0, len(contacts))}
 	for _, ct := range contacts {
 		list.Items = append(list.Items, Contact{Type: ct.typ, Value: maskContact(ct.typ, ct.value), VerifiedAt: ct.verifiedAt.UTC()})
 	}
-	helpers.SendResponse(c, http.StatusOK, "Contact changed successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CONTACT_CHANGED_SUCCESSFULLY"), list)
 }
 
 // ownership is a successful check that a mobile number belongs to the
@@ -711,12 +712,12 @@ type ownership struct {
 // errIdentityUnavailable is the refusal of a mobile change that cannot be
 // checked now.
 var errIdentityUnavailable = &errChange{status: http.StatusServiceUnavailable, code: codeIdentityUnavailable,
-	message: "Your mobile number cannot be checked against your national ID right now. Please try again later."}
+	message: i18n.M("MOBILE_OWNERSHIP_CHECK_UNAVAILABLE")}
 
 // errMobileRequired is the refusal of a removal of the mobile number of a
 // user who has a verified national ID.
 var errMobileRequired = &errChange{status: http.StatusConflict, code: codeMobileRequired,
-	message: "Your account needs a mobile number registered to your national ID. Replace it instead of removing it."}
+	message: i18n.M("OWNED_MOBILE_REQUIRED")}
 
 // nationalID returns the verified national ID of a user, and maps keys that
 // are not loaded to errIdentityUnavailable.
@@ -769,14 +770,14 @@ func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pen
 			log.Printf("Failed to record the audit event %s (failure): %v", e.Action, err)
 		}
 		return nil, &errChange{status: http.StatusForbidden, code: codeMobileOwnerMismatch,
-			message: "This mobile number is not registered to your national ID. Use a number in your own name."}
+			message: i18n.M("MOBILE_NOT_OWNED_BY_NATIONAL_ID")}
 	}
 	return &ownership{nationalID: nationalID, provider: h.Ownership.Provider(), ref: match.Ref}, nil
 }
 
 // errContactInUse is the refusal of a contact that another account holds
 // and still owns. The user proved control of it, so the answer may say so.
-var errContactInUse = &errChange{status: http.StatusConflict, code: codeContactInUse, message: "This contact belongs to another account."}
+var errContactInUse = &errChange{status: http.StatusConflict, code: codeContactInUse, message: i18n.M("CONTACT_BELONGS_TO_ANOTHER_ACCOUNT")}
 
 // claimable returns the account that holds the new contact of a change
 // and that the contact may move away from (#252), or "" when no other
@@ -856,7 +857,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 
 	if _, err := loadProfile(ctx, tx, uuid.MustParse(ch.UserID), true); err != nil {
 		if errors.Is(err, errAccountUnavailable) || errors.Is(err, errProfileNotFound) {
-			return nil, &errChange{status: http.StatusForbidden, code: helpers.CodeAccountUnavailable, message: "This account is not available. Please contact support."}
+			return nil, &errChange{status: http.StatusForbidden, code: helpers.CodeAccountUnavailable, message: i18n.M("ACCOUNT_NOT_AVAILABLE_CONTACT_SUPPORT")}
 		}
 		return nil, err
 	}
@@ -872,7 +873,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	}
 	// The contact that proved the account must still be one of the user's.
 	if _, ok := findContactValue(contacts, ch.AccountContact); !ok {
-		return nil, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: "The contact you verified with has changed; start the change again."}
+		return nil, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: i18n.M("VERIFYING_CONTACT_CHANGED")}
 	}
 	// The national ID is read again under the lock: the check before must
 	// have been made with the one the user has now (#253).
@@ -885,7 +886,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 		case has && plan.action == contactRemove:
 			return nil, errMobileRequired
 		case has && (owned == nil || owned.nationalID != nationalID):
-			return nil, &errChange{status: http.StatusConflict, code: codeIdentityChanged, message: "Your verified identity changed during the change; start it again."}
+			return nil, &errChange{status: http.StatusConflict, code: codeIdentityChanged, message: i18n.M("IDENTITY_CHANGED_DURING_CHANGE")}
 		case !has:
 			owned = nil
 		}

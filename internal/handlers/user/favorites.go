@@ -5,11 +5,13 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -53,7 +55,7 @@ func maxFavorites() int {
 func (h *UserHandler) ListFavorites(c *gin.Context) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -61,17 +63,17 @@ func (h *UserHandler) ListFavorites(c *gin.Context) {
 	list, err := favorites.Get(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the favorites of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list favorites.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_FAVORITES"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Favorites retrieved successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("FAVORITES_RETRIEVED_SUCCESSFULLY"), list)
 }
 
 // targetParam reads the currency or pair of the path, in its canonical form.
 func targetParam(c *gin.Context) (string, bool) {
 	id, err := uuid.Parse(c.Param("hk"))
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_UUID_FORMAT"), nil)
 		return "", false
 	}
 	return id.String(), true
@@ -80,7 +82,7 @@ func targetParam(c *gin.Context) (string, bool) {
 func (h *UserHandler) changeFavorite(c *gin.Context, kind favorites.Kind, add bool) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	target, ok := targetParam(c)
@@ -98,17 +100,17 @@ func (h *UserHandler) changeFavorite(c *gin.Context, kind favorites.Kind, add bo
 	}
 	switch {
 	case errors.Is(err, favorites.ErrNotListed):
-		helpers.SendResponse(c, http.StatusNotFound, "Not a listed "+string(kind), nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M(i18n.Key("FAVORITE_NOT_LISTED_"+strings.ToUpper(string(kind)))), nil)
 	case errors.Is(err, favorites.ErrLimit):
-		helpers.SendError(c, http.StatusConflict, "favorites_limit_reached", "You have the most favorites allowed. Remove one to add another.",
+		helpers.SendError(c, http.StatusConflict, "favorites_limit_reached", i18n.M("FAVORITES_LIMIT_REACHED"),
 			gin.H{"max_favorites": maxFavorites()})
 	case errors.Is(err, favorites.ErrUserNotFound):
-		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account is not available. Please contact support.", nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_NOT_AVAILABLE_CONTACT_SUPPORT"), nil)
 	case err != nil:
 		log.Printf("Failed to change a favorite: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to change the favorite.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CHANGE_THE_FAVORITE"), nil)
 	default:
-		helpers.SendResponse(c, http.StatusOK, "Favorites updated.", FavoriteChange{Changed: changed})
+		helpers.SendResponse(c, http.StatusOK, i18n.M("FAVORITES_UPDATED"), FavoriteChange{Changed: changed})
 	}
 }
 
@@ -196,12 +198,12 @@ func (h *UserHandler) RemoveFavoritePair(c *gin.Context) {
 func (h *UserHandler) ReorderFavorites(c *gin.Context) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	var req FavoritesOrder
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 	errs := map[string]string{}
@@ -222,7 +224,7 @@ func (h *UserHandler) ReorderFavorites(c *gin.Context) {
 		errs["currencies"] = "or pairs is required"
 	}
 	if len(errs) > 0 {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 
@@ -240,22 +242,22 @@ func (h *UserHandler) ReorderFavorites(c *gin.Context) {
 		switch {
 		case errors.Is(err, favorites.ErrOrderMismatch):
 			helpers.SendError(c, http.StatusConflict, "order_mismatch",
-				"The order must name each of your favorite "+string(change.kind)+"s once; read them again and retry.", nil)
+				i18n.M("FAVORITES_ORDER_MISMATCH", i18n.A("kind", i18n.Key("FAVORITE_KIND_"+strings.ToUpper(string(change.kind))))), nil)
 			return
 		case errors.Is(err, favorites.ErrUserNotFound):
-			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account is not available. Please contact support.", nil)
+			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_NOT_AVAILABLE_CONTACT_SUPPORT"), nil)
 			return
 		case err != nil:
 			log.Printf("Failed to reorder the favorites of a user: %v", err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to reorder favorites.", nil)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_REORDER_FAVORITES"), nil)
 			return
 		}
 	}
 	list, err := favorites.Get(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the favorites of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list favorites.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_FAVORITES"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Favorites reordered.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("FAVORITES_REORDERED"), list)
 }

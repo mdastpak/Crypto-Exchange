@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
@@ -39,7 +40,7 @@ func bearerToken(header string) (string, bool) {
 // scheme, for a route that takes a token without requiring one.
 func BearerToken(header string) (string, bool) { return bearerToken(header) }
 
-func unauthorized(c *gin.Context, code, message string) {
+func unauthorized(c *gin.Context, code string, message i18n.Message) {
 	c.Header("WWW-Authenticate", `Bearer`)
 	helpers.SendError(c, http.StatusUnauthorized, code, message, nil)
 }
@@ -52,30 +53,30 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" {
-			unauthorized(c, "token_missing", "Unauthorized - Token not provided")
+			unauthorized(c, "token_missing", i18n.M("UNAUTHORIZED_TOKEN_NOT_PROVIDED"))
 			return
 		}
 		token, ok := bearerToken(header)
 		if !ok {
-			unauthorized(c, helpers.CodeTokenInvalid, "Unauthorized - Bearer token required")
+			unauthorized(c, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_BEARER_TOKEN_REQUIRED"))
 			return
 		}
 
 		claims, err := ParseToken(token, role, TokenTypeAccess)
 		if err != nil {
-			unauthorized(c, helpers.CodeTokenInvalid, "Unauthorized - Invalid token")
+			unauthorized(c, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"))
 			return
 		}
 
 		if tb != nil {
 			isBlacklisted, err := tb.IsTokenBlacklisted(c.Request.Context(), token)
 			if err != nil {
-				helpers.SendResponse(c, http.StatusInternalServerError, "Error checking blacklist", nil)
+				helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("ERROR_CHECKING_BLACKLIST"), nil)
 				c.Abort()
 				return
 			}
 			if isBlacklisted {
-				unauthorized(c, "token_revoked", "Unauthorized - Token is blacklisted")
+				unauthorized(c, "token_revoked", i18n.M("UNAUTHORIZED_TOKEN_IS_BLACKLISTED"))
 				return
 			}
 		}
@@ -88,11 +89,11 @@ func RequireRole(role string, tb *TokenBlacklist) gin.HandlerFunc {
 
 // accountUnavailableMessage answers a token whose user can no longer sign in.
 // The profile routes give the same answer.
-const accountUnavailableMessage = "This account is not available. Please contact support."
+var accountUnavailableMessage = i18n.M("ACCOUNT_UNAVAILABLE")
 
 // AccountError returns the code and message of an ErrAccountUnavailable,
 // which is account_frozen for a frozen account.
-func AccountError(err error) (code, message string) {
+func AccountError(err error) (code string, message i18n.Message) {
 	if errors.Is(err, ErrAccountFrozen) {
 		return restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen
 	}
@@ -109,7 +110,7 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := GetClaims(c)
 		if !ok || claims.SessionID == "" || sessions == nil {
-			unauthorized(c, helpers.CodeTokenInvalid, "Unauthorized - Invalid token")
+			unauthorized(c, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"))
 			return
 		}
 		err := sessions.Verify(c.Request.Context(), claims.SessionID, claims.UUID)
@@ -117,13 +118,13 @@ func RequireActiveSession(sessions SessionStore) gin.HandlerFunc {
 		case err == nil:
 			c.Next()
 		case errors.Is(err, ErrSessionInvalid):
-			unauthorized(c, reasonSessionInactive, "Unauthorized - Session is not active")
+			unauthorized(c, reasonSessionInactive, i18n.M("UNAUTHORIZED_SESSION_IS_NOT_ACTIVE"))
 		case errors.Is(err, ErrAccountUnavailable):
 			code, message := AccountError(err)
 			helpers.SendError(c, http.StatusForbidden, code, message, nil)
 		default:
 			log.Printf("Failed to verify session %s: %v", claims.SessionID, err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the session", nil)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_VERIFY_THE_SESSION"), nil)
 			c.Abort()
 		}
 	}

@@ -19,6 +19,8 @@ import (
 	"errors"
 	"sync/atomic"
 
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
+
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -102,7 +104,7 @@ func Busy(ctx context.Context) bool {
 // (#232): 503 with Code, Message, and Retry-After.
 type Unavailable struct {
 	Code              string
-	Message           string
+	Message           i18n.Message
 	RetryAfterSeconds int
 }
 
@@ -114,7 +116,7 @@ const CodeDeliveryUnavailable = "delivery_unavailable"
 // restart or a failover to another node takes seconds.
 var DeliveryUnavailable = Unavailable{
 	Code:              CodeDeliveryUnavailable,
-	Message:           "Codes cannot be sent right now. Please try again in a moment.",
+	Message:           i18n.M("DELIVERY_UNAVAILABLE"),
 	RetryAfterSeconds: 5,
 }
 
@@ -131,7 +133,7 @@ const CodeServiceUnavailable = "service_unavailable"
 // new primary soon after it is promoted.
 var StoreUnavailable = Unavailable{
 	Code:              CodeServiceUnavailable,
-	Message:           "The service is temporarily unavailable. Please try again in a moment.",
+	Message:           i18n.M("SERVICE_UNAVAILABLE_RETRY"),
 	RetryAfterSeconds: 1,
 }
 
