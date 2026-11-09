@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 
 	"github.com/gin-gonic/gin"
@@ -68,10 +69,10 @@ func (h *AdminHandler) ListAuditEvents(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("Error querying the audit log: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to query the audit log.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_QUERY_AUDIT_LOG"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Audit events retrieved successfully.", result)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("AUDIT_EVENTS_RETRIEVED_SUCCESSFULLY"), result)
 }
 
 // auditFilter reads the filters of the audit query, and the problems of

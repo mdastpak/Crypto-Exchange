@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"bytes"
 	"io"
@@ -63,7 +64,7 @@ func BodyLimit(max int64) gin.HandlerFunc {
 		}
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, max+1))
 		if err != nil {
-			helpers.SendResponse(c, http.StatusBadRequest, "Invalid request body", nil)
+			helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_REQUEST_BODY"), nil)
 			c.Abort()
 			return
 		}
@@ -79,6 +80,6 @@ func BodyLimit(max int64) gin.HandlerFunc {
 func rejectLargeBody(c *gin.Context) {
 	// The rest of the body is not read, so the connection cannot be reused.
 	c.Header("Connection", "close")
-	helpers.SendResponse(c, http.StatusRequestEntityTooLarge, "Request body too large", nil)
+	helpers.SendResponse(c, http.StatusRequestEntityTooLarge, i18n.M("REQUEST_BODY_TOO_LARGE"), nil)
 	c.Abort()
 }

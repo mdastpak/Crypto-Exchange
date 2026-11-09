@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 
 	"github.com/gin-gonic/gin"
@@ -70,24 +71,24 @@ func (h *AdminHandler) ScheduleMigration(c *gin.Context) {
 	}
 	origin, _, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	m, err := rebrand.Schedule(ctx, h.PostgresDB.DB, hk, plan, origin)
 	switch {
 	case errors.Is(err, rebrand.ErrTargetNotListed):
-		helpers.SendError(c, http.StatusConflict, "not_listed", "The target must be an approved currency.", nil)
+		helpers.SendError(c, http.StatusConflict, "not_listed", i18n.M("MIGRATION_TARGET_NOT_APPROVED"), nil)
 	case errors.Is(err, rebrand.ErrSourceNotListed):
-		helpers.SendError(c, http.StatusConflict, "not_listed", "Every source must be an approved currency.", nil)
+		helpers.SendError(c, http.StatusConflict, "not_listed", i18n.M("MIGRATION_SOURCE_NOT_APPROVED"), nil)
 	case errors.Is(err, rebrand.ErrSourceInMigration):
-		helpers.SendError(c, http.StatusConflict, "source_in_migration", "A source is already being migrated.", nil)
+		helpers.SendError(c, http.StatusConflict, "source_in_migration", i18n.M("MIGRATION_SOURCE_MIGRATING"), nil)
 	case errors.Is(err, rebrand.ErrTargetInMigration):
-		helpers.SendError(c, http.StatusConflict, "target_in_migration", "The target is itself being migrated.", nil)
+		helpers.SendError(c, http.StatusConflict, "target_in_migration", i18n.M("MIGRATION_TARGET_MIGRATING"), nil)
 	case err != nil:
 		log.Printf("Failed to schedule a migration into %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to schedule the migration.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_SCHEDULE_MIGRATION"), nil)
 	default:
-		helpers.SendResponse(c, http.StatusCreated, "Migration scheduled.", m)
+		helpers.SendResponse(c, http.StatusCreated, i18n.M("MIGRATION_SCHEDULED"), m)
 	}
 }
 
@@ -113,10 +114,10 @@ func (h *AdminHandler) ListMigrations(c *gin.Context) {
 	list, err := rebrand.List(ctx, h.PostgresDB.DB, hk)
 	if err != nil {
 		log.Printf("Failed to list the migrations of %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list the migrations.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_MIGRATIONS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Migrations retrieved successfully.", MigrationList{Items: list})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MIGRATIONS_RETRIEVED_SUCCESSFULLY"), MigrationList{Items: list})
 }
 
 // @Summary Cancel a migration
@@ -145,7 +146,7 @@ func (h *AdminHandler) CancelMigration(c *gin.Context) {
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for the migration", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_MIGRATION_ID"), nil)
 		return
 	}
 	var req CancelMigrationRequest
@@ -158,26 +159,26 @@ func (h *AdminHandler) CancelMigration(c *gin.Context) {
 	}
 	origin, _, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	m, changes, err := rebrand.Cancel(ctx, h.PostgresDB.DB, hk, id.String(), req.Version, origin)
 	var conflict *rebrand.VersionConflict
 	switch {
 	case errors.Is(err, rebrand.ErrNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Migration not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("MIGRATION_NOT_FOUND"), nil)
 	case errors.As(err, &conflict):
-		helpers.SendError(c, http.StatusConflict, "version_conflict", "The migration has changed since that version; read it again and retry.",
+		helpers.SendError(c, http.StatusConflict, "version_conflict", i18n.M("MIGRATION_VERSION_CONFLICT"),
 			gin.H{"version": conflict.Current})
 	case errors.Is(err, rebrand.ErrNotOpen):
-		helpers.SendError(c, http.StatusConflict, "migration_not_open", "The migration is already completed or cancelled.", nil)
+		helpers.SendError(c, http.StatusConflict, "migration_not_open", i18n.M("MIGRATION_ENDED"), nil)
 	case errors.Is(err, rebrand.ErrIrreversible):
-		helpers.SendError(c, http.StatusConflict, "migration_irreversible", "The migration is converting balances; it can no longer be cancelled.", nil)
+		helpers.SendError(c, http.StatusConflict, "migration_irreversible", i18n.M("MIGRATION_PAST_CANCEL"), nil)
 	case err != nil:
 		log.Printf("Failed to cancel the migration %s: %v", id, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to cancel the migration.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CANCEL_MIGRATION"), nil)
 	default:
 		h.afterCurrencyChanges(ctx, changes)
-		helpers.SendResponse(c, http.StatusOK, "Migration cancelled.", m)
+		helpers.SendResponse(c, http.StatusOK, i18n.M("MIGRATION_CANCELLED"), m)
 	}
 }

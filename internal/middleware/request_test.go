@@ -9,6 +9,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -110,7 +111,7 @@ func TestRequestID_TracksDatabaseRefusals(t *testing.T) {
 	engine.Use(RequestID())
 	engine.GET("/", func(c *gin.Context) {
 		dberr.Record(c.Request.Context(), &pgconn.PgError{Code: "40P01"})
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("INTERNAL_SERVER_ERROR"), nil)
 	})
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))

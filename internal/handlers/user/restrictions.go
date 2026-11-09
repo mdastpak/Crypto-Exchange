@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
@@ -38,7 +39,7 @@ type RestrictionList struct {
 func (h *UserHandler) ListRestrictions(c *gin.Context) {
 	userID, ok := callerID(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -46,13 +47,13 @@ func (h *UserHandler) ListRestrictions(c *gin.Context) {
 	active, err := restrictions.Active(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the restrictions of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list restrictions.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_RESTRICTIONS"), nil)
 		return
 	}
 	hold, err := restrictions.SecurityHold(ctx, h.PostgresDB.DB, userID.String())
 	if err != nil {
 		log.Printf("Failed to read the security hold of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list restrictions.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_RESTRICTIONS"), nil)
 		return
 	}
 	list := RestrictionList{Items: make([]restrictions.PublicRestriction, 0, len(active))}
@@ -63,5 +64,5 @@ func (h *UserHandler) ListRestrictions(c *gin.Context) {
 	for _, r := range active {
 		list.Items = append(list.Items, restrictions.Public(r))
 	}
-	helpers.SendResponse(c, http.StatusOK, "Restrictions retrieved successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("RESTRICTIONS_RETRIEVED_SUCCESSFULLY"), list)
 }

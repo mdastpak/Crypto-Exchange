@@ -5,6 +5,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,7 +16,7 @@ import (
 // details to anyone who can trigger the panic.
 func RecoveryMiddleware() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Internal server error", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("INTERNAL_SERVER_ERROR"), nil)
 	})
 }
 

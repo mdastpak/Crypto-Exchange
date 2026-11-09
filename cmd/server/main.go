@@ -861,7 +861,7 @@ func newMarketDataAPI(services *models.InfraServices) *marketdataapi.Handler {
 // @Success 200 {object} models.APIResponse
 // @Router / [get]
 func welcome(c *gin.Context) {
-	helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("WELCOME"), nil)
 }
 
 // userLogout ends the session of a user access token: it revokes the
@@ -1071,10 +1071,10 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	// and the request ID, instead of Gin's plain-text answers (#53).
 	r.HandleMethodNotAllowed = true
 	r.NoRoute(func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusNotFound, "Not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("NOT_FOUND"), nil)
 	})
 	r.NoMethod(func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusMethodNotAllowed, "Method not allowed", nil)
+		helpers.SendResponse(c, http.StatusMethodNotAllowed, i18n.M("METHOD_NOT_ALLOWED"), nil)
 	})
 
 	r.GET("/", welcome)

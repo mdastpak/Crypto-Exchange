@@ -44,7 +44,7 @@ func Locales(registry *i18n.Registry) gin.HandlerFunc {
 		// The answer names the visitor's locale, so no shared cache may
 		// keep it.
 		c.Header("Cache-Control", "private, no-store")
-		helpers.SendResponse(c, http.StatusOK, "Locales retrieved successfully.", LocalesInfo{
+		helpers.SendResponse(c, http.StatusOK, i18n.M("LOCALES_RETRIEVED_SUCCESSFULLY"), LocalesInfo{
 			Default: registry.Default().Code,
 			Current: n.Locale,
 			Source:  n.Source,

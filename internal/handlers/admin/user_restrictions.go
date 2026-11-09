@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
 	"github.com/gin-gonic/gin"
@@ -127,7 +128,7 @@ func restrictionOrigin(c *gin.Context) (audit.Event, string, bool) {
 func userParam(c *gin.Context) (string, bool) {
 	hk := c.Param("hk")
 	if _, err := uuid.Parse(hk); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for the user", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_USER_ID"), nil)
 		return "", false
 	}
 	return hk, true
@@ -160,7 +161,7 @@ func (h *AdminHandler) CreateRestriction(c *gin.Context) {
 	dec := json.NewDecoder(c.Request.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 	req.CaseRef, req.Note = strings.TrimSpace(req.CaseRef), strings.TrimSpace(req.Note)
@@ -170,7 +171,7 @@ func (h *AdminHandler) CreateRestriction(c *gin.Context) {
 	}
 	origin, adminHK, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 
@@ -180,16 +181,16 @@ func (h *AdminHandler) CreateRestriction(c *gin.Context) {
 	}, origin)
 	switch {
 	case errors.Is(err, restrictions.ErrUserNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "User not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("USER_NOT_FOUND"), nil)
 	case errors.Is(err, restrictions.ErrNotUser):
-		helpers.SendError(c, http.StatusConflict, "not_a_user", "Only the account of a user, not deleted, can be restricted.", nil)
+		helpers.SendError(c, http.StatusConflict, "not_a_user", i18n.M("ONLY_USERS_CAN_BE_RESTRICTED"), nil)
 	case errors.Is(err, restrictions.ErrCurrencyNotFound):
 		sendValidationErrors(c, fieldErrors{"currency_hk": "is not a currency"})
 	case err != nil:
 		log.Printf("Failed to restrict a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to restrict the user.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RESTRICT_USER"), nil)
 	default:
-		helpers.SendResponse(c, http.StatusCreated, "User restricted.", CreatedRestriction{
+		helpers.SendResponse(c, http.StatusCreated, i18n.M("USER_RESTRICTED"), CreatedRestriction{
 			Restriction: created.Restriction, EndedSessions: created.EndedSessions,
 		})
 	}
@@ -227,10 +228,10 @@ func (h *AdminHandler) ListRestrictions(c *gin.Context) {
 	list, err := restrictions.List(ctx, h.PostgresDB.DB, userHK, activeOnly, maxRestrictionList)
 	if err != nil {
 		log.Printf("Failed to list the restrictions of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list the restrictions.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_USER_RESTRICTIONS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Restrictions retrieved successfully.", RestrictionList{Items: list})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("RESTRICTIONS_RETRIEVED_SUCCESSFULLY"), RestrictionList{Items: list})
 }
 
 // @Summary Lift a restriction of a user
@@ -260,7 +261,7 @@ func (h *AdminHandler) LiftRestriction(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if _, err := uuid.Parse(id); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for the restriction", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_RESTRICTION_ID"), nil)
 		return
 	}
 	expected, ok := versionQuery(c)
@@ -270,7 +271,7 @@ func (h *AdminHandler) LiftRestriction(c *gin.Context) {
 	}
 	var req LiftRestrictionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 	req.Note = strings.TrimSpace(req.Note)
@@ -280,7 +281,7 @@ func (h *AdminHandler) LiftRestriction(c *gin.Context) {
 	}
 	origin, adminHK, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 
@@ -288,16 +289,16 @@ func (h *AdminHandler) LiftRestriction(c *gin.Context) {
 	var conflict *restrictions.VersionConflict
 	switch {
 	case errors.Is(err, restrictions.ErrUserNotFound), errors.Is(err, restrictions.ErrNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Restriction not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("RESTRICTION_NOT_FOUND"), nil)
 	case errors.As(err, &conflict):
-		helpers.SendError(c, http.StatusConflict, "version_conflict", "The restriction has changed since that version; read it again and retry.",
+		helpers.SendError(c, http.StatusConflict, "version_conflict", i18n.M("RESTRICTION_VERSION_CONFLICT"),
 			gin.H{"code": "version_conflict", "version": conflict.Current})
 	case errors.Is(err, restrictions.ErrAlreadyLifted):
-		helpers.SendError(c, http.StatusConflict, "already_lifted", "The restriction is already lifted.", nil)
+		helpers.SendError(c, http.StatusConflict, "already_lifted", i18n.M("RESTRICTION_ALREADY_LIFTED"), nil)
 	case err != nil:
 		log.Printf("Failed to lift a restriction: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to lift the restriction.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIFT_RESTRICTION"), nil)
 	default:
-		helpers.SendResponse(c, http.StatusOK, "Restriction lifted.", r)
+		helpers.SendResponse(c, http.StatusOK, i18n.M("RESTRICTION_LIFTED"), r)
 	}
 }

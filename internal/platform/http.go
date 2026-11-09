@@ -8,15 +8,16 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Messages of the refusals, for clients that show no message of their own.
-const (
-	messageMaintenance  = "The exchange is under maintenance. Please try again later."
-	messageLocked       = "This feature is temporarily unavailable. Please try again later."
-	messageStateUnknown = "This feature is temporarily unavailable while the exchange checks its state. Please try again shortly."
+var (
+	messageMaintenance  = i18n.M("MAINTENANCE")
+	messageLocked       = i18n.M("FEATURE_LOCKED")
+	messageStateUnknown = i18n.M("FEATURE_STATE_UNKNOWN")
 )
 
 // LockedInfo is the info of a refusal by a control.

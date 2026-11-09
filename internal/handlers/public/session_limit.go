@@ -19,6 +19,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 
@@ -87,12 +88,12 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 	sessionID := uuid.NewString()
 	accessToken, err := auth.GenerateAccessToken(userHK.String(), auth.RoleUser, sessionID)
 	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_ACCESS_TOKEN"), nil)
 		return false
 	}
 	refreshToken, err := auth.GenerateRefreshToken(userHK.String(), auth.RoleUser, sessionID)
 	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate refresh token", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_REFRESH_TOKEN"), nil)
 		return false
 	}
 
@@ -118,12 +119,12 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
 		return false
 	case errors.Is(err, auth.ErrReplacedSessionNotFound):
-		helpers.SendError(c, http.StatusConflict, "session_not_found", "The session to end is not one of your active sessions.", nil)
+		helpers.SendError(c, http.StatusConflict, "session_not_found", i18n.M("SESSION_TO_END_NOT_YOURS"), nil)
 		return true
 	case err != nil:
 		// No tokens without the session, nor without its audit event.
 		log.Printf("Failed to create session: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return false
 	}
 
@@ -131,7 +132,7 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 	// body, so scripts running in the page cannot read it.
 	auth.SetRefreshTokenCookie(c, refreshToken)
 
-	helpers.SendResponse(c, http.StatusOK, "OTP verified successfully", gin.H{"access_token": accessToken})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("OTP_VERIFIED_SUCCESSFULLY"), gin.H{"access_token": accessToken})
 	return false
 }
 
@@ -143,23 +144,23 @@ func (h *PublicHandler) refuseAtLimit(c *gin.Context, ctx context.Context, userH
 	})
 	if !ok || h.RedisClient == nil {
 		helpers.SendError(c, http.StatusConflict, codeSessionLimit,
-			"You have the most active sessions allowed. End one of them and sign in again.", nil)
+			i18n.M("SESSION_LIMIT_REACHED_SIGN_IN_AGAIN"), nil)
 		return
 	}
 	page, err := lister.List(ctx, userHK.String(), pagination.Request{Limit: config.MaxSessionsPerUser})
 	if err != nil {
 		log.Printf("Failed to list the sessions of a user at the limit: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
 	}
 	challenge, err := h.issueChallenge(ctx, userHK)
 	if err != nil {
 		log.Printf("Failed to store a session limit challenge: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
 	}
 	helpers.SendError(c, http.StatusConflict, codeSessionLimit,
-		"You have the most active sessions allowed. End one of them to sign in.",
+		i18n.M("SESSION_LIMIT_REACHED"),
 		SessionLimitInfo{
 			Challenge:   challenge,
 			ExpiresIn:   int(sessionLimitChallengeTTL.Seconds()),
@@ -237,7 +238,7 @@ func (h *PublicHandler) ReplaceSession(c *gin.Context) {
 
 	var req ReplaceSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 	errs := map[string]string{}
@@ -248,22 +249,22 @@ func (h *PublicHandler) ReplaceSession(c *gin.Context) {
 		errs["session_id"] = "must be a UUID"
 	}
 	if len(errs) > 0 {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 	if h.RedisClient == nil || h.PostgresDB == nil {
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Sign-in is not available.", nil)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
 
 	userHK, expires, ok, err := h.takeChallenge(ctx, req.Challenge)
 	if err != nil {
 		log.Printf("Failed to read a session limit challenge: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
 	}
 	if !ok {
-		helpers.SendError(c, http.StatusUnauthorized, "challenge_invalid", "The challenge is invalid or has expired; sign in again.", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "challenge_invalid", i18n.M("CHALLENGE_INVALID_OR_EXPIRED"), nil)
 		return
 	}
 
@@ -283,13 +284,13 @@ func (h *PublicHandler) ReplaceSession(c *gin.Context) {
 	}
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && (deleted || role != auth.RoleUser || !account.UserStatus(status).CanSignIn())) {
 		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
-		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account cannot sign in. Please contact support.", nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
 		return
 	}
 	if err != nil {
 		log.Printf("Failed to read the user of a session limit challenge: %v", err)
 		h.putBack(ctx, req.Challenge, userHK, expires)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
 	}
 

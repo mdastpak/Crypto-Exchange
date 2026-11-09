@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -41,7 +42,7 @@ func BindAndValidate(c *gin.Context, obj interface{}) error {
 		for _, err := range err.(validator.ValidationErrors) {
 			errors = append(errors, formatValidationError(err))
 		}
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errors})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errors})
 		return err
 	}
 	return nil

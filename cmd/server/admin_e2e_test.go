@@ -395,7 +395,7 @@ func TestAdminSignIn_EndToEnd(t *testing.T) {
 		sessionID, code := env.requestAdminCode(t, email)
 		status, resp := env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": adminTOTP}, "")
 		assert.Equal(t, http.StatusUnauthorized, status)
-		assert.Equal(t, "Invalid or expired code", resp.Message)
+		assert.Equal(t, "Invalid or expired code.", resp.Message)
 	})
 
 	t.Run("a wrong authenticator code ends the sign-in", func(t *testing.T) {

@@ -596,7 +596,7 @@ func TestRequireActiveSession(t *testing.T) {
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.False(t, served)
-		assert.Contains(t, w.Body.String(), accountUnavailableMessage)
+		assert.Contains(t, w.Body.String(), accountUnavailableMessage.String())
 	})
 
 	t.Run("session store failure", func(t *testing.T) {
@@ -819,7 +819,7 @@ func TestRefreshTokenHandler(t *testing.T) {
 		w := refresh(refreshToken, sessions)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		assert.Contains(t, w.Body.String(), accountUnavailableMessage)
+		assert.Contains(t, w.Body.String(), accountUnavailableMessage.String())
 		assert.NotContains(t, w.Body.String(), "access_token")
 		assert.Equal(t, []string{"test-session/user-123"}, sessions.verified)
 		assert.Empty(t, sessions.rotations, "no new tokens for a user who can no longer sign in")

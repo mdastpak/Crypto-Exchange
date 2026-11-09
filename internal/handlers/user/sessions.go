@@ -10,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 
 	"github.com/gin-gonic/gin"
@@ -28,7 +29,7 @@ type RevokedSessions struct {
 func sessionCaller(c *gin.Context) (*auth.Claims, bool) {
 	claims, ok := auth.GetClaims(c)
 	if !ok || claims.SessionID == "" {
-		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 		return nil, false
 	}
 	return claims, true
@@ -57,26 +58,26 @@ func (h *UserHandler) ListSessions(c *gin.Context) {
 	}
 	page, errs := pagination.Parse(c)
 	if errs != nil {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
 	defer cancel()
 	result, err := h.Sessions.List(ctx, claims.UUID, page)
 	if errors.Is(err, pagination.ErrInvalidCursor) {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed",
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"),
 			gin.H{"errors": fieldErrors{"cursor": "is not a cursor of this list"}})
 		return
 	}
 	if err != nil {
 		log.Printf("Failed to list the sessions of user %s: %v", claims.UUID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list the sessions.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_SESSIONS"), nil)
 		return
 	}
 	for i := range result.Items {
 		result.Items[i].Current = result.Items[i].ID == claims.SessionID
 	}
-	helpers.SendResponse(c, http.StatusOK, "Sessions retrieved successfully.", result)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SESSIONS_RETRIEVED_SUCCESSFULLY"), result)
 }
 
 // RevokeSession ends one session of the signed-in user. Its access and
@@ -102,7 +103,7 @@ func (h *UserHandler) RevokeSession(c *gin.Context) {
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed",
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"),
 			gin.H{"errors": fieldErrors{"id": "must be a UUID"}})
 		return
 	}
@@ -114,17 +115,17 @@ func (h *UserHandler) RevokeSession(c *gin.Context) {
 	switch {
 	case errors.Is(err, auth.ErrSessionInvalid):
 		// Also for a session of another user, which is not told apart.
-		helpers.SendResponse(c, http.StatusNotFound, "Session not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("SESSION_NOT_FOUND"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to revoke session %s of user %s: %v", sessionID, claims.UUID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to end the session.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_END_SESSION"), nil)
 		return
 	}
 	if sessionID == claims.SessionID {
 		auth.ClearRefreshTokenCookie(c)
 	}
-	helpers.SendResponse(c, http.StatusOK, "Session ended.", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SESSION_ENDED"), nil)
 }
 
 // RevokeOtherSessions ends every session of the signed-in user but the
@@ -152,8 +153,8 @@ func (h *UserHandler) RevokeOtherSessions(c *gin.Context) {
 	revoked, err := h.Sessions.RevokeOthers(ctx, claims.UUID, claims.SessionID, event)
 	if err != nil {
 		log.Printf("Failed to revoke the other sessions of user %s: %v", claims.UUID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to end the other sessions.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_END_OTHER_SESSIONS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Other sessions ended.", RevokedSessions{Revoked: revoked})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("OTHER_SESSIONS_ENDED"), RevokedSessions{Revoked: revoked})
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 
 	"github.com/gin-gonic/gin"
@@ -22,5 +23,5 @@ func (h *PublicHandler) PlatformStatus(c *gin.Context) {
 	if h.Platform != nil && h.Platform.Watcher != nil {
 		status = h.Platform.Watcher.Status()
 	}
-	helpers.SendResponse(c, http.StatusOK, "Status retrieved successfully.", status)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("STATUS_RETRIEVED_SUCCESSFULLY"), status)
 }
