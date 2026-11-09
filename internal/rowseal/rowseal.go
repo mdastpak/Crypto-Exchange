@@ -283,7 +283,6 @@ func (s *Sealer) Reseal(ctx context.Context, q Querier, t *Table, where string, 
 	}
 	// One statement locks the rows, raises their version, and returns what
 	// the seal covers.
-	//nolint:gosec // G201: the table, its columns, and where are constants of the caller's code; values are arguments.
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(`UPDATE %s SET row_version = row_version + 1 WHERE %s RETURNING %s`,
 		t.Name, where, t.Fields("")), args...)
 	if err != nil {
@@ -313,7 +312,6 @@ func (s *Sealer) Reseal(ctx context.Context, q Querier, t *Table, where string, 
 	if len(keysOf) == 0 {
 		return nil
 	}
-	//nolint:gosec // G201: the table and its key are constants of this package; values are arguments.
 	_, err = q.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %[1]s SET row_seal = v.seal, seal_key_version = $3
 		FROM unnest($1::text[], $2::bytea[]) AS v(k, seal)

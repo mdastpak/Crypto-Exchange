@@ -138,7 +138,6 @@ func (s *Sealer) ResealFinding(ctx context.Context, id int64, origin audit.Event
 		return Finding{}, err
 	}
 	r := t.NewRow()
-	//nolint:gosec // G202: the table and its columns are constants of this package.
 	err = tx.QueryRowContext(ctx, `SELECT `+t.Fields("")+` FROM `+t.Name+` WHERE `+where, f.RowKey).Scan(r.Dest()...)
 	resolution := "resealed"
 	var after map[string]interface{}

@@ -132,6 +132,7 @@ func RecordCheck(ctx context.Context, conn *sql.DB, ownerHK, mobile, provider, r
 		return fmt.Errorf("failed to record the ownership check: %w", err)
 	}
 	defer tx.Rollback()
+	//nolint:gosec // G202: db.ContactMatch is a constant fragment; every value is an argument.
 	_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $3, ownership_ref = NULLIF($4, '')
 		WHERE c.user_hk = $5 AND `+db.ContactMatch, string(contactMobile), mobile, provider, ref, ownerHK)
 	if err != nil {
