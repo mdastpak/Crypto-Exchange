@@ -169,7 +169,7 @@ For an origin in `server.cors.allowed_origins`, `Access-Control-Expose-Headers` 
 
 ### Languages
 
-The server answers in the language of each request where it has a translation ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)). It takes the first supported locale of: the `lang` query parameter, the `X-Locale` header, the `locale` cookie, `Accept-Language`, and `i18n.default_locale` (`en`). An unsupported value is skipped, never an error. `message` is translated; `code` never changes. `Content-Language` names the language that `message` is in, which is `en` when it has no translation, and error and translated answers carry `Vary: Accept-Language, Cookie, X-Locale`. [`docs/i18n.md`](i18n.md) describes the rules, the translations, and RTL layout.
+The server answers in the language of each request where it has a translation ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)). It takes the first supported locale of: the `lang` query parameter, the `X-Locale` header, the `locale` cookie, `Accept-Language`, the default locale of the [site](#get-publicsite) the call comes from, and `i18n.default_locale` (`en`). An unsupported value is skipped, never an error. `message` is translated; `code` never changes. `Content-Language` names the language that `message` is in, which is `en` when it has no translation, and error and translated answers carry `Vary: Accept-Language, Cookie, X-Locale`. [`docs/i18n.md`](i18n.md) describes the rules, the translations, and RTL layout.
 
 ### Rate limiting
 
@@ -888,7 +888,7 @@ A refusal:
 
 ### `GET /public/locales`
 
-The supported locales, each with `code`, `name`, `native_name`, and `dir` (`ltr` or `rtl`), in the order of a language switcher; `default`; and `current` with its `source` (`query`, `header`, `cookie`, `accept_language`, or `default`): the locale of this request, for `<html lang dir>`.
+The supported locales, each with `code`, `name`, `native_name`, and `dir` (`ltr` or `rtl`), in the order of a language switcher; `default`; and `current` with its `source` (`query`, `header`, `cookie`, `accept_language`, `site`, or `default`): the locale of this request, for `<html lang dir>`.
 
 ```json
 {
@@ -901,6 +901,33 @@ The supported locales, each with `code`, `name`, `native_name`, and `dir` (`ltr`
   ]
 }
 ```
+
+### `GET /public/site`
+
+Where the visitor belongs ([#285](https://github.com/mdastpak/Crypto-Exchange/issues/285)); [`docs/i18n.md`](i18n.md#sites-and-redirects) gives the rules. `path` is the page, a local path (default `/`); anything else answers `400 invalid_path`. `current_site` is the site the call comes from, by its `Origin`, by `X-Forwarded-Host` through a trusted proxy, or by `Host`, or `null`; `site` is the site the visitor belongs to, and `reason` why (`enforced`, `crawler`, `choice`, `stay`, `country`, or `default`); `redirect.needed` is true when the two differ. Without sites, `site` is `null` and nothing redirects.
+
+```json
+{
+  "country": "IR",
+  "country_source": "database",
+  "current_site": "global",
+  "site": { "id": "ir", "domain": "example.ir", "url": "https://example.ir", "countries": ["IR"], "locales": ["fa", "en"], "default_locale": "fa", "enforce": false },
+  "reason": "country",
+  "locale": { "code": "fa", "name": "Persian", "native_name": "فارسی", "dir": "rtl" },
+  "locale_source": "accept_language",
+  "redirect": { "needed": true, "url": "https://example.ir/markets" },
+  "sites": [],
+  "alternates": [{ "site": "ir", "locale": "fa", "hreflang": "fa-IR", "url": "https://example.ir/markets" }]
+}
+```
+
+### `GET /public/site/redirect`
+
+`302 Found` with `Location` set to `path` on the visitor's site, chosen as `GET /public/site` chooses it, or `204 No Content` when they are already on it, when the call comes from no site, or when there are no sites. A locale other than the site's default is added as `lang`. `400 invalid_path` for a path that is not local.
+
+### `POST /public/site/choice`
+
+`{"site": "global", "locale": "en"}`: saves the visitor's choice as the `site` and `locale` cookies (a year, `SameSite=Lax`, `Secure`, and `HttpOnly`: `GET /public/site` tells the frontend the choice), so that GeoIP no longer moves them, except to a site that enforces their country. An empty or missing value clears that cookie. `400 unknown_site` or `400 unknown_locale` for a value that names none.
 
 ### `GET /public/status`
 

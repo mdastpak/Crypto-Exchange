@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -530,4 +532,40 @@ func TestValidateServer_GeoIPOverridesOutsideRelease(t *testing.T) {
 	assert.Equal(t, []string{"geoip.header (GEOIP_HEADER) is set, but server.trusted_proxies (SERVER_TRUSTED_PROXIES) is empty; the header is only trusted from the proxies that set it"}, problemsOf(c))
 	assert.Equal(t, DefaultGeoIPReloadIntervalSeconds, c.GeoIP.ReloadIntervalSeconds)
 	assert.Equal(t, DefaultGeoIPMaxAgeDays, c.GeoIP.MaxAgeDays)
+}
+
+func TestValidateServer_Sites(t *testing.T) {
+	c := secureRelease(t)
+	c.Sites.Default = "global"
+	c.Sites.List = []SiteConfig{
+		{ID: "global", Domain: "example.com", Aliases: []string{"www.example.com"}, Locales: []string{"en"}},
+		{ID: "ir", Domain: "example.ir", Countries: []string{"IR"}, Locales: []string{"fa", "en"}},
+	}
+	assert.Empty(t, problemsOf(c))
+	assert.Equal(t, []string{"https://example.com", "https://www.example.com", "https://example.ir"}, c.SiteOrigins())
+
+	r, err := c.SiteRegistry(mustLocales(t, c))
+	require.NoError(t, err)
+	assert.Equal(t, "ir", r.ByHost("example.ir").ID)
+
+	c.Sites.List[1].Locales = []string{"ar"}
+	assert.Equal(t, []string{`sites is not valid: site "ir": locale "ar" is not one of i18n.locales (en, fa)`}, problemsOf(c))
+	c.Sites.List[1].Locales = []string{"fa"}
+
+	c.Sites.Default = "world"
+	assert.Contains(t, strings.Join(problemsOf(c), "\n"), `the default site "world" is not one of the sites (global, ir)`)
+	c.Sites.Default = "global"
+
+	c.Sites.Scheme = "http"
+	assert.Equal(t, []string{`sites.scheme (SITES_SCHEME) is "http"; release mode serves the sites over https`}, problemsOf(c))
+	c.Server.Mode = "debug"
+	assert.Empty(t, problemsOf(c))
+	assert.Equal(t, "http://example.ir", c.SiteOrigins()[2])
+}
+
+func mustLocales(t *testing.T, c Configuration) *i18n.Registry {
+	t.Helper()
+	r, err := c.Locales()
+	require.NoError(t, err)
+	return r
 }

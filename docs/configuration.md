@@ -346,6 +346,32 @@ The languages of the product ([#283](https://github.com/mdastpak/Crypto-Exchange
 | `locales` | `[en, fa]` | The supported locales, as BCP 47 tags such as `fa` or `en-GB`, in the order a language switcher lists them. Each is listed once, and `en` is required: it is the language of every message that has no translation. The names and the direction (RTL or LTR) of each come from its language, so `fa`, `ar`, `he`, `ur`, and `ckb` are RTL. A locale without a catalog in `internal/i18n/catalogs` is offered, but the API's messages stay in English for it. A release outside Iran may list only the languages of its markets. |
 | `default_locale` | `en` | One of `locales`. The locale of a request that names no supported locale, in its query, headers, or cookie. |
 
+### `sites`
+
+The sites of the product: the domain of each, the countries it serves, and its locales ([#285](https://github.com/mdastpak/Crypto-Exchange/issues/285)). A visitor is offered the site of their country (from [`geoip`](#geoip)) in their language, or the default site; [`docs/i18n.md`](i18n.md#sites-and-redirects) describes the rules. Empty means one site and no redirects.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `default` | **required** with sites | The `id` of the site of visitors whose country no site serves, or is not known: usually the global site. |
+| `scheme` | `https` | The scheme of the sites' URLs. `http` only for development; release mode refuses it. |
+| `list` | `[]` | The sites, in the order of a site switcher. Each has the keys below. |
+| `list[].id` | **required** | 1 to 32 lower-case letters, digits, and hyphens, such as `global` or `ir`. The `site` cookie names it. |
+| `list[].domain` | **required** | The canonical host of the site, such as `example.ir`, with an optional port for development. Redirects only ever go to these domains. |
+| `list[].aliases` | `[]` | Other hosts of the site, such as `www.example.ir`, recognised as it. No two sites share a host. |
+| `list[].countries` | `[]` | ISO 3166-1 alpha-2 codes of the countries whose visitors belong to it. A country belongs to one site at most; a site with none serves only visitors who pick it, or every other country when it is the default. |
+| `list[].locales` | **required** | Codes of [`i18n.locales`](#i18n); the first is the site's default, which a visitor gets when they ask for no locale it offers. |
+| `list[].enforce` | `false` | Keeps the visitors of its countries on it, even when they picked another site or a locale elsewhere, for a legal requirement. Needs `countries`. |
+
+Every domain and alias of every site is also allowed by CORS and by the WebSocket, in addition to `server.cors.allowed_origins` and `websocket.allowed_origins`. A release for users outside Iran lists no Iranian site; [#272](https://github.com/mdastpak/Crypto-Exchange/issues/272) will bind sites to the release's region.
+
+```yaml
+sites:
+  default: global
+  list:
+    - {id: global, domain: example.com, aliases: [www.example.com], locales: [en]}
+    - {id: ir, domain: example.ir, aliases: [www.example.ir], countries: [IR], locales: [fa, en]}
+```
+
 ### `delisting`
 
 | Key | Default | Description |
@@ -615,6 +641,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `GEOIP_DATABASE_PATH` | `geoip.database_path` |
 | `GEOIP_RELOAD_INTERVAL_SECONDS` | `geoip.reload_interval_seconds` |
 | `GEOIP_MAX_AGE_DAYS` | `geoip.max_age_days` |
+| `SITES_DEFAULT` | `sites.default` |
+| `SITES_SCHEME` | `sites.scheme` |
 | `I18N_DEFAULT_LOCALE` | `i18n.default_locale` |
 | `I18N_LOCALES` | `i18n.locales`, as a comma-separated list |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |

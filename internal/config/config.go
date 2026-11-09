@@ -15,6 +15,7 @@ import (
 	configfiles "github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/sites"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -341,6 +342,17 @@ type Configuration struct {
 		// flow locally. Release mode refuses them.
 		Overrides map[string]string `yaml:"overrides"`
 	} `yaml:"geoip"`
+
+	// Sites are the domains of the product, the countries each serves, and
+	// its locales (#285). Empty means one site and no redirects.
+	Sites struct {
+		// Default names the site of a visitor whose country no site serves,
+		// or is not known.
+		Default string `yaml:"default"`
+		// Scheme of the sites' URLs: https, or http for development.
+		Scheme string       `yaml:"scheme"`
+		List   []SiteConfig `yaml:"list"`
+	} `yaml:"sites"`
 
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
@@ -1379,6 +1391,9 @@ func setDefaults() {
 	if Config.GeoIP.MaxAgeDays == 0 {
 		Config.GeoIP.MaxAgeDays = DefaultGeoIPMaxAgeDays
 	}
+	if Config.Sites.Scheme == "" {
+		Config.Sites.Scheme = DefaultSiteScheme
+	}
 	if Config.I18n.DefaultLocale == "" {
 		Config.I18n.DefaultLocale = DefaultLocale
 	}
@@ -2033,3 +2048,55 @@ const (
 	DefaultGeoIPMaxAgeDays            = 45
 	MaxGeoIPMaxAgeDays                = 365
 )
+
+// SiteConfig is one site of the product (#285).
+type SiteConfig struct {
+	// ID names the site, such as global or ir.
+	ID string `yaml:"id"`
+	// Domain is its canonical host; Aliases are other hosts of the same
+	// site, such as www.example.com.
+	Domain  string   `yaml:"domain"`
+	Aliases []string `yaml:"aliases"`
+	// Countries are the ISO 3166-1 alpha-2 codes of the countries whose
+	// visitors belong to it. A country belongs to one site at most.
+	Countries []string `yaml:"countries"`
+	// Locales are codes of i18n.locales; the first is its default.
+	Locales []string `yaml:"locales"`
+	// Enforce keeps the visitors of its countries on it, even when they
+	// chose another site, for a legal requirement.
+	Enforce bool `yaml:"enforce"`
+}
+
+// DefaultSiteScheme is the scheme of the sites' URLs.
+const DefaultSiteScheme = "https"
+
+// SiteRegistry builds the table of sites (#285) on locales.
+func (c *Configuration) SiteRegistry(locales *i18n.Registry) (*sites.Registry, error) {
+	specs := make([]sites.Spec, 0, len(c.Sites.List))
+	for _, s := range c.Sites.List {
+		specs = append(specs, sites.Spec{ID: s.ID, Domain: s.Domain, Aliases: s.Aliases, Countries: s.Countries, Locales: s.Locales, Enforce: s.Enforce})
+	}
+	scheme := c.Sites.Scheme
+	if scheme == "" {
+		scheme = DefaultSiteScheme
+	}
+	return sites.New(c.Sites.Default, scheme, specs, locales)
+}
+
+// SiteOrigins returns the browser origins of every domain of the sites
+// (#285), which CORS and the WebSocket allow besides their own lists.
+func (c *Configuration) SiteOrigins() []string {
+	scheme := c.Sites.Scheme
+	if scheme == "" {
+		scheme = DefaultSiteScheme
+	}
+	var origins []string
+	for _, s := range c.Sites.List {
+		for _, host := range append([]string{s.Domain}, s.Aliases...) {
+			if host, err := sites.NormalizeHost(host); err == nil {
+				origins = append(origins, scheme+"://"+host)
+			}
+		}
+	}
+	return origins
+}

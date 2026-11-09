@@ -16,8 +16,9 @@ type LocalesInfo struct {
 	// Current is the locale of this request, for <html lang dir>.
 	Current i18n.Locale `json:"current"`
 	// Source is where the current locale came from: query, header, cookie,
-	// accept_language, or default.
-	Source string `json:"source" example:"accept_language" enums:"query,header,cookie,accept_language,default"`
+	// accept_language, site (the default of the site the request comes
+	// from), or default.
+	Source string `json:"source" example:"accept_language" enums:"query,header,cookie,accept_language,site,default"`
 	// Locales are the supported locales, in the order of the language
 	// switcher.
 	Locales []i18n.Locale `json:"locales"`

@@ -95,11 +95,15 @@ var (
 			// In production, configure allowed origins from config
 			origin := r.Header.Get("Origin")
 			allowed := config.Config.WebSocket.AllowedOrigins
+			// The pages of every site may connect too (#285).
+			sites := config.Config.SiteOrigins()
 			if len(allowed) == 0 {
-				// Default: allow same origin only
-				return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
+				// Default: allow same origin only, and the sites.
+				if origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host {
+					return true
+				}
 			}
-			for _, o := range allowed {
+			for _, o := range append(append([]string(nil), allowed...), sites...) {
 				if o == "*" || o == origin {
 					return true
 				}

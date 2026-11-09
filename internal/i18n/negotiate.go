@@ -29,7 +29,10 @@ const (
 	SourceHeader         = "header"
 	SourceCookie         = "cookie"
 	SourceAcceptLanguage = "accept_language"
-	SourceDefault        = "default"
+	// SourceSite is the default locale of the site that the request is
+	// on (#285), when the request names no supported locale.
+	SourceSite    = "site"
+	SourceDefault = "default"
 )
 
 // Negotiated is the locale of a request.
@@ -81,6 +84,20 @@ func (r *Registry) Negotiate(req *http.Request) Negotiated {
 	return n
 }
 
+// NegotiateWith is Negotiate with a fallback before the default: the
+// locale that fallback returns for the request, such as the default
+// locale of the site it is on (#285).
+func (r *Registry) NegotiateWith(req *http.Request, fallback func(*http.Request) string) Negotiated {
+	n := r.Negotiate(req)
+	if n.Source != SourceDefault || fallback == nil {
+		return n
+	}
+	if l, ok := r.Lookup(fallback(req)); ok {
+		n.Locale, n.Source = l, SourceSite
+	}
+	return n
+}
+
 // Render returns m in the negotiated locale, and the language its text is
 // in; see Registry.Render.
 func (n Negotiated) Render(m Message) (text, language string) {
@@ -96,10 +113,16 @@ type contextKey struct{}
 const ginKey = "i18n.negotiated"
 
 // Middleware negotiates the locale of every request and keeps it on the
-// request, for the handlers and the response envelope.
-func Middleware(r *Registry) gin.HandlerFunc {
+// request, for the handlers and the response envelope. fallback, when it
+// is set, names the locale of a request that names none, before the
+// default; see NegotiateWith.
+func Middleware(r *Registry, fallback ...func(*http.Request) string) gin.HandlerFunc {
+	var f func(*http.Request) string
+	if len(fallback) > 0 {
+		f = fallback[0]
+	}
 	return func(c *gin.Context) {
-		n := r.Negotiate(c.Request)
+		n := r.NegotiateWith(c.Request, f)
 		c.Set(ginKey, n)
 		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), contextKey{}, n))
 		c.Next()
