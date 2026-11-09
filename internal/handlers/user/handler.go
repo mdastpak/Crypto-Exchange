@@ -3,6 +3,7 @@ package user
 import (
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -12,6 +13,9 @@ import (
 
 // UserHandler struct to hold dependencies for User routes
 type UserHandler struct {
+	// Locales are the supported locales, which a user may save in their
+	// profile (#286). Without them, no locale can be saved.
+	Locales         *i18n.Registry
 	PostgresDB      *db.PostgresService
 	RedisClient     *db.RedisService
 	RedisIndex      string // Redis index for base definitions

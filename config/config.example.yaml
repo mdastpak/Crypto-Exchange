@@ -369,6 +369,32 @@ websocket:
   max_connections_per_user: 10     # Per signed-in user, over all instances
   session_check_seconds: 60        # How often ended sessions are disconnected
 
+# The country of each client (#284), for the site of their country.
+# See docs/geoip.md.
+geoip:
+  enabled: false
+  header: ""                       # e.g. CF-IPCountry; trusted only from server.trusted_proxies
+  database_path: ""                # e.g. /var/lib/geoip/GeoLite2-Country.mmdb
+  reload_interval_seconds: 300     # A new file is loaded without a restart
+  max_age_days: 45                 # Older databases make /system/ready degraded
+  overrides: {}                    # Local tests only, e.g. {"192.168.0.0/16": "IR"}
+
+# The languages of the product (#283). Direction (RTL/LTR) and names come
+# from each language; see docs/i18n.md.
+i18n:
+  locales: [en, fa]                # BCP 47 tags; en is required
+  default_locale: en               # For a request that names no supported locale
+
+# The sites per country (#285): the domain, countries, and locales of each.
+# Empty: one site, no redirects. See docs/i18n.md.
+sites:
+  default: ""                      # The id of the site of every other country
+  scheme: https                    # http only for development
+  list: []
+  # list:
+  #   - {id: global, domain: example.com, aliases: [www.example.com], locales: [en]}
+  #   - {id: ir, domain: example.ir, countries: [IR], locales: [fa, en]}
+
 # Maintenance and lockdown controls (#235). The controls are created with the
 # admin API or cmd/admin; these settings say how each instance applies them.
 platform:

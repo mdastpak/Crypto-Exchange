@@ -25,6 +25,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
@@ -166,7 +167,7 @@ func (h *Handler) ListAssets(c *gin.Context) {
 		errs["q"] = "must be at most 64 characters"
 	}
 	if len(errs) > 0 {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 	h.cached(c, func(ctx context.Context) (any, *apiError) {
@@ -379,7 +380,7 @@ func (h *Handler) GetCandles(c *gin.Context) {
 		}
 	}
 	if len(errs) > 0 {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 	h.cached(c, func(ctx context.Context) (any, *apiError) {
@@ -389,7 +390,7 @@ func (h *Handler) GetCandles(c *gin.Context) {
 		}
 		pair, err := h.store.PairOf(ctx, a.ID, venue, quote, h.opts.Regions)
 		if errors.Is(err, marketdata.ErrNotFound) {
-			return nil, &apiError{status: http.StatusNotFound, code: CodePairNotFound, message: "The venue has no such pair of this asset."}
+			return nil, &apiError{status: http.StatusNotFound, code: CodePairNotFound, message: i18n.M("PAIR_NOT_ON_VENUE")}
 		}
 		if err != nil {
 			return nil, internal("finding a market pair", err)
@@ -410,11 +411,11 @@ func (h *Handler) GetCandles(c *gin.Context) {
 
 func (h *Handler) asset(ctx context.Context, slug string) (marketdata.Asset, *apiError) {
 	if slug == "" || len(slug) > 120 {
-		return marketdata.Asset{}, &apiError{status: http.StatusNotFound, code: CodeAssetNotFound, message: "No such asset."}
+		return marketdata.Asset{}, &apiError{status: http.StatusNotFound, code: CodeAssetNotFound, message: i18n.M("NO_SUCH_ASSET")}
 	}
 	a, err := h.store.PublicAsset(ctx, slug)
 	if errors.Is(err, marketdata.ErrNotFound) {
-		return marketdata.Asset{}, &apiError{status: http.StatusNotFound, code: CodeAssetNotFound, message: "No such asset."}
+		return marketdata.Asset{}, &apiError{status: http.StatusNotFound, code: CodeAssetNotFound, message: i18n.M("NO_SUCH_ASSET")}
 	}
 	if err != nil {
 		return marketdata.Asset{}, internal("reading a market asset", err)
@@ -426,18 +427,18 @@ func (h *Handler) asset(ctx context.Context, slug string) (marketdata.Asset, *ap
 type apiError struct {
 	status  int
 	code    string
-	message string
+	message i18n.Message
 	info    any
 }
 
 func badRequest(errs map[string]string) *apiError {
-	return &apiError{status: http.StatusBadRequest, code: helpers.CodeValidationFailed, message: "Validation failed",
+	return &apiError{status: http.StatusBadRequest, code: helpers.CodeValidationFailed, message: i18n.M("VALIDATION_FAILED"),
 		info: gin.H{"errors": errs}}
 }
 
 func internal(what string, err error) *apiError {
 	log.Printf("Market data API: %s: %v", what, err)
-	return &apiError{status: http.StatusInternalServerError, message: "Internal error"}
+	return &apiError{status: http.StatusInternalServerError, message: i18n.M("INTERNAL_ERROR")}
 }
 
 // cached answers from the shared cache, or builds the answer, caches it,
@@ -468,7 +469,7 @@ func (h *Handler) cached(c *gin.Context, build func(ctx context.Context) (any, *
 	}
 	body, err := json.Marshal(models.APIResponse{Status: http.StatusOK, Message: "OK", Info: info})
 	if err != nil {
-		helpers.SendError(c, http.StatusInternalServerError, "", "Internal error", nil)
+		helpers.SendError(c, http.StatusInternalServerError, "", i18n.M("INTERNAL_ERROR"), nil)
 		return
 	}
 	if key != "" {

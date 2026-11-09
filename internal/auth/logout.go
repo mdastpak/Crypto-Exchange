@@ -7,6 +7,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,7 +22,7 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 	tokenString, hasToken := accessToken(c)
 	if !ok || !hasToken {
 		// The route is not protected by RequireRole.
-		unauthorized(c, "token_missing", "Unauthorized - Token not provided")
+		unauthorized(c, "token_missing", i18n.M("UNAUTHORIZED_TOKEN_NOT_PROVIDED"))
 		return
 	}
 
@@ -30,7 +31,7 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 		event := SessionEvent(c, audit.ActionUserLogout, claims.UUID, claims.SessionID)
 		if err := sessions.Revoke(ctx, claims.SessionID, claims.UUID, event); err != nil {
 			log.Printf("Error revoking session %s: %v", claims.SessionID, err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to logout", nil)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LOGOUT"), nil)
 			return
 		}
 	}
@@ -42,10 +43,10 @@ func LogoutHandler(c *gin.Context, tb *TokenBlacklist, sessions SessionStore) {
 	}
 
 	if err := tb.AddTokenToBlacklist(ctx, tokenString, expiresAt); err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to logout", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LOGOUT"), nil)
 		return
 	}
 
 	ClearRefreshTokenCookie(c)
-	helpers.SendResponse(c, http.StatusOK, "Logged out successfully", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("LOGGED_OUT_SUCCESSFULLY"), nil)
 }

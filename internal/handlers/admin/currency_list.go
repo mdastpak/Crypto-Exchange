@@ -12,6 +12,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 
@@ -76,7 +77,7 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 	all, err := allCurrencies(ctx, h.PostgresDB.DB)
 	if err != nil {
 		log.Printf("Error listing currencies: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
 		return
 	}
 	result, err := query.Page(all, page)
@@ -86,10 +87,10 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 	}
 	if err != nil {
 		log.Printf("Error listing currencies: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Currencies retrieved successfully.", result)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCIES_RETRIEVED_SUCCESSFULLY"), result)
 }
 
 // allCurrencies reads every currency, deleted ones included, for the

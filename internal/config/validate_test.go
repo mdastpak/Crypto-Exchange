@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,14 +81,21 @@ func TestValidateServer_Rules(t *testing.T) {
 		"migration password in server": {func(c *Configuration) {
 			c.Postgres.Migrations.User, c.Postgres.Migrations.Password = "exchange_owner", "secret"
 		}, "postgres.migrations.password (POSTGRES_MIGRATIONS_PASSWORD) is set; in release mode only the release step"},
-		"no Redis password":       {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
-		"RabbitMQ guest user":     {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
-		"RabbitMQ guest password": {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
-		"Redis without TLS":       {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
-		"RabbitMQ without TLS":    {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
-		"Redis CA file missing":   {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
-		"IPv6 prefix too short":   {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
-		"IPv6 prefix too long":    {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
+		"no Redis password":         {func(c *Configuration) { c.Redis.Password = "" }, "redis.password (REDIS_PASSWORD) is empty"},
+		"RabbitMQ guest user":       {func(c *Configuration) { c.RabbitMQ.Username = "guest" }, "rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
+		"RabbitMQ guest password":   {func(c *Configuration) { c.RabbitMQ.Password = "guest" }, "use the default guest account"},
+		"Redis without TLS":         {func(c *Configuration) { c.Redis.TLS.Enabled = false }, "redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK)"},
+		"RabbitMQ without TLS":      {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false }, "rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
+		"Redis CA file missing":     {func(c *Configuration) { c.Redis.TLS.CAFile = "/does/not/exist.pem" }, "redis.tls cannot be used: read ca_file"},
+		"IPv6 prefix too short":     {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 16 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 16; it must be between 32 and 128"},
+		"IPv6 prefix too long":      {func(c *Configuration) { c.RateLimits.IPv6PrefixLength = 129 }, "rate_limits.ipv6_prefix_length (RATE_LIMITS_IPV6_PREFIX_LENGTH) is 129"},
+		"locales without English":   {func(c *Configuration) { c.I18n.Locales = []string{"fa"} }, `i18n.locales (I18N_LOCALES) and i18n.default_locale (I18N_DEFAULT_LOCALE) are not valid: the locales must include "en"`},
+		"default locale not listed": {func(c *Configuration) { c.I18n.DefaultLocale = "ar" }, `default locale "ar" is not one of the locales (en, fa)`},
+		"locale not a tag":          {func(c *Configuration) { c.I18n.Locales = []string{"en", "not a tag"} }, "not a BCP 47 language tag"},
+		"GeoIP without a source":    {func(c *Configuration) { c.GeoIP.Enabled = true }, "geoip.enabled (GEOIP_ENABLED) is true, but neither geoip.header (GEOIP_HEADER) nor geoip.database_path (GEOIP_DATABASE_PATH) is set"},
+		"GeoIP reload too often":    {func(c *Configuration) { c.GeoIP.ReloadIntervalSeconds = 1 }, "geoip.reload_interval_seconds (GEOIP_RELOAD_INTERVAL_SECONDS) is 1; it must be from 10 to 86400"},
+		"GeoIP max age too long":    {func(c *Configuration) { c.GeoIP.MaxAgeDays = 400 }, "geoip.max_age_days (GEOIP_MAX_AGE_DAYS) is 400; it must be from 1 to 365"},
+		"GeoIP overrides released":  {func(c *Configuration) { c.GeoIP.Overrides = map[string]string{"10.0.0.0/8": "IR"} }, "geoip.overrides is set; it fixes the country of addresses for local tests, and release mode refuses it"},
 		"RabbitMQ half a client pair": {func(c *Configuration) {
 			c.RabbitMQ.TLS.Enabled, c.RabbitMQ.TLS.CertFile = true, "/run/secrets/client.pem"
 		}, "rabbitmq.tls cannot be used: cert_file and key_file must be set together"},
@@ -489,4 +498,74 @@ func TestSourceKeyVar_AddsTheKeyWithoutEnablingTheSource(t *testing.T) {
 	require.NoError(t, v.set(&c, "cg-key"))
 	assert.Equal(t, "cg-key", c.MarketData.Sources["coingecko"].APIKey)
 	assert.False(t, c.MarketData.Sources["coingecko"].Enabled)
+}
+
+func TestLocales_DefaultsAndEnvironment(t *testing.T) {
+	c := secureRelease(t)
+	assert.Equal(t, "en", c.I18n.DefaultLocale)
+	assert.Equal(t, []string{"en", "fa"}, c.I18n.Locales)
+
+	// A configuration built without defaults, as tests build them.
+	r, err := (&Configuration{}).Locales()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"en", "fa"}, r.Codes())
+
+	require.NoError(t, overlayEnv(&c, func(name string) string {
+		return map[string]string{"I18N_LOCALES": "en, ar", "I18N_DEFAULT_LOCALE": "ar"}[name]
+	}))
+	r, err = c.Locales()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"en", "ar"}, r.Codes())
+	assert.Equal(t, "ar", r.Default().Code)
+	assert.Equal(t, "rtl", r.Default().Dir)
+}
+
+func TestValidateServer_GeoIPOverridesOutsideRelease(t *testing.T) {
+	c := secureRelease(t)
+	c.Server.Mode = "debug"
+	c.GeoIP.Enabled = true
+	c.GeoIP.Overrides = map[string]string{"192.168.0.0/16": "IR"}
+	assert.Empty(t, problemsOf(c), "overrides alone are a source, outside release mode")
+	c.GeoIP.Overrides = map[string]string{"192.168.0.0/16": "Iran"}
+	assert.Contains(t, strings.Join(problemsOf(c), "\n"), "geoip.overrides is not valid")
+	c.GeoIP.Overrides, c.GeoIP.Header, c.Server.TLS.BehindProxy, c.Server.TrustedProxies = nil, "CF-IPCountry", false, nil
+	assert.Equal(t, []string{"geoip.header (GEOIP_HEADER) is set, but server.trusted_proxies (SERVER_TRUSTED_PROXIES) is empty; the header is only trusted from the proxies that set it"}, problemsOf(c))
+	assert.Equal(t, DefaultGeoIPReloadIntervalSeconds, c.GeoIP.ReloadIntervalSeconds)
+	assert.Equal(t, DefaultGeoIPMaxAgeDays, c.GeoIP.MaxAgeDays)
+}
+
+func TestValidateServer_Sites(t *testing.T) {
+	c := secureRelease(t)
+	c.Sites.Default = "global"
+	c.Sites.List = []SiteConfig{
+		{ID: "global", Domain: "example.com", Aliases: []string{"www.example.com"}, Locales: []string{"en"}},
+		{ID: "ir", Domain: "example.ir", Countries: []string{"IR"}, Locales: []string{"fa", "en"}},
+	}
+	assert.Empty(t, problemsOf(c))
+	assert.Equal(t, []string{"https://example.com", "https://www.example.com", "https://example.ir"}, c.SiteOrigins())
+
+	r, err := c.SiteRegistry(mustLocales(t, c))
+	require.NoError(t, err)
+	assert.Equal(t, "ir", r.ByHost("example.ir").ID)
+
+	c.Sites.List[1].Locales = []string{"ar"}
+	assert.Equal(t, []string{`sites is not valid: site "ir": locale "ar" is not one of i18n.locales (en, fa)`}, problemsOf(c))
+	c.Sites.List[1].Locales = []string{"fa"}
+
+	c.Sites.Default = "world"
+	assert.Contains(t, strings.Join(problemsOf(c), "\n"), `the default site "world" is not one of the sites (global, ir)`)
+	c.Sites.Default = "global"
+
+	c.Sites.Scheme = "http"
+	assert.Equal(t, []string{`sites.scheme (SITES_SCHEME) is "http"; release mode serves the sites over https`}, problemsOf(c))
+	c.Server.Mode = "debug"
+	assert.Empty(t, problemsOf(c))
+	assert.Equal(t, "http://example.ir", c.SiteOrigins()[2])
+}
+
+func mustLocales(t *testing.T, c Configuration) *i18n.Registry {
+	t.Helper()
+	r, err := c.Locales()
+	require.NoError(t, err)
+	return r
 }

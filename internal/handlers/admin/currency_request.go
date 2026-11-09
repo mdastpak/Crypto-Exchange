@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -67,7 +68,7 @@ type currencyRequest struct {
 type fieldErrors map[string]string
 
 func sendValidationErrors(c *gin.Context, errs fieldErrors) {
-	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 }
 
 // errMalformedCurrencyRequest reports a body that is not a JSON object of the
@@ -195,7 +196,7 @@ func validateCurrency(status string, info models.CurrencyInfo) fieldErrors {
 // sendVersionConflict answers a change that is based on a version of the
 // currency that is no longer the current one.
 func sendVersionConflict(c *gin.Context, current int64) {
-	helpers.SendError(c, http.StatusConflict, "version_conflict", "The currency has changed since that version; read it again and retry.",
+	helpers.SendError(c, http.StatusConflict, "version_conflict", i18n.M("CURRENCY_VERSION_CONFLICT"),
 		gin.H{"code": "version_conflict", "version": current})
 }
 
@@ -211,6 +212,13 @@ func versionQuery(c *gin.Context) (version *int64, ok bool) {
 		return nil, false
 	}
 	return &v, true
+}
+
+// currencyWriteFailures are the messages of an unexpected failure, by
+// action.
+var currencyWriteFailures = map[string]i18n.Message{
+	"create": i18n.M("CURRENCY_CREATE_FAILED"),
+	"update": i18n.M("CURRENCY_UPDATE_FAILED"),
 }
 
 // sendCurrencyWriteError answers a failed insert or update. PostgreSQL errors
@@ -229,7 +237,7 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 				// A previous symbol of another currency, after a rebrand
 				// (#215).
 				helpers.SendError(c, http.StatusConflict, "symbol_reserved",
-					"This symbol was the symbol of another currency, which keeps it until an administrator releases it.",
+					i18n.M("SYMBOL_RESERVED"),
 					gin.H{"code": "symbol_reserved", "field": field})
 				return
 			}
@@ -237,7 +245,7 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 			// naming one hk for clients that cached it (#196): a deleted one
 			// is restored, not created again.
 			helpers.SendError(c, http.StatusConflict, code,
-				"A currency with this "+what+" already exists. If it was deleted, restore it instead.",
+				i18n.M("CURRENCY_FIELD_EXISTS", i18n.A("field", i18n.Key("CURRENCY_FIELD_"+strings.ToUpper(what)))),
 				gin.H{"code": code, "field": field})
 			return
 		case "23514", "22P02": // check_violation, invalid_text_representation
@@ -246,5 +254,5 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 		}
 	}
 	log.Printf("Error trying to %s a currency: %v", action, err)
-	helpers.SendResponse(c, http.StatusInternalServerError, "Failed to "+action+" currency due to an unexpected error.", nil)
+	helpers.SendResponse(c, http.StatusInternalServerError, currencyWriteFailures[action], nil)
 }

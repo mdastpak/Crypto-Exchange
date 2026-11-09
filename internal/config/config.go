@@ -14,6 +14,8 @@ import (
 
 	configfiles "github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/sites"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -306,6 +308,51 @@ type Configuration struct {
 		// Communications Regulatory Authority answers it.
 		MobileOwnership MobileOwnershipConfig `yaml:"mobile_ownership"`
 	} `yaml:"identity"`
+
+	// I18n lists the locales that the product supports and its fallback
+	// (#283). The direction (RTL or LTR) and the names of each locale come
+	// from its language.
+	I18n struct {
+		// DefaultLocale answers a request that names no supported locale.
+		DefaultLocale string `yaml:"default_locale"`
+		// Locales are BCP 47 tags, in the order a language switcher lists
+		// them. "en" is required: it is the language of every message that
+		// has no translation.
+		Locales []string `yaml:"locales"`
+	} `yaml:"i18n"`
+
+	// GeoIP finds the country of a client (#284), for the site of their
+	// country (#285). Off by default: no request has a country.
+	GeoIP struct {
+		Enabled bool `yaml:"enabled"`
+		// Header names the request header in which a CDN or load balancer
+		// in front of the server sends the country, such as CF-IPCountry.
+		// It is trusted only from server.trusted_proxies.
+		Header string `yaml:"header"`
+		// DatabasePath is a MaxMind-format country or city database
+		// (.mmdb), such as GeoLite2-Country or DB-IP Lite Country.
+		DatabasePath string `yaml:"database_path"`
+		// ReloadIntervalSeconds is how often the file is checked for a new
+		// version, which is then loaded without a restart.
+		ReloadIntervalSeconds int `yaml:"reload_interval_seconds"`
+		// MaxAgeDays is the age of the database after which the readiness
+		// check reports it as stale.
+		MaxAgeDays int `yaml:"max_age_days"`
+		// Overrides map addresses or networks to countries, to try the
+		// flow locally. Release mode refuses them.
+		Overrides map[string]string `yaml:"overrides"`
+	} `yaml:"geoip"`
+
+	// Sites are the domains of the product, the countries each serves, and
+	// its locales (#285). Empty means one site and no redirects.
+	Sites struct {
+		// Default names the site of a visitor whose country no site serves,
+		// or is not known.
+		Default string `yaml:"default"`
+		// Scheme of the sites' URLs: https, or http for development.
+		Scheme string       `yaml:"scheme"`
+		List   []SiteConfig `yaml:"list"`
+	} `yaml:"sites"`
 
 	Favorites struct {
 		// MaxPerUser caps the favorite currencies and pairs of one user
@@ -1338,6 +1385,22 @@ func setDefaults() {
 		Config.Server.ShutdownTimeout = DefaultShutdownTimeoutSeconds
 	}
 
+	if Config.GeoIP.ReloadIntervalSeconds == 0 {
+		Config.GeoIP.ReloadIntervalSeconds = DefaultGeoIPReloadIntervalSeconds
+	}
+	if Config.GeoIP.MaxAgeDays == 0 {
+		Config.GeoIP.MaxAgeDays = DefaultGeoIPMaxAgeDays
+	}
+	if Config.Sites.Scheme == "" {
+		Config.Sites.Scheme = DefaultSiteScheme
+	}
+	if Config.I18n.DefaultLocale == "" {
+		Config.I18n.DefaultLocale = DefaultLocale
+	}
+	if len(Config.I18n.Locales) == 0 {
+		Config.I18n.Locales = append([]string(nil), DefaultLocales...)
+	}
+
 	if Config.JWT.Issuer == "" {
 		Config.JWT.Issuer = DefaultJWTIssuer
 	}
@@ -1955,3 +2018,85 @@ const (
 
 // RedisModes lists the values of redis.mode.
 var RedisModes = []string{RedisModeStandalone, RedisModeSentinel, RedisModeCluster}
+
+// The locales of a configuration that lists none (#283): English, the
+// fallback of every message, and Persian. A release outside Iran may list
+// only the languages of its markets.
+const DefaultLocale = "en"
+
+var DefaultLocales = []string{"en", "fa"}
+
+// Locales builds the registry of the configured locales (#283). A
+// configuration that lists none, such as one built by a test, gets the
+// defaults.
+func (c *Configuration) Locales() (*i18n.Registry, error) {
+	def, codes := c.I18n.DefaultLocale, c.I18n.Locales
+	if def == "" {
+		def = DefaultLocale
+	}
+	if len(codes) == 0 {
+		codes = DefaultLocales
+	}
+	return i18n.New(def, codes)
+}
+
+// The GeoIP defaults and limits (#284).
+const (
+	DefaultGeoIPReloadIntervalSeconds = 300
+	MinGeoIPReloadIntervalSeconds     = 10
+	MaxGeoIPReloadIntervalSeconds     = 86400
+	DefaultGeoIPMaxAgeDays            = 45
+	MaxGeoIPMaxAgeDays                = 365
+)
+
+// SiteConfig is one site of the product (#285).
+type SiteConfig struct {
+	// ID names the site, such as global or ir.
+	ID string `yaml:"id"`
+	// Domain is its canonical host; Aliases are other hosts of the same
+	// site, such as www.example.com.
+	Domain  string   `yaml:"domain"`
+	Aliases []string `yaml:"aliases"`
+	// Countries are the ISO 3166-1 alpha-2 codes of the countries whose
+	// visitors belong to it. A country belongs to one site at most.
+	Countries []string `yaml:"countries"`
+	// Locales are codes of i18n.locales; the first is its default.
+	Locales []string `yaml:"locales"`
+	// Enforce keeps the visitors of its countries on it, even when they
+	// chose another site, for a legal requirement.
+	Enforce bool `yaml:"enforce"`
+}
+
+// DefaultSiteScheme is the scheme of the sites' URLs.
+const DefaultSiteScheme = "https"
+
+// SiteRegistry builds the table of sites (#285) on locales.
+func (c *Configuration) SiteRegistry(locales *i18n.Registry) (*sites.Registry, error) {
+	specs := make([]sites.Spec, 0, len(c.Sites.List))
+	for _, s := range c.Sites.List {
+		specs = append(specs, sites.Spec{ID: s.ID, Domain: s.Domain, Aliases: s.Aliases, Countries: s.Countries, Locales: s.Locales, Enforce: s.Enforce})
+	}
+	scheme := c.Sites.Scheme
+	if scheme == "" {
+		scheme = DefaultSiteScheme
+	}
+	return sites.New(c.Sites.Default, scheme, specs, locales)
+}
+
+// SiteOrigins returns the browser origins of every domain of the sites
+// (#285), which CORS and the WebSocket allow besides their own lists.
+func (c *Configuration) SiteOrigins() []string {
+	scheme := c.Sites.Scheme
+	if scheme == "" {
+		scheme = DefaultSiteScheme
+	}
+	var origins []string
+	for _, s := range c.Sites.List {
+		for _, host := range append([]string{s.Domain}, s.Aliases...) {
+			if host, err := sites.NormalizeHost(host); err == nil {
+				origins = append(origins, scheme+"://"+host)
+			}
+		}
+	}
+	return origins
+}

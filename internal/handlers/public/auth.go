@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -23,6 +24,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -104,7 +106,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 
 	var req OTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: Email or Mobile is required", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("EMAIL_OR_MOBILE_REQUIRED"), nil)
 		return
 	}
 	// Every form of a contact that users type, such as a mobile number in
@@ -113,11 +115,11 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 
 	contactType, maskedContact := IdentifyInputType(req.Username)
 	if contactType == "" {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid contact information", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_CONTACT_INFORMATION"), nil)
 		return
 	}
 	if !h.OTPSender.Supports(contactType) {
-		helpers.SendResponse(c, http.StatusBadRequest, fmt.Sprintf("Sign-in by %s is not available", contactType), nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("SIGN_IN_BY_NOT_AVAILABLE", i18n.A("channel", i18n.Key("CHANNEL_"+strings.ToUpper(contactType)))), nil)
 		return
 	}
 
@@ -133,15 +135,15 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
 		h.noteSignIn(ctx, event, audit.Denied, reasonRateLimited)
-		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
+		helpers.SendResponse(c, http.StatusTooManyRequests, i18n.M("TOO_MANY_SIGN_IN_CODES"), nil)
 		return
 	case errors.Is(err, otp.ErrTooManyAttempts):
 		h.noteSignIn(ctx, event, audit.Denied, reasonRateLimited)
-		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
+		helpers.SendResponse(c, http.StatusTooManyRequests, i18n.M("TOO_MANY_FAILED_ATTEMPTS"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to issue a sign-in code for %s %s: %v", contactType, maskedContact, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to store OTP", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_STORE_OTP"), nil)
 		return
 	}
 	event.TargetType, event.TargetID = audit.TargetSignIn, issued.SessionID
@@ -157,12 +159,12 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 	if err != nil {
 		log.Printf("Failed to send the sign-in code to %s %s: %v", contactType, maskedContact, err)
 		h.noteSignIn(ctx, event, audit.Failure, "delivery_failed")
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to send OTP", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_SEND_OTP"), nil)
 		return
 	}
 	h.noteSignIn(ctx, event, audit.Success, "")
 
-	helpers.SendResponse(c, http.StatusOK, "OTP sent to your contact", gin.H{"type": contactType, "username": maskedContact, "uuid": issued.SessionID})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("OTP_SENT_TO_YOUR_CONTACT"), gin.H{"type": contactType, "username": maskedContact, "uuid": issued.SessionID})
 }
 
 // @Summary Verify a sign-in code
@@ -188,12 +190,12 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	var req VerifyOTPRequest
 	reqUUID := c.Param("uuid")
 	if err := c.ShouldBindJSON(&req); err != nil || reqUUID == "" || req.OTP == "" {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: UUID and OTP are required", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("UUID_AND_OTP_REQUIRED"), nil)
 		return
 	}
 
 	if !validateUUID(reqUUID) {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_UUID_FORMAT"), nil)
 		return
 	}
 
@@ -210,21 +212,21 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	switch {
 	case errors.Is(err, otp.ErrTooManyAttempts):
 		h.noteSignIn(ctx, attempt, audit.Denied, reasonRateLimited)
-		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
+		helpers.SendResponse(c, http.StatusTooManyRequests, i18n.M("TOO_MANY_FAILED_ATTEMPTS"), nil)
 		return
 	case errors.Is(err, otp.ErrInvalidCode):
 		h.noteSignIn(ctx, attempt, audit.Failure, "code_invalid")
-		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired OTP code", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", i18n.M("INVALID_OR_EXPIRED_OTP_CODE"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to verify a sign-in code: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify OTP", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_VERIFY_OTP"), nil)
 		return
 	}
 
 	contactType, _ := IdentifyInputType(contact)
 	if contactType == "" {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid contact information", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_CONTACT_INFORMATION"), nil)
 		return
 	}
 
@@ -242,7 +244,7 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
 		// The code was right, so the caller controls the contact and may
 		// learn why the account cannot sign in.
-		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, "This account cannot sign in. Please contact support.", nil)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
 		return
 	}
 	var locked *platform.Locked
@@ -254,16 +256,16 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	if errors.Is(err, errIdentityUnavailable) {
 		h.noteSignIn(ctx, attempt, audit.Failure, codeIdentityUnavailable)
 		helpers.SendError(c, http.StatusServiceUnavailable, codeIdentityUnavailable,
-			"Your mobile number cannot be checked against your national ID right now. Please request a new code later, or sign in with your email address.", nil)
+			i18n.M("SIGN_IN_MOBILE_CHECK_UNAVAILABLE"), nil)
 		return
 	}
 	if errors.Is(err, errAdminAccount) {
 		h.noteSignIn(ctx, attempt, audit.Failure, "use_admin_sign_in")
-		helpers.SendError(c, http.StatusForbidden, "use_admin_sign_in", "Administrators must use the admin sign-in.", nil)
+		helpers.SendError(c, http.StatusForbidden, "use_admin_sign_in", i18n.M("ADMINS_USE_ADMIN_SIGN_IN"), nil)
 		return
 	}
 	if err != nil || userHK == uuid.Nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to create user", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_USER"), nil)
 		return
 	}
 
@@ -612,7 +614,7 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 		errs[field] = problem
 	}
 	if len(errs) > 0 {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 
@@ -627,23 +629,23 @@ func (h *PublicHandler) GetActiveCurrencies(c *gin.Context) {
 		// The store of the currencies could not be read, as while Redis is
 		// away: the client may retry (#130).
 		c.Header("Retry-After", strconv.Itoa(dberr.StoreUnavailable.RetryAfterSeconds))
-		helpers.SendError(c, http.StatusServiceUnavailable, dberr.CodeServiceUnavailable, "Currencies are temporarily unavailable.", nil)
+		helpers.SendError(c, http.StatusServiceUnavailable, dberr.CodeServiceUnavailable, i18n.M("CURRENCIES_UNAVAILABLE"), nil)
 		return
 	}
 	// A delisted currency leaves the list, but can still be read by its hk.
 	list = slices.DeleteFunc(slices.Clone(list), func(c models.Currency) bool { return !currencies.Listed(c) })
 	result, err := query.Page(list, page)
 	if errors.Is(err, pagination.ErrInvalidCursor) {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed",
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"),
 			gin.H{"errors": map[string]string{"cursor": "is not a cursor of this list"}})
 		return
 	}
 	if err != nil {
 		log.Printf("Error paging the public currencies: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Active currencies retrieved successfully.", result)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("ACTIVE_CURRENCIES_RETRIEVED_SUCCESSFULLY"), result)
 }
 
 // favoritesOf keeps only the favorites of the user of the request's access
@@ -653,7 +655,7 @@ func (h *PublicHandler) favoritesOf(c *gin.Context, ctx context.Context, q *curr
 	token, ok := auth.BearerToken(c.GetHeader("Authorization"))
 	if !ok {
 		c.Header("WWW-Authenticate", "Bearer")
-		helpers.SendError(c, http.StatusUnauthorized, "token_missing", "favorites=true needs your access token.", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "token_missing", i18n.M("FAVORITES_FILTER_NEEDS_TOKEN"), nil)
 		return false
 	}
 	claims, err := auth.AuthenticateUserToken(ctx, token, h.Blacklist, h.Sessions)
@@ -663,21 +665,21 @@ func (h *PublicHandler) favoritesOf(c *gin.Context, ctx context.Context, q *curr
 		helpers.SendError(c, http.StatusForbidden, code, message, nil)
 		return false
 	case errors.Is(err, auth.ErrSessionInvalid):
-		helpers.SendError(c, http.StatusUnauthorized, "session_inactive", "Unauthorized - Session is not active", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "session_inactive", i18n.M("UNAUTHORIZED_SESSION_IS_NOT_ACTIVE"), nil)
 		return false
 	case err != nil && (errors.Is(err, auth.ErrInvalidToken) || errors.Is(err, auth.ErrWrongTokenType) || errors.Is(err, auth.ErrWrongRole) || claims == nil):
 		c.Header("WWW-Authenticate", "Bearer")
-		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 		return false
 	case err != nil:
 		log.Printf("Failed to check the token of a favorites filter: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
 		return false
 	}
 	hks, err := favorites.CurrencyHKs(ctx, h.PostgresDB.DB, claims.UUID)
 	if err != nil {
 		log.Printf("Failed to read the favorites of a user: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list currencies.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
 		return false
 	}
 	q.HKs = hks
@@ -700,7 +702,7 @@ func (h *PublicHandler) favoritesOf(c *gin.Context, ctx context.Context, q *curr
 func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("hk"))
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for HK", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_CURRENCY_ID"), nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), currencyReadTimeout)
@@ -712,12 +714,12 @@ func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
 		// The store of the currencies could not be read, as while Redis is
 		// away: the client may retry (#130).
 		c.Header("Retry-After", strconv.Itoa(dberr.StoreUnavailable.RetryAfterSeconds))
-		helpers.SendError(c, http.StatusServiceUnavailable, dberr.CodeServiceUnavailable, "Currencies are temporarily unavailable.", nil)
+		helpers.SendError(c, http.StatusServiceUnavailable, dberr.CodeServiceUnavailable, i18n.M("CURRENCIES_UNAVAILABLE"), nil)
 		return
 	}
 	if !found {
-		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Currency retrieved successfully.", currency)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_RETRIEVED_SUCCESSFULLY"), currency)
 }

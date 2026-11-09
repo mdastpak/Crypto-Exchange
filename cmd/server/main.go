@@ -22,6 +22,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
 	marketdataapi "github.com/mdastpak/crypto-exchange/internal/handlers/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/marketdataadmin"
@@ -30,6 +31,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
@@ -41,6 +43,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
+	"github.com/mdastpak/crypto-exchange/internal/sites"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -68,6 +71,14 @@ type InfraHandlers struct {
 	// Platform refuses the requests that a maintenance or a lockdown closes
 	// (#235). Without a watcher, it lets every request through.
 	Platform *platform.Gate
+	// Locales are the supported locales (#283). RouteHandler fills it from
+	// the configuration when it is nil.
+	Locales *i18n.Registry
+	// GeoIP finds the country of a request (#284). Nil knows no country.
+	GeoIP *geoip.Resolver
+	// Sites are the domains and locales per country (#285). RouteHandler
+	// fills it from the configuration when it is nil.
+	Sites *sites.Registry
 }
 
 var (
@@ -162,6 +173,14 @@ func run() error {
 	}
 	relay := newOutboxRelay(services, handlers, watcher)
 	workers := []worker{{"outbox relay", relay.Stop}, {"platform watcher", watcher.Stop}}
+	geoIP, geoIPWorker, err := startGeoIP()
+	if err != nil {
+		return fmt.Errorf("invalid GeoIP configuration: %w", err)
+	}
+	handlers.GeoIP, handlers.System.GeoIP = geoIP, geoIP
+	if geoIPWorker != nil {
+		workers = append(workers, *geoIPWorker)
+	}
 	scheduler := newDelistingScheduler(services, handlers, relay)
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
@@ -242,6 +261,70 @@ func run() error {
 	ctx, stop := stopSignals()
 	defer stop()
 	return serve(ctx, srv, listen, handlers, workers, shutdownTimeout(), drainTime())
+}
+
+// newSiteHandler builds the handler of the site routes (#285).
+func newSiteHandler(ih *InfraHandlers) *public.SiteHandler {
+	h := &public.SiteHandler{
+		Sites:   ih.Sites,
+		Locales: ih.Locales,
+		GeoIP:   ih.GeoIP,
+	}
+	for _, entry := range config.Config.Server.TrustedProxies {
+		if prefix, err := geoip.ParsePrefix(entry); err == nil {
+			h.TrustedProxies = append(h.TrustedProxies, prefix)
+		}
+	}
+	return h
+}
+
+// startGeoIP builds the resolver of client countries (#284) and starts the
+// reloader of its database, which each instance runs on its own copy of
+// the file. A database that does not load stops a release, since the sites
+// of the countries (#285) would silently fall back to the default site; in
+// development the server starts without it.
+func startGeoIP() (*geoip.Resolver, *worker, error) {
+	g := config.Config.GeoIP
+	if !g.Enabled {
+		return nil, nil, nil
+	}
+	resolver, err := geoip.New(geoip.Options{
+		Header:         g.Header,
+		TrustedProxies: config.Config.Server.TrustedProxies,
+		DatabasePath:   g.DatabasePath,
+		Overrides:      g.Overrides,
+		MaxAge:         time.Duration(g.MaxAgeDays) * 24 * time.Hour,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := resolver.Load(); err != nil {
+		if config.Config.Server.Mode == "release" {
+			return nil, nil, err
+		}
+		log.Printf("WARNING: GeoIP starts without its database: %v", err)
+	}
+	if err := resolver.Check(time.Now()); err != nil {
+		log.Printf("WARNING: GeoIP: %v", err)
+	}
+	if g.DatabasePath == "" {
+		return resolver, nil, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		resolver.Watch(ctx, time.Duration(g.ReloadIntervalSeconds)*time.Second)
+	}()
+	return resolver, &worker{"GeoIP reloader", func(stopCtx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-stopCtx.Done():
+			return stopCtx.Err()
+		}
+	}}, nil
 }
 
 // stopSignals returns a context that a SIGINT or SIGTERM cancels.
@@ -804,7 +887,7 @@ func newMarketDataAPI(services *models.InfraServices) *marketdataapi.Handler {
 // @Success 200 {object} models.APIResponse
 // @Router / [get]
 func welcome(c *gin.Context) {
-	helpers.SendResponse(c, http.StatusOK, "Welcome to the Crypto Exchange API", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("WELCOME"), nil)
 }
 
 // userLogout ends the session of a user access token: it revokes the
@@ -866,6 +949,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	publicGroup := g.Group("/public")
 	{
 		publicGroup.GET("/status", ih.Public.PlatformStatus)
+		publicGroup.GET("/locales", public.Locales(ih.Locales))
+		siteHandler := newSiteHandler(ih)
+		publicGroup.GET("/site", siteHandler.Site)
+		publicGroup.GET("/site/redirect", siteHandler.Redirect)
+		publicGroup.POST("/site/choice", siteHandler.Choice)
 		publicGroup.GET("/currencies", service, ih.Public.GetActiveCurrencies)
 		publicGroup.GET("/currencies/:hk", service, ih.Public.GetCurrencyByHK)
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
@@ -972,13 +1060,38 @@ var probeRoutes = []string{"/system/live", "/system/ready", "/system/healthcheck
 // be registered before this function runs.
 func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	rl := middleware.NewRateLimiter(ih.Redis)
-	cors, err := middleware.NewCORSMiddleware(config.Config.Server.CORS.AllowedOrigins)
+	// The pages of every site call the API (#285).
+	origins := append(append([]string(nil), config.Config.Server.CORS.AllowedOrigins...), config.Config.SiteOrigins()...)
+	cors, err := middleware.NewCORSMiddleware(origins)
 	if err != nil {
 		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
 	}
 
+	if ih.Locales == nil {
+		locales, err := config.Config.Locales()
+		if err != nil {
+			return fmt.Errorf("invalid i18n settings: %w", err)
+		}
+		ih.Locales = locales
+	}
+	if ih.User != nil && ih.User.Locales == nil {
+		ih.User.Locales = ih.Locales
+	}
+	if ih.Sites == nil {
+		registry, err := config.Config.SiteRegistry(ih.Locales)
+		if err != nil {
+			return fmt.Errorf("invalid sites: %w", err)
+		}
+		ih.Sites = registry
+	}
+
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.RequestID())
+	// Every answer after this point, refusals of the limits included, is
+	// in the visitor's language where it has a translation (#283).
+	// A request that names no locale gets the default locale of the site
+	// it comes from (#285).
+	r.Use(i18n.Middleware(ih.Locales, ih.Sites.LocaleOfHost))
 	security := middleware.SecurityOptions{
 		HSTS:                  config.Config.HSTSEnabled(),
 		HSTSMaxAge:            config.Config.Server.HSTS.MaxAgeSeconds,
@@ -1007,10 +1120,10 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	// and the request ID, instead of Gin's plain-text answers (#53).
 	r.HandleMethodNotAllowed = true
 	r.NoRoute(func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusNotFound, "Not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("NOT_FOUND"), nil)
 	})
 	r.NoMethod(func(c *gin.Context) {
-		helpers.SendResponse(c, http.StatusMethodNotAllowed, "Method not allowed", nil)
+		helpers.SendResponse(c, http.StatusMethodNotAllowed, i18n.M("METHOD_NOT_ALLOWED"), nil)
 	})
 
 	r.GET("/", welcome)

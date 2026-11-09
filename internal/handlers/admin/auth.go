@@ -14,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
@@ -28,7 +29,7 @@ const otpNamespace = "admin"
 
 // signInCodeSent is the answer to every valid sign-in request, so that it does
 // not reveal which addresses belong to administrators.
-const signInCodeSent = "If this address belongs to an administrator, a sign-in code was sent to it"
+var signInCodeSent = i18n.M("ADMIN_SIGN_IN_CODE_SENT")
 
 type adminSignInRequest struct {
 	Email string `json:"email"`
@@ -56,20 +57,20 @@ func (h *AdminHandler) RequireActiveAdmin() gin.HandlerFunc {
 		claims, ok := auth.GetClaims(c)
 		if !ok || h.Accounts == nil {
 			// Without admin sign-in, no admin token is legitimate.
-			helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, "Unauthorized - Invalid token", nil)
+			helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 			c.Abort()
 			return
 		}
 		active, err := h.Accounts.IsActive(c.Request.Context(), claims.UUID)
 		if err != nil {
 			log.Printf("Failed to check administrator %s: %v", claims.UUID, err)
-			helpers.SendResponse(c, http.StatusInternalServerError, "Failed to check the administrator", nil)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CHECK_ADMIN"), nil)
 			c.Abort()
 			return
 		}
 		if !active {
 			log.Printf("Rejected a token of administrator %s, who is no longer active", claims.UUID)
-			helpers.SendError(c, http.StatusUnauthorized, "admin_inactive", "Unauthorized - Administrator is not active", nil)
+			helpers.SendError(c, http.StatusUnauthorized, "admin_inactive", i18n.M("UNAUTHORIZED_ADMIN_NOT_ACTIVE"), nil)
 			c.Abort()
 			return
 		}
@@ -98,17 +99,17 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	defer cancel()
 
 	if !h.signInAvailable() {
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Admin sign-in is not available", nil)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("ADMIN_SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
 	var req adminSignInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: Email is required", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("EMAIL_REQUIRED"), nil)
 		return
 	}
 	email, err := adminauth.NormalizeEmail(req.Email)
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid email address", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_EMAIL_ADDRESS"), nil)
 		return
 	}
 
@@ -121,7 +122,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	// already be on its way.
 	start := time.Now()
 	minimum := time.Duration(config.Config.Admin.SignInMinResponseMS) * time.Millisecond
-	respond := func(status int, message string, info interface{}) {
+	respond := func(status int, message i18n.Message, info interface{}) {
 		padResponse(ctx, start, minimum)
 		helpers.SendResponse(c, status, message, info)
 	}
@@ -130,7 +131,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	known := err == nil
 	if err != nil && !errors.Is(err, adminauth.ErrNotFound) {
 		log.Printf("Failed to look up an administrator for sign-in: %v", err)
-		respond(http.StatusInternalServerError, "Failed to start the sign-in", nil)
+		respond(http.StatusInternalServerError, i18n.M("FAILED_TO_START_SIGN_IN"), nil)
 		return
 	}
 	adminID := ""
@@ -147,15 +148,15 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
 		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, adminID, audit.Denied, "rate_limited")
-		respond(http.StatusTooManyRequests, "Too many sign-in codes requested. Please try again later.", nil)
+		respond(http.StatusTooManyRequests, i18n.M("TOO_MANY_SIGN_IN_CODES"), nil)
 		return
 	case errors.Is(err, otp.ErrTooManyAttempts):
 		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, adminID, audit.Denied, "rate_limited")
-		respond(http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
+		respond(http.StatusTooManyRequests, i18n.M("TOO_MANY_FAILED_ATTEMPTS"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to issue an admin sign-in code: %v", err)
-		respond(http.StatusInternalServerError, "Failed to start the sign-in", nil)
+		respond(http.StatusInternalServerError, i18n.M("FAILED_TO_START_SIGN_IN"), nil)
 		return
 	}
 	if !known {
@@ -172,7 +173,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	})
 	if err != nil {
 		log.Printf("Failed to send the admin sign-in code to administrator %s: %v", admin.ID, err)
-		respond(http.StatusInternalServerError, "Failed to start the sign-in", nil)
+		respond(http.StatusInternalServerError, i18n.M("FAILED_TO_START_SIGN_IN"), nil)
 		return
 	}
 	h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, admin.ID, audit.Success, "")
@@ -203,17 +204,17 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	defer cancel()
 
 	if !h.signInAvailable() {
-		helpers.SendResponse(c, http.StatusServiceUnavailable, "Admin sign-in is not available", nil)
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("ADMIN_SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
 	sessionID := c.Param("uuid")
 	if _, err := uuid.Parse(sessionID); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_UUID_FORMAT"), nil)
 		return
 	}
 	var req adminVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.OTP == "" || req.TOTP == "" {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid request data: OTP and TOTP are required", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("OTP_AND_TOTP_REQUIRED"), nil)
 		return
 	}
 	// An authenticator code typed in Persian digits is the same code (#197);
@@ -226,15 +227,15 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	switch {
 	case errors.Is(err, otp.ErrTooManyAttempts):
 		h.noteSignIn(ctx, c, audit.ActionAdminSignIn, "", audit.Denied, "rate_limited")
-		helpers.SendResponse(c, http.StatusTooManyRequests, "Too many failed attempts. Please try again later.", nil)
+		helpers.SendResponse(c, http.StatusTooManyRequests, i18n.M("TOO_MANY_FAILED_ATTEMPTS"), nil)
 		return
 	case errors.Is(err, otp.ErrInvalidCode):
 		h.noteSignIn(ctx, c, audit.ActionAdminSignIn, "", audit.Failure, "email_code_invalid")
-		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired code", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", i18n.M("INVALID_OR_EXPIRED_CODE"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to verify an admin sign-in code: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the sign-in", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_VERIFY_SIGN_IN"), nil)
 		return
 	}
 
@@ -250,11 +251,11 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		} else {
 			h.noteSignIn(ctx, c, audit.ActionAdminSignIn, admin.ID, audit.Failure, "authenticator_code_invalid")
 		}
-		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", "Invalid or expired code", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", i18n.M("INVALID_OR_EXPIRED_CODE"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to verify an admin sign-in: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the sign-in", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_VERIFY_SIGN_IN"), nil)
 		return
 	}
 
@@ -269,17 +270,17 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	accessToken, err := auth.GenerateAccessToken(admin.ID, auth.RoleAdmin, "")
 	if err != nil {
 		log.Printf("Failed to issue an admin token: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_ACCESS_TOKEN"), nil)
 		return
 	}
 	// An administrator signs in only with a record of it.
 	if err := h.auditSignIn(ctx, c, audit.ActionAdminSignIn, admin.ID, audit.Success, ""); err != nil {
 		log.Printf("Refused the sign-in of administrator %s, which could not be recorded: %v", admin.ID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to verify the sign-in", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_VERIFY_SIGN_IN"), nil)
 		return
 	}
 	log.Printf("Administrator %s signed in", admin.ID)
-	helpers.SendResponse(c, http.StatusOK, "Signed in successfully", gin.H{"access_token": accessToken})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SIGNED_IN_SUCCESSFULLY"), gin.H{"access_token": accessToken})
 }
 
 // padResponse waits until minimum has passed since start, so that every

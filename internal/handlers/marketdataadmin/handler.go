@@ -22,6 +22,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 
@@ -94,27 +95,28 @@ func origin(c *gin.Context) audit.Event {
 }
 
 func validation(c *gin.Context, errs map[string]string) {
-	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, "Validation failed", gin.H{"errors": errs})
+	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 }
 
 // sendError answers the errors of the store.
 func sendError(c *gin.Context, err error, what string) {
 	type answer struct {
-		status        int
-		code, message string
+		status  int
+		code    string
+		message i18n.Message
 	}
 	answers := []struct {
 		err error
 		answer
 	}{
-		{marketdata.ErrNotFound, answer{http.StatusNotFound, CodeNotFound, "Not found."}},
-		{marketdata.ErrAssetLinked, answer{http.StatusConflict, CodeAssetLinked, "The asset is linked to a listed currency; unlink it first."}},
-		{marketdata.ErrAssetHidden, answer{http.StatusConflict, CodeAssetHidden, "The asset is hidden; show it first."}},
-		{marketdata.ErrAssetNotLinked, answer{http.StatusConflict, CodeAssetNotLinked, "The asset is not linked."}},
-		{marketdata.ErrCurrencyNotFound, answer{http.StatusUnprocessableEntity, CodeCurrencyNotFound, "No listed currency has that hk."}},
-		{marketdata.ErrCurrencyLinked, answer{http.StatusConflict, CodeCurrencyLinked, "Another asset is linked to that currency."}},
-		{marketdata.ErrConflictResolved, answer{http.StatusConflict, CodeConflictResolved, "The conflict is already resolved."}},
-		{marketdata.ErrJobRunning, answer{http.StatusConflict, CodeJobRunning, "A worker is running the job; it runs again on its schedule."}},
+		{marketdata.ErrNotFound, answer{http.StatusNotFound, CodeNotFound, i18n.M("NOT_FOUND")}},
+		{marketdata.ErrAssetLinked, answer{http.StatusConflict, CodeAssetLinked, i18n.M("MARKET_ASSET_LINKED")}},
+		{marketdata.ErrAssetHidden, answer{http.StatusConflict, CodeAssetHidden, i18n.M("MARKET_ASSET_HIDDEN")}},
+		{marketdata.ErrAssetNotLinked, answer{http.StatusConflict, CodeAssetNotLinked, i18n.M("MARKET_ASSET_NOT_LINKED")}},
+		{marketdata.ErrCurrencyNotFound, answer{http.StatusUnprocessableEntity, CodeCurrencyNotFound, i18n.M("MARKET_CURRENCY_NOT_FOUND")}},
+		{marketdata.ErrCurrencyLinked, answer{http.StatusConflict, CodeCurrencyLinked, i18n.M("MARKET_CURRENCY_LINKED")}},
+		{marketdata.ErrConflictResolved, answer{http.StatusConflict, CodeConflictResolved, i18n.M("MARKET_CONFLICT_ALREADY_RESOLVED")}},
+		{marketdata.ErrJobRunning, answer{http.StatusConflict, CodeJobRunning, i18n.M("MARKET_JOB_RUNNING")}},
 	}
 	for _, a := range answers {
 		if errors.Is(err, a.err) {
@@ -127,7 +129,7 @@ func sendError(c *gin.Context, err error, what string) {
 		return
 	}
 	log.Printf("Market data admin: failed to %s: %v", what, err)
-	helpers.SendResponse(c, http.StatusInternalServerError, "Failed to "+what+".", nil)
+	helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("INTERNAL_ERROR"), nil)
 }
 
 // changed drops the cache of the public API after a change. A failure is
@@ -428,7 +430,7 @@ func (h *Handler) ListSources(c *gin.Context) {
 		list.Items = append(list.Items, *v)
 	}
 	slices.SortFunc(list.Items, func(a, b SourceView) int { return strings.Compare(a.Source, b.Source) })
-	helpers.SendResponse(c, http.StatusOK, "Sources retrieved successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_SOURCES_RETRIEVED"), list)
 }
 
 // PauseSource pauses a source.
@@ -479,7 +481,7 @@ func (h *Handler) setSourcePaused(c *gin.Context, paused bool) {
 		sendError(c, err, "change the source")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Source updated successfully.",
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_SOURCE_UPDATED"),
 		SourceView{Source: ctl.Source, Paused: ctl.Paused, Reason: ctl.Reason, UpdatedAt: ctl.UpdatedAt, Healthy: true, Jobs: []JobView{}})
 }
 
@@ -507,7 +509,7 @@ func (h *Handler) ListJobs(c *gin.Context) {
 	for i, j := range jobs {
 		list.Items[i] = jobView(j)
 	}
-	helpers.SendResponse(c, http.StatusOK, "Jobs retrieved successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_JOBS_RETRIEVED"), list)
 }
 
 // RunJob runs a job now.
@@ -532,7 +534,7 @@ func (h *Handler) RunJob(c *gin.Context) {
 		sendError(c, err, "run the job")
 		return
 	}
-	helpers.SendResponse(c, http.StatusAccepted, "The job runs at the next poll of a worker.", nil)
+	helpers.SendResponse(c, http.StatusAccepted, i18n.M("MARKET_JOB_DUE"), nil)
 }
 
 // ListRuns lists the runs of the jobs.
@@ -572,7 +574,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		sendError(c, err, "read the runs")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Runs retrieved successfully.", RunPage{Items: items, NextCursor: next})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_RUNS_RETRIEVED"), RunPage{Items: items, NextCursor: next})
 }
 
 // Venues.
@@ -601,7 +603,7 @@ func (h *Handler) ListVenues(c *gin.Context) {
 	for i, v := range venues {
 		list.Items[i] = venueView(v)
 	}
-	helpers.SendResponse(c, http.StatusOK, "Venues retrieved successfully.", list)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_VENUES_RETRIEVED"), list)
 }
 
 // EnableVenue enables a venue.
@@ -655,7 +657,7 @@ func (h *Handler) setVenueEnabled(c *gin.Context, enabled bool) {
 		return
 	}
 	h.changed(ctx)
-	helpers.SendResponse(c, http.StatusOK, "Venue updated successfully.", venueView(v))
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_VENUE_UPDATED"), venueView(v))
 }
 
 // Assets.
@@ -694,7 +696,7 @@ func (h *Handler) ListAssets(c *gin.Context) {
 		sendError(c, err, "read the assets")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Assets retrieved successfully.", AssetPage{Items: items, NextCursor: next})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_ASSETS_RETRIEVED"), AssetPage{Items: items, NextCursor: next})
 }
 
 // GetAsset returns an asset.
@@ -723,7 +725,7 @@ func (h *Handler) GetAsset(c *gin.Context) {
 		sendError(c, err, "read the asset")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Asset retrieved successfully.", assetView(a))
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_ASSET_RETRIEVED"), assetView(a))
 }
 
 // assetChange runs a change of an asset and answers with the asset.
@@ -740,7 +742,7 @@ func (h *Handler) assetChange(c *gin.Context, req any, change func(ctx context.C
 		return
 	}
 	h.changed(ctx)
-	helpers.SendResponse(c, http.StatusOK, "Asset updated successfully.", assetView(a))
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_ASSET_UPDATED"), assetView(a))
 }
 
 // HideAsset hides an asset.
@@ -935,7 +937,7 @@ func (h *Handler) ListPairs(c *gin.Context) {
 		sendError(c, err, "read the pairs")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Pairs retrieved successfully.", PairPage{Items: items, NextCursor: next})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_PAIRS_RETRIEVED"), PairPage{Items: items, NextCursor: next})
 }
 
 // SetPairTier sets the tier of a pair.
@@ -1007,7 +1009,7 @@ func (h *Handler) pairChange(c *gin.Context, req any, change func(ctx context.Co
 		return
 	}
 	h.changed(ctx)
-	helpers.SendResponse(c, http.StatusOK, "Pair updated successfully.", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_PAIR_UPDATED"), nil)
 }
 
 // Conflicts.
@@ -1057,7 +1059,7 @@ func (h *Handler) ListConflicts(c *gin.Context) {
 		sendError(c, err, "read the conflicts")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Conflicts retrieved successfully.", ConflictPage{Items: items, NextCursor: next})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_CONFLICTS_RETRIEVED"), ConflictPage{Items: items, NextCursor: next})
 }
 
 // ResolveRequest resolves a conflict.
@@ -1096,5 +1098,5 @@ func (h *Handler) ResolveConflict(c *gin.Context) {
 		sendError(c, err, "resolve the conflict")
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Conflict resolved successfully.", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("MARKET_CONFLICT_RESOLVED"), nil)
 }

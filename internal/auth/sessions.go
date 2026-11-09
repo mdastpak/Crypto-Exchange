@@ -66,6 +66,13 @@ type SessionStore interface {
 	Verify(ctx context.Context, sessionID, userID string) error
 }
 
+// LocaleVerifier is a SessionStore that also returns, with Verify, the
+// locale that the user saved in their profile (#286), so that the
+// negotiation of a signed-in request needs no other read.
+type LocaleVerifier interface {
+	VerifyLocale(ctx context.Context, sessionID, userID string) (string, error)
+}
+
 // Session is a new sign-in session.
 type Session struct {
 	ID               string
@@ -400,14 +407,22 @@ func rotate(ctx context.Context, tx *sql.Tx, r SessionRotation, event audit.Even
 // account that is no longer available, because its tokens are dead either
 // way.
 func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID string) error {
+	_, err := s.VerifyLocale(ctx, sessionID, userID)
+	return err
+}
+
+// VerifyLocale is Verify that also returns the locale the user saved in
+// their profile (#286), or "" for none, from the same lookup.
+func (s *PostgresSessionStore) VerifyLocale(ctx context.Context, sessionID, userID string) (string, error) {
 	var active, deleted, frozen bool
-	var status, role string
+	var status, role, locale string
 	// The same statement records the use of an active session, at most
 	// once a minute, so that most requests write nothing (#193).
 	err := s.DB.QueryRowContext(ctx, `
 		WITH found AS (
 			SELECT s.id, (`+liveSession("s")+`) AS active, s.last_used_at,
 				u.status AS user_status, u.role, u.deleted_at IS NOT NULL AS deleted,
+				COALESCE(u.locale, '') AS locale,
 				`+restrictions.FrozenSQL("u.hk")+` AS frozen
 			FROM sessions s JOIN users u ON u.hk = s.user_id
 			WHERE s.id = $1 AND s.user_id = $2
@@ -416,27 +431,27 @@ func (s *PostgresSessionStore) Verify(ctx context.Context, sessionID, userID str
 			WHERE sessions.id = found.id AND found.active
 			  AND (found.last_used_at IS NULL OR found.last_used_at < NOW() - make_interval(secs => $3))
 		)
-		SELECT active, user_status, role, deleted, frozen FROM found`,
+		SELECT active, user_status, role, deleted, frozen, locale FROM found`,
 		sessionID, userID, sessionTouchInterval.Seconds(),
-	).Scan(&active, &status, &role, &deleted, &frozen)
+	).Scan(&active, &status, &role, &deleted, &frozen, &locale)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrSessionInvalid
+		return "", ErrSessionInvalid
 	}
 	if err != nil {
-		return fmt.Errorf("failed to verify session: %w", err)
+		return "", fmt.Errorf("failed to verify session: %w", err)
 	}
 	// A freeze ends the sessions, and is reported before them, so that the
 	// user learns why their tokens stopped working.
 	if frozen {
-		return ErrAccountFrozen
+		return "", ErrAccountFrozen
 	}
 	if !active {
-		return ErrSessionInvalid
+		return "", ErrSessionInvalid
 	}
 	if deleted || role != RoleUser || !account.UserStatus(status).CanSignIn() {
-		return ErrAccountUnavailable
+		return "", ErrAccountUnavailable
 	}
-	return nil
+	return locale, nil
 }
 
 func (s *PostgresSessionStore) Revoke(ctx context.Context, sessionID, userID string, event audit.Event) error {

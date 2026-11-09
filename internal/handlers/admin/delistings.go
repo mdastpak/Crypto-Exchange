@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -44,7 +45,7 @@ type CapabilityOverrideRequest struct {
 func currencyParam(c *gin.Context) (string, bool) {
 	id, err := uuid.Parse(c.Param("hk"))
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for HK", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_CURRENCY_ID"), nil)
 		return "", false
 	}
 	return id.String(), true
@@ -61,7 +62,7 @@ func decodeStrict(c *gin.Context, into any) bool {
 	dec := json.NewDecoder(c.Request.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(into); err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid input: Please check the provided data format.", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return false
 	}
 	return true
@@ -101,27 +102,27 @@ func (h *AdminHandler) ScheduleDelisting(c *gin.Context) {
 	}
 	origin, _, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	d, change, err := delisting.Schedule(ctx, h.PostgresDB.DB, hk, plan, origin)
 	switch {
 	case errors.Is(err, delisting.ErrCurrencyNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 	case errors.Is(err, delisting.ErrNotListed):
-		helpers.SendError(c, http.StatusConflict, "not_listed", "Only an approved currency can be delisted.", nil)
+		helpers.SendError(c, http.StatusConflict, "not_listed", i18n.M("ONLY_APPROVED_CAN_BE_DELISTED"), nil)
 	case errors.Is(err, delisting.ErrInProgress):
-		helpers.SendError(c, http.StatusConflict, "delisting_in_progress", "The currency is already being delisted, with steps left, or is delisted.", nil)
+		helpers.SendError(c, http.StatusConflict, "delisting_in_progress", i18n.M("CURRENCY_ALREADY_DELISTING"), nil)
 	case errors.Is(err, delisting.ErrStepsBehind):
 		sendValidationErrors(c, fieldErrors{"steps": "must start after the lifecycle state that the currency is at"})
 	case errors.Is(err, delisting.ErrSettlementCurrency):
 		sendValidationErrors(c, fieldErrors{"settlement_currency_hk": "must be another approved currency"})
 	case err != nil:
 		log.Printf("Failed to schedule the delisting of %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to schedule the delisting.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_SCHEDULE_DELISTING"), nil)
 	default:
 		h.afterLifecycleChange(ctx, change)
-		helpers.SendResponse(c, http.StatusCreated, "Delisting scheduled.", d)
+		helpers.SendResponse(c, http.StatusCreated, i18n.M("DELISTING_SCHEDULED"), d)
 	}
 }
 
@@ -147,10 +148,10 @@ func (h *AdminHandler) ListDelistings(c *gin.Context) {
 	list, err := delisting.List(ctx, h.PostgresDB.DB, hk)
 	if err != nil {
 		log.Printf("Failed to list the delistings of %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to list the delistings.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_DELISTINGS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, "Delistings retrieved successfully.", DelistingList{Items: list})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("DELISTINGS_RETRIEVED_SUCCESSFULLY"), DelistingList{Items: list})
 }
 
 // @Summary Cancel the delisting of a currency
@@ -179,7 +180,7 @@ func (h *AdminHandler) CancelDelisting(c *gin.Context) {
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		helpers.SendResponse(c, http.StatusBadRequest, "Invalid UUID format for the delisting", nil)
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_DELISTING_ID"), nil)
 		return
 	}
 	var req CancelDelistingRequest
@@ -192,27 +193,27 @@ func (h *AdminHandler) CancelDelisting(c *gin.Context) {
 	}
 	origin, _, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	d, change, err := delisting.Cancel(ctx, h.PostgresDB.DB, hk, id.String(), req.Version, origin)
 	var conflict *delisting.VersionConflict
 	switch {
 	case errors.Is(err, delisting.ErrNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Delisting not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("DELISTING_NOT_FOUND"), nil)
 	case errors.As(err, &conflict):
-		helpers.SendError(c, http.StatusConflict, "version_conflict", "The delisting has changed since that version; read it again and retry.",
+		helpers.SendError(c, http.StatusConflict, "version_conflict", i18n.M("DELISTING_VERSION_CONFLICT"),
 			gin.H{"version": conflict.Current})
 	case errors.Is(err, delisting.ErrNotScheduled):
-		helpers.SendError(c, http.StatusConflict, "delisting_not_scheduled", "The delisting is already completed or cancelled.", nil)
+		helpers.SendError(c, http.StatusConflict, "delisting_not_scheduled", i18n.M("DELISTING_ENDED"), nil)
 	case errors.Is(err, delisting.ErrIrreversible):
-		helpers.SendError(c, http.StatusConflict, "delisting_irreversible", "The delisting has reached frozen, and balances are being settled; it can no longer be cancelled.", nil)
+		helpers.SendError(c, http.StatusConflict, "delisting_irreversible", i18n.M("DELISTING_PAST_CANCEL"), nil)
 	case err != nil:
 		log.Printf("Failed to cancel the delisting %s: %v", id, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to cancel the delisting.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CANCEL_DELISTING"), nil)
 	default:
 		h.afterLifecycleChange(ctx, change)
-		helpers.SendResponse(c, http.StatusOK, "Delisting cancelled.", d)
+		helpers.SendResponse(c, http.StatusOK, i18n.M("DELISTING_CANCELLED"), d)
 	}
 }
 
@@ -279,24 +280,24 @@ func (h *AdminHandler) changeCapability(c *gin.Context, allowed *bool, note stri
 	}
 	k := currencies.Capability(c.Param("capability"))
 	if !slices.Contains(currencies.Capabilities, k) {
-		helpers.SendResponse(c, http.StatusNotFound, "Unknown capability", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("UNKNOWN_CAPABILITY"), nil)
 		return
 	}
 	origin, _, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 	var l *models.CurrencyLifecycle
 	l, change, err := delisting.Override(ctx, h.PostgresDB.DB, hk, k, allowed, note, origin)
 	switch {
 	case errors.Is(err, delisting.ErrCurrencyNotFound):
-		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 	case err != nil:
 		log.Printf("Failed to override the %s capability of %s: %v", k, hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to change the capability.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CHANGE_CAPABILITY"), nil)
 	default:
 		h.afterLifecycleChange(ctx, change)
-		helpers.SendResponse(c, http.StatusOK, "Capability changed.", l)
+		helpers.SendResponse(c, http.StatusOK, i18n.M("CAPABILITY_CHANGED"), l)
 	}
 }

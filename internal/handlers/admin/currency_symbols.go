@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -50,14 +51,14 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 	}
 	origin, _, ok := restrictionOrigin(c)
 	if !ok {
-		helpers.SendResponse(c, http.StatusUnauthorized, "Unauthorized", nil)
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
 
 	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("Error starting the release of a symbol: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to release the symbol.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RELEASE_SYMBOL"), nil)
 		return
 	}
 	defer tx.Rollback()
@@ -65,7 +66,7 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 	var deleted sql.NullTime
 	err = tx.QueryRowContext(ctx, `SELECT status, deleted_at FROM currencies WHERE hk = $1 FOR UPDATE`, hk).Scan(&status, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
-		helpers.SendResponse(c, http.StatusNotFound, "Currency not found", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 		return
 	}
 	var current bool
@@ -74,21 +75,21 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		helpers.SendResponse(c, http.StatusNotFound, "Not a previous symbol of this currency", nil)
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("NOT_A_PREVIOUS_SYMBOL"), nil)
 		return
 	case err != nil:
 		log.Printf("Error reading the symbols of %s: %v", hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to release the symbol.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RELEASE_SYMBOL"), nil)
 		return
 	case current:
-		helpers.SendError(c, http.StatusConflict, "symbol_current", "This is the current symbol of the currency; change it first.", nil)
+		helpers.SendError(c, http.StatusConflict, "symbol_current", i18n.M("SYMBOL_IS_CURRENT"), nil)
 		return
 	}
 	// The row stays, marked, for the record (#248).
 	if _, err := tx.ExecContext(ctx, `UPDATE currency_symbols SET released_at = NOW(), released_by = $3
 		WHERE symbol = $1 AND currency_hk = $2 AND NOT current AND released_at IS NULL`, symbol, hk, origin.ActorID); err != nil {
 		log.Printf("Error releasing the symbol %s of %s: %v", symbol, hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to release the symbol.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RELEASE_SYMBOL"), nil)
 		return
 	}
 	e := audit.Of(origin, audit.ActionCurrencySymbolRelease, audit.TargetCurrency, hk)
@@ -98,11 +99,11 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("Error releasing the symbol %s of %s: %v", symbol, hk, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to release the symbol.", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RELEASE_SYMBOL"), nil)
 		return
 	}
 	if status == models.CurrencyStatusApproved && !deleted.Valid {
 		h.afterPublicChange(ctx, hk)
 	}
-	helpers.SendResponse(c, http.StatusOK, "Symbol released.", nil)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SYMBOL_RELEASED"), nil)
 }

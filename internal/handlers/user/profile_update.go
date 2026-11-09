@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,14 +22,23 @@ const (
 )
 
 // profileUpdate is the body of PATCH /user/profile. A field that is not sent
-// keeps its value, and an empty string clears it. The other profile fields,
+// keeps its value, and an empty string clears a name or the locale. The
+// other profile fields,
 // such as the contacts and the KYC state, cannot be changed here, and
 // decodeProfileUpdate rejects them.
 type profileUpdate struct {
 	FirstName   *string `json:"first_name"`
 	LastName    *string `json:"last_name"`
 	DisplayName *string `json:"display_name"`
+	// Locale is a tag of GET /public/locales, or "" to clear the choice
+	// (#286).
+	Locale *string `json:"locale" example:"fa"`
+	// Theme is light, dark, or system.
+	Theme *string `json:"theme" enums:"light,dark,system" example:"dark"`
 }
+
+// themes are the colour themes a user may choose.
+var themes = []string{"light", "dark", "system"}
 
 // fieldErrors maps a field to what is wrong with it.
 type fieldErrors map[string]string
@@ -62,8 +73,9 @@ func (u profileUpdate) fields() map[string]*string {
 	}
 }
 
-// validate checks the fields that are sent, after trimming spaces.
-func (u profileUpdate) validate() fieldErrors {
+// validate checks the fields that are sent, after trimming spaces. A
+// locale must be one of locales.
+func (u profileUpdate) validate(locales *i18n.Registry) fieldErrors {
 	errs := fieldErrors{}
 	sent := false
 	for name, value := range u.fields() {
@@ -75,8 +87,22 @@ func (u profileUpdate) validate() fieldErrors {
 			errs[name] = msg
 		}
 	}
+	if u.Locale != nil {
+		sent = true
+		if code := strings.TrimSpace(*u.Locale); code != "" {
+			if _, ok := lookupLocale(locales, code); !ok {
+				errs["locale"] = "must be one of the supported locales"
+			}
+		}
+	}
+	if u.Theme != nil {
+		sent = true
+		if !slices.Contains(themes, *u.Theme) {
+			errs["theme"] = "must be light, dark, or system"
+		}
+	}
 	if !sent {
-		errs["body"] = "send at least one of first_name, last_name, and display_name"
+		errs["body"] = "send at least one of first_name, last_name, display_name, locale, and theme"
 	}
 	if len(errs) == 0 {
 		return nil
@@ -113,9 +139,23 @@ func isBidiOverride(r rune) bool {
 	return (r >= '\u202A' && r <= '\u202E') || (r >= '\u2066' && r <= '\u2069')
 }
 
-// apply sets the fields of the update on the profile. An empty name clears
-// the field.
-func (u profileUpdate) apply(p *Profile) {
+// lookupLocale returns the supported locale that code names exactly, so
+// that the profile keeps a tag that GET /public/locales lists.
+func lookupLocale(locales *i18n.Registry, code string) (i18n.Locale, bool) {
+	if locales == nil {
+		return i18n.Locale{}, false
+	}
+	for _, l := range locales.Locales() {
+		if strings.EqualFold(l.Code, code) {
+			return l, true
+		}
+	}
+	return i18n.Locale{}, false
+}
+
+// apply sets the fields of the update on the profile. An empty name or
+// locale clears the field. The fields are valid.
+func (u profileUpdate) apply(p *Profile, locales *i18n.Registry) {
 	set := func(dst **string, src *string) {
 		if src == nil {
 			return
@@ -130,11 +170,20 @@ func (u profileUpdate) apply(p *Profile) {
 	set(&p.FirstName, u.FirstName)
 	set(&p.LastName, u.LastName)
 	set(&p.DisplayName, u.DisplayName)
+	if u.Locale != nil {
+		p.Locale = nil
+		if l, ok := lookupLocale(locales, strings.TrimSpace(*u.Locale)); ok {
+			p.Locale = &l.Code
+		}
+	}
+	if u.Theme != nil {
+		p.Theme = *u.Theme
+	}
 }
 
-// nameChanges returns the names that differ between before and after, as
-// an audit change, or nil when none does.
-func nameChanges(before, after Profile) *audit.Changes {
+// profileChanges returns the fields that differ between before and after,
+// as an audit change, or nil when none does.
+func profileChanges(before, after Profile) *audit.Changes {
 	c := &audit.Changes{Before: map[string]interface{}{}, After: map[string]interface{}{}}
 	for _, field := range []struct {
 		name          string
@@ -143,6 +192,8 @@ func nameChanges(before, after Profile) *audit.Changes {
 		{"first_name", before.FirstName, after.FirstName},
 		{"last_name", before.LastName, after.LastName},
 		{"display_name", before.DisplayName, after.DisplayName},
+		{"locale", before.Locale, after.Locale},
+		{"theme", &before.Theme, &after.Theme},
 	} {
 		if equalName(field.before, field.after) {
 			continue

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -294,12 +295,12 @@ func ReadLifecycle(ctx context.Context, q Querier, currencyHK string, lock bool)
 }
 
 func readDetails(ctx context.Context, q Querier, currencyHK string, lock bool, c *models.Currency) error {
-	query := `SELECT ` + DetailColumns + ` FROM currencies c WHERE c.hk = $1 AND c.deleted_at IS NULL`
+	query := `SELECT COALESCE(c.info->>'symbol', ''), ` + DetailColumns + ` FROM currencies c WHERE c.hk = $1 AND c.deleted_at IS NULL`
 	if lock {
 		query += ` FOR SHARE OF c`
 	}
 	var s DetailScan
-	err := q.QueryRowContext(ctx, query, currencyHK).Scan(s.Dest()...)
+	err := q.QueryRowContext(ctx, query, currencyHK).Scan(append([]any{&c.Info.Symbol}, s.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -317,6 +318,8 @@ const CodeCurrencyOperationDisabled = "currency_operation_disabled"
 // It is an error.
 type Refusal struct {
 	CurrencyHK string
+	// Symbol is the symbol of the currency, for the message.
+	Symbol     string
 	Capability Capability
 	Lifecycle  *models.CurrencyLifecycle
 	// Migration is the migration of the currency, when it has one.
@@ -339,7 +342,7 @@ func Check(ctx context.Context, q Querier, currencyHK string, k Capability, lock
 		return err
 	}
 	if !Allows(c.Lifecycle.Capabilities, k) {
-		return &Refusal{CurrencyHK: currencyHK, Capability: k, Lifecycle: c.Lifecycle, Migration: c.Migration}
+		return &Refusal{CurrencyHK: currencyHK, Symbol: c.Info.Symbol, Capability: k, Lifecycle: c.Lifecycle, Migration: c.Migration}
 	}
 	return nil
 }
@@ -353,19 +356,20 @@ func SendRefusal(c *gin.Context, err error) bool {
 		return false
 	}
 	info := gin.H{"currency_hk": r.CurrencyHK, "capability": r.Capability, "lifecycle": r.Lifecycle.State}
-	message := "This operation is not available for this currency now."
+	operation := i18n.Key("CAPABILITY_" + strings.ToUpper(string(r.Capability)))
+	message := i18n.M("CURRENCY_OPERATION_UNAVAILABLE", i18n.A("operation", operation), i18n.A("currency", r.Symbol))
 	if r.Migration != nil {
 		info["migration"] = gin.H{"id": r.Migration.ID, "target_hk": r.Migration.TargetHK, "phase": r.Migration.Phase}
 	}
 	switch Lifecycle(r.Lifecycle.State) {
 	case LifecycleActive:
 		if r.Migration != nil && r.Migration.Forced {
-			message = "This currency is migrating to another currency, and this operation is paused."
+			message = i18n.M("CURRENCY_OPERATION_PAUSED_BY_MIGRATION", i18n.A("operation", operation), i18n.A("currency", r.Symbol))
 		}
 	case LifecycleFrozen, LifecycleDelisted:
-		message = "This currency is delisted, and no operation is available for it."
+		message = i18n.M("CURRENCY_DELISTED", i18n.A("currency", r.Symbol))
 	default:
-		message = "This currency is being delisted, and this operation is no longer available for it."
+		message = i18n.M("CURRENCY_BEING_DELISTED", i18n.A("operation", operation), i18n.A("currency", r.Symbol))
 	}
 	helpers.SendError(c, http.StatusForbidden, CodeCurrencyOperationDisabled, message, info)
 	return true

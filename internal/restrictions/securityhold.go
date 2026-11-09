@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 )
 
 // The security hold (#251). A change of a security setting of a user, such
@@ -29,7 +31,7 @@ import (
 const CodeSecurityHold = "security_hold"
 
 // messageSecurityHold is the message of a refusal by the security hold.
-const messageSecurityHold = "A security setting of your account changed recently, so this operation is held for a while. Please try again after the time in info.until."
+var messageSecurityHold = i18n.M("SECURITY_HOLD")
 
 // HeldOperations are the operations that the security hold blocks. Every
 // path that moves funds out calls Check with one of them, so it cannot miss

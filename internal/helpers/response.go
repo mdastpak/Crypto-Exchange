@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -47,17 +48,17 @@ func StatusCode(status int) string {
 // SendResponse sends the standard envelope. An error response, of status
 // 400 or more, gets the code of its status and the request ID, and aborts
 // the handlers after it; SendError gives it a more specific code.
-func SendResponse(c *gin.Context, status int, message string, info interface{}) {
+func SendResponse(c *gin.Context, status int, message i18n.Message, info interface{}) {
 	send(c, status, "", message, info)
 }
 
 // SendError sends an error response with a code that tells clients what
 // went wrong, where the code of the status does not.
-func SendError(c *gin.Context, status int, code, message string, info interface{}) {
+func SendError(c *gin.Context, status int, code string, message i18n.Message, info interface{}) {
 	send(c, status, code, message, info)
 }
 
-func send(c *gin.Context, status int, code, message string, info interface{}) {
+func send(c *gin.Context, status int, code string, message i18n.Message, info interface{}) {
 	// A 500 of a request whose query PostgreSQL refused for a moment, such
 	// as a lock wait past lock_timeout, is not a bug: the client may retry
 	// (#230).
@@ -69,11 +70,11 @@ func send(c *gin.Context, status int, code, message string, info interface{}) {
 			c.Header("Retry-After", strconv.Itoa(answer.RetryAfterSeconds))
 		} else if dberr.Busy(c.Request.Context()) {
 			status, code, info = http.StatusServiceUnavailable, dberr.Code, nil
-			message = "The service is busy. Please try again."
+			message = i18n.M("SERVICE_BUSY")
 			c.Header("Retry-After", strconv.Itoa(dberr.RetryAfterSeconds))
 		}
 	}
-	response := models.APIResponse{Status: status, Message: message, Info: info}
+	response := models.APIResponse{Status: status, Message: localize(c, status, message), Info: info}
 	if status >= http.StatusBadRequest {
 		if code == "" {
 			code = StatusCode(status)
@@ -87,4 +88,24 @@ func send(c *gin.Context, status int, code, message string, info interface{}) {
 	if status >= http.StatusBadRequest {
 		c.Abort()
 	}
+}
+
+// localize renders message in the locale of the request (#283, #290) and
+// sets Content-Language to the language that its text is in: English when
+// the catalog of the locale lacks it. An error answer varies with the
+// headers that the locale is negotiated from, so that a cache does not
+// serve one visitor's language to another; an answer in another language
+// than English does too. Without the locale middleware, the text is
+// English.
+func localize(c *gin.Context, status int, message i18n.Message) string {
+	n, ok := i18n.FromGin(c)
+	if !ok {
+		return message.String()
+	}
+	text, language := n.Render(message)
+	c.Header("Content-Language", language)
+	if language != i18n.English || status >= http.StatusBadRequest {
+		c.Writer.Header().Add("Vary", i18n.VaryHeaders)
+	}
+	return text
 }

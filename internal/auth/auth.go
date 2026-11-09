@@ -12,6 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
+	"github.com/mdastpak/crypto-exchange/internal/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -179,13 +180,13 @@ func ParseToken(tokenString, role, tokenType string) (*Claims, error) {
 // who can no longer sign in gets 403 and no new tokens.
 func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	if !KeysLoaded(RoleUser) {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to load RSA keys", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LOAD_RSA_KEYS"), nil)
 		return
 	}
 
 	refreshToken, err := c.Cookie(RefreshTokenCookie)
 	if err != nil || refreshToken == "" {
-		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_missing", "Refresh token not provided", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_missing", i18n.M("REFRESH_TOKEN_NOT_PROVIDED"), nil)
 		return
 	}
 
@@ -193,7 +194,7 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	claims, err := ParseToken(refreshToken, RoleUser, TokenTypeRefresh)
 	if err != nil || claims.SessionID == "" {
 		ClearRefreshTokenCookie(c)
-		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", i18n.M("INVALID_OR_EXPIRED_REFRESH_TOKEN"), nil)
 		return
 	}
 
@@ -217,7 +218,7 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	case errors.Is(err, ErrSessionInvalid):
 		refused(reasonSessionInactive)
 		ClearRefreshTokenCookie(c)
-		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", i18n.M("INVALID_OR_EXPIRED_REFRESH_TOKEN"), nil)
 		return
 	case errors.Is(err, ErrAccountUnavailable):
 		code, message := AccountError(err)
@@ -227,18 +228,18 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 		return
 	case err != nil:
 		log.Printf("Error verifying session %s: %v", claims.SessionID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to refresh the session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_REFRESH_SESSION"), nil)
 		return
 	}
 
 	accessToken, err := GenerateAccessToken(claims.UUID, claims.Role, claims.SessionID)
 	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate access token", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_ACCESS_TOKEN"), nil)
 		return
 	}
 	newRefreshToken, err := GenerateRefreshToken(claims.UUID, claims.Role, claims.SessionID)
 	if err != nil {
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to generate refresh token", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_REFRESH_TOKEN"), nil)
 		return
 	}
 
@@ -254,7 +255,7 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	if errors.Is(err, ErrConcurrentRefresh) {
 		// Another request rotated the token a moment ago and set the cookie
 		// to the new one, which this answer leaves as it is.
-		helpers.SendResponse(c, http.StatusOK, "Access token refreshed", gin.H{"access_token": accessToken})
+		helpers.SendResponse(c, http.StatusOK, i18n.M("ACCESS_TOKEN_REFRESHED"), gin.H{"access_token": accessToken})
 		return
 	}
 	if errors.Is(err, ErrRefreshTokenReused) {
@@ -265,17 +266,17 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 	}
 	if errors.Is(err, ErrSessionInvalid) {
 		ClearRefreshTokenCookie(c)
-		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", "Invalid or expired refresh token", nil)
+		helpers.SendError(c, http.StatusUnauthorized, "refresh_token_invalid", i18n.M("INVALID_OR_EXPIRED_REFRESH_TOKEN"), nil)
 		return
 	}
 	if err != nil {
 		log.Printf("Error rotating session %s: %v", claims.SessionID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, "Failed to refresh the session", nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_REFRESH_SESSION"), nil)
 		return
 	}
 
 	SetRefreshTokenCookie(c, newRefreshToken)
-	helpers.SendResponse(c, http.StatusOK, "Access token refreshed", gin.H{"access_token": accessToken})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("ACCESS_TOKEN_REFRESHED"), gin.H{"access_token": accessToken})
 }
 
 // SetRefreshTokenCookie stores the refresh token in an HttpOnly, Secure,
