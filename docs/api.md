@@ -1232,6 +1232,10 @@ Each ended session records a `user.session_revoke` event in the [audit log](arch
 
 Connect to `ws://<host>:<port>/api/v1/ws/`. The trailing slash is required. Browser origins must match `websocket.allowed_origins`, or the request must be same-origin when the list is empty.
 
+### Language
+
+The locale of a connection is negotiated once, at the upgrade request, as for a REST request ([Languages](#languages)): the `lang` query parameter (`/api/v1/ws/?lang=fa`), `X-Locale`, the `locale` cookie, the signed-in user's saved locale, `Accept-Language`, the site, and the default ([#296](https://github.com/mdastpak/Crypto-Exchange/issues/296)). The refusals of the upgrade carry their `message` in it, with `Content-Language`, and so does the `message` of an `error` event. A `reauth` applies the user's saved locale as it is then, unless the upgrade chose one explicitly. Codes and close frame reasons never change: they are for clients to act on, and a close reason is limited to 123 bytes.
+
 ### Authentication
 
 A connection may bring a user access token. Without a token, the connection is anonymous and receives the public events. A token is checked like on the `/user/*` routes: its signature, the blacklist, its session, and its user (see [Authentication](#authentication)). The account channels of [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66) will need it. The token can be sent in one of two ways:
