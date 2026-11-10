@@ -53,7 +53,11 @@ psql_primary() { docker exec "$NAME-primary" psql -U postgres -d exchange -v ON_
 admin() {
 	local port="$1"
 	shift
+	# A drill on throwaway containers: debug mode, since release mode (the
+	# default, #306) needs TLS, a region, and the other production settings.
 	cat >"$WORK/config.yaml" <<YAML
+server:
+  mode: "debug"
 postgres:
   host: "localhost"
   port: "$port"
