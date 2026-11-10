@@ -118,18 +118,20 @@ type AssetView struct {
 	Kind string `json:"kind"`
 	// Verified is true only for an asset that an administrator linked to a
 	// currency listed on this exchange; Label says the same for display.
-	Verified          bool              `json:"verified"`
-	Label             string            `json:"label"`
-	Active            bool              `json:"active"`
-	LogoURL           string            `json:"logo_url,omitempty"`
-	MarketCapRank     *int              `json:"market_cap_rank,omitempty"`
-	CirculatingSupply *shared.Decimal   `json:"circulating_supply,omitempty" swaggertype:"string"`
-	TotalSupply       *shared.Decimal   `json:"total_supply,omitempty" swaggertype:"string"`
-	MaxSupply         *shared.Decimal   `json:"max_supply,omitempty" swaggertype:"string"`
-	Attribution       string            `json:"attribution,omitempty"`
-	UpdatedAt         time.Time         `json:"updated_at"`
-	Description       string            `json:"description,omitempty"`
-	Links             map[string]string `json:"links,omitempty"`
+	Verified          bool            `json:"verified"`
+	Label             string          `json:"label"`
+	Active            bool            `json:"active"`
+	LogoURL           string          `json:"logo_url,omitempty"`
+	MarketCapRank     *int            `json:"market_cap_rank,omitempty"`
+	CirculatingSupply *shared.Decimal `json:"circulating_supply,omitempty" swaggertype:"string"`
+	TotalSupply       *shared.Decimal `json:"total_supply,omitempty" swaggertype:"string"`
+	MaxSupply         *shared.Decimal `json:"max_supply,omitempty" swaggertype:"string"`
+	Attribution       string          `json:"attribution,omitempty"`
+	// CreatedAt is when the catalog first collected the asset.
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	Description string            `json:"description,omitempty"`
+	Links       map[string]string `json:"links,omitempty"`
 	// Contracts are the contracts of a token, by network.
 	Contracts []marketdata.Contract `json:"contracts,omitempty"`
 }
@@ -142,7 +144,7 @@ func view(a marketdata.Asset) AssetView {
 	}
 	return AssetView{Slug: a.Slug, Symbol: a.Symbol, Name: a.Name, Kind: a.Kind, Verified: verified, Label: label,
 		Active: a.Active, LogoURL: a.LogoURL, MarketCapRank: a.MarketCapRank, CirculatingSupply: a.CirculatingSupply,
-		TotalSupply: a.TotalSupply, MaxSupply: a.MaxSupply, Attribution: a.Attribution, UpdatedAt: a.UpdatedAt.UTC()}
+		TotalSupply: a.TotalSupply, MaxSupply: a.MaxSupply, Attribution: a.Attribution, CreatedAt: a.CreatedAt.UTC(), UpdatedAt: a.UpdatedAt.UTC()}
 }
 
 // AssetPage is a page of the list of assets, as pagination.Page writes it;
@@ -153,13 +155,21 @@ type AssetPage struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-// ListAssets lists the assets of the catalog by market cap rank.
+// The orders of the list of assets.
+const (
+	sortRank   = "rank"
+	sortNewest = "newest"
+)
+
+// ListAssets lists the assets of the catalog by market cap rank, or the
+// newest first.
 //
 // @Summary List the assets of the market data catalog
-// @Description The crypto assets of the global catalog, by market cap rank, the unranked last. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.
+// @Description The crypto assets of the global catalog. sort=rank (the default) lists them by market cap rank, the unranked last; sort=newest lists the one the catalog first collected last first, by created_at. A cursor holds its order: a cursor of one order is refused by the other. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.
 // @Tags market data
 // @Produce json
 // @Param q query string false "The exact symbol, or a part of the name or slug, in any case" maxLength(64)
+// @Param sort query string false "The order, rank by default" Enums(rank, newest)
 // @Param limit query int false "The number of assets, 50 by default" minimum(1) maximum(200)
 // @Param cursor query string false "The next_cursor of the previous page"
 // @Success 200 {object} models.APIResponse{info=AssetPage}
@@ -176,23 +186,50 @@ func (h *Handler) ListAssets(c *gin.Context) {
 		}
 		errs["q"] = "must be at most 64 characters"
 	}
+	order := c.DefaultQuery("sort", sortRank)
+	if order != sortRank && order != sortNewest {
+		if errs == nil {
+			errs = map[string]string{}
+		}
+		errs["sort"] = "must be rank or newest"
+	}
 	if len(errs) > 0 {
 		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 	h.cached(c, func(ctx context.Context) (any, *apiError) {
-		var after *marketdata.ListPosition
-		var position marketdata.ListPosition
-		if ok, err := page.After(&position); err != nil {
+		var position assetCursor
+		hasCursor, err := page.After(&position)
+		if err != nil || (hasCursor && !position.of(order)) {
 			return nil, badRequest(map[string]string{"cursor": "is not a cursor of this list"})
-		} else if ok {
-			after = &position
 		}
-		assets, err := h.store.PublicAssets(ctx, query, after, page.Limit+1)
+		var assets []marketdata.Asset
+		var positionOf func(marketdata.Asset) interface{}
+		if order == sortNewest {
+			var after *marketdata.NewestPosition
+			if hasCursor {
+				after = &marketdata.NewestPosition{CreatedAt: *position.CreatedAt, Slug: position.Slug}
+			}
+			assets, err = h.store.NewestAssets(ctx, query, after, page.Limit+1)
+			positionOf = func(a marketdata.Asset) interface{} {
+				p := marketdata.NewestPositionOf(a)
+				return assetCursor{CreatedAt: &p.CreatedAt, Slug: p.Slug}
+			}
+		} else {
+			var after *marketdata.ListPosition
+			if hasCursor {
+				after = &marketdata.ListPosition{Rank: *position.Rank, Slug: position.Slug}
+			}
+			assets, err = h.store.PublicAssets(ctx, query, after, page.Limit+1)
+			positionOf = func(a marketdata.Asset) interface{} {
+				p := marketdata.PositionOf(a)
+				return assetCursor{Rank: &p.Rank, Slug: p.Slug}
+			}
+		}
 		if err != nil {
 			return nil, internal("listing the market assets", err)
 		}
-		found, err := pagination.NewPage(assets, page, func(a marketdata.Asset) interface{} { return marketdata.PositionOf(a) })
+		found, err := pagination.NewPage(assets, page, positionOf)
 		if err != nil {
 			return nil, internal("paging the market assets", err)
 		}
@@ -202,6 +239,24 @@ func (h *Handler) ListAssets(c *gin.Context) {
 		}
 		return result, nil
 	})
+}
+
+// assetCursor is the position in a cursor of the list of assets: a rank
+// and slug for sort=rank (the same JSON as marketdata.ListPosition, so the
+// cursors given before sort existed still work), or a time and slug for
+// sort=newest.
+type assetCursor struct {
+	Rank      *int       `json:"r,omitempty"`
+	CreatedAt *time.Time `json:"t,omitempty"`
+	Slug      string     `json:"s"`
+}
+
+// of reports whether the cursor is one of the order.
+func (p assetCursor) of(order string) bool {
+	if order == sortNewest {
+		return p.CreatedAt != nil && p.Rank == nil
+	}
+	return p.Rank != nil && p.CreatedAt == nil
 }
 
 // GetAsset returns an asset with its description, links, and contracts.

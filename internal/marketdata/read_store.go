@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 )
 
 // unrankedOrder sorts the assets without a rank after the ranked ones, in
@@ -26,24 +27,74 @@ func PositionOf(a Asset) ListPosition {
 	return ListPosition{Rank: *a.MarketCapRank, Slug: a.Slug}
 }
 
+// NewestPosition is where a page of the public list of the newest assets
+// starts: after the asset first collected at this time, with this slug.
+type NewestPosition struct {
+	CreatedAt time.Time `json:"t"`
+	Slug      string    `json:"s"`
+}
+
+// NewestPositionOf is the position of an asset in the list of the newest
+// assets.
+func NewestPositionOf(a Asset) NewestPosition {
+	return NewestPosition{CreatedAt: a.CreatedAt.UTC(), Slug: a.Slug}
+}
+
+// publicFilter keeps the assets that are not hidden and match the query in
+// $1 (the trimmed query) and $2 (its LIKE pattern).
+const publicFilter = `status <> 'hidden'
+			AND ($1 = '' OR symbol = upper($1) OR name ILIKE $2 OR slug ILIKE $2)`
+
+// likePattern is the trimmed query and the LIKE pattern that holds it
+// literally.
+func likePattern(query string) (string, string) {
+	query = strings.TrimSpace(query)
+	return query, "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
+}
+
 // PublicAssets returns at most limit assets that are not hidden, by market
 // cap rank, the unranked last, then by slug, after the position when it is
 // set. A query matches the symbol exactly, or a part of the name or slug,
 // in any case.
 func (s *Store) PublicAssets(ctx context.Context, query string, after *ListPosition, limit int) ([]Asset, error) {
-	query = strings.TrimSpace(query)
-	like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
+	query, like := likePattern(query)
 	afterRank, afterSlug := -1, ""
 	if after != nil {
 		afterRank, afterSlug = after.Rank, after.Slug
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	return s.publicAssets(ctx, `
 		SELECT `+assetColumns+` FROM market_assets
-		WHERE status <> 'hidden'
-			AND ($1 = '' OR symbol = upper($1) OR name ILIKE $2 OR slug ILIKE $2)
+		WHERE `+publicFilter+`
 			AND (COALESCE(market_cap_rank, $5), slug) > ($3, $4)
 		ORDER BY COALESCE(market_cap_rank, $5), slug
 		LIMIT $6`, query, like, afterRank, afterSlug, unrankedOrder, limit)
+}
+
+// NewestAssets returns at most limit assets that are not hidden, the one
+// the catalog first collected last first, then by slug, after the position
+// when it is set. The query matches as in PublicAssets.
+func (s *Store) NewestAssets(ctx context.Context, query string, after *NewestPosition, limit int) ([]Asset, error) {
+	query, like := likePattern(query)
+	if after == nil {
+		return s.publicAssets(ctx, `
+			SELECT `+assetColumns+` FROM market_assets
+			WHERE `+publicFilter+`
+			ORDER BY created_at DESC, slug
+			LIMIT $3`, query, like, limit)
+	}
+	// Descending time, ascending slug: the rows after (t, s) are the older
+	// ones, and those of the same time with a greater slug.
+	return s.publicAssets(ctx, `
+		SELECT `+assetColumns+` FROM market_assets
+		WHERE `+publicFilter+`
+			AND (created_at < $3 OR (created_at = $3 AND slug > $4))
+		ORDER BY created_at DESC, slug
+		LIMIT $5`, query, like, after.CreatedAt, after.Slug, limit)
+}
+
+// publicAssets runs a query of assetColumns.
+func (s *Store) publicAssets(ctx context.Context, query string, args ...any) ([]Asset, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

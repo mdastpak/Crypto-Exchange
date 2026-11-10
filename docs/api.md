@@ -619,11 +619,12 @@ Answers are cached for `market_data.api.cache_seconds` (30), with `Cache-Control
 
 ### `GET /market-data/assets`
 
-The assets by market cap rank, the unranked last, then by slug, [paginated](#pagination). `q` (at most 64 characters) matches the exact symbol in any case, or a part of the name or slug.
+The assets by market cap rank, the unranked last, then by slug, [paginated](#pagination). `sort=newest` lists them instead by `created_at`, when the catalog first collected them, newest first ([Newest assets](market-data.md#newest-assets)); `sort=rank` is the default. A cursor works only with the order that gave it. `q` (at most 64 characters) matches the exact symbol in any case, or a part of the name or slug, in either order. `400 validation_failed` for another `sort`.
 
 ```json
 {"items": [{"slug": "bitcoin", "symbol": "BTC", "name": "Bitcoin", "kind": "coin", "verified": false, "label": "unverified",
-  "active": true, "market_cap_rank": 1, "max_supply": "21000000", "attribution": "Data from CoinGecko", "updated_at": "2026-11-08T12:00:00Z"}],
+  "active": true, "market_cap_rank": 1, "max_supply": "21000000", "attribution": "Data from CoinGecko",
+  "created_at": "2026-11-01T09:30:00Z", "updated_at": "2026-11-08T12:00:00Z"}],
  "next_cursor": "eyJ2IjoxLCJhIjp7InIiOjEsInMiOiJiaXRjb2luIn19"}
 ```
 

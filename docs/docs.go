@@ -4324,7 +4324,7 @@ const docTemplate = `{
         },
         "/api/v1/market-data/assets": {
             "get": {
-                "description": "The crypto assets of the global catalog, by market cap rank, the unranked last. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.",
+                "description": "The crypto assets of the global catalog. sort=rank (the default) lists them by market cap rank, the unranked last; sort=newest lists the one the catalog first collected last first, by created_at. A cursor holds its order: a cursor of one order is refused by the other. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.",
                 "produces": [
                     "application/json"
                 ],
@@ -4338,6 +4338,16 @@ const docTemplate = `{
                         "type": "string",
                         "description": "The exact symbol, or a part of the name or slug, in any case",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "rank",
+                            "newest"
+                        ],
+                        "type": "string",
+                        "description": "The order, rank by default",
+                        "name": "sort",
                         "in": "query"
                     },
                     {
@@ -7647,6 +7657,10 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/marketdata.Contract"
                     }
+                },
+                "created_at": {
+                    "description": "CreatedAt is when the catalog first collected the asset.",
+                    "type": "string"
                 },
                 "description": {
                     "type": "string"
