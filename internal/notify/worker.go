@@ -20,10 +20,7 @@ import (
 // The queues are quorum queues (#232): a classic queue lives on one node of
 // a RabbitMQ cluster, so while that node is down, no sign-in code can be
 // queued or delivered. A quorum queue is replicated to a majority of the
-// nodes and survives the loss of any one of three. The type of a queue
-// cannot change in place, so the quorum queues have names of their own,
-// and the worker drains the classic queue of earlier versions (see
-// LegacyOTPQueue).
+// nodes and survives the loss of any one of three.
 const (
 	// DefaultOTPQueue receives the sign-in code jobs published to the
 	// notifications exchange.
@@ -33,14 +30,6 @@ const (
 	DefaultDeadLetterExchange = "notifications.dead-letter"
 	// DefaultOTPDeadLetterQueue keeps those records for deadLetterTTL.
 	DefaultOTPDeadLetterQueue = "notifications.otp.dead-letter.quorum"
-	// LegacyOTPQueue is the classic queue of the versions before #232.
-	// The worker unbinds it from the exchange, delivers the jobs left in
-	// it, and deletes it once it is empty and no worker of an earlier
-	// version consumes it any more.
-	LegacyOTPQueue = "notifications.otp"
-	// LegacyOTPDeadLetterQueue is the classic dead-letter queue of those
-	// versions. Its records expire within seven days; delete it then.
-	LegacyOTPDeadLetterQueue = "notifications.otp.dead-letter"
 )
 
 // deliveryLimit bounds how often a quorum queue hands out one job, so that
@@ -48,10 +37,6 @@ const (
 // queue then drops it: it has no broker dead-letter exchange on purpose,
 // since that would copy the code to the dead-letter queue.
 const deliveryLimit = 10
-
-// legacyPoll is how often the worker looks at the legacy queue while it
-// exists.
-var legacyPoll = 30 * time.Second
 
 const (
 	deadLetterTTL       = 7 * 24 * time.Hour
@@ -89,9 +74,6 @@ type WorkerOptions struct {
 	// MaxAttempts bounds the delivery attempts per job (default 3). A job is
 	// also given up once its code expires.
 	MaxAttempts int
-	// LegacyQueue is a queue of an earlier version to drain and then
-	// delete, LegacyOTPQueue in the server. Empty drains none.
-	LegacyQueue string
 	// Delivered remembers the jobs that were delivered, so that a job that
 	// the broker hands out again, because its worker stopped before
 	// acknowledging it, is not sent twice. Nil remembers none.
@@ -110,7 +92,6 @@ type Worker struct {
 	queue              string
 	deadLetterExchange string
 	deadLetterQueue    string
-	legacyQueue        string
 	delivered          DeliveryLog
 	concurrency        int
 	maxAttempts        int
@@ -133,7 +114,6 @@ func NewWorker(broker Broker, channels Channels, opts WorkerOptions) *Worker {
 		queue:              opts.Queue,
 		deadLetterExchange: opts.DeadLetterExchange,
 		deadLetterQueue:    opts.DeadLetterQueue,
-		legacyQueue:        opts.LegacyQueue,
 		delivered:          opts.Delivered,
 		concurrency:        opts.Concurrency,
 		maxAttempts:        opts.MaxAttempts,
@@ -250,14 +230,6 @@ func (w *Worker) declare(ch *amqp.Channel) error {
 // current one closes, for example while the service reconnects to the broker.
 func (w *Worker) run() {
 	defer close(w.done)
-	if w.legacyQueue != "" {
-		legacyDone := make(chan struct{})
-		go func() {
-			defer close(legacyDone)
-			w.drainLegacy()
-		}()
-		defer func() { <-legacyDone }()
-	}
 	backoff := time.Second
 	for {
 		consumed, err := w.consume()
@@ -502,72 +474,4 @@ func (w *Worker) markDelivered(id string, job otpJob) {
 	if err := w.delivered.MarkDelivered(ctx, id, ttl); err != nil {
 		w.logger.Printf("Could not record the delivery of the sign-in code for %s %s: %v", job.ContactType, job.MaskedContact, err)
 	}
-}
-
-// drainLegacy moves the queue of an earlier version out of the way (#232):
-// it unbinds it from the exchange, so that new jobs go only to the quorum
-// queue, delivers the jobs left in it, and deletes it once it is empty and
-// no worker of an earlier version consumes it. Until then, it looks again
-// every legacyPoll, since a worker of an earlier version that reconnects
-// binds the queue again. It returns when the queue is gone or the worker
-// stops.
-func (w *Worker) drainLegacy() {
-	for {
-		gone, err := w.drainLegacyOnce()
-		switch {
-		case gone:
-			return
-		case err != nil && !w.stopping():
-			w.logger.Printf("OTP delivery worker: draining %s: %v", w.legacyQueue, err)
-		}
-		select {
-		case <-w.stop:
-			return
-		case <-time.After(legacyPoll):
-		}
-	}
-}
-
-// drainLegacyOnce makes one pass over the legacy queue and reports whether
-// it is gone.
-func (w *Worker) drainLegacyOnce() (gone bool, err error) {
-	ch, err := w.broker.OpenChannel()
-	if err != nil {
-		return false, err
-	}
-	defer ch.Close()
-	queue, err := ch.QueueDeclarePassive(w.legacyQueue, true, false, false, false, nil)
-	if err != nil {
-		var amqpErr *amqp.Error
-		if errors.As(err, &amqpErr) && amqpErr.Code == amqp.NotFound {
-			return true, nil
-		}
-		return false, err
-	}
-	if err := ch.QueueUnbind(w.legacyQueue, "", w.exchange, nil); err != nil {
-		return false, fmt.Errorf("unbind: %w", err)
-	}
-	drained := 0
-	for !w.stopping() {
-		d, ok, err := ch.Get(w.legacyQueue, false)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			break
-		}
-		w.handle(d)
-		drained++
-	}
-	if drained > 0 {
-		w.logger.Printf("OTP delivery worker: delivered %d job(s) left in %s", drained, w.legacyQueue)
-	}
-	if queue.Consumers > 0 || w.stopping() {
-		return false, nil // a worker of an earlier version still consumes it
-	}
-	if _, err := ch.QueueDelete(w.legacyQueue, true, true, false); err != nil {
-		return false, fmt.Errorf("delete: %w", err)
-	}
-	w.logger.Printf("OTP delivery worker: deleted the drained classic queue %s", w.legacyQueue)
-	return true, nil
 }

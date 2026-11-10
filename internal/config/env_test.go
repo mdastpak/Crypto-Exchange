@@ -182,7 +182,7 @@ func TestLoad_ReportsInvalidEnvironmentVariables(t *testing.T) {
 	assert.Contains(t, err.Error(), "POSTGRES_MAX_OPEN_CONNS")
 }
 
-func TestKeyPath_AcceptsAStringOrPathSegments(t *testing.T) {
+func TestKeyPath_IsAString(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
 deployment:
@@ -191,20 +191,17 @@ jwt:
   ssl:
     user:
       private_key: "keys/user/private.pem"
-      public_key: ["keys", "user", "public.pem"]
       retired_public_keys:
         - "keys/user/old.pem"
-        - ["keys", "user", "older.pem"]
 `), 0o600))
 	require.NoError(t, loadFile(t, path, nil))
 
 	user := Config.JWT.SSL.User
 	assert.Equal(t, KeyPath("keys/user/private.pem"), user.PrivateKey)
-	assert.Equal(t, KeyPath(filepath.Join("keys", "user", "public.pem")), user.PublicKey)
-	assert.Equal(t, []KeyPath{"keys/user/old.pem", KeyPath(filepath.Join("keys", "user", "older.pem"))}, user.RetiredPublicKeys)
+	assert.Equal(t, []KeyPath{"keys/user/old.pem"}, user.RetiredPublicKeys)
 
-	require.NoError(t, os.WriteFile(path, []byte("jwt:\n  ssl:\n    user:\n      private_key: {file: x}\n"), 0o600))
-	assert.ErrorContains(t, loadFile(t, path, nil), "a key path must be a string")
+	require.NoError(t, os.WriteFile(path, []byte("jwt:\n  ssl:\n    user:\n      private_key: [keys, user, private.pem]\n"), 0o600))
+	assert.Error(t, loadFile(t, path, nil), "a key path is one string")
 }
 
 func TestValidateServer_NamesEveryMissingSetting(t *testing.T) {

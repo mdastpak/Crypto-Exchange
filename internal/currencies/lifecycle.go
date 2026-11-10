@@ -140,8 +140,8 @@ func LifecycleOf(l Lifecycle, overrides map[Capability]bool, next *models.Curren
 	return &models.CurrencyLifecycle{State: string(l), Capabilities: caps, Next: next}
 }
 
-// Listed reports whether a currency is in the public lists. A currency read
-// from a cache of an earlier version has no lifecycle, and is listed.
+// Listed reports whether a currency is in the public lists. A currency
+// without a lifecycle is listed.
 func Listed(c models.Currency) bool {
 	return c.Lifecycle == nil || c.Lifecycle.Capabilities.Listed
 }

@@ -316,8 +316,6 @@ The worker declares this RabbitMQ topology at startup:
 | `notifications.dead-letter` | Durable fan-out exchange | Receives a record of every code that could not be delivered |
 | `notifications.otp.dead-letter.quorum` | Quorum queue bound to `notifications.dead-letter` | Keeps those records for seven days. A record holds the contact type, the masked contact, the reason, the number of attempts, and the last error, but never the code or the raw contact. Its depth is a direct measure of delivery failures. |
 
-Versions before [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232) used the classic queues `notifications.otp` and `notifications.otp.dead-letter`. A queue cannot change its type in place, so the quorum queues have new names. The worker unbinds `notifications.otp` from the exchange, delivers the jobs left in it, and deletes it once no worker of an earlier version consumes it; it looks again every 30 seconds until then. Delete `notifications.otp.dead-letter` by hand once its records have expired, seven days after the upgrade.
-
 Failed attempts and abandoned codes are also logged with the masked contact. Delivery metrics are part of [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50).
 
 ### `admin`

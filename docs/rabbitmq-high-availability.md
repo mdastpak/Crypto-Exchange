@@ -31,17 +31,7 @@ A quorum queue hands out a job at most ten times (`x-delivery-limit`), so that a
 
 ### Sent once
 
-A worker that sends a code and stops before it acknowledges the job, because its node or its process went away, leaves the job unacknowledged, and the broker hands it out again. The worker therefore records every job that it delivered in Redis (`notify:otp:delivered:<id>`), until a minute after the code expires, and acknowledges a job that it finds there without sending it again. When Redis cannot be read, the job is sent: a code sent twice is better than none. Each job carries an ID, its message ID, for this; a job of an earlier version is recognized by the hash of its body.
-
-### Upgrading from the classic queues
-
-Versions before #232 used the classic queues `notifications.otp` and `notifications.otp.dead-letter`. A queue cannot change its type in place, so the quorum queues have new names, and the upgrade needs no step by hand:
-
-1. A new instance declares the quorum queues and binds `notifications.otp.quorum` to the exchange.
-2. It unbinds `notifications.otp`, so that new jobs go only to the quorum queue, and delivers the jobs left in it.
-3. It deletes `notifications.otp` once it is empty and no instance of an earlier version consumes it. Until then it looks again every 30 seconds, since an instance of an earlier version that reconnects binds the queue again.
-
-Delete `notifications.otp.dead-letter` by hand once its records have expired, seven days after the upgrade.
+A worker that sends a code and stops before it acknowledges the job, because its node or its process went away, leaves the job unacknowledged, and the broker hands it out again. The worker therefore records every job that it delivered in Redis (`notify:otp:delivered:<id>`), until a minute after the code expires, and acknowledges a job that it finds there without sending it again. When Redis cannot be read, the job is sent: a code sent twice is better than none. Each job carries an ID, its message ID, for this; a job without one is recognized by the hash of its body.
 
 ## While the broker is away
 

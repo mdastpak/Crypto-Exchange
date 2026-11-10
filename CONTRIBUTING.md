@@ -72,10 +72,19 @@ docs: document the OTP sign-in flow
 - Return errors with context (`fmt.Errorf("...: %w", err)`). Never return internal error details to clients.
 - Use `shared.Decimal` for monetary values. Floating point is not allowed for money.
 - Never log secrets, tokens, one-time codes, or unmasked personal data.
-- Write comments in English that explain *why* something is done, not *what* the code does.
+- Write comments in English that explain *why* something is done, not *what* the code does. A comment describes the code as it is: what it replaced, and which issue changed it, belong in the commit message, the pull request, and the CHANGELOG. `internal/codestyle` fails on a comment that says `before #123`, `earlier release`, or the like.
 - Keep handlers thin. New business logic belongs in services with interface-based dependencies ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)).
 - A feature that only releases for Iran may have, such as an Iranian provider, exchange, or currency, adds itself to `regionFeatures` in `internal/config/region.go`, so that an international release refuses it ([Region of a release](docs/configuration.md#region-of-a-release)). Branch on `config.Config.Region()`, never on the raw setting.
 - Paginate a list endpoint that can grow with `internal/pagination`: keyset pages with an opaque cursor, by a sort key with an index ([API conventions](docs/api.md#pagination)). Never use `OFFSET`, which gets slower the deeper the page and shifts items as rows are added. A cursor can be decoded, so its sort key holds only what the client may see: break ties with a public identifier, never an internal serial id.
+
+## Compatibility
+
+Nothing is deployed before version 1.0, so there is nobody to stay compatible with ([#312](https://github.com/mdastpak/Crypto-Exchange/issues/312)):
+
+- **Before 1.0, add no compatibility code** unless a deployed consumer needs it and the pull request names that consumer. That covers a second path or name for a route, a second format of stored data that the code still reads, a setting kept under its old name, and a step that moves data out of a format no release wrote. Change the thing in place, and update its callers, its documentation, and the other repository (`crypto-blog`) in step.
+- A change that an existing development database or configuration cannot follow is fine. Say in the CHANGELOG what a developer must do, for example recreate the database.
+- Keeping two instances of *the same* build working together is not compatibility code: several nodes always run at once, and a rolling restart mixes them. Rotated keys, versioned rows, and migrations that an instance of the build before them survives stay required.
+- **From 1.0 on, deprecations follow a schedule.** A route, a setting, or a format that a release shipped is first deprecated in a minor release, with a CHANGELOG entry, a `Deprecation` header or a start-up warning that names the replacement, and a removal version no earlier than the next major release. The code that reads the old form is removed in that version, together with its tests.
 
 ## Database migrations
 
