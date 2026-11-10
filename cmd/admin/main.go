@@ -7,6 +7,7 @@
 //	admin [-config path] [-migrations url] create -email <address>
 //	admin [-config path] [-migrations url] reset-totp -email <address>
 //	admin [-config path] [-migrations url] disable -email <address>
+//	admin [-config path] [-migrations url] end-sessions -email <address>
 //	admin [-config path] [-migrations url] keys list
 //	admin [-config path] [-migrations url] keys rotate -purpose <purpose>
 //	admin [-config path] [-migrations url] keys retire -purpose <purpose> -version <n>
@@ -77,6 +78,8 @@ Administrators:
   create -email <address>      Create an administrator and print its authenticator secret.
   reset-totp -email <address>  Replace the authenticator secret of an administrator.
   disable -email <address>     Stop an administrator from signing in.
+  end-sessions -email <address>
+                               Sign an administrator out everywhere.
 
 Data-protection keys (purposes row-mac, field-enc, blind-index):
   keys list                                    List the keys, never their values.
@@ -193,7 +196,7 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 
 	cmd.name = global.Arg(0)
 	switch cmd.name {
-	case "create", "reset-totp", "disable":
+	case "create", "reset-totp", "disable", "end-sessions":
 	case "keys":
 		return parseKeysArgs(cmd, global.Args()[1:], stderr)
 	case "outbox":
@@ -394,7 +397,13 @@ func execute(ctx context.Context, accounts *adminauth.Service, cmd command, stdo
 		if err := accounts.Disable(ctx, cmd.email); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "Disabled administrator %s. Admin tokens issued earlier are rejected from their next request on.\n", cmd.email)
+		fmt.Fprintf(stdout, "Disabled administrator %s and ended their sessions. Admin tokens issued earlier are rejected from their next request on.\n", cmd.email)
+	case "end-sessions":
+		ended, err := accounts.EndSessions(ctx, cmd.email)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Ended %d session(s) of administrator %s. Their tokens are rejected from the next request on.\n", ended, cmd.email)
 	default:
 		return fmt.Errorf("unknown command %q", cmd.name)
 	}

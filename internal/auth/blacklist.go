@@ -10,9 +10,9 @@ import (
 )
 
 // TokenBlacklist keeps the access tokens that were logged out until they
-// expire. For a user token the session check of RequireActiveSession also
-// rejects it, but an administrator's token has no session: the blacklist is
-// all that ends it before it expires.
+// expire. The session checks, of RequireActiveSession for a user token and
+// of the admin handler for an administrator's, reject such a token too, from
+// the database; the blacklist is a second check.
 type TokenBlacklist struct {
 	RedisClient redis.UniversalClient
 	Prefix      string

@@ -406,13 +406,31 @@ Errors:
 - `429`: the attempts of the emailed code are used up
 - `503`: admin sign-in is not configured
 
+Each sign-in starts a session, stored in PostgreSQL, which the token belongs to ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). An administrator has at most `admin.sessions.max_per_admin` sessions (2 by default): a sign-in past it ends the oldest. A session lasts as long as its token.
+
 ### `POST /admin/logout`
 
-Requires an admin token. Blacklists the token until it expires. Response `200`.
+Requires an admin token. Ends the token's session in the database, so the token stops working on every instance at once, whatever Redis holds; the token also joins the blacklist until it expires. Response `200`. Audited as `admin.logout`.
+
+### `GET /admin/sessions`
+
+The active sessions of the administrator of the token, newest first:
+
+```json
+{"info": [{"id": "4f0c…", "ip": "203.0.113.7", "user_agent": "Mozilla/5.0 …", "created_at": "2026-11-10T09:00:00Z", "expires_at": "2026-11-10T09:15:00Z", "last_used_at": "2026-11-10T09:04:00Z", "current": true}]}
+```
+
+`current` marks the session of the request. `last_used_at` is written at most once a minute.
+
+### `DELETE /admin/sessions/{id}`
+
+Ends one of the administrator's own sessions; its token gets `401 session_inactive` from its next request on. Ending the session of the request signs out. `404` for a session that is not an active session of this administrator. Audited as `admin.session_revoke`.
+
+An operator ends every session of an administrator with `admin end-sessions -email <address>`, for a token that may be stolen; `disable` and `reset-totp` do so too.
 
 ### Checks on admin routes
 
-On every request, all `/admin/*` routes except sign-in check that the token's administrator still has the admin role, the approved status, and an enrolled authenticator. Demoting or disabling an administrator therefore revokes its tokens at once, also when the change is made directly in the database. Such a token gets `401 Unauthorized - Administrator is not active`.
+On every request, all `/admin/*` routes except sign-in check that the token's administrator still has the admin role, the approved status, and an enrolled authenticator. Demoting or disabling an administrator therefore revokes its tokens at once, also when the change is made directly in the database. Such a token gets `401 Unauthorized - Administrator is not active`. They also check that the token's session is active: a token of an ended session, or without one, gets `401 session_inactive`.
 
 ## Currencies
 

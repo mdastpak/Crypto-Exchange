@@ -189,6 +189,10 @@ func (s *Service) ResetTOTP(ctx context.Context, email string) (Enrollment, erro
 		if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", adminID); err != nil {
 			return err
 		}
+		// Whoever signed in with the old secret is signed out.
+		if _, err := endSessions(ctx, tx, adminID, SessionAuthenticator); err != nil {
+			return err
+		}
 		// The event says that the secret changed, never what it is.
 		return audit.Record(ctx, tx, audit.Of(s.Origin, audit.ActionAdminTOTPReset, audit.TargetUser, adminID))
 	})
@@ -212,8 +216,7 @@ func (s *Service) inTx(ctx context.Context, change func(tx *sql.Tx) error) error
 	return tx.Commit()
 }
 
-// Disable stops an administrator from signing in. Admin tokens issued
-// earlier stay valid until they expire.
+// Disable stops an administrator from signing in, and ends their sessions.
 func (s *Service) Disable(ctx context.Context, email string) error {
 	email, err := NormalizeEmail(email)
 	if err != nil {
@@ -235,6 +238,9 @@ func (s *Service) Disable(ctx context.Context, email string) error {
 		}
 		if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", adminID); err != nil {
 			return err
+		}
+		if _, err := endSessions(ctx, tx, adminID, SessionAdminDisabled); err != nil {
+			return fmt.Errorf("disable the administrator: %w", err)
 		}
 		e := audit.Of(s.Origin, audit.ActionAdminDisable, audit.TargetUser, adminID)
 		e.Changes = &audit.Changes{Before: map[string]interface{}{"status": before}, After: map[string]interface{}{"status": "INACTIVE"}}

@@ -166,7 +166,7 @@ Add the admin key paths under `jwt.ssl.admin` in `config/config.local.yaml`, as 
 go run ./cmd/admin -config config/config.local.yaml create -email admin@example.com
 ```
 
-The server and the command must use the same `keys` settings: keep `KEYS_LOCAL_KEK`, since a new one cannot open the data keys that the first one wrapped. `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. Each command records an audit event; pass `-operator <name>` before the command to name yourself in it. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
+The server and the command must use the same `keys` settings: keep `KEYS_LOCAL_KEK`, since a new one cannot open the data keys that the first one wrapped. `reset-totp` replaces a lost authenticator, `disable` stops an administrator from signing in, and `end-sessions` signs one out everywhere. Each command records an audit event; pass `-operator <name>` before the command to name yourself in it. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
 
 ### Run everything with Docker Compose
 
@@ -220,7 +220,9 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | `POST` | `/public/auth/logout` | Access token | End the session and clear the refresh token cookie |
 | `POST` | `/admin/auth` | None | Request an admin sign-in code |
 | `POST` | `/admin/auth/{uuid}` | None | Verify the emailed code and the authenticator code, and receive an admin token |
-| `POST` | `/admin/logout` | Admin token | Revoke the admin token |
+| `POST` | `/admin/logout` | Admin token | End the session of the admin token |
+| `GET` | `/admin/sessions` | Admin token | List the administrator's active sessions |
+| `DELETE` | `/admin/sessions/{id}` | Admin token | End one of the administrator's sessions |
 | `POST` | `/admin/currencies` | Admin token | Create a currency |
 | `GET` | `/admin/currencies` | Admin token | List currencies of every status, with filters and pages |
 | `GET` | `/admin/currencies/{hk}` | Admin token | Get a currency, whatever its status, with its version |

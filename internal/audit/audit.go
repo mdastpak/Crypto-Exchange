@@ -44,9 +44,11 @@ const (
 	ActionAdminSignInCode = "admin.sign_in_code"
 	ActionAdminSignIn     = "admin.sign_in"
 	ActionAdminLogout     = "admin.logout"
-	ActionCurrencyCreate  = "currency.create"
-	ActionCurrencyUpdate  = "currency.update"
-	ActionCurrencyDelete  = "currency.delete"
+	// An administrator ended one of their own sessions (#308).
+	ActionAdminSessionRevoke = "admin.session_revoke"
+	ActionCurrencyCreate     = "currency.create"
+	ActionCurrencyUpdate     = "currency.update"
+	ActionCurrencyDelete     = "currency.delete"
 	// ActionCurrencyRestore is an administrator undoing a delete (#196).
 	ActionCurrencyRestore = "currency.restore"
 	// The lifecycle of a currency (#216): an administrator scheduling or
@@ -105,12 +107,14 @@ const (
 	ActionAdminCreate    = "admin.create"
 	ActionAdminTOTPReset = "admin.totp_reset"
 	ActionAdminDisable   = "admin.disable"
-	ActionDataKeyCreate  = "data_key.create"
-	ActionDataKeyRotate  = "data_key.rotate"
-	ActionDataKeyRetire  = "data_key.retire"
-	ActionDataKeyRewrap  = "data_key.rewrap"
-	ActionOutboxRetry    = "outbox.retry"
-	ActionOutboxDiscard  = "outbox.discard"
+	// An operator ended every session of an administrator (#308).
+	ActionAdminSessionsEnd = "admin.sessions_end"
+	ActionDataKeyCreate    = "data_key.create"
+	ActionDataKeyRotate    = "data_key.rotate"
+	ActionDataKeyRetire    = "data_key.retire"
+	ActionDataKeyRewrap    = "data_key.rewrap"
+	ActionOutboxRetry      = "outbox.retry"
+	ActionOutboxDiscard    = "outbox.discard"
 
 	// The administration of the market data catalog (#270), by an
 	// administrator or cmd/admin market-data. Pausing or resuming a source,
@@ -143,6 +147,9 @@ const (
 	TargetUser     = "user"
 	// TargetSession is a user's session, by the session ID of its tokens.
 	TargetSession = "session"
+	// TargetAdminSession is an administrator's session (#308), by the
+	// session ID of its token.
+	TargetAdminSession = "admin_session"
 	// TargetSignIn is a sign-in in progress, by the ID that a code request
 	// returns, which links the code request to the attempts to verify it.
 	TargetSignIn = "sign_in"

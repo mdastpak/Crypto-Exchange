@@ -273,6 +273,24 @@ definitions:
           refused with 409. A create may not send it.
         type: integer
     type: object
+  adminauth.Session:
+    properties:
+      created_at:
+        type: string
+      current:
+        description: Current marks the session of the request that lists.
+        type: boolean
+      expires_at:
+        type: string
+      id:
+        type: string
+      ip:
+        type: string
+      last_used_at:
+        type: string
+      user_agent:
+        type: string
+    type: object
   audit.Changes:
     properties:
       after:
@@ -4920,6 +4938,74 @@ paths:
       summary: Lift a platform control
       tags:
       - admin platform
+  /api/v1/admin/sessions:
+    get:
+      description: The active sessions of the administrator of the token, newest first,
+        each with the address and client that signed in. The session of the request
+        has current true.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/adminauth.Session'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the administrator's sessions
+      tags:
+      - admin sign-in
+  /api/v1/admin/sessions/{id}:
+    delete:
+      description: Ends an active session of the administrator of the token, on every
+        instance at once; its token stops working. Ending the session of the request
+        signs out. Audited as admin.session_revoke.
+      parameters:
+      - description: The session
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: End one of the administrator's sessions
+      tags:
+      - admin sign-in
   /api/v1/admin/users/{hk}/restrictions:
     get:
       description: 'The restrictions of a user, newest first, at most 200: every one,
