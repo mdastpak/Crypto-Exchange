@@ -21,11 +21,21 @@ import (
 
 const cliTestDBName = "testdb_admin_cli"
 
+// TestParseArgs_ConfigNamedOnlyWhenGiven checks that only a -config on the
+// command line makes the file required (#306).
+func TestParseArgs_ConfigNamedOnlyWhenGiven(t *testing.T) {
+	cmd, err := parseArgs([]string{"create", "-email", "admin@example.com"}, &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.False(t, cmd.configNamed)
+	assert.Equal(t, "config/config.yaml", cmd.configPath)
+}
+
 func TestParseArgs(t *testing.T) {
 	cmd, err := parseArgs([]string{"-config", "c.yaml", "create", "-email", "admin@example.com"}, &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, command{
 		configPath:     "c.yaml",
+		configNamed:    true,
 		migrationsPath: "file://internal/db/migrations",
 		name:           "create",
 		email:          "admin@example.com",
@@ -71,7 +81,11 @@ func resetCLITestDB(t *testing.T) {
 func writeConfig(t *testing.T, totpKey string) []string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	yaml := fmt.Sprintf(`postgres:
+	yaml := fmt.Sprintf(`# A development configuration: an instance that names no mode runs in
+# release mode (#306).
+server:
+  mode: "debug"
+postgres:
   host: "localhost"
   port: "5432"
   user: "postgres"
@@ -299,7 +313,10 @@ func TestRun_KeysNeedAProvider(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr, "KEYS_LOCAL_KEK")
 
-	release := fmt.Sprintf("server:\n  mode: \"release\"\nkeys:\n  provider: \"local\"\n  local:\n    kek: %q\n", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	// The file names debug mode; SERVER_MODE overrides it. A release names
+	// its region (#306).
+	t.Setenv("SERVER_MODE", "release")
+	release := fmt.Sprintf("deployment:\n  region: \"ir\"\nkeys:\n  provider: \"local\"\n  local:\n    kek: %q\n", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	code, _, stderr = runCLI(t, append(writeKeysConfig(t, release), "keys", "list")...)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr, "refused in release mode")

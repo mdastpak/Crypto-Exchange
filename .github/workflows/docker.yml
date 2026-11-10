@@ -49,3 +49,14 @@ jobs:
           # Without arguments, admin prints its usage and exits with status 2.
           output=$(docker run --rm --entrypoint /app/admin crypto-exchange:ci 2>&1 || true)
           echo "$output" | grep -q '^Usage: admin'
+
+      # The image runs in release mode (#306), which never falls back to the
+      # embedded example: without a configuration file the server stops.
+      - name: Check that the server refuses to start without its configuration
+        run: |
+          if output=$(docker run --rm crypto-exchange:ci 2>&1); then
+            echo "::error::The server started without a configuration file"
+            exit 1
+          fi
+          echo "$output"
+          echo "$output" | grep -q 'release mode never falls back to the embedded example'

@@ -44,6 +44,8 @@ postgres:
   user: "svc"
   password: "secret"
   dbname: "exchange"
+deployment:
+  region: "ir"
 `
 	require.NoError(t, os.WriteFile(path, []byte(yamlContent), 0644))
 
@@ -110,7 +112,7 @@ func TestSetDefaults_FillsZeroValues(t *testing.T) {
 	assert.Equal(t, 10, Config.Server.ReadTimeout)
 	assert.Equal(t, 10, Config.Server.WriteTimeout)
 	assert.Equal(t, 120, Config.Server.IdleTimeout)
-	assert.Equal(t, "debug", Config.Server.Mode)
+	assert.Equal(t, "release", Config.Server.Mode, "an instance that names no mode is a production instance (#306)")
 	assert.Equal(t, DefaultJWTIssuer, Config.JWT.Issuer, "tokens are always checked for an issuer")
 
 	assert.Equal(t, 25, Config.Postgres.MaxOpenConns)
@@ -369,4 +371,84 @@ func TestSetDefaults_CandleTiers(t *testing.T) {
 	assert.Equal(t, []string{TierHot}, Config.MarketData.Streams.Tiers)
 	assert.Equal(t, 1000, Config.MarketData.Streams.FlushMillis)
 	assert.Equal(t, 2, Config.MarketData.Streams.MaxPerWorker)
+}
+
+// writeConfig writes a configuration file and points Load at it.
+func writeConfig(t *testing.T, content string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	original := configPath
+	t.Cleanup(func() { configPath = original; resetConfig() })
+	SetConfigPath(path)
+}
+
+// TestLoad_ReleaseNeverFallsBackToTheExample checks #306: a release whose
+// configuration file is missing stops, instead of running with the
+// development example.
+func TestLoad_ReleaseNeverFallsBackToTheExample(t *testing.T) {
+	original := configPath
+	t.Cleanup(func() { configPath = original; resetConfig() })
+	SetConfigPath(filepath.Join(t.TempDir(), "missing.yaml"))
+
+	t.Setenv("SERVER_MODE", "release")
+	err := Load()
+	require.ErrorIs(t, err, ErrConfigFileMissing)
+	assert.Contains(t, err.Error(), "missing.yaml")
+
+	t.Setenv("SERVER_MODE", "debug")
+	require.NoError(t, Load(), "development may still use the example")
+}
+
+// TestLoad_ANamedConfigFileMustExist checks that a path named on the
+// command line is never replaced by the example, in any mode.
+func TestLoad_ANamedConfigFileMustExist(t *testing.T) {
+	original := configPath
+	t.Cleanup(func() { configPath = original; resetConfig(); RequireConfigFile(false) })
+	SetConfigPath(filepath.Join(t.TempDir(), "typo.yaml"))
+	RequireConfigFile(true)
+	t.Setenv("SERVER_MODE", "debug")
+
+	require.ErrorIs(t, Load(), ErrConfigFileMissing)
+}
+
+// TestLoad_ReleaseMustNameTheRegion checks #306: the default region is
+// only for development, so that an international release cannot run the
+// features of Iran by forgetting DEPLOYMENT_REGION.
+func TestLoad_ReleaseMustNameTheRegion(t *testing.T) {
+	writeConfig(t, "server:\n  mode: release\n")
+	t.Setenv("DEPLOYMENT_REGION", "")
+	err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DEPLOYMENT_REGION")
+	assert.Contains(t, err.Error(), "international")
+
+	t.Setenv("DEPLOYMENT_REGION", "international")
+	require.NoError(t, Load())
+	assert.Equal(t, "international", Config.Deployment.Region)
+
+	writeConfig(t, "server:\n  mode: debug\n")
+	t.Setenv("DEPLOYMENT_REGION", "")
+	require.NoError(t, Load())
+	assert.Equal(t, "ir", Config.Deployment.Region, "development keeps the default")
+}
+
+// TestSetDefaults_RowSealsEnforceInRelease checks #306: release mode with
+// data keys refuses a changed row unless report is named.
+func TestSetDefaults_RowSealsEnforceInRelease(t *testing.T) {
+	defer resetConfig()
+	cases := []struct {
+		mode, provider, set, want string
+	}{
+		{"release", "vault", "", RowSealsEnforce},
+		{"release", "vault", RowSealsReport, RowSealsReport},
+		{"release", "", "", RowSealsReport},
+		{"debug", "vault", "", RowSealsReport},
+	}
+	for _, c := range cases {
+		Config = Configuration{}
+		Config.Server.Mode, Config.Keys.Provider, Config.Keys.RowSeals.Mode = c.mode, c.provider, c.set
+		setDefaults()
+		assert.Equal(t, c.want, Config.Keys.RowSeals.Mode, "%+v", c)
+	}
 }

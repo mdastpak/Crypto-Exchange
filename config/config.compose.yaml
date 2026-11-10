@@ -1,6 +1,9 @@
 # Configuration of the app service in docker-compose.yml, for local
 # development. It holds no secrets: passwords and keys come from environment
 # variables and Compose secrets.
+deployment:
+  region: "ir"  # Named: release mode needs it (#306). DEPLOYMENT_REGION overrides it.
+
 server:
   ip: "0.0.0.0"
   port: "8080"

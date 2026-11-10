@@ -63,6 +63,7 @@ func main() {
 // run starts the worker and runs it until a SIGINT or SIGTERM.
 func run() error {
 	config.SetConfigPath(configPath)
+	config.RequireConfigFile(configFlagSet())
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
 	if err := config.ValidateMarketWorker(); err != nil {
@@ -381,4 +382,11 @@ func applicationName() string {
 		host = "unknown"
 	}
 	return "crypto-exchange-market-worker/" + host
+}
+
+// configFlagSet reports whether -config was given: a named file that does
+// not exist stops the worker instead of falling back to the example (#306).
+func configFlagSet() (set bool) {
+	flag.Visit(func(f *flag.Flag) { set = set || f.Name == "config" })
+	return set
 }

@@ -43,10 +43,15 @@ COPY --from=builder /src/internal/db/migrations /app/internal/db/migrations
 
 USER 10001:10001
 
+# The image runs in release mode unless told otherwise (#306): an instance
+# whose deployment forgot SERVER_MODE gets the release checks, never debug.
+# Development sets SERVER_MODE=debug (docker-compose.yml does).
+ENV SERVER_MODE=release
+
 EXPOSE 8080
 
-# /system/ready answers 503 while PostgreSQL, Redis, or RabbitMQ is
-# unavailable, and wget fails on it.
+# /system/ready answers 503 while PostgreSQL or Redis is unavailable, and
+# wget fails on it; without RabbitMQ it answers 200, degraded (#232).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/system/ready || exit 1
 

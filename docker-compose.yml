@@ -93,6 +93,8 @@ services:
       dockerfile: Dockerfile
     entrypoint: ["/app/admin", "-config", "config/config.compose.yaml", "migrate"]
     environment:
+      # The image defaults to release mode (#306); this is development.
+      - SERVER_MODE=${SERVER_MODE:-debug}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-exchange_app}
@@ -128,6 +130,8 @@ services:
       - path: .env
         required: false
     environment:
+      # The image defaults to release mode (#306); this is development.
+      - SERVER_MODE=${SERVER_MODE:-debug}
       - SERVER_IP=0.0.0.0
       - SERVER_PORT=8080
       - POSTGRES_HOST=postgres
