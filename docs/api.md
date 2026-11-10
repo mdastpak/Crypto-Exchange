@@ -744,7 +744,7 @@ The rows that did not match their [row seal](data-protection.md#row-seals) ([#13
 | Route | |
 | --- | --- |
 | `GET /admin/integrity/findings?all=&limit=` | The open findings, or every finding with `all=true`, newest first, [paginated](#pagination): `table`, `row_key`, `check` (`missing`, `mismatch`, `unknown_key`), `detected_by` (`read`, `verifier`), `seen_count`, and, once resolved, `resolution` (`resealed`, `report_mode`, `row_gone`), `resolved_by`, and `reason`. |
-| `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters, seals the row as it now is and resolves the finding; audited as `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. |
+| `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters. It needs two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): the first request records the reason and answers `202` with the finding and `reseal_requested_by`; the same request by another administrator within 24 hours seals the row as it now is, resolves the finding, and answers `200`. `403 second_approval_required` for the administrator who asked, and `403 own_row` for the administrator whose account the row belongs to, at either step. A request older than 24 hours is replaced by a new one. Audited as `integrity.reseal_request` and `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. Needs a [step-up](#post-adminstep-up). |
 
 ## Currency migrations
 

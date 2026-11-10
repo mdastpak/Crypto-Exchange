@@ -26,24 +26,45 @@ type Finding struct {
 	Resolution string     `json:"resolution,omitempty" enums:"resealed,report_mode,row_gone"`
 	ResolvedBy string     `json:"resolved_by,omitempty"`
 	Reason     string     `json:"reason,omitempty"`
+	// ResealRequestedBy is the administrator who asked for the re-seal that
+	// another administrator must approve (#308), with when and why.
+	ResealRequestedBy   string     `json:"reseal_requested_by,omitempty"`
+	ResealRequestedAt   *time.Time `json:"reseal_requested_at,omitempty"`
+	ResealRequestReason string     `json:"reseal_request_reason,omitempty"`
 }
 
 // ErrResolved reports a finding that is already resolved.
 var ErrResolved = errors.New("the finding is already resolved")
 
+// ErrSameApprover refuses the approval of a re-seal by the administrator who
+// asked for it.
+var ErrSameApprover = errors.New("the re-seal must be approved by another administrator")
+
+// ErrOwnRow refuses an administrator who asks for, or approves, the re-seal
+// of a row of their own account.
+var ErrOwnRow = errors.New("an administrator cannot re-seal a row of their own account")
+
+// ResealApprovalTTL is how long a request for a re-seal waits for its
+// second administrator. A later approval starts a new request instead.
+const ResealApprovalTTL = 24 * time.Hour
+
 // MaxReasonLength bounds the reason of a re-seal, as the table does.
 const MaxReasonLength = 1000
 
 const findingFields = `id, table_name, row_key, check_failed, detected_by, detected_at, last_seen_at, seen_count,
-	resolved_at, COALESCE(resolution, ''), COALESCE(resolved_by::text, ''), COALESCE(reason, '')`
+	resolved_at, COALESCE(resolution, ''), COALESCE(resolved_by::text, ''), COALESCE(reason, ''),
+	COALESCE(reseal_requested_by::text, ''), reseal_requested_at, COALESCE(reseal_request_reason, '')`
 
 func scanFinding(scan func(...any) error) (Finding, error) {
 	var f Finding
-	var resolved sql.NullTime
+	var resolved, requested sql.NullTime
 	err := scan(&f.ID, &f.Table, &f.RowKey, &f.Check, &f.DetectedBy, &f.DetectedAt, &f.LastSeenAt, &f.SeenCount,
-		&resolved, &f.Resolution, &f.ResolvedBy, &f.Reason)
+		&resolved, &f.Resolution, &f.ResolvedBy, &f.Reason, &f.ResealRequestedBy, &requested, &f.ResealRequestReason)
 	if resolved.Valid {
 		f.ResolvedAt = &resolved.Time
+	}
+	if requested.Valid {
+		f.ResealRequestedAt = &requested.Time
 	}
 	return f, err
 }
@@ -100,42 +121,110 @@ func resolve(ctx context.Context, q Querier, id int64, resolution, resolvedBy, r
 	return err
 }
 
-// ResealFinding re-seals the row of an open finding after an administrator
-// reviewed it, and closes the finding, in one transaction with its audit
-// event. origin is the administrator or the operator, and reason says why
-// the current values are right, such as a reviewed data fix. The event
-// shows the values that are sealed now, without the secret ones. A row
-// that no longer exists closes the finding as row_gone.
+// ResealFinding re-seals the row of an open finding after a review, and
+// closes the finding, in one transaction with its audit event. It is the
+// re-seal of an operator, who holds the data keys and the database; an
+// administrator's goes through ReviewReseal, which needs two of them.
+// reason says why the current values are right, such as a reviewed data
+// fix. The event shows the values that are sealed now, without the secret
+// ones. A row that no longer exists closes the finding as row_gone.
 func (s *Sealer) ResealFinding(ctx context.Context, id int64, origin audit.Event, reason string) (Finding, error) {
+	f, _, err := s.reseal(ctx, id, origin, reason, false)
+	return f, err
+}
+
+// ReviewReseal is the re-seal of an administrator, which needs a second one
+// (#308): row seals exist to detect changes made outside the backend, and
+// an administrator who could accept a flagged row alone could launder one.
+// The first call records the request with its reason and returns pending;
+// the call of another administrator within ResealApprovalTTL re-seals the
+// row. The administrator who asked cannot approve (ErrSameApprover), and
+// neither step is open to the administrator whose account the row belongs
+// to (ErrOwnRow). A request that waited longer is replaced by a new one.
+func (s *Sealer) ReviewReseal(ctx context.Context, id int64, origin audit.Event, reason string) (f Finding, pending bool, err error) {
+	if origin.ActorID == "" {
+		return Finding{}, false, errors.New("the re-seal of an administrator needs the administrator")
+	}
+	return s.reseal(ctx, id, origin, reason, true)
+}
+
+// rowOwner returns the account that the row of a finding belongs to, or ""
+// when the row is gone.
+func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string, error) {
+	column := map[string]string{Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id"}[t.Name]
+	if column == "" {
+		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)
+	}
+	var owner string
+	err := tx.QueryRowContext(ctx, `SELECT `+column+`::text FROM `+t.Name+` WHERE `+t.Key+` = $1::`+t.KeyType, rowKey).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return owner, err
+}
+
+func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reason string, twoPerson bool) (Finding, bool, error) {
 	reason = strings.TrimSpace(reason)
 	if s == nil {
-		return Finding{}, errors.New("row seals need keys.provider")
+		return Finding{}, false, errors.New("row seals need keys.provider")
 	}
 	if reason == "" || len(reason) > MaxReasonLength {
-		return Finding{}, fmt.Errorf("a reason of 1 to %d characters is required", MaxReasonLength)
+		return Finding{}, false, fmt.Errorf("a reason of 1 to %d characters is required", MaxReasonLength)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Finding{}, err
+		return Finding{}, false, err
 	}
 	defer tx.Rollback()
 	f, err := scanFinding(tx.QueryRowContext(ctx, `SELECT `+findingFields+` FROM integrity_findings WHERE id = $1 FOR UPDATE`, id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Finding{}, ErrNotFound
+		return Finding{}, false, ErrNotFound
 	}
 	if err != nil {
-		return Finding{}, err
+		return Finding{}, false, err
 	}
 	if f.ResolvedAt != nil {
-		return Finding{}, ErrResolved
+		return Finding{}, false, ErrResolved
 	}
 	t := TableNamed(f.Table)
 	if t == nil {
-		return Finding{}, fmt.Errorf("finding %d names the unknown table %q", id, f.Table)
+		return Finding{}, false, fmt.Errorf("finding %d names the unknown table %q", id, f.Table)
+	}
+	extra := map[string]interface{}{}
+	if twoPerson {
+		owner, err := rowOwner(ctx, tx, t, f.RowKey)
+		if err != nil {
+			return Finding{}, false, err
+		}
+		if owner == origin.ActorID {
+			return Finding{}, false, ErrOwnRow
+		}
+		waiting := f.ResealRequestedAt != nil && time.Since(*f.ResealRequestedAt) < ResealApprovalTTL
+		if waiting && f.ResealRequestedBy == origin.ActorID {
+			return Finding{}, false, ErrSameApprover
+		}
+		if !waiting {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE integrity_findings SET reseal_requested_by = $2::uuid, reseal_requested_at = NOW(), reseal_request_reason = $3
+				WHERE id = $1`, id, origin.ActorID, reason); err != nil {
+				return Finding{}, false, err
+			}
+			e := audit.Of(origin, audit.ActionIntegrityResealRequest, t.Name, f.RowKey)
+			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "check": f.Check, "reason": reason}}
+			if err := audit.Record(ctx, tx, e); err != nil {
+				return Finding{}, false, err
+			}
+			if err := tx.Commit(); err != nil {
+				return Finding{}, false, err
+			}
+			pending, err := GetFinding(ctx, s.db, id)
+			return pending, true, err
+		}
+		extra["requested_by"], extra["request_reason"] = f.ResealRequestedBy, f.ResealRequestReason
 	}
 	where := t.Key + " = $1::" + t.KeyType
 	if err := s.Reseal(ctx, tx, t, where, f.RowKey); err != nil {
-		return Finding{}, err
+		return Finding{}, false, err
 	}
 	r := t.NewRow()
 	err = tx.QueryRowContext(ctx, `SELECT `+t.Fields("")+` FROM `+t.Name+` WHERE `+where, f.RowKey).Scan(r.Dest()...)
@@ -145,25 +234,27 @@ func (s *Sealer) ResealFinding(ctx context.Context, id int64, origin audit.Event
 	case errors.Is(err, sql.ErrNoRows):
 		resolution = "row_gone"
 	case err != nil:
-		return Finding{}, err
+		return Finding{}, false, err
 	default:
 		after = t.Shown(r)
 	}
 	if err := resolve(ctx, tx, id, resolution, origin.ActorID, reason); err != nil {
-		return Finding{}, err
+		return Finding{}, false, err
 	}
 	e := audit.Of(origin, audit.ActionIntegrityReseal, t.Name, f.RowKey)
+	extra["resolution"], extra["reason"], extra["values"] = resolution, reason, after
 	e.Changes = &audit.Changes{
 		Before: map[string]interface{}{"finding": id, "check": f.Check},
-		After:  map[string]interface{}{"resolution": resolution, "reason": reason, "values": after},
+		After:  extra,
 	}
 	if err := audit.Record(ctx, tx, e); err != nil {
-		return Finding{}, err
+		return Finding{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return Finding{}, err
+		return Finding{}, false, err
 	}
-	return GetFinding(ctx, s.db, id)
+	resolved, err := GetFinding(ctx, s.db, id)
+	return resolved, false, err
 }
 
 // verifierLockID is the advisory lock that one instance at a time holds

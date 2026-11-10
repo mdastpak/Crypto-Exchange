@@ -108,7 +108,8 @@ A finding names the table, the row's key, and what failed: `missing` (no seal), 
 An administrator checks the row, for example against the audit log and backups, and then either fixes it or confirms it:
 
 - `admin row-seals findings [-all] [-limit n]`, or `GET /api/v1/admin/integrity/findings`, lists the findings, newest first.
-- `admin row-seals reseal -id N -reason TEXT`, or `POST /api/v1/admin/integrity/findings/{id}/reseal` with `{"reason": "…"}`, seals the row as it now is and resolves the finding as `resealed`, or as `row_gone` if the row no longer exists. It records `integrity.reseal` with the reason and the sealed values, secret columns shown as `[secret]`.
+- `POST /api/v1/admin/integrity/findings/{id}/reseal` with `{"reason": "…"}` seals the row as it now is and resolves the finding as `resealed`, or as `row_gone` if the row no longer exists. It takes two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): one asks, with the reason, and another approves with the same request within 24 hours. The one who asked cannot approve, and the administrator whose account the row belongs to can do neither, so nobody accepts a change of their own alone. It records `integrity.reseal_request`, and `integrity.reseal` with both reasons, who asked, and the sealed values, secret columns shown as `[secret]`.
+- `admin row-seals reseal -id N -reason TEXT` does it in one step, for the operator, who holds the data keys and the database anyway, and for an installation with one administrator.
 
 Re-sealing makes a row valid as it is, so re-seal only a row that is right. A row that someone changed must be fixed first, through the backend or in SQL followed by a re-seal.
 
@@ -117,7 +118,7 @@ Re-sealing makes a row valid as it is, so re-seal only a row that is right. A ro
 - **Replay.** Someone with write access to the database can put back an older version of a row with its seal, such as a session from before its revocation, and the seal matches. A later step of #139 detects that, with a hash-chained log of the seals.
 - **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it.
 - **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139.
-- **One administrator.** A re-seal needs one administrator. Four-eyes approval is not required yet.
+- **The operator.** A re-seal through the API needs two administrators, but `cmd/admin` needs one operator: whoever holds the data keys and a database role that writes can seal any row.
 
 ## Setup
 

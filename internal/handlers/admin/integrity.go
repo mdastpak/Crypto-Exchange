@@ -95,7 +95,7 @@ func (h *AdminHandler) ListIntegrityFindings(c *gin.Context) {
 // ResealIntegrityFinding seals the row of a finding again after a review.
 //
 // @Summary Re-seal the row of an integrity finding
-// @Description After an administrator reviewed a row that did not match its seal and found its current values right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. The reason is required. Audited as integrity.reseal with the values sealed now, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503.
+// @Description After a review found the current values of a row that did not match its seal right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. It needs two administrators: the first request records the reason and answers 202 with the finding and who asked; the same request by another administrator within 24 hours re-seals the row and answers 200. The administrator who asked cannot approve (403 second_approval_required), and neither step is open to the administrator whose account the row belongs to (403 own_row). The reason is required. Audited as integrity.reseal_request and integrity.reseal, with the values sealed now, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503. The route needs a step-up.
 // @Tags admin integrity
 // @Accept json
 // @Produce json
@@ -103,6 +103,7 @@ func (h *AdminHandler) ListIntegrityFindings(c *gin.Context) {
 // @Param id path int true "The finding's id" minimum(1)
 // @Param body body ResealRequest true "Why the row is right"
 // @Success 200 {object} models.APIResponse{info=rowseal.Finding}
+// @Success 202 {object} models.APIResponse{info=rowseal.Finding}
 // @Failure 400 {object} models.APIResponse
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse
@@ -139,8 +140,12 @@ func (h *AdminHandler) ResealIntegrityFinding(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	finding, err := sealer.ResealFinding(ctx, id, origin, req.Reason)
+	finding, pending, err := sealer.ReviewReseal(ctx, id, origin, req.Reason)
 	switch {
+	case errors.Is(err, rowseal.ErrSameApprover):
+		helpers.SendError(c, http.StatusForbidden, "second_approval_required", i18n.M("RESEAL_SECOND_APPROVAL_REQUIRED"), nil)
+	case errors.Is(err, rowseal.ErrOwnRow):
+		helpers.SendError(c, http.StatusForbidden, "own_row", i18n.M("RESEAL_OWN_ROW"), nil)
 	case errors.Is(err, rowseal.ErrNotFound):
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("INTEGRITY_FINDING_NOT_FOUND"), nil)
 	case errors.Is(err, rowseal.ErrResolved):
@@ -148,6 +153,8 @@ func (h *AdminHandler) ResealIntegrityFinding(c *gin.Context) {
 	case err != nil:
 		log.Printf("Failed to re-seal the row of finding %d: %v", id, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RESEAL_ROW"), nil)
+	case pending:
+		helpers.SendResponse(c, http.StatusAccepted, i18n.M("RESEAL_REQUESTED"), finding)
 	default:
 		helpers.SendResponse(c, http.StatusOK, i18n.M("ROW_RESEALED_SUCCESSFULLY"), finding)
 	}

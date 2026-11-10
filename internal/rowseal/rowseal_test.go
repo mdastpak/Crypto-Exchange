@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"log"
 	"testing"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
@@ -357,4 +358,67 @@ func TestReseal_SessionsAndContacts(t *testing.T) {
 	r := rowseal.Sessions.NewRow()
 	require.NoError(t, e.conn.QueryRow(`SELECT `+rowseal.Sessions.Fields("")+` FROM sessions WHERE id = $1`, sessions[0]).Scan(r.Dest()...))
 	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Sessions, r), rowseal.ErrUnverified)
+}
+
+// A re-seal by an administrator needs a second one (#308).
+func TestReviewReseal_NeedsASecondAdministrator(t *testing.T) {
+	e := newEnv(t)
+	sealer := e.sealer(rowseal.ModeEnforce)
+	ctx := context.Background()
+	first := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	second := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	changed := func() int64 {
+		_, err := e.conn.Exec(`UPDATE users SET first_name = 'Changed' WHERE hk = $1`, first.ActorID)
+		require.NoError(t, err)
+		require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, first.ActorID)), rowseal.ErrUnverified)
+		return e.openFindings(t)[0].ID
+	}
+	id := changed()
+
+	_, _, err := sealer.ReviewReseal(ctx, id, first, "my own row")
+	require.ErrorIs(t, err, rowseal.ErrOwnRow, "the account of the row cannot ask")
+	_, _, err = sealer.ReviewReseal(ctx, id, audit.Event{ActorType: audit.ActorAdmin}, "nobody")
+	require.Error(t, err, "an administrator is required")
+
+	third := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	pending, waits, err := sealer.ReviewReseal(ctx, id, second, "Reviewed fix of ticket 7")
+	require.NoError(t, err)
+	assert.True(t, waits)
+	assert.Nil(t, pending.ResolvedAt)
+	assert.Equal(t, second.ActorID, pending.ResealRequestedBy)
+	assert.Equal(t, "Reviewed fix of ticket 7", pending.ResealRequestReason)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, first.ActorID)), rowseal.ErrUnverified, "nothing is sealed yet")
+
+	_, _, err = sealer.ReviewReseal(ctx, id, second, "again, alone")
+	require.ErrorIs(t, err, rowseal.ErrSameApprover)
+	_, _, err = sealer.ReviewReseal(ctx, id, first, "approve my own row")
+	require.ErrorIs(t, err, rowseal.ErrOwnRow, "nor approve")
+
+	resolved, waits, err := sealer.ReviewReseal(ctx, id, third, "Confirmed with the ticket")
+	require.NoError(t, err)
+	assert.False(t, waits)
+	assert.Equal(t, "resealed", resolved.Resolution)
+	assert.Equal(t, third.ActorID, resolved.ResolvedBy)
+	require.NoError(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, first.ActorID)))
+	assert.Equal(t, 1, e.events(t, audit.ActionIntegrityResealRequest))
+	var changes string
+	require.NoError(t, e.conn.QueryRow(`SELECT changes::text FROM audit_events WHERE action = $1`, audit.ActionIntegrityReseal).Scan(&changes))
+	assert.Contains(t, changes, second.ActorID, "the event names who asked")
+	assert.Contains(t, changes, "Reviewed fix of ticket 7")
+
+	// A request that waited too long starts again.
+	_, err = e.conn.Exec(`UPDATE users SET first_name = 'Again' WHERE hk = $1`, first.ActorID)
+	require.NoError(t, err)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, first.ActorID)), rowseal.ErrUnverified)
+	id = e.openFindings(t)[0].ID
+	_, waits, err = sealer.ReviewReseal(ctx, id, second, "first request")
+	require.NoError(t, err)
+	require.True(t, waits)
+	_, err = e.conn.Exec(`UPDATE integrity_findings SET reseal_requested_at = NOW() - $2 * INTERVAL '1 second' WHERE id = $1`,
+		id, (rowseal.ResealApprovalTTL + time.Minute).Seconds())
+	require.NoError(t, err)
+	late, waits, err := sealer.ReviewReseal(ctx, id, third, "too late to approve")
+	require.NoError(t, err)
+	assert.True(t, waits, "the late approval is a new request")
+	assert.Equal(t, third.ActorID, late.ResealRequestedBy)
 }
