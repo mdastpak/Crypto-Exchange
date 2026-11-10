@@ -295,10 +295,28 @@ transport (HTTP, WebSocket)  ->  services (business logic)  ->  repositories and
 
 | Topic | Decision |
 | --- | --- |
-| Monetary values | Arbitrary-precision decimals, never floating point. Domain types use `shared.Decimal` (`internal/domain/shared`), which wraps `shopspring/decimal` and adds the database and JSON encodings; new code in the domain uses it, and `shopspring/decimal` is used directly only by code outside the domain, such as market data. Column precision is decided in [#314](https://github.com/mdastpak/Crypto-Exchange/issues/314). |
+| Monetary values | Exact decimals, never floating point: every amount, price, rate, and ratio of the exchange is an `exact_decimal` column, and `shared.Decimal` in Go. See [Amounts, prices, and ratios](#amounts-prices-and-ratios) ([#314](https://github.com/mdastpak/Crypto-Exchange/issues/314)). |
 | Identifiers | UUIDs, with timestamp-ordered UUIDv7 planned for orders and trades |
 | Balance safety | Database transactions with row locks or optimistic versioning, plus an immutable change log ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)) |
 | Event delivery | A transactional outbox for every event: written in the transaction of its change and relayed with publisher confirms, retries, and dead letters ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#171](https://github.com/mdastpak/Crypto-Exchange/issues/171), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)) |
 | WebSocket scaling | Per-instance consumers and channel-based subscriptions ([#66](https://github.com/mdastpak/Crypto-Exchange/issues/66)) |
 | Authentication | JWT for interactive users. HMAC and Ed25519 API keys for programmatic access ([#64](https://github.com/mdastpak/Crypto-Exchange/issues/64)). |
 | Configuration | YAML plus environment variables, validated fail-closed at startup: release mode is the default and refuses unsafe settings (`internal/config/validate.go`, [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41), [#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)) |
+
+### Amounts, prices, and ratios
+
+Decision record for [#314](https://github.com/mdastpak/Crypto-Exchange/issues/314), accepted 2026-11-10.
+
+**Context.** The first migrations stored every amount as `NUMERIC(36, 18)`. PostgreSQL rounds a value to a column's scale without an error, so an asset with more than 18 decimals, such as NEAR (24), would have been credited short, and its on-chain balance and the books would never reconcile. Nothing tied the column scale to an asset's `decimals`, and ratios and fees had scales of their own.
+
+**Decision.**
+
+- Every amount (balances and their changes, order and trade quantities, fees, deposits, withdrawals, limits), price, rate, and ratio of the exchange's tables is an `exact_decimal` (migration 49): a PostgreSQL domain over `NUMERIC` without a fixed scale, so a value is stored exactly as written. It refuses, with a check violation instead of rounding, a value with more than 36 decimals or 42 integer digits.
+- An asset has at most 36 decimals: `assets.decimals` and `custody_configs.decimals` are checked to be from 0 to 36, and the asset registry refuses more. Every unit of every listed asset therefore fits, including the smallest.
+- Amounts are kept in whole units of the asset (1.5 BTC is `1.5`), not in base units. Code that writes an amount checks that its scale is at most the asset's `decimals`, and rounds explicitly, in the direction that favors the books (down for what a user receives, up for what a user pays), where a computation such as a price times a quantity or a conversion ratio gives more decimals. The rounding of a conversion is recorded as dust, as [currency migrations](api.md#currency-migrations) will.
+- In Go, amounts are `shared.Decimal` (`internal/domain/shared`), which wraps `shopspring/decimal` and adds the database and JSON encodings; JSON carries amounts as strings. Code outside the domain, such as market data, uses `shopspring/decimal` directly.
+- Third-party figures of market data (`market_*` tables, [market-data.md](market-data.md)) stay unconstrained `NUMERIC`: no balance is computed from them. `risk_score` is a score, not money.
+
+**Alternatives.** Integers in base units (`NUMERIC(78, 0)`, which holds any `uint256`) avoid fractions in the books, but need a conversion at every edge and an asset for every column, including limits and notional values that have none; whole units with an exact type and an explicit scale check give the same exactness. Keeping `NUMERIC(36, 18)` with a limit of 18 decimals would have refused assets such as NEAR.
+
+**Consequences.** `TestSchema_EveryAmountIsExact` fails on a money column of another type, and `TestExactDecimal_HoldsTheSmallestUnitOfEveryAsset` stores 1 yoctoNEAR without loss. A new money column is an `exact_decimal`.
