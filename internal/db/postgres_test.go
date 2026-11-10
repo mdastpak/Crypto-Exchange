@@ -272,13 +272,20 @@ func TestMigration11_PreflightStopsOnManualData(t *testing.T) {
 // on a freshly reset migrations-test database.
 func newMigrationsTestMigrator(t *testing.T) *migrate.Migrate {
 	t.Helper()
+	return newTestMigratorOf(t, "migrations")
+}
+
+// newTestMigratorOf returns a migrator of the migration files in dir, on the
+// emptied migrations-test database.
+func newTestMigratorOf(t *testing.T, dir string) *migrate.Migrate {
+	t.Helper()
 	ensureMigrationsTestDB(t)
 	resetMigrationsTestSchema(t)
 	t.Cleanup(func() { resetMigrationsTestSchema(t) })
 
 	cwd, err := filepath.Abs(".")
 	require.NoError(t, err)
-	sourceURL := "file://" + strings.ReplaceAll(filepath.Join(cwd, "migrations"), "\\", "/")
+	sourceURL := "file://" + strings.ReplaceAll(filepath.Join(cwd, dir), "\\", "/")
 	dbURL := "pgx5://" + fmt.Sprintf("%s:%s@%s:%s/%s?sslmode=%s",
 		testPGUser, testPGPassword, testPGHost, testPGPort, migrationsTestDBName, testPGSSLMode)
 
