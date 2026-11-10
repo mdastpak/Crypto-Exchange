@@ -30,7 +30,6 @@ Release mode is the default ([#306](https://github.com/mdastpak/Crypto-Exchange/
 
 At start the server logs one line with its posture: the mode, the region, the row seal mode, whether sign-in codes are logged, and whether Swagger is served.
 
-
 | Setting | Release mode needs |
 | --- | --- |
 | `server.tls.enabled`, `server.tls.behind_proxy` | TLS: either the server serves HTTPS itself, or `behind_proxy` says that a reverse proxy terminates TLS in front of it |
