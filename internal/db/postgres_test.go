@@ -158,13 +158,10 @@ func resetMigrationsTestSchema(t *testing.T) {
 	}
 }
 
-// TestMigrations_FullUpDownUpCycle exercises the entire migration chain
-// (1 through the latest) forward, all the way back down, and forward again,
-// against the dedicated migrations-test database. It guards against
-// regressions of the forward-reference foreign keys, users(id) vs
-// users(hk) type mismatches, type-name collisions, and down.sql ordering
-// bugs that previously made migrations 5-10 fail on a fresh database (and
-// made the down migrations unusable).
+// TestMigrations_FullUpDownUpCycle applies every migration, rolls all of
+// them back, and applies them again, against the dedicated migrations-test
+// database. A down migration that leaves something behind fails the second
+// run.
 func TestMigrations_FullUpDownUpCycle(t *testing.T) {
 	ensureMigrationsTestDB(t)
 	resetMigrationsTestSchema(t)
@@ -184,88 +181,6 @@ func TestMigrations_FullUpDownUpCycle(t *testing.T) {
 	require.NoError(t, m.Up(), "full up migration should succeed on a fresh database")
 	require.NoError(t, m.Down(), "full down migration should fully reverse the schema")
 	require.NoError(t, m.Up(), "re-applying up migrations after a full down should succeed")
-}
-
-// TestMigration11_StepDownAndUpWithOTPUsers checks that migration 11 can be
-// rolled back and re-applied on its own while users created by OTP sign-in
-// exist. Those rows do not satisfy the constraint that the down migration
-// restores, so the down migration must not validate existing rows.
-func TestMigration11_StepDownAndUpWithOTPUsers(t *testing.T) {
-	m := newMigrationsTestMigrator(t)
-	require.NoError(t, m.Migrate(11))
-
-	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
-	require.NoError(t, err)
-	defer conn.Close()
-	_, err = conn.Exec(`INSERT INTO users (info, status) VALUES ('{"contact": {"email": "otp-user@example.com"}}', 'approved')`)
-	require.NoError(t, err, "migration 11 must accept the document written by OTP sign-in")
-
-	require.NoError(t, m.Steps(-1), "rolling back migration 11 must keep existing OTP users")
-	require.NoError(t, m.Steps(1), "re-applying migration 11 must succeed")
-
-	var count int
-	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM users WHERE info->'contact'->>'email' = 'otp-user@example.com'`).Scan(&count))
-	assert.Equal(t, 1, count)
-}
-
-// TestMigration11_PreflightStopsOnManualData checks that migration 11 stops
-// with an actionable message, before changing the schema, when users holds
-// rows that no application code writes: rows without a contact object, or
-// contact values shared by several users.
-func TestMigration11_PreflightStopsOnManualData(t *testing.T) {
-	cases := []struct {
-		name    string
-		rows    []string
-		wantErr string // empty when the migration must succeed
-	}{
-		{
-			name:    "row without contact",
-			rows:    []string{`{"username": "legacy", "password": "secret"}`},
-			wantErr: `have no "contact" object`,
-		},
-		{
-			name: "email shared by two users",
-			rows: []string{
-				`{"username": "first", "password": "secret", "contact": {"email": "Shared@Example.com"}}`,
-				`{"username": "second", "password": "secret", "contact": {"email": "shared@example.com"}}`,
-			},
-			wantErr: "shared by more than one user",
-		},
-		{
-			name: "null contact values are not duplicates",
-			rows: []string{
-				`{"username": "first", "password": "secret", "contact": {"email": null, "mobile": "09120000001"}}`,
-				`{"username": "second", "password": "secret", "contact": {"email": null, "mobile": "09120000002"}}`,
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := newMigrationsTestMigrator(t)
-			require.NoError(t, m.Migrate(10))
-
-			conn, err := sql.Open("pgx", migrationsTestDBConnStr())
-			require.NoError(t, err)
-			defer conn.Close()
-			for _, row := range tc.rows {
-				_, err := conn.Exec(`INSERT INTO users (info) VALUES ($1::jsonb)`, row)
-				require.NoError(t, err)
-			}
-
-			err = m.Migrate(11)
-			if tc.wantErr == "" {
-				require.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantErr)
-			assert.Contains(t, err.Error(), `run "migrate force 10"`, "the error must explain how to recover from the dirty version")
-
-			var oldConstraintExists bool
-			require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_info_structure')`).Scan(&oldConstraintExists))
-			assert.True(t, oldConstraintExists, "a failed preflight must leave the schema unchanged")
-		})
-	}
 }
 
 // newMigrationsTestMigrator returns a migrator for the repository migrations
@@ -344,12 +259,12 @@ func TestPingWithRetry_NormalizesInvalidArguments(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestMigration13_OnlyNonEmptyContractsAreUnique checks that several
-// currencies without a contract can coexist, while a contract still belongs to
-// one currency only, and that the migration rolls back.
-func TestMigration13_OnlyNonEmptyContractsAreUnique(t *testing.T) {
+// TestSchema_OnlyNonEmptyContractsAreUnique checks that several currencies
+// without a contract can coexist, while a contract still belongs to one
+// currency only.
+func TestSchema_OnlyNonEmptyContractsAreUnique(t *testing.T) {
 	m := newMigrationsTestMigrator(t)
-	require.NoError(t, m.Migrate(13))
+	require.NoError(t, m.Up())
 
 	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
 	require.NoError(t, err)
@@ -369,9 +284,4 @@ func TestMigration13_OnlyNonEmptyContractsAreUnique(t *testing.T) {
 	require.ErrorAs(t, err, &pgErr, "a contract must stay unique")
 	assert.Equal(t, "23505", pgErr.Code)
 	assert.Equal(t, "currencies_info_contract_unique", pgErr.ConstraintName)
-
-	_, err = conn.Exec(`UPDATE currencies SET info = jsonb_set(info, '{contract}', '"native-eth"') WHERE info->>'symbol' = 'ETH'`)
-	require.NoError(t, err)
-	require.NoError(t, m.Steps(-1), "rolling back works once the empty contracts are distinct")
-	require.NoError(t, m.Steps(1))
 }

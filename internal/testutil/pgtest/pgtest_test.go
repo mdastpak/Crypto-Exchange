@@ -25,7 +25,7 @@ func TestMigrationsURL_PointsAtTheRepositoryMigrations(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	assert.NotEmpty(t, entries)
-	_, err = os.Stat(dir + "/1_create_currencies_table.up.sql")
+	_, err = os.Stat(dir + "/1_baseline.up.sql")
 	assert.NoError(t, err)
 }
 
@@ -35,7 +35,7 @@ func TestMigrated_BuildsTheSchemaOfTheMigrations(t *testing.T) {
 	var version int
 	var dirty bool
 	require.NoError(t, conn.QueryRow(`SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty))
-	assert.GreaterOrEqual(t, version, 14)
+	assert.GreaterOrEqual(t, version, 1)
 	assert.False(t, dirty)
 
 	var index bool

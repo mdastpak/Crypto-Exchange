@@ -31,7 +31,7 @@ var schemaQueries = map[string]string{
 	"triggers": `SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t
 		JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
-	// Functions of extensions are left out. Migration 3 creates pgcrypto and
+	// Functions of extensions are left out. The baseline creates pgcrypto and
 	// uuid-ossp IF NOT EXISTS, and its down migration rightly keeps them: it
 	// cannot know whether they existed before, or what else uses them.
 	"functions": `SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' FROM pg_proc p
@@ -85,7 +85,7 @@ func TestMigrations_EachStepIsReversible(t *testing.T) {
 		snapshots = append(snapshots, schemaSnapshot(t, conn))
 	}
 	latest := len(snapshots) - 1
-	require.GreaterOrEqual(t, latest, 13)
+	require.GreaterOrEqual(t, latest, 1)
 
 	for version := latest; version >= 1; version-- {
 		require.NoError(t, m.Steps(-1), "down migration %d", version)
@@ -122,25 +122,4 @@ func difference(a, b []string) []string {
 		}
 	}
 	return out
-}
-
-// TestMigration8_StepDownAndUpKeepsUsers rolls back and re-applies
-// migration 8 with a user in the table. Migration 2 created users.status,
-// so migration 8 never added it, and its down migration must not drop it.
-func TestMigration8_StepDownAndUpKeepsUsers(t *testing.T) {
-	m := newMigrationsTestMigrator(t)
-	require.NoError(t, m.Migrate(8))
-	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
-	require.NoError(t, err)
-	defer conn.Close()
-	_, err = conn.Exec(`INSERT INTO users (info, status) VALUES ('{"username": "u", "password": "p"}', 'suspend')`)
-	require.NoError(t, err)
-
-	require.NoError(t, m.Steps(-1))
-	require.NoError(t, m.Steps(1))
-
-	var status, statusType string
-	require.NoError(t, conn.QueryRow(`SELECT status::text, pg_typeof(status)::text FROM users WHERE info->>'username' = 'u'`).Scan(&status, &statusType))
-	assert.Equal(t, "suspend", status, "the status of existing users must survive")
-	assert.Equal(t, "user_status", statusType)
 }

@@ -88,7 +88,7 @@ Nothing is deployed before version 1.0, so there is nobody to stay compatible wi
 
 ## Database migrations
 
-- Add new migrations as the next sequence number, with both `.up.sql` and `.down.sql` files in `internal/db/migrations/`.
+- `1_baseline` is the whole schema of the first working version. Add new migrations as the next sequence number after it, with both `.up.sql` and `.down.sql` files in `internal/db/migrations/`.
 - **Never modify a migration that has already been merged.** Write a new migration instead.
 - A down migration must revert exactly what its up migration created, and nothing else.
 - Verify the full cycle on a fresh database: up, down, then up again.

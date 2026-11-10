@@ -1,1 +1,0 @@
-ALTER TABLE users DROP COLUMN theme, DROP COLUMN locale;

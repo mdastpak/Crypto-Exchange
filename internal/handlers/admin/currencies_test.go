@@ -465,8 +465,8 @@ func (s *AdminCurrenciesTestSuite) TestRestoreCurrency_ConcurrentRestoresSucceed
 	assert.Equal(s.T(), 1, restores)
 }
 
-// TestCurrencyTimestamps_HaveATimeZone checks migration 24: the timestamps
-// of currencies do not depend on the session time zone of the writer.
+// TestCurrencyTimestamps_HaveATimeZone checks that the timestamps of
+// currencies do not depend on the session time zone of the writer.
 func (s *AdminCurrenciesTestSuite) TestCurrencyTimestamps_HaveATimeZone() {
 	var types []string
 	rows, err := s.postgresSvc.DB.Query(`SELECT data_type FROM information_schema.columns
