@@ -53,7 +53,11 @@ func writeRolesConfig(t *testing.T) []string {
 	require.NoError(t, err)
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	yaml := fmt.Sprintf(`postgres:
+	yaml := fmt.Sprintf(`# A development configuration: an instance that names no mode runs in
+# release mode (#306).
+server:
+  mode: "debug"
+postgres:
   host: "localhost"
   port: "5432"
   user: %q

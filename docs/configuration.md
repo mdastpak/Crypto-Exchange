@@ -20,7 +20,15 @@ This document describes how the server is configured and which settings it curre
 
 ## Release mode
 
-With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start with settings that are fine for development but not for production. It lists them all at once:
+With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start with settings that are fine for development but not for production. It lists them all at once.
+
+Release mode is the default ([#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)): an instance that names no mode, in its file or with `SERVER_MODE`, runs in release mode, and so does the container image (`ENV SERVER_MODE=release`). Development opts out with `SERVER_MODE=debug`, as `.env.example`, `docker-compose.yml`, `config/config.example.yaml`, and `config/config.compose.yaml` do. In release mode, also:
+
+- a missing configuration file stops the server, `admin`, and the market data worker; only development falls back to the embedded `config/config.example.yaml`. A file named with `-config` must exist in every mode;
+- `deployment.region` must be named; the default `ir` is for development only;
+- `keys.row_seals.mode` defaults to `enforce` when `keys.provider` is set; `report` must be named, and is logged at every start.
+
+At start the server logs one line with its posture: the mode, the region, the row seal mode, whether sign-in codes are logged, and whether Swagger is served.
 
 | Setting | Release mode needs |
 | --- | --- |
@@ -43,7 +51,7 @@ With `server.mode: release` (`SERVER_MODE=release`), the server refuses to start
 
 ## Region of a release
 
-A release is built for one region, set by `deployment.region` (`DEPLOYMENT_REGION`): `ir` (the default) for Iran, or `international` for everywhere else. The binaries are the same; the region decides which features may be configured, and some defaults. A feature of one region is still turned on by its own settings, so an Iranian release can leave any of them off.
+A release is built for one region, set by `deployment.region` (`DEPLOYMENT_REGION`): `ir` (the default outside release mode; release mode needs it named) for Iran, or `international` for everywhere else. The binaries are the same; the region decides which features may be configured, and some defaults. A feature of one region is still turned on by its own settings, so an Iranian release can leave any of them off.
 
 In an international release, the server and the market data worker refuse to start while a setting turns on a feature of the `ir` region, and list every such setting at once, with what to set instead:
 
@@ -78,7 +86,7 @@ A new feature that only one region may have adds itself to the table `regionFeat
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `region` | `ir` | `ir` or `international`, case-insensitive. See [Region of a release](#region-of-a-release). Any other value stops the server and the worker. |
+| `region` | `ir`, outside release mode | `ir` or `international`, case-insensitive. Release mode needs it named ([#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)). See [Region of a release](#region-of-a-release). Any other value stops the server and the worker. |
 
 ### `server`
 
@@ -89,7 +97,7 @@ A new feature that only one region may have adds itself to the table `regionFeat
 | `read_timeout_seconds` | `10` | HTTP read timeout |
 | `write_timeout_seconds` | `10` | HTTP write timeout |
 | `idle_timeout_seconds` | `120` | HTTP keep-alive idle timeout |
-| `mode` | `debug` | `debug`, `release`, or `test`. Sets Gin's mode, and `release` turns on the [release checks](#release-mode). Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
+| `mode` | `release` | `debug`, `release`, or `test`. An instance that names none runs in release mode ([#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)); development sets `debug`. Sets Gin's mode, and `release` turns on the [release checks](#release-mode). Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
 | `swagger.enabled` | unset | Serves the Swagger UI at `/swagger/index.html`. When it is not set, the UI is served outside release mode only. |
 | `max_body_bytes` | `1048576` | The largest request body accepted, in bytes. A larger body gets `413`. |
@@ -495,7 +503,7 @@ The data-protection keys seal rows and encrypt fields, so that someone with acce
 | `reload_interval_seconds` | `60` | From 5 to 3600. How often each instance checks `data_keys`, and loads a rotation, a retirement, or a re-wrap without a restart ([#233](https://github.com/mdastpak/Crypto-Exchange/issues/233)). An instance that meets a value sealed with a version it does not hold also reloads at once, at most every 5 seconds. |
 | `activation_delay_seconds` | `300` | How long after `admin keys rotate` the new version starts writing. Until then every instance only reads with it. At least twice `reload_interval_seconds`, so that every instance has loaded a version before any writes with it. `admin keys rotate` reads it from the configuration it is given. |
 | `legacy_secrets` | `write` | What [`admin.totp_key`](#admin) and [`otp.auth.secret`](#otp) still do while they are set ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)). `write` seals new authenticator secrets and sign-in codes with them, as releases before #146 do, so that those can still read them during a rolling upgrade. `read` seals them with the data keys and opens the old ones only; set it once every instance runs a release with #146. Both modes read the data keys. `read` needs `keys.provider`. `KEYS_LEGACY_SECRETS` overrides it. |
-| `row_seals.mode` | `report` | What a [protected row](data-protection.md#row-seals) that does not match its seal does ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). `report` records the finding and still serves the row, and the background verifier seals it again; it is the mode to start with, while a release that seals rows rolls out and the rows written before it are adopted. `enforce` records the finding and refuses the row (a session, an account, or a contact) until an administrator reviews the finding and re-seals the row. `enforce` needs `provider`. Without `provider`, no row is sealed or checked. |
+| `row_seals.mode` | `enforce` in release mode with `provider`, else `report` | What a [protected row](data-protection.md#row-seals) that does not match its seal does ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). `report` records the finding and still serves the row, and the background verifier seals it again; it is the mode to start with, while a release that seals rows rolls out and the rows written before it are adopted. `enforce` records the finding and refuses the row (a session, an account, or a contact) until an administrator reviews the finding and re-seals the row. `enforce` needs `provider`. Without `provider`, no row is sealed or checked. |
 | `row_seals.verify_interval_minutes` | `60` | From 1 to 10080. How often the background verifier walks the protected tables, in batches, on one instance at a time. |
 
 The key service is contacted at startup, when `data_keys` changed, and by the `admin keys` commands. A running server keeps the keys in memory: when a reload fails, because the key service is unreachable, it keeps the keys it has and logs the failure, so it does not depend on the key service between changes.

@@ -113,13 +113,36 @@ func main() {
 	log.Println("Server stopped gracefully")
 }
 
+// flagSet reports whether the flag name was given on the command line.
+func flagSet(name string) (set bool) {
+	flag.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
+// logPosture logs the settings that weaken an instance in one line at
+// start (#306), so that an instance that runs weaker than intended is
+// visible in its logs: the mode, the region, the row seal mode, whether
+// sign-in codes are logged, and whether Swagger is served.
+func logPosture() {
+	cfg := config.Config
+	log.Printf("Security posture: mode=%s region=%s row_seals=%s dev_log_codes=%t swagger=%t",
+		cfg.Server.Mode, cfg.Region(), cfg.Keys.RowSeals.Mode, cfg.OTP.Auth.DevLogCodes, cfg.SwaggerEnabled())
+	if cfg.Server.Mode != gin.ReleaseMode {
+		log.Printf("WARNING: server.mode is %s: the release checks are off. Production instances run in release mode, the default", cfg.Server.Mode)
+	} else if cfg.Keys.Provider != "" && cfg.Keys.RowSeals.Mode == config.RowSealsReport {
+		log.Println("WARNING: keys.row_seals.mode is report: a row changed outside the backend is recorded but still served; set enforce once the rollout is over")
+	}
+}
+
 // run starts the server and serves until a SIGINT or SIGTERM, then stops it.
 // It returns instead of exiting on an error, so that the deferred closes of
 // the services run on every path.
 func run() error {
 	config.SetConfigPath(configPath)
+	config.RequireConfigFile(flagSet("config"))
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
+	logPosture()
 
 	// Check the whole configuration before connecting to anything, and
 	// report every problem at once.

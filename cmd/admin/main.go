@@ -158,7 +158,10 @@ func main() {
 // command is a parsed command line. The keys commands are named "keys list",
 // "keys rotate", and so on.
 type command struct {
-	configPath     string
+	configPath string
+	// configNamed says that -config was given, so that a missing file
+	// stops the command instead of loading the example (#306).
+	configNamed    bool
 	migrationsPath string
 	name           string
 	email          string
@@ -192,6 +195,7 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 	if err := global.Parse(args); err != nil {
 		return command{}, err
 	}
+	global.Visit(func(f *flag.Flag) { cmd.configNamed = cmd.configNamed || f.Name == "config" })
 	if global.NArg() == 0 {
 		global.Usage()
 		return command{}, errors.New("a command is required")
@@ -357,6 +361,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	config.SetConfigPath(cmd.configPath)
+	config.RequireConfigFile(cmd.configNamed)
 	config.SetMigrationsPath(cmd.migrationsPath)
 	config.LoadConfig()
 	db.ApplicationName = "crypto-exchange-admin"

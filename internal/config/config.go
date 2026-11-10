@@ -1275,13 +1275,17 @@ func Load() error {
 	var data []byte
 	var err error
 
+	usingExample := false
 	if _, statErr := os.Stat(configPath); statErr == nil {
 		data, err = os.ReadFile(configPath)
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", configPath, err)
 		}
 	} else {
-		log.Printf("%s does not exist: using the embedded config/config.example.yaml", configPath)
+		if requireConfigFile {
+			return fmt.Errorf("%w: %s", ErrConfigFileMissing, configPath)
+		}
+		usingExample = true
 		data = configfiles.Example
 	}
 
@@ -1292,9 +1296,25 @@ func Load() error {
 	if err := overlayEnvVars(); err != nil {
 		return fmt.Errorf("invalid environment variables: %w", err)
 	}
+	// Whether the region was named, before the default fills it in: a
+	// release must name it (#306), so that an international release that
+	// forgets DEPLOYMENT_REGION does not run the features of Iran.
+	regionNamed := strings.TrimSpace(Config.Deployment.Region) != ""
 	setDefaults()
 	if err := Config.validateMode(); err != nil {
 		return err
+	}
+	if usingExample {
+		// The example is for development. A release that cannot find its
+		// file stops instead of running with it (#306).
+		if Config.Server.Mode == "release" {
+			return fmt.Errorf("%w: %s; release mode never falls back to the embedded example (set -config, or SERVER_MODE=debug for development)", ErrConfigFileMissing, configPath)
+		}
+		log.Printf("%s does not exist: using the embedded config/config.example.yaml, which is for development only", configPath)
+	}
+	if Config.Server.Mode == "release" && !regionNamed {
+		return fmt.Errorf("deployment.region (%s) is not set; release mode needs the region named: %s or %s",
+			envVarFor("deployment.region"), region.Iran, region.International)
 	}
 	if _, err := region.Parse(Config.Deployment.Region); err != nil {
 		return fmt.Errorf("deployment.region (%s): %w", envVarFor("deployment.region"), err)
@@ -1406,6 +1426,21 @@ func (c *Configuration) validateKeys() error {
 // Server modes. They are the modes of Gin.
 var serverModes = []string{"debug", "release", "test"}
 
+// DefaultServerMode is the mode of an instance that names none (#306).
+const DefaultServerMode = "release"
+
+// ErrConfigFileMissing is returned by Load when the configuration file
+// does not exist and the embedded example may not stand in for it.
+var ErrConfigFileMissing = errors.New("the configuration file does not exist")
+
+// requireConfigFile is set by RequireConfigFile.
+var requireConfigFile bool
+
+// RequireConfigFile makes Load fail when the configuration file does not
+// exist, instead of loading the embedded example: the path was named on
+// the command line, so a missing file is a mistake (#306).
+func RequireConfigFile(required bool) { requireConfigFile = required }
+
 func (c *Configuration) validateMode() error {
 	for _, mode := range serverModes {
 		if c.Server.Mode == mode {
@@ -1455,8 +1490,12 @@ func setDefaults() {
 	if Config.Server.IdleTimeout == 0 {
 		Config.Server.IdleTimeout = 120
 	}
+	// An instance that names no mode is a production instance (#306): the
+	// release checks run unless development opts out with
+	// SERVER_MODE=debug, which .env.example, docker-compose.yml, and
+	// config.example.yaml do.
 	if Config.Server.Mode == "" {
-		Config.Server.Mode = "debug"
+		Config.Server.Mode = DefaultServerMode
 	}
 	if Config.Server.MaxBodyBytes == 0 {
 		Config.Server.MaxBodyBytes = DefaultMaxBodyBytes
@@ -1466,6 +1505,16 @@ func setDefaults() {
 	}
 	if Config.Server.ShutdownTimeout == 0 {
 		Config.Server.ShutdownTimeout = DefaultShutdownTimeoutSeconds
+	}
+
+	// Row seals refuse a changed row by default in release mode (#306);
+	// report, which records it and serves it anyway, is a setting of a
+	// rollout, which the server logs at every start.
+	if Config.Keys.RowSeals.Mode == "" {
+		Config.Keys.RowSeals.Mode = RowSealsReport
+		if Config.Server.Mode == "release" && Config.Keys.Provider != "" {
+			Config.Keys.RowSeals.Mode = RowSealsEnforce
+		}
 	}
 
 	if Config.GeoIP.ReloadIntervalSeconds == 0 {

@@ -185,6 +185,8 @@ func TestLoad_ReportsInvalidEnvironmentVariables(t *testing.T) {
 func TestKeyPath_AcceptsAStringOrPathSegments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
+deployment:
+  region: "ir"
 jwt:
   ssl:
     user:

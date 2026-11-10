@@ -28,7 +28,7 @@ server:
   idle_timeout_seconds: 120
   shutdown_timeout_seconds: 30 # The whole shutdown, after SIGINT or SIGTERM
   drain_seconds: 0             # Keep serving this long after readiness turns 503
-  mode: "debug"  # debug, release, or test. Set with SERVER_MODE.
+  mode: "debug"  # This file is for development. Unset, the mode is release (#306). Set with SERVER_MODE.
   # IPs or CIDR ranges of reverse proxies (load balancer, ingress) whose
   # X-Forwarded-For and X-Real-IP headers are trusted. Leave empty when clients
   # connect directly; otherwise they could spoof their address.
@@ -368,7 +368,9 @@ keys:
   legacy_secrets: "write"
   # Row seals (#139): a keyed MAC over the protected rows, with the row-mac key.
   row_seals:
-    mode: "report"                # report records a row that does not match its seal; enforce also refuses it
+    # report records a row that does not match its seal; enforce also refuses
+    # it. Empty: enforce in release mode with keys.provider, report otherwise.
+    mode: ""
     verify_interval_minutes: 60   # How often the background verifier walks the protected tables
 
 websocket:
