@@ -46,9 +46,12 @@ const (
 	ActionAdminLogout     = "admin.logout"
 	// An administrator ended one of their own sessions (#308).
 	ActionAdminSessionRevoke = "admin.session_revoke"
-	ActionCurrencyCreate     = "currency.create"
-	ActionCurrencyUpdate     = "currency.update"
-	ActionCurrencyDelete     = "currency.delete"
+	// An administrator gave a fresh authenticator code for the sensitive
+	// routes (#308).
+	ActionAdminStepUp    = "admin.step_up"
+	ActionCurrencyCreate = "currency.create"
+	ActionCurrencyUpdate = "currency.update"
+	ActionCurrencyDelete = "currency.delete"
 	// ActionCurrencyRestore is an administrator undoing a delete (#196).
 	ActionCurrencyRestore = "currency.restore"
 	// The lifecycle of a currency (#216): an administrator scheduling or

@@ -138,3 +138,54 @@ func TestStartSession_NeedsItsEvent(t *testing.T) {
 	require.NoError(t, conn.QueryRow(`SELECT count(*) FROM admin_sessions`).Scan(&count))
 	assert.Zero(t, count)
 }
+
+func TestStepUp_ElevatesTheSessionWithAFreshCode(t *testing.T) {
+	service, conn := newTestService(t)
+	ctx := context.Background()
+	enrollment, err := service.Create(ctx, "elevate@example.com")
+	require.NoError(t, err)
+	admin := enrollment.AdminID
+	session := startTestSession(t, service, admin, 2)
+	event := audit.Event{ActorType: audit.ActorAdmin, ActorID: admin, Action: audit.ActionAdminStepUp,
+		TargetType: audit.TargetAdminSession, TargetID: session}
+	now := time.Now()
+
+	elevated, err := service.Elevated(ctx, session, admin)
+	require.NoError(t, err)
+	assert.False(t, elevated, "this sign-in asked for no step-up time")
+	elevated, err = service.Elevated(ctx, "", admin)
+	require.NoError(t, err)
+	assert.False(t, elevated)
+
+	_, err = service.StepUp(ctx, session, admin, "000000", 5*time.Minute, event)
+	assert.ErrorIs(t, err, ErrInvalidCode)
+	until, err := service.StepUp(ctx, session, admin, at(t, service, now, enrollment), 5*time.Minute, event)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now().Add(5*time.Minute), until, 10*time.Second)
+	elevated, err = service.Elevated(ctx, session, admin)
+	require.NoError(t, err)
+	assert.True(t, elevated)
+	_, err = service.StepUp(ctx, session, admin, at(t, service, now, enrollment), 5*time.Minute, event)
+	assert.ErrorIs(t, err, ErrInvalidCode, "a code is accepted once")
+
+	var failures int
+	require.NoError(t, conn.QueryRow(`SELECT step_up_failures FROM admin_sessions WHERE id = $1`, session).Scan(&failures))
+	assert.Equal(t, 1, failures, "an accepted code starts the count again")
+
+	for i := failures; i < MaxStepUpFailures; i++ {
+		_, err = service.StepUp(ctx, session, admin, "000000", 5*time.Minute, event)
+		require.ErrorIs(t, err, ErrInvalidCode)
+	}
+	_, err = service.StepUp(ctx, session, admin, "000000", 5*time.Minute, event)
+	assert.ErrorIs(t, err, ErrSessionEnded, "the code past the limit ends the session")
+	assert.Equal(t, SessionStepUpFailed, sessionReason(t, conn, session))
+	_, err = service.StepUp(ctx, session, admin, at(t, service, now.Add(time.Minute), enrollment), 5*time.Minute, event)
+	assert.ErrorIs(t, err, ErrSessionEnded)
+
+	var outcomes string
+	require.NoError(t, conn.QueryRow(`SELECT string_agg(outcome || ':' || COALESCE(reason, ''), ',' ORDER BY hk)
+		FROM audit_events WHERE action = $1`, audit.ActionAdminStepUp).Scan(&outcomes))
+	assert.Equal(t, "failure:authenticator_code_invalid,success:,failure:authenticator_code_invalid,"+
+		"failure:authenticator_code_invalid,failure:authenticator_code_invalid,failure:authenticator_code_invalid,"+
+		"failure:authenticator_code_invalid,failure:too_many_wrong_codes", outcomes)
+}

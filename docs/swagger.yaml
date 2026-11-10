@@ -223,6 +223,13 @@ definitions:
           $ref: '#/definitions/restrictions.Restriction'
         type: array
     type: object
+  admin.StepUpInfo:
+    properties:
+      elevated_until:
+        description: ElevatedUntil is until when the session may use the sensitive
+          routes.
+        type: string
+    type: object
   admin.UpdateControlRequest:
     properties:
       ends_at:
@@ -273,6 +280,11 @@ definitions:
           refused with 409. A create may not send it.
         type: integer
     type: object
+  admin.stepUpRequest:
+    properties:
+      totp:
+        type: string
+    type: object
   adminauth.Session:
     properties:
       created_at:
@@ -280,6 +292,11 @@ definitions:
       current:
         description: Current marks the session of the request that lists.
         type: boolean
+      elevated_until:
+        description: |-
+          ElevatedUntil is until when the session may use the sensitive
+          routes without a new authenticator code. It is absent once passed.
+        type: string
       expires_at:
         type: string
       id:
@@ -5004,6 +5021,52 @@ paths:
       security:
       - BearerAuth: []
       summary: End one of the administrator's sessions
+      tags:
+      - admin sign-in
+  /api/v1/admin/step-up:
+    post:
+      consumes:
+      - application/json
+      description: The sensitive admin routes (platform controls, user restrictions,
+        delistings, currency migrations, capability overrides, and re-seals) need
+        a session that gave an authenticator (TOTP) code within admin.step_up_minutes;
+        without it they answer 403 step_up_required. A sign-in counts as one. Each
+        code is accepted once. A wrong code answers 401 code_invalid, and after 5
+        wrong codes the next one ends the session. Audited as admin.step_up.
+      parameters:
+      - description: The authenticator code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.stepUpRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.StepUpInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Step up with a fresh authenticator code
       tags:
       - admin sign-in
   /api/v1/admin/users/{hk}/restrictions:

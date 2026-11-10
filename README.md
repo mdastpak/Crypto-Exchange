@@ -221,6 +221,7 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | `POST` | `/admin/auth` | None | Request an admin sign-in code |
 | `POST` | `/admin/auth/{uuid}` | None | Verify the emailed code and the authenticator code, and receive an admin token |
 | `POST` | `/admin/logout` | Admin token | End the session of the admin token |
+| `POST` | `/admin/step-up` | Admin token | Give a fresh authenticator code for the sensitive routes |
 | `GET` | `/admin/sessions` | Admin token | List the administrator's active sessions |
 | `DELETE` | `/admin/sessions/{id}` | Admin token | End one of the administrator's sessions |
 | `POST` | `/admin/currencies` | Admin token | Create a currency |

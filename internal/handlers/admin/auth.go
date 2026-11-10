@@ -293,6 +293,8 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		UserAgent: c.Request.UserAgent(),
 		ExpiresAt: time.Now().Add(auth.AccessTokenLifetime()),
 		Max:       maxSessionsPerAdmin(),
+		// The sign-in checked an authenticator code just now.
+		ElevatedFor: stepUpLifetime(),
 	}
 	accessToken, err := auth.GenerateAccessToken(admin.ID, auth.RoleAdmin, session.ID)
 	if err != nil {

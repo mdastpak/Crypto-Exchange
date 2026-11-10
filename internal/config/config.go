@@ -286,7 +286,10 @@ type Configuration struct {
 		// sign-in request takes, so that its duration does not tell an
 		// administrator's address from an unknown one (#190).
 		SignInMinResponseMS int `yaml:"sign_in_min_response_ms"`
-		Sessions            struct {
+		// StepUpMinutes is how long a sign-in or a fresh authenticator
+		// code lets a session use the sensitive admin routes (#308).
+		StepUpMinutes int `yaml:"step_up_minutes"`
+		Sessions      struct {
 			// MaxPerAdmin caps the active sessions of one administrator
 			// (#308). A sign-in past it ends the oldest ones.
 			MaxPerAdmin int `yaml:"max_per_admin"`
@@ -1608,6 +1611,7 @@ func setDefaults() {
 		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
 		{&Config.Admin.Sessions.MaxPerAdmin, DefaultMaxSessionsPerAdmin},
+		{&Config.Admin.StepUpMinutes, DefaultAdminStepUpMinutes},
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
 		{&Config.JWT.Sessions.MaxLifetimeMinutes, DefaultSessionMaxLifetimeMinutes},
@@ -2002,6 +2006,10 @@ const (
 	// MaxSessionsPerAdmin bounds what one administrator can hold.
 	DefaultMaxSessionsPerAdmin = 2
 	MaxSessionsPerAdmin        = 10
+	// DefaultAdminStepUpMinutes is long enough for one task, and
+	// MaxAdminStepUpMinutes keeps a stolen token from inheriting much.
+	DefaultAdminStepUpMinutes = 5
+	MaxAdminStepUpMinutes     = 30
 )
 
 // The defaults of the websocket settings. Clients send small control
