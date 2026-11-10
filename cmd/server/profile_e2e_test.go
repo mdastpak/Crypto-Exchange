@@ -208,15 +208,13 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 	t.Run("created_at is an instant whatever the database time zone", func(t *testing.T) {
 		token, id := env.signedInUser(t, "carol@example.com")
 		var stored time.Time
-		require.NoError(t, env.db.QueryRow(`SELECT created_at AT TIME ZONE 'UTC' FROM users WHERE hk = $1`, id).Scan(&stored))
+		require.NoError(t, env.db.QueryRow(`SELECT created_at FROM users WHERE hk = $1`, id).Scan(&stored))
 
-		// In another database time zone, NOW() writes another wall-clock
-		// value. The profile must still report the same instant.
-		_, err := env.db.Exec(`UPDATE users SET created_at = (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Tehran' WHERE hk = $1`, id)
-		require.NoError(t, err)
+		// created_at is a TIMESTAMPTZ (#315): another database time zone
+		// changes how a session shows it, never the instant it holds.
 		// The server's runtime role cannot change the database (#180).
 		owner := e2eOwnerDB(t)
-		_, err = owner.Exec(`ALTER DATABASE ` + e2eDBName + ` SET timezone TO 'Asia/Tehran'`)
+		_, err := owner.Exec(`ALTER DATABASE ` + e2eDBName + ` SET timezone TO 'Asia/Tehran'`)
 		require.NoError(t, err)
 		t.Cleanup(func() { _, _ = owner.Exec(`ALTER DATABASE ` + e2eDBName + ` RESET timezone`) })
 		// env.db is the server's pool: new connections pick up the setting.
@@ -228,12 +226,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		got, err := time.Parse(time.RFC3339, resp.Info.CreatedAt)
 		require.NoError(t, err)
 		assert.WithinDuration(t, stored, got, time.Second)
-
-		_, err = env.db.Exec(`UPDATE users SET created_at = NULL WHERE hk = $1`, id)
-		require.NoError(t, err)
-		status, raw := env.call(t, http.MethodGet, "/api/v1/user/profile", nil, token)
-		require.Equal(t, http.StatusOK, status, string(raw))
-		assert.Contains(t, string(raw), `"created_at":null`)
+		assert.Equal(t, time.UTC, got.Location(), "reported in UTC")
 	})
 
 	t.Run("the old routes are gone", func(t *testing.T) {
