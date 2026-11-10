@@ -34,7 +34,7 @@ type otpJob struct {
 }
 
 // deliveryID is the key of the job in the delivery log: its ID, or, for a
-// job of an earlier version, which has none, a hash of its body. The body
+// job that carries none, a hash of its body. The body
 // holds the code and its expiry, so two jobs never share it.
 func (j otpJob) deliveryID(body []byte) string {
 	if j.ID != "" {

@@ -168,9 +168,8 @@ func SessionMaxLifetime() time.Duration {
 // alias qualifies the columns, as "s" does s.status.
 //
 // The age is checked here, not only kept out of expires_at by rotate, so
-// that the limit holds for every session at once: for one that an instance
-// of an earlier release extended while a release rolls out, and for every
-// session when the limit is lowered.
+// that the limit holds for every session at once, also when the limit is
+// lowered.
 func liveSession(alias string) string {
 	p := ""
 	if alias != "" {

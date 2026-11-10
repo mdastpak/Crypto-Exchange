@@ -21,8 +21,7 @@ const (
 // a CurrencyRemoval for delete.
 type CurrencyEvent struct {
 	// ID identifies the event, so that clients can drop a repeated one:
-	// delivery is at least once. It is a UUID; events of earlier versions
-	// have none.
+	// delivery is at least once. It is a UUID.
 	ID     string          `json:"id,omitempty"`
 	Entity string          `json:"entity"`
 	Action string          `json:"action"`

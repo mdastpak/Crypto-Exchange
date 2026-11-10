@@ -686,9 +686,8 @@ func otpTTL() time.Duration {
 // notifications exchange to a worker that sends them over the configured
 // channels. The worker is nil when it is not needed.
 //
-// The worker drains the classic queue of earlier versions (#232), and
-// remembers the delivered jobs in Redis, so that a job that the broker
-// hands out again is not sent twice.
+// The worker remembers the delivered jobs in Redis, so that a job that the
+// broker hands out again is not sent twice.
 func newOTPDelivery(channels notify.Channels, broker *rabbitmq.RabbitMQService, redisClient redis.UniversalClient) (notify.OTPSender, *notify.Worker) {
 	if config.Config.OTP.Auth.DevLogCodes {
 		log.Println("WARNING: otp.auth.dev_log_codes is enabled: sign-in codes are written to the log instead of being delivered")
@@ -715,7 +714,6 @@ func newOTPDelivery(channels notify.Channels, broker *rabbitmq.RabbitMQService, 
 		Exchange:    exchange,
 		Concurrency: config.Config.Notifications.Worker.Concurrency,
 		MaxAttempts: config.Config.Notifications.Worker.MaxAttempts,
-		LegacyQueue: notify.LegacyOTPQueue,
 		Delivered:   delivered,
 	})
 	return sender, worker

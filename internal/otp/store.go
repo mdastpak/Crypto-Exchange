@@ -297,17 +297,12 @@ func (s *Store) Verify(ctx context.Context, sessionID, code string) (string, err
 	contactID, _ := ids[0].(string)
 	clientID, _ := ids[1].(string)
 	version, _ := ids[2].(string)
-	if contactID == "" {
+	if contactID == "" || clientID == "" {
 		return "", ErrInvalidCode
 	}
 	keys, err := s.reader(ctx, version)
 	if err != nil {
 		return "", err
-	}
-	if clientID == "" {
-		// A session issued before #187 counted its attempts per contact
-		// only; it expires within otp.auth.ttl_seconds of the upgrade.
-		clientID = keys.clientID("")
 	}
 
 	attempt, storedMAC, encrypted, err := s.reserveAttempt(ctx, key, s.contactAttemptsKey(contactID, clientID))

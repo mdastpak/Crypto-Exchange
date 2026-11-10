@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -552,25 +551,8 @@ type JWTKeyPaths struct {
 	NextPublicKeys []KeyPath `yaml:"next_public_keys"`
 }
 
-// KeyPath is the path of a key file. In YAML it is a string. A list of path
-// segments, which earlier versions required, is still accepted and joined
-// with the platform's separator.
+// KeyPath is the path of a key file.
 type KeyPath string
-
-// UnmarshalYAML accepts a string or a list of path segments.
-func (p *KeyPath) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var path string
-	if err := unmarshal(&path); err == nil {
-		*p = KeyPath(path)
-		return nil
-	}
-	var segments []string
-	if err := unmarshal(&segments); err != nil {
-		return errors.New("a key path must be a string")
-	}
-	*p = KeyPath(filepath.Join(segments...))
-	return nil
-}
 
 // KeysConfig configures the provider of the key-encryption key that wraps
 // the data-protection keys.
