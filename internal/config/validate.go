@@ -241,6 +241,9 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.JWT.Sessions.MaxPerUser; v < 1 || v > MaxSessionsPerUser {
 		p.add("jwt.sessions.max_per_user", "is %d; it must be from 1 to %d", v, MaxSessionsPerUser)
 	}
+	if v := c.Admin.StepUpMinutes; v < 1 || v > MaxAdminStepUpMinutes {
+		p.add("admin.step_up_minutes", "is %d; it must be from 1 to %d", v, MaxAdminStepUpMinutes)
+	}
 	if v := c.Admin.Sessions.MaxPerAdmin; v < 1 || v > MaxSessionsPerAdmin {
 		p.add("admin.sessions.max_per_admin", "is %d; it must be from 1 to %d", v, MaxSessionsPerAdmin)
 	}

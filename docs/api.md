@@ -428,6 +428,29 @@ Ends one of the administrator's own sessions; its token gets `401 session_inacti
 
 An operator ends every session of an administrator with `admin end-sessions -email <address>`, for a token that may be stolen; `disable` and `reset-totp` do so too.
 
+### `POST /admin/step-up`
+
+The sensitive admin routes need a session that gave an authenticator code lately ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): within `admin.step_up_minutes` (5 by default) of the sign-in or of this request. Without it they answer `403 step_up_required`, with `info.step_up` naming this route, and nothing changes. So a stolen admin token alone cannot lock the platform, freeze a user, or accept a changed row.
+
+Request: `{"totp": "123456"}`. Response `200`: `{"info": {"elevated_until": "2026-11-10T09:10:00Z"}}`. `GET /admin/sessions` shows `elevated_until` of each session.
+
+- Each code is accepted once, so a step-up right after a sign-in waits for the next code.
+- `401 code_invalid`: the code is wrong or already used. After 5 wrong codes on a session, the next one ends the session (`401 session_inactive`), and the administrator signs in again.
+- Audited as `admin.step_up`, with the failures.
+
+The sensitive routes:
+
+| Routes | What they change |
+| --- | --- |
+| `POST /admin/platform/controls`, `PATCH /admin/platform/controls/{id}`, `POST /admin/platform/controls/{id}/lift` | Maintenance and lockdowns of the platform |
+| `POST /admin/users/{hk}/restrictions`, `POST /admin/users/{hk}/restrictions/{id}/lift` | Freezes and restrictions of users |
+| `POST /admin/currencies/{hk}/delistings`, `POST …/delistings/{id}/cancel` | Delistings |
+| `POST /admin/currencies/{hk}/migrations`, `POST …/migrations/{id}/cancel` | Currency migrations |
+| `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` | Capability overrides |
+| `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
+
+Every admin route that changes something is classified in one table, `adminRoutes` of `cmd/server/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
+
 ### Checks on admin routes
 
 On every request, all `/admin/*` routes except sign-in check that the token's administrator still has the admin role, the approved status, and an enrolled authenticator. Demoting or disabling an administrator therefore revokes its tokens at once, also when the change is made directly in the database. Such a token gets `401 Unauthorized - Administrator is not active`. They also check that the token's session is active: a token of an ended session, or without one, gets `401 session_inactive`.

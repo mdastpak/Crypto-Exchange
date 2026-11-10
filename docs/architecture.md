@@ -160,6 +160,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `admin.sign_in` | An administrator signs in | `success`, without which no token is issued; `failure` with `email_code_invalid`, `authenticator_code_invalid`, or `account_unavailable`; `denied` with `rate_limited`. The answer does not say which factor was wrong; the event does. |
 | `admin.logout` | An administrator signs out, in the transaction that ends the session; the target is the session (`admin_session`) | `success` |
 | `admin.session_revoke` | An administrator ends one of their own sessions, in the transaction that ends it; the target is the session | `success` |
+| `admin.step_up` | An administrator gives an authenticator code for the sensitive routes, in the transaction that elevates the session; the target is the session | `success`; `failure` with `authenticator_code_invalid`, or `too_many_wrong_codes` when the session ends |
 | `admin.sessions_end` | `cmd/admin end-sessions` ends every session of an administrator; the event holds how many | `success` |
 | `user.sign_in_code` | A user's sign-in code is requested. The actor is the account that owns the contact, or `anonymous` for a contact without one; the target is the sign-in (`sign_in` and the `uuid` of the answer). | `success`; `failure` with `delivery_failed`; `denied` with `rate_limited` |
 | `user.create` | A first sign-in creates a user, in the transaction that creates it | `success` |

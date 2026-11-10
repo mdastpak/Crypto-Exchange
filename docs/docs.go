@@ -4147,6 +4147,75 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/step-up": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The sensitive admin routes (platform controls, user restrictions, delistings, currency migrations, capability overrides, and re-seals) need a session that gave an authenticator (TOTP) code within admin.step_up_minutes; without it they answer 403 step_up_required. A sign-in counts as one. Each code is accepted once. A wrong code answers 401 code_invalid, and after 5 wrong codes the next one ends the session. Audited as admin.step_up.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin sign-in"
+                ],
+                "summary": "Step up with a fresh authenticator code",
+                "parameters": [
+                    {
+                        "description": "The authenticator code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.stepUpRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.StepUpInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/users/{hk}/restrictions": {
             "get": {
                 "security": [
@@ -7149,6 +7218,15 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.StepUpInfo": {
+            "type": "object",
+            "properties": {
+                "elevated_until": {
+                    "description": "ElevatedUntil is until when the session may use the sensitive routes.",
+                    "type": "string"
+                }
+            }
+        },
         "admin.UpdateControlRequest": {
             "type": "object",
             "properties": {
@@ -7221,6 +7299,14 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.stepUpRequest": {
+            "type": "object",
+            "properties": {
+                "totp": {
+                    "type": "string"
+                }
+            }
+        },
         "adminauth.Session": {
             "type": "object",
             "properties": {
@@ -7230,6 +7316,10 @@ const docTemplate = `{
                 "current": {
                     "description": "Current marks the session of the request that lists.",
                     "type": "boolean"
+                },
+                "elevated_until": {
+                    "description": "ElevatedUntil is until when the session may use the sensitive\nroutes without a new authenticator code. It is absent once passed.",
+                    "type": "string"
                 },
                 "expires_at": {
                     "type": "string"

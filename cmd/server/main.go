@@ -1001,7 +1001,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
 	adminGroup.Use(ih.Admin.RequireActiveAdmin())
 	adminGroup.Use(rl.TradingRateLimit())
+	// Every admin route that changes something has a class in adminRoutes;
+	// the sensitive ones need a step-up (#308).
+	adminGroup.Use(ih.Admin.RequireStepUp(adminRouteClass))
 	{
+		adminGroup.POST("/step-up", ih.Admin.StepUp)
 		adminGroup.POST("/currencies", ih.Admin.CreateCurrency)
 		adminGroup.GET("/currencies", ih.Admin.ListCurrencies)
 		adminGroup.GET("/currencies/:hk", ih.Admin.GetCurrency)

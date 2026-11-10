@@ -26,7 +26,13 @@ const (
 	SessionAdminDisabled   = "administrator_disabled"
 	SessionAuthenticator   = "authenticator_reset"
 	SessionEndedByOperator = "operator"
+	SessionStepUpFailed    = "step_up_failed"
 )
+
+// MaxStepUpFailures is how many wrong authenticator codes a session may
+// give to step up. The next one ends it, so that a stolen token cannot be
+// used to guess codes.
+const MaxStepUpFailures = 5
 
 // maxUserAgentLength is what admin_sessions keeps of a User-Agent header.
 const maxUserAgentLength = 500
@@ -45,6 +51,9 @@ type NewSession struct {
 	// Max is how many sessions the administrator may have at once. The
 	// oldest ones past it end with the sign-in.
 	Max int
+	// ElevatedFor is how long the sign-in, which checked an authenticator
+	// code, counts as a step-up.
+	ElevatedFor time.Duration
 }
 
 // Session is an active session, as its administrator sees it.
@@ -55,6 +64,9 @@ type Session struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	// ElevatedUntil is until when the session may use the sensitive
+	// routes without a new authenticator code. It is absent once passed.
+	ElevatedUntil *time.Time `json:"elevated_until,omitempty"`
 	// Current marks the session of the request that lists.
 	Current bool `json:"current"`
 }
@@ -91,8 +103,10 @@ func (s *Service) StartSession(ctx context.Context, session NewSession, event au
 			ip = session.IP
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO admin_sessions (id, admin_id, ip, user_agent, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-			session.ID, session.AdminID, ip, shorten(session.UserAgent, maxUserAgentLength), session.ExpiresAt); err != nil {
+			INSERT INTO admin_sessions (id, admin_id, ip, user_agent, expires_at, elevated_until)
+			VALUES ($1, $2, $3, $4, $5, NOW() + make_interval(secs => $6))`,
+			session.ID, session.AdminID, ip, shorten(session.UserAgent, maxUserAgentLength), session.ExpiresAt,
+			session.ElevatedFor.Seconds()); err != nil {
 			return err
 		}
 		return audit.Record(ctx, tx, event)
@@ -143,7 +157,8 @@ func (s *Service) VerifySession(ctx context.Context, sessionID, adminID string) 
 // ListSessions returns the active sessions of an administrator, newest first.
 func (s *Service) ListSessions(ctx context.Context, adminID, current string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, COALESCE(host(ip), ''), COALESCE(user_agent, ''), created_at, expires_at, last_used_at
+		SELECT id, COALESCE(host(ip), ''), COALESCE(user_agent, ''), created_at, expires_at, last_used_at,
+			CASE WHEN elevated_until > NOW() THEN elevated_until END
 		FROM admin_sessions
 		WHERE admin_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
 		ORDER BY created_at DESC, id DESC`, adminID)
@@ -154,9 +169,12 @@ func (s *Service) ListSessions(ctx context.Context, adminID, current string) ([]
 	sessions := []Session{}
 	for rows.Next() {
 		var item Session
-		var lastUsed sql.NullTime
-		if err := rows.Scan(&item.ID, &item.IP, &item.UserAgent, &item.CreatedAt, &item.ExpiresAt, &lastUsed); err != nil {
+		var lastUsed, elevated sql.NullTime
+		if err := rows.Scan(&item.ID, &item.IP, &item.UserAgent, &item.CreatedAt, &item.ExpiresAt, &lastUsed, &elevated); err != nil {
 			return nil, fmt.Errorf("list the administrator sessions: %w", err)
+		}
+		if elevated.Valid {
+			item.ElevatedUntil = &elevated.Time
 		}
 		if lastUsed.Valid {
 			item.LastUsedAt = &lastUsed.Time
@@ -230,4 +248,96 @@ func (s *Service) EndSessions(ctx context.Context, email string) (int64, error) 
 		return audit.Record(ctx, tx, e)
 	})
 	return ended, err
+}
+
+// Elevated reports whether an active session may use the sensitive routes
+// now: it signed in, or stepped up, within the step-up time.
+func (s *Service) Elevated(ctx context.Context, sessionID, adminID string) (bool, error) {
+	if _, err := uuid.Parse(sessionID); err != nil {
+		return false, nil
+	}
+	var elevated bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(elevated_until > NOW(), FALSE) FROM admin_sessions
+		WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()`,
+		sessionID, adminID).Scan(&elevated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check the step-up of the session: %w", err)
+	}
+	return elevated, nil
+}
+
+// StepUp elevates a session for lifetime with a fresh authenticator code,
+// which is accepted once, and records event in the same transaction. A wrong
+// code returns ErrInvalidCode and is counted on the session; past
+// MaxStepUpFailures the session ends, and StepUp returns ErrSessionEnded.
+// The failures are recorded with event too, as a failure with its reason.
+func (s *Service) StepUp(ctx context.Context, sessionID, adminID, code string, lifetime time.Duration, event audit.Event) (time.Time, error) {
+	if err := s.VerifySession(ctx, sessionID, adminID); err != nil {
+		return time.Time{}, err
+	}
+	err := s.VerifyTOTP(ctx, adminID, code)
+	if errors.Is(err, ErrInvalidCode) {
+		return time.Time{}, s.failStepUp(ctx, sessionID, adminID, event)
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	var until time.Time
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, `
+			UPDATE admin_sessions SET elevated_until = NOW() + make_interval(secs => $3), step_up_failures = 0
+			WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()
+			RETURNING elevated_until`, sessionID, adminID, lifetime.Seconds()).Scan(&until)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionEnded
+		}
+		if err != nil {
+			return fmt.Errorf("step up the session: %w", err)
+		}
+		event.Outcome, event.Reason = audit.Success, ""
+		if err := audit.Record(ctx, tx, event); err != nil {
+			return fmt.Errorf("step up the session: %w", err)
+		}
+		return nil
+	})
+	return until, err
+}
+
+// failStepUp counts a wrong code on the session and ends the session past
+// the limit, with the event of the failure.
+func (s *Service) failStepUp(ctx context.Context, sessionID, adminID string, event audit.Event) error {
+	result := ErrInvalidCode
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var failures int
+		err := tx.QueryRowContext(ctx, `
+			UPDATE admin_sessions SET step_up_failures = step_up_failures + 1
+			WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL
+			RETURNING step_up_failures`, sessionID, adminID).Scan(&failures)
+		if errors.Is(err, sql.ErrNoRows) {
+			result = ErrSessionEnded
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		event.Outcome, event.Reason = audit.Failure, "authenticator_code_invalid"
+		if failures > MaxStepUpFailures {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE admin_sessions SET revoked_at = NOW(), revoked_reason = $2 WHERE id = $1`,
+				sessionID, SessionStepUpFailed); err != nil {
+				return err
+			}
+			event.Reason = "too_many_wrong_codes"
+			result = ErrSessionEnded
+		}
+		return audit.Record(ctx, tx, event)
+	})
+	if err != nil {
+		return fmt.Errorf("count the wrong step-up code: %w", err)
+	}
+	return result
 }

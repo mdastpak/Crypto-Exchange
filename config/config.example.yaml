@@ -221,6 +221,9 @@ admin:
   # Least duration of an answer to an admin sign-in request, so that it does
   # not tell administrators' addresses from unknown ones.
   sign_in_min_response_ms: 400
+  # Minutes that a sign-in or a fresh authenticator code opens the sensitive
+  # admin routes (platform controls, restrictions, delistings, re-seals).
+  step_up_minutes: 5
   sessions:
     # Sessions of one administrator at once; a sign-in past it ends the oldest.
     max_per_admin: 2
