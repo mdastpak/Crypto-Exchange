@@ -54,14 +54,12 @@ type queryRower interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
-// profileQuery reads a profile. users.created_at is a timestamp without time
-// zone, written with NOW() in the database's time zone, so it is converted
-// to an instant in that same time zone.
+// profileQuery reads a profile.
 // The contacts come as one JSON object of the primary contact of each type.
 const profileQuery = `SELECT hk, status, role,
 	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary AND c.removed_at IS NULL), '{}'),
 	first_name, last_name, display_name, locale, theme, kyc_status, kyc_tier,
-	created_at AT TIME ZONE current_setting('TimeZone')
+	created_at
 	FROM users WHERE hk = $1 AND deleted_at IS NULL`
 
 // loadProfile reads the profile of a user. It returns errProfileNotFound for

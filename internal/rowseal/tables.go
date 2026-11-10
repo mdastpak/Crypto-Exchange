@@ -44,11 +44,6 @@ func timestamptz(name string) Column {
 	return Column{Name: name, Expr: `to_char(%[1]s` + name + ` AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')`}
 }
 
-// timestamp formats a TIMESTAMP without a time zone as stored.
-func timestamp(name string) Column {
-	return Column{Name: name, Expr: `to_char(%[1]s` + name + `, 'YYYY-MM-DD"T"HH24:MI:SS.US')`}
-}
-
 // The protected tables of the first step of #139: the accounts, their
 // contacts, which decide who signs in to which account, and the sessions,
 // which decide whose tokens still work.
@@ -57,7 +52,7 @@ var (
 	// what it may do: the role, the status, the deletion, the second
 	// factor, the security hold, the KYC level, and the names.
 	Users = &Table{Name: "users", Key: "hk", KeyType: "uuid", Columns: []Column{
-		text("status"), text("role"), timestamp("deleted_at"),
+		text("status"), text("role"), timestamptz("deleted_at"),
 		secret("totp_secret"), text("totp_enabled"),
 		timestamptz("security_hold_until"), text("kyc_status"), text("kyc_tier"),
 		text("first_name"), text("last_name"), text("display_name"),
