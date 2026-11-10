@@ -1,14 +1,16 @@
 # Comprehensive Technical Audit & Refactoring Changelog
 
 > [!NOTE]
-> **Historical document.** This audit was written on 2026-09-14 for commit `68ccdbe`, and it was the repository's `CHANGELOG.md` until the changelog was restructured. It is kept unchanged below for reference. Several statements are no longer accurate:
+> **Historical document.** This audit was written on 2026-09-14 for commit `68ccdbe`, and it was the repository's `CHANGELOG.md` until the changelog was restructured. It is kept unchanged below for reference and describes the code of that commit, not the current one. Status as of 2026-11-10:
 >
-> - The verification results (for example "`gofmt -l .` clean" and "no test files") do not match the current code base.
-> - Item 7.1 says OTP generation still uses a time-based source. It was switched to `crypto/rand` in [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1), and further hardening is tracked in [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15).
-> - Item 2.2 describes a shared WebSocket consumer, but the server never starts it ([#19](https://github.com/mdastpak/Crypto-Exchange/issues/19)).
-> - Item 3.1 describes publisher confirms, but the confirm handling stalls after a few messages ([#9](https://github.com/mdastpak/Crypto-Exchange/issues/9)).
+> | Finding | Tracked in | State |
+> | --- | --- | --- |
+> | Verification results ("`gofmt -l .` clean", "no test files") | [#36](https://github.com/mdastpak/Crypto-Exchange/issues/36) | Superseded: CI runs format, vet, lint, and the tests on every pull request |
+> | 7.1 OTP generation uses a time-based source | [#1](https://github.com/mdastpak/Crypto-Exchange/pull/1), [#15](https://github.com/mdastpak/Crypto-Exchange/issues/15) | Fixed: `crypto/rand`, codes stored hashed with their own key ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)) |
+> | 2.2 Shared WebSocket consumer | [#19](https://github.com/mdastpak/Crypto-Exchange/issues/19) | Fixed: consumers per instance broadcast to every client |
+> | 3.1 Publisher confirms | [#9](https://github.com/mdastpak/Crypto-Exchange/issues/9) | Fixed, and replaced by the transactional outbox ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89)) |
 >
-> The current change history is in [CHANGELOG.md](../../CHANGELOG.md), and open findings are tracked in the [M0](https://github.com/mdastpak/Crypto-Exchange/issues/83) and [M1](https://github.com/mdastpak/Crypto-Exchange/issues/84) epics.
+> The current change history is in [CHANGELOG.md](../../CHANGELOG.md). Open findings of later reviews are GitHub issues with the `type: security` and `type: docs` labels, and the [M1](https://github.com/mdastpak/Crypto-Exchange/issues/84) epic.
 
 ## Overview
 This document details all modifications made during the comprehensive technical audit of the encrypted-db codebase. Changes are categorized as **Bug Fix**, **Performance Optimization**, **Security Enhancement**, **Refactoring**, or **Code Quality**.

@@ -295,10 +295,10 @@ transport (HTTP, WebSocket)  ->  services (business logic)  ->  repositories and
 
 | Topic | Decision |
 | --- | --- |
-| Monetary values | `shared.Decimal` (arbitrary precision). Never use floating point. |
+| Monetary values | Arbitrary-precision decimals, never floating point. Domain types use `shared.Decimal` (`internal/domain/shared`), which wraps `shopspring/decimal` and adds the database and JSON encodings; new code in the domain uses it, and `shopspring/decimal` is used directly only by code outside the domain, such as market data. Column precision is decided in [#314](https://github.com/mdastpak/Crypto-Exchange/issues/314). |
 | Identifiers | UUIDs, with timestamp-ordered UUIDv7 planned for orders and trades |
 | Balance safety | Database transactions with row locks or optimistic versioning, plus an immutable change log ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)) |
-| Event delivery | Publisher confirms now. A transactional outbox is planned for trade events. |
+| Event delivery | A transactional outbox for every event: written in the transaction of its change and relayed with publisher confirms, retries, and dead letters ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#171](https://github.com/mdastpak/Crypto-Exchange/issues/171), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)) |
 | WebSocket scaling | Per-instance consumers and channel-based subscriptions ([#66](https://github.com/mdastpak/Crypto-Exchange/issues/66)) |
 | Authentication | JWT for interactive users. HMAC and Ed25519 API keys for programmatic access ([#64](https://github.com/mdastpak/Crypto-Exchange/issues/64)). |
-| Configuration | YAML plus environment variables, with fail-closed validation planned ([#41](https://github.com/mdastpak/Crypto-Exchange/issues/41)) |
+| Configuration | YAML plus environment variables, validated fail-closed at startup: release mode is the default and refuses unsafe settings (`internal/config/validate.go`, [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41), [#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)) |

@@ -1,0 +1,36 @@
+name: Status table
+
+# The README's project status table must agree with the issues it links
+# (#313): an Implemented row links only closed issues, and any other row
+# links at least one open one. Issue states change outside pull requests,
+# so the check runs every week and by hand, and on the pull requests that
+# change the README.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "README.md"
+      - "scripts/doc-status/**"
+      - ".github/workflows/doc-status.yml"
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  check:
+    name: Status table agrees with issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Check the status table
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: go run ./scripts/doc-status -repo "$GITHUB_REPOSITORY" README.md
