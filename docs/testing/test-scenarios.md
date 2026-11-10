@@ -324,7 +324,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | S-02 | P0 / integration | PostgreSQL unavailable, Redis healthy | Response is `degraded`; postgres detail is `error`; HTTP policy is documented | Passes: `/system/ready` answers `503`, also when PostgreSQL stops behind a TCP proxy, and `200` again when it is back ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)) |
 | S-03 | P0 / integration | Redis unavailable, PostgreSQL healthy | Response is `degraded`; redis detail is `error` | Passes: `503` ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)) |
 | S-04 | P0 / integration | Both dependencies unavailable | Both details are present; response is not a misleading `ok` | Passes: `degraded` with `503`, and every dependency is checked at once within a timeout ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33)) |
-| S-05 | P1 / contract | `/system/ping` | `200`; JSON contains `pong` and a UTC timestamp | Passes |
+| S-05 | P1 / contract | `/system/live` | `200` with `{"status": "ok"}`, also while every dependency is down | Passes |
 | S-06 | P0 / integration | Fresh PostgreSQL database | All migrations apply once and startup succeeds | Passes: the index is on `users` since [#4](https://github.com/mdastpak/Crypto-Exchange/pull/4), and the full and step-wise migration tests start from an empty database |
 | S-07 | P0 / integration | Startup is repeated against an already migrated database | `migrate.ErrNoChange` is treated as success | Passes |
 | S-08 | P0 / integration | A migration fails halfway | Startup fails, resources close, and the error is actionable | Verify transaction/rollback behavior |

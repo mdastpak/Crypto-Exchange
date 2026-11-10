@@ -70,7 +70,7 @@ func TestCORS_Preflight(t *testing.T) {
 	assert.Equal(t, "https://app.example.com", w.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "GET, POST, PUT, PATCH, DELETE, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
 	assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Authorization")
-	assert.Equal(t, "X-Request-ID, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, Deprecation, Link",
+	assert.Equal(t, "X-Request-ID, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining",
 		w.Header().Get("Access-Control-Expose-Headers"), "browsers may read only the exposed headers")
 
 	w = corsResponse(t, allowed, http.MethodOptions, "https://evil.example")

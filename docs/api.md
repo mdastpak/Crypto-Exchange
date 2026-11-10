@@ -6,16 +6,7 @@ This document describes the HTTP and WebSocket API as currently implemented on `
 
 ### Versions
 
-The API is versioned under `/api/v1`. The paths in this document are relative to it: `POST /public/auth` is `POST /api/v1/public/auth`, and the WebSocket gateway is `/api/v1/ws/`. The exceptions are not part of the API and have no version: the health probes under `/system/`, which orchestrators and load balancers call, `/swagger/`, and `/`.
-
-The unversioned paths of earlier releases, such as `/public/auth`, still answer the same, as deprecated aliases until a later release removes them. Their responses carry:
-
-```http
-Deprecation: @1793923200
-Link: </api/v1/public/auth>; rel="successor-version"
-```
-
-`Deprecation` (RFC 9745) gives the date of the deprecation, 2026-11-06, and `Link` (RFC 8288) the path to use instead. A path and its alias share the rate limits, so the alias does not double them.
+The API is versioned under `/api/v1`. The paths in this document are relative to it: `POST /public/auth` is `POST /api/v1/public/auth`, and the WebSocket gateway is `/api/v1/ws/`. The exceptions are not part of the API and have no version: the health probes `/system/live` and `/system/ready`, which orchestrators and load balancers call, and `/swagger/` outside release mode. No other path answers.
 
 ### Response envelope
 
@@ -165,7 +156,7 @@ Every response carries these headers ([#191](https://github.com/mdastpak/Crypto-
 | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` | `nosniff`, `DENY`, `strict-origin-when-cross-origin`, no geolocation, microphone, or camera, `same-origin`, `same-origin` |
 | `X-XSS-Protection` | `0`, which turns off the XSS auditor of old browsers, as recommended; the content security policy replaces it |
 
-For an origin in `server.cors.allowed_origins`, `Access-Control-Expose-Headers` lists `X-Request-ID`, `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Deprecation`, and `Link`, so that scripts of that origin can read them. Preflight requests (`OPTIONS`) count against the REST rate limit like other requests.
+For an origin in `server.cors.allowed_origins`, `Access-Control-Expose-Headers` lists `X-Request-ID`, `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining`, so that scripts of that origin can read them. Preflight requests (`OPTIONS`) count against the REST rate limit like other requests.
 
 ### Languages
 
@@ -267,7 +258,7 @@ The refresh token is **only** delivered in a cookie, never in the body, so scrip
 Set-Cookie: refresh_token=<jwt>; Path=/api/v1/public/auth; Max-Age=<refresh_token.expiration_minutes × 60>; HttpOnly; Secure; SameSite=Strict
 ```
 
-The browser sends the cookie only to `/api/v1/public/auth/*`, which covers the refresh and logout routes. A sign-in through the deprecated alias sets it for `/public/auth` instead, so that the cookie goes to the auth routes of the version that issued it; a client that moves to `/api/v1` signs in again. Logout clears the cookie under both paths. Because it is `Secure`, browsers only store it over HTTPS. Chrome and Firefox also store it on `http://localhost` during development.
+The browser sends the cookie only to `/api/v1/public/auth/*`, which covers the refresh and logout routes. Logout clears it. Because it is `Secure`, browsers only store it over HTTPS. Chrome and Firefox also store it on `http://localhost` during development.
 
 Errors:
 
@@ -1211,16 +1202,6 @@ Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two secon
 `status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored, also while the server moves to another node of a cluster. In release mode, the response has only `status`, without `details`, because the details describe the internals.
 
 Once the instance is shutting down, it answers `503` with `{"status": "draining"}` and checks no dependency, while it keeps serving the other routes for `server.drain_seconds`. See [Startup and shutdown](architecture.md#startup-and-shutdown).
-
-### `GET /system/healthcheck`
-
-The earlier name of `/system/ready`, with the same response.
-
-### `GET /system/ping`
-
-```json
-{ "message": "pong", "timestamp": "2026-11-02T10:00:00Z" }
-```
 
 ### Sessions
 

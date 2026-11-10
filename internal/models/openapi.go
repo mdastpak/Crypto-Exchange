@@ -39,9 +39,3 @@ type CurrencyCreatedInfo struct {
 type VersionInfo struct {
 	Version int64 `json:"version" example:"2"`
 }
-
-// PingInfo is the answer of GET /system/ping, which has no envelope.
-type PingInfo struct {
-	Message   string `json:"message" example:"pong"`
-	Timestamp string `json:"timestamp" example:"2026-11-07T10:00:00Z"`
-}

@@ -15,25 +15,6 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "system"
-                ],
-                "summary": "Welcome",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.APIResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/admin/audit": {
             "get": {
                 "security": [
@@ -6701,31 +6682,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/system/healthcheck": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "system"
-                ],
-                "summary": "Readiness, by its earlier name",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/system.HealthStatus"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/system.HealthStatus"
-                        }
-                    }
-                }
-            }
-        },
         "/system/live": {
             "get": {
                 "description": "Whether the process serves requests. Checks no dependency.",
@@ -6741,25 +6697,6 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/system.HealthStatus"
-                        }
-                    }
-                }
-            }
-        },
-        "/system/ping": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "system"
-                ],
-                "summary": "Ping",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.PingInfo"
                         }
                     }
                 }
@@ -8677,19 +8614,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.PingInfo": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "example": "pong"
-                },
-                "timestamp": {
-                    "type": "string",
-                    "example": "2026-11-07T10:00:00Z"
-                }
-            }
-        },
         "models.SignInCodeInfo": {
             "type": "object",
             "properties": {
@@ -9934,7 +9858,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Crypto Exchange API",
-	Description:      "The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. The unversioned paths of earlier releases still answer, as deprecated aliases of the paths under /api/v1.",
+	Description:      "The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. Every route is under /api/v1, besides the health probes /system/live and /system/ready.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

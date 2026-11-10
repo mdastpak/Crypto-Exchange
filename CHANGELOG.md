@@ -199,6 +199,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- The unversioned aliases of the API, with the `Deprecation` and `Link` headers that pointed to `/api/v1`, `/system/healthcheck`, `/system/ping`, and the welcome answer at `/`. Every route is now under `/api/v1`, besides the probes `/system/live` and `/system/ready` (and `/swagger/` outside release mode), and the refresh token cookie has the one path `/api/v1/public/auth`. No release shipped the aliases, so no client uses them ([#312](https://github.com/mdastpak/Crypto-Exchange/issues/312)).
 - Dead code and stale artifacts ([#56](https://github.com/mdastpak/Crypto-Exchange/issues/56)): `gqlgen.yml` (there is no GraphQL API), `cmd.bat` (it ran `go mod tidy` on every run; the commands are in the README and CONTRIBUTING), the `.kilo/` planning notes (the roadmap lives in the epics, which link the plan at a fixed commit), `pkg/utils`, the unused middleware `ErrorSanitizer`, `SanitizeError`, `ValidationMiddleware`, `BindAndValidate`, `SanitizeInput`, and `SanitizeMap` with their tests and a test that always skipped, and the unused `config.JWTPrivateKeyPath`, `JWTPublicKeyPath`, `GetServerAddr`, and `GetServerTimeouts`. A compiled `admin` binary and a Redis `dump.rdb` that had been committed by mistake are gone, and `.gitignore` now ignores the binaries built at the repository root and Redis dumps. `internal/models/currncies.go` is now `currencies.go`.
 
 ### Security

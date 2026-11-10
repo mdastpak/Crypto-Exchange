@@ -51,8 +51,8 @@ func TestRouter_AnswersInTheLanguageOfTheRequest(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Equal(t, "دسترسی غیرمجاز: توکن ارسال نشده است.", body["message"])
 
-	// The deprecated alias negotiates the same way, and English stays.
-	w, body = call(http.MethodGet, "/public/locales", map[string]string{"Accept-Language": "de"})
+	// An unsupported language falls back to the default, English.
+	w, body = call(http.MethodGet, "/api/v1/public/locales", map[string]string{"Accept-Language": "de"})
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "default", body["info"].(map[string]interface{})["source"])
 	assert.Equal(t, "Locales retrieved successfully.", body["message"])

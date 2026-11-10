@@ -1,32 +1,13 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. The unversioned paths of earlier releases still answer, as deprecated aliases of the paths under /api/v1.",
+        "description": "The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. Every route is under /api/v1, besides the health probes /system/live and /system/ready.",
         "title": "Crypto Exchange API",
         "contact": {},
         "version": "1"
     },
     "basePath": "/",
     "paths": {
-        "/": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "system"
-                ],
-                "summary": "Welcome",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.APIResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/admin/audit": {
             "get": {
                 "security": [
@@ -6694,31 +6675,6 @@
                 }
             }
         },
-        "/system/healthcheck": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "system"
-                ],
-                "summary": "Readiness, by its earlier name",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/system.HealthStatus"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/system.HealthStatus"
-                        }
-                    }
-                }
-            }
-        },
         "/system/live": {
             "get": {
                 "description": "Whether the process serves requests. Checks no dependency.",
@@ -6734,25 +6690,6 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/system.HealthStatus"
-                        }
-                    }
-                }
-            }
-        },
-        "/system/ping": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "system"
-                ],
-                "summary": "Ping",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.PingInfo"
                         }
                     }
                 }
@@ -8667,19 +8604,6 @@
                 "phase": {
                     "type": "string",
                     "example": "deposits_paused"
-                }
-            }
-        },
-        "models.PingInfo": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "example": "pong"
-                },
-                "timestamp": {
-                    "type": "string",
-                    "example": "2026-11-07T10:00:00Z"
                 }
             }
         },

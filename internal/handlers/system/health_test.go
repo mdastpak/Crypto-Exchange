@@ -45,8 +45,6 @@ func get(h *SystemHandler, path string) *httptest.ResponseRecorder {
 	router := gin.New()
 	router.GET("/system/live", h.LivenessHandler)
 	router.GET("/system/ready", h.ReadinessHandler)
-	router.GET("/system/healthcheck", h.HealthCheckHandler)
-	router.GET("/system/ping", h.PingPongHandler)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	return w
@@ -127,35 +125,16 @@ func TestReadiness_HidesTheDetailsInReleaseMode(t *testing.T) {
 	assert.JSONEq(t, `{"status": "degraded"}`, w.Body.String())
 }
 
-func TestHealthCheck_AnswersLikeReadiness(t *testing.T) {
-	assert.Equal(t, http.StatusOK, get(handlerFailing(), "/system/healthcheck").Code)
-	w := get(handlerFailing("postgres"), "/system/healthcheck")
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, "error", healthOf(t, w).Details["postgres"].Status)
-}
-
 func TestLiveness_DoesNotDependOnTheDependencies(t *testing.T) {
 	w := get(handlerFailing(dependencyNames...), "/system/live")
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.JSONEq(t, `{"status": "ok"}`, w.Body.String())
 }
 
-func TestPingPongHandler(t *testing.T) {
-	w := get(&SystemHandler{}, "/system/ping")
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var body map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, "pong", body["message"])
-	_, err := time.Parse(time.RFC3339, body["timestamp"])
-	assert.NoError(t, err)
-}
-
 func TestReadiness_AnswersDrainingDuringShutdown(t *testing.T) {
 	h := handlerFailing()
 	router := gin.New()
 	router.GET("/ready", h.ReadinessHandler)
-	router.GET("/healthcheck", h.HealthCheckHandler)
 	router.GET("/live", h.LivenessHandler)
 	get := func(path string) (int, string) {
 		w := httptest.NewRecorder()
@@ -170,11 +149,9 @@ func TestReadiness_AnswersDrainingDuringShutdown(t *testing.T) {
 	require.Equal(t, "ok", status)
 
 	h.StartDraining()
-	for _, path := range []string{"/ready", "/healthcheck"} {
-		code, status = get(path)
-		assert.Equal(t, http.StatusServiceUnavailable, code, path)
-		assert.Equal(t, "draining", status, path)
-	}
+	code, status = get("/ready")
+	assert.Equal(t, http.StatusServiceUnavailable, code)
+	assert.Equal(t, "draining", status)
 	code, _ = get("/live")
 	assert.Equal(t, http.StatusOK, code, "the process is still alive")
 }

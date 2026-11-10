@@ -99,7 +99,7 @@ func init() {
 //
 // @title Crypto Exchange API
 // @version 1
-// @description The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. The unversioned paths of earlier releases still answer, as deprecated aliases of the paths under /api/v1.
+// @description The HTTP API of the Crypto Exchange server. docs/api.md describes the conventions: the envelope, the error codes, sign-in, and the WebSocket messages. Every route is under /api/v1, besides the health probes /system/live and /system/ready.
 // @BasePath /
 // @securityDefinitions.apikey BearerAuth
 // @in header
@@ -954,17 +954,6 @@ func newMarketDataAPI(services *models.InfraServices) *marketdataapi.Handler {
 		})
 }
 
-// welcome answers the root path.
-//
-// @Summary Welcome
-// @Tags system
-// @Produce json
-// @Success 200 {object} models.APIResponse
-// @Router / [get]
-func welcome(c *gin.Context) {
-	helpers.SendResponse(c, http.StatusOK, i18n.M("WELCOME"), nil)
-}
-
 // userLogout ends the session of a user access token: it revokes the
 // session, its refresh token, and the access token, and clears the refresh
 // token cookie.
@@ -999,9 +988,6 @@ func userLogout(ih *InfraHandlers) gin.HandlerFunc {
 func adminLogout(ih *InfraHandlers) gin.HandlerFunc {
 	return ih.Admin.Logout(ih.TokenBlacklist)
 }
-
-// apiV1Since is when the unversioned paths were deprecated.
-var apiV1Since = time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
 
 // registerAPI registers the routes of the API under g.
 func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimiter) {
@@ -1130,7 +1116,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 
 // probeRoutes are the health probes. They must answer while Redis is down,
 // so the REST limit counts them in memory instead of in Redis.
-var probeRoutes = []string{"/system/live", "/system/ready", "/system/healthcheck", "/system/ping"}
+var probeRoutes = []string{"/system/live", "/system/ready"}
 
 // RouteHandler registers the global middleware and then every route. Gin
 // applies middleware only to the routes registered after it, so no route may
@@ -1203,7 +1189,6 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		helpers.SendResponse(c, http.StatusMethodNotAllowed, i18n.M("METHOD_NOT_ALLOWED"), nil)
 	})
 
-	r.GET("/", welcome)
 	if config.Config.SwaggerEnabled() {
 		// The paths of the document are absolute.
 		docs.SwaggerInfo.BasePath = "/"
@@ -1214,16 +1199,12 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	{
 		systemGroup.GET("/live", ih.System.LivenessHandler)
 		systemGroup.GET("/ready", ih.System.ReadinessHandler)
-		systemGroup.GET("/healthcheck", ih.System.HealthCheckHandler)
-		systemGroup.GET("/ping", ih.System.PingPongHandler)
 	}
 
-	// The API is versioned under /api/v1 (#53). The unversioned paths of
-	// earlier releases answer the same, as deprecated aliases that point to
-	// their successor, until they are removed. The rate limits count both
-	// paths of a route together. The health probes above are not part of
-	// the API: orchestrators and load balancers call them.
+	// Every route of the API is under /api/v1. The health probes above are
+	// not part of the API: orchestrators and load balancers call them.
+	// Swagger, only where it is enabled (never in release mode), is the one
+	// other path.
 	registerAPI(r.Group(helpers.APIPrefix), ih, rl)
-	registerAPI(r.Group("", middleware.Deprecated(helpers.APIPrefix, apiV1Since)), ih, rl)
 	return nil
 }

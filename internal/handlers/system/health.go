@@ -149,25 +149,3 @@ func (h *SystemHandler) ReadinessHandler(c *gin.Context) {
 	}
 	c.JSON(code, health)
 }
-
-// HealthCheckHandler serves /system/healthcheck, the earlier name of
-// /system/ready.
-//
-// @Summary Readiness, by its earlier name
-// @Tags system
-// @Produce json
-// @Success 200 {object} HealthStatus
-// @Failure 503 {object} HealthStatus
-// @Router /system/healthcheck [get]
-func (h *SystemHandler) HealthCheckHandler(c *gin.Context) {
-	h.ReadinessHandler(c)
-}
-
-// @Summary Ping
-// @Tags system
-// @Produce json
-// @Success 200 {object} models.PingInfo
-// @Router /system/ping [get]
-func (h *SystemHandler) PingPongHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "pong", "timestamp": time.Now().UTC().Format(time.RFC3339)})
-}

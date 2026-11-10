@@ -64,7 +64,7 @@ func TestRouter_EveryRouteGetsTheGlobalMiddleware(t *testing.T) {
 		assert.NotEmpty(t, w.Header().Get("X-Request-ID"), "%s: request ID", name)
 		assertErrorContract(t, w, name)
 	}
-	assert.True(t, seen["/"], "the root route is checked")
+	assert.True(t, seen["/system/live"], "the probes are checked")
 	assert.True(t, seen["/swagger/*any"], "Swagger is served outside release mode")
 }
 

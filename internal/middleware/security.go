@@ -69,7 +69,7 @@ func SecurityHeaders(opts SecurityOptions) gin.HandlerFunc {
 // exposedHeaders are the response headers that the API documents for
 // clients, which a cross-origin script can read only when they are listed
 // in Access-Control-Expose-Headers.
-const exposedHeaders = "X-Request-ID, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, Deprecation, Link"
+const exposedHeaders = "X-Request-ID, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining"
 
 // NewCORSMiddleware grants cross-origin access to the listed origins only.
 // Allowed origins may send credentials (the refresh token cookie), so a

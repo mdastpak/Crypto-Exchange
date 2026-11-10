@@ -197,7 +197,7 @@ Backups, point-in-time recovery, the restore drill, and the disaster-recovery ru
 
 ## API overview
 
-The API is versioned under `/api/v1`: the paths of the API in the table below are relative to it, so `/public/currencies` is `/api/v1/public/currencies`. The health probes under `/system/` are not part of the API and have no version. The unversioned paths of earlier releases still answer as deprecated aliases, with `Deprecation` and `Link` headers that point to the versioned path ([docs/api.md](docs/api.md#versions)).
+The API is versioned under `/api/v1`: the paths of the API in the table below are relative to it, so `/public/currencies` is `/api/v1/public/currencies`. The health probes under `/system/` are not part of the API and have no version. No other path answers ([docs/api.md](docs/api.md#versions)).
 
 All JSON responses, except the system endpoints, use this envelope:
 
@@ -211,8 +211,6 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | --- | --- | --- | --- |
 | `GET` | `/system/live` | None | Liveness: the process serves requests |
 | `GET` | `/system/ready` | None | Readiness: `503` while PostgreSQL or Redis is unavailable; `degraded` without RabbitMQ |
-| `GET` | `/system/healthcheck` | None | Earlier name of `/system/ready` |
-| `GET` | `/system/ping` | None | Ping |
 | `GET` | `/public/currencies` | None | List cached currencies |
 | `GET` | `/public/currencies/{hk}` | None | Get a currency by its UUID |
 | `POST` | `/public/auth` | None | Request an OTP |
