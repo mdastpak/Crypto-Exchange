@@ -285,8 +285,8 @@ The server serves the catalog read only, without sign-in, under `/api/v1/market-
 
 | Route | Answer |
 | --- | --- |
-| `GET /market-data/assets?q=&limit=&cursor=` | The assets by market cap rank, the unranked last, [paginated](api.md#pagination). `q` matches the exact symbol, or a part of the name or slug. |
-| `GET /market-data/assets/{slug}` | An asset with its description, links, supply, contracts, and attribution. |
+| `GET /market-data/assets?q=&sort=&limit=&cursor=` | The assets, [paginated](api.md#pagination): by market cap rank, the unranked last (`sort=rank`, the default), or the newest first (`sort=newest`, [Newest assets](#newest-assets)). `q` matches the exact symbol, or a part of the name or slug, in either order. |
+| `GET /market-data/assets/{slug}` | An asset with its description, links, supply, contracts, and attribution. Every asset also carries `created_at`, when the catalog first collected it. |
 | `GET /market-data/assets/{slug}/venues` | The latest ticker at each venue, with `stale`, `outlier`, and the `median` of its quote ([Stale prices and outliers](#stale-prices-and-outliers)). |
 | `GET /market-data/assets/{slug}/candles?venue=&quote=&interval=&from=&to=` | The candles of the asset's pair at a venue, at most 1000; the last 500 by default. |
 | `GET /market-data/feed/assets?updated_since=&limit=&cursor=` | The assets in the order they changed, for a service that keeps a copy, such as the blog ([Feed for the blog](#feed-for-the-blog)). |
@@ -296,6 +296,13 @@ The server serves the catalog read only, without sign-in, under `/api/v1/market-
 - **Cache.** Each answer is cached in Redis for `market_data.api.cache_seconds` (30), shared by every instance, under a key that holds a generation number. `Invalidate` raises the generation (`INCR`), so that every instance stops serving the answers cached before at once; the [administration](#administration) calls it after each change. Only successful answers are cached. Without Redis, the answers are built on every request.
 - **ETag.** Every answer has an `ETag`, the same on every instance for the same answer, and `Cache-Control: public, max-age=<cache_seconds>`; a request with a matching `If-None-Match` gets `304 Not Modified`.
 - **Limits.** The routes fall under the REST rate limit of the public routes, and close during a full maintenance, as the other public routes do.
+
+### Newest assets
+
+`sort=newest` lists the assets that are not hidden by `created_at`, the time the catalog first collected them, newest first, then by slug ([#304](https://github.com/mdastpak/Crypto-Exchange/issues/304)); the blog's "newest coins" page reads it. It is the time this catalog first saw the asset, not the launch date of the coin: a source added later brings its older assets in as new. `market_assets_newest` (migration 50) indexes the order.
+
+- **Cursor.** The cursor holds the time and slug of the last asset, so the next page starts right after it. An asset added between two pages is newer than the cursor, so it is neither repeated nor does it push another one out; it shows on the first page the next time. `created_at` is the start of the inserting transaction, so an asset whose transaction started before a page was read but committed after it can be missed by that walk through the pages, and appears on the next one from the start; the list is for browsing, and a service that must see every asset uses the [feed](#feed-for-the-blog).
+- **One cursor, one order.** A cursor of one order is refused by the other with `400 validation_failed`, as is an unknown `sort`. The rank cursors given before `sort` existed still work.
 
 ## Feed for the blog
 

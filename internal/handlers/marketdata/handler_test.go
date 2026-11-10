@@ -207,6 +207,47 @@ func TestListAssets_UnverifiedByRankWithoutHidden(t *testing.T) {
 	}
 }
 
+func TestListAssets_Newest(t *testing.T) {
+	f := newFixture(t)
+	base := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	for i, slug := range []string{"bitcoin", "tether", "ethereum", "scam"} {
+		_, err := f.db.Exec(`UPDATE market_assets SET created_at = $1 WHERE slug = $2`, base.Add(time.Duration(i)*time.Hour), slug)
+		require.NoError(t, err)
+	}
+	r := newRouter(newHandler(f, nil))
+
+	res := get(t, r, "/api/v1/market-data/assets?sort=newest&limit=2")
+	require.Equal(t, http.StatusOK, res.Code, res.Raw)
+	items := info(res)["items"].([]any)
+	require.Len(t, items, 2)
+	assert.Equal(t, "ethereum", items[0].(map[string]any)["slug"], "the newest first, never the hidden")
+	assert.Equal(t, "2026-11-01T02:00:00Z", items[0].(map[string]any)["created_at"])
+	assert.Equal(t, "tether", items[1].(map[string]any)["slug"])
+
+	next := info(res)["next_cursor"].(string)
+	res = get(t, r, "/api/v1/market-data/assets?sort=newest&limit=2&cursor="+url.QueryEscape(next))
+	require.Equal(t, http.StatusOK, res.Code, res.Raw)
+	items = info(res)["items"].([]any)
+	require.Len(t, items, 1)
+	assert.Equal(t, "bitcoin", items[0].(map[string]any)["slug"])
+
+	// A cursor holds its order: the other order refuses it.
+	res = get(t, r, "/api/v1/market-data/assets?limit=2&cursor="+url.QueryEscape(next))
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	rank := info(get(t, r, "/api/v1/market-data/assets?sort=rank&limit=1"))["next_cursor"].(string)
+	res = get(t, r, "/api/v1/market-data/assets?sort=newest&cursor="+url.QueryEscape(rank))
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.Equal(t, "validation_failed", res.Body["code"])
+
+	res = get(t, r, "/api/v1/market-data/assets?sort=newest&q=tether")
+	require.Equal(t, http.StatusOK, res.Code)
+	assert.Len(t, info(res)["items"], 1, "the query works with this order too")
+
+	res = get(t, r, "/api/v1/market-data/assets?sort=volume")
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.Equal(t, "validation_failed", res.Body["code"])
+}
+
 func TestListAssets_LinkedIsVerified(t *testing.T) {
 	f := newFixture(t)
 	currency, err := json.Marshal(models.CurrencyInfo{Symbol: "BTC", EnName: "Bitcoin", FaName: "Bitcoin"})

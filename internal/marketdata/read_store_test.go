@@ -3,6 +3,7 @@ package marketdata
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,85 @@ func TestPublicAssets_ByRankWithoutHiddenAndPaged(t *testing.T) {
 	found, err = store.PublicAssets(ctx, "_", nil, 10)
 	require.NoError(t, err)
 	assert.Empty(t, found, "an _ in the query is literal")
+}
+
+func TestNewestAssets_NewestFirstWithoutHiddenAndPaged(t *testing.T) {
+	store, db := newStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	add := func(slug, symbol, name string, at time.Time) {
+		t.Helper()
+		_, _, err := store.CreateAsset(ctx, slug, "coingecko", slug, AssetDetails{Symbol: symbol, Name: name, Kind: KindCoin})
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE market_assets SET created_at = $1 WHERE slug = $2`, at, slug)
+		require.NoError(t, err)
+	}
+	add("bitcoin", "BTC", "Bitcoin", base)
+	add("ethereum", "ETH", "Ethereum", base.Add(time.Hour))
+	add("pepe", "PEPE", "Pepe", base.Add(2*time.Hour+time.Microsecond))
+	add("bonk", "BONK", "Bonk", base.Add(2*time.Hour+time.Microsecond))
+	add("scam", "SCM", "Scam Bitcoin", base.Add(3*time.Hour))
+	_, err := db.Exec(`UPDATE market_assets SET status = 'hidden' WHERE slug = 'scam'`)
+	require.NoError(t, err)
+
+	all, err := store.NewestAssets(ctx, "", nil, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bonk", "pepe", "ethereum", "bitcoin"}, slugOf(all),
+		"the newest first, the same time by slug, never the hidden")
+
+	// Pages of one asset hold every asset once, even when an asset is added
+	// between pages: the new one is newer than the cursor, so it is neither
+	// repeated nor does it push one of the others out.
+	var paged []Asset
+	var after *NewestPosition
+	for i := 0; ; i++ {
+		page, err := store.NewestAssets(ctx, "", after, 1)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		paged = append(paged, page...)
+		p := NewestPositionOf(page[len(page)-1])
+		after = &p
+		if i == 1 {
+			add("late", "LATE", "Late Coin", base.Add(4*time.Hour))
+		}
+	}
+	assert.Equal(t, slugOf(all), slugOf(paged))
+
+	found, err := store.NewestAssets(ctx, "bitcoin", nil, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bitcoin"}, slugOf(found), "the query, never the hidden")
+	found, err = store.NewestAssets(ctx, "%", nil, 10)
+	require.NoError(t, err)
+	assert.Empty(t, found, "a % in the query is literal")
+}
+
+func TestPublicAssets_AnAssetAddedBetweenPages(t *testing.T) {
+	store, _ := newStore(t)
+	ctx := context.Background()
+	rank := func(n int) *int { return &n }
+	for i, slug := range []string{"one", "two", "three"} {
+		_, _, err := store.CreateAsset(ctx, slug, "coingecko", slug, AssetDetails{Symbol: "X", Name: slug, Kind: KindCoin, MarketCapRank: rank(10 * (i + 1))})
+		require.NoError(t, err)
+	}
+	first, err := store.PublicAssets(ctx, "", nil, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{"one", "two"}, slugOf(first))
+	_, _, err = store.CreateAsset(ctx, "early", "coingecko", "early", AssetDetails{Symbol: "E", Name: "Early", Kind: KindCoin, MarketCapRank: rank(5)})
+	require.NoError(t, err)
+	p := PositionOf(first[1])
+	rest, err := store.PublicAssets(ctx, "", &p, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"three"}, slugOf(rest), "neither repeated nor skipped")
+}
+
+func slugOf(assets []Asset) []string {
+	out := []string{}
+	for _, a := range assets {
+		out = append(out, a.Slug)
+	}
+	return out
 }
 
 func TestPublicAsset_NotAHiddenOne(t *testing.T) {

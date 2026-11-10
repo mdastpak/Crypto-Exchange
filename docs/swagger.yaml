@@ -661,6 +661,9 @@ definitions:
         items:
           $ref: '#/definitions/marketdata.Contract'
         type: array
+      created_at:
+        description: CreatedAt is when the catalog first collected the asset.
+        type: string
       description:
         type: string
       kind:
@@ -5127,15 +5130,24 @@ paths:
       - admin users
   /api/v1/market-data/assets:
     get:
-      description: The crypto assets of the global catalog, by market cap rank, the
-        unranked last. Every asset is unverified unless it is linked to a currency
-        listed on this exchange. Cached for market_data.api.cache_seconds, with an
-        ETag.
+      description: 'The crypto assets of the global catalog. sort=rank (the default)
+        lists them by market cap rank, the unranked last; sort=newest lists the one
+        the catalog first collected last first, by created_at. A cursor holds its
+        order: a cursor of one order is refused by the other. Every asset is unverified
+        unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds,
+        with an ETag.'
       parameters:
       - description: The exact symbol, or a part of the name or slug, in any case
         in: query
         maxLength: 64
         name: q
+        type: string
+      - description: The order, rank by default
+        enum:
+        - rank
+        - newest
+        in: query
+        name: sort
         type: string
       - description: The number of assets, 50 by default
         in: query
