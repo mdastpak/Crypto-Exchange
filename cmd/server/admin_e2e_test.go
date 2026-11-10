@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/base32"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -203,16 +202,12 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	c.JWT.AccessToken.Expiration = 15
 	c.JWT.RefreshToken.Expiration = 60
 	c.OTP.Auth.Length, c.OTP.Auth.TTL, c.OTP.Auth.RetryLimit = 6, 60, 3
-	// One secret for all OTP stores, as in production; only the namespace
-	// separates user and admin sign-in.
-	c.OTP.Auth.Secret = "an-e2e-otp-secret-of-at-least-32-bytes"
 	c.Exchange.Name = "E2E Exchange"
 	c.Security.ChangeHoldHours = 24
 	c.Identity.MobileOwnership.TimeoutSeconds = 5
-	totpKey := make([]byte, adminauth.KeySize)
-	_, err := rand.Read(totpKey)
-	require.NoError(t, err)
-	c.Admin.TOTPKey = base64.StdEncoding.EncodeToString(totpKey)
+	// The data keys protect the sign-in codes and the authenticator
+	// secrets of administrators, as in production.
+	c.Keys = localKeysConfig(t)
 	migrations, err := filepath.Abs(filepath.Join("..", "..", "internal", "db", "migrations"))
 	require.NoError(t, err)
 	config.SetMigrationsPath("file://" + filepath.ToSlash(migrations))
@@ -241,7 +236,8 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	})
 
 	handlers := initializeHandlers(services)
-	// The data keys, when an option sets keys.provider, as main loads them.
+	// The data keys, unless an option clears keys.provider, as main loads
+	// them.
 	provider, err := keys.FromConfig(c.Keys)
 	require.NoError(t, err)
 	handlers.DataKeys, err = loadDataKeys(services, provider)
@@ -250,9 +246,7 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	sender := &capturingSender{}
 	handlers.Public.OTPSender = sender
 	handlers.User.OTPSender = sender
-	key, err := legacyTOTPKey()
-	require.NoError(t, err)
-	require.NoError(t, configureAdminSignIn(handlers, services, key, sender))
+	require.NoError(t, configureAdminSignIn(handlers, services, sender))
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
 	watcher, err := startPlatform(services, handlers)
 	require.NoError(t, err)
@@ -474,7 +468,7 @@ func (e *e2eEnv) signInAdmin(t *testing.T, enrollment adminauth.Enrollment) stri
 
 // TestAdminRole_DatabaseChanges covers changes made directly in the
 // database, outside the CLI: they can take admin rights away at once, but
-// cannot grant them without admin.totp_key.
+// cannot grant them without the data keys.
 func TestAdminRole_DatabaseChanges(t *testing.T) {
 	env := newE2EEnv(t)
 	ctx := context.Background()
@@ -526,7 +520,7 @@ func TestAdminRole_DatabaseChanges(t *testing.T) {
 		require.NoError(t, err)
 		sessionID, code := env.requestAdminCode(t, "intruder@example.com")
 		status, resp = env.post(t, "/api/v1/admin/auth/"+sessionID, map[string]string{"otp": code, "totp": currentTOTP(t, other)}, "")
-		assert.NotEqual(t, http.StatusOK, status, "no admin token without a secret sealed with admin.totp_key")
+		assert.NotEqual(t, http.StatusOK, status, "no admin token with a secret sealed for another administrator")
 		assert.Empty(t, resp.Info["access_token"])
 	})
 }
@@ -544,24 +538,15 @@ func TestAdminSignIn_UnavailableWithoutAdminKeys(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
 
-// withDataKeysOnly configures the end state of #146: neither
-// admin.totp_key nor otp.auth.secret, only the data keys.
-func withDataKeysOnly(c *config.Configuration) {
-	kek := make([]byte, 32)
-	_, _ = rand.Read(kek)
-	c.Keys.Provider = config.KeysProviderLocal
-	c.Keys.Local.KEK = base64.StdEncoding.EncodeToString(kek)
-	c.Keys.LegacySecrets = config.LegacySecretsRead
-	c.Admin.TOTPKey = ""
-	c.OTP.Auth.Secret = ""
-}
+// withoutDataKeys clears keys.provider, as a development setup may.
+func withoutDataKeys(c *config.Configuration) { c.Keys = config.KeysConfig{} }
 
-// TestSignIn_WithDataKeysOnly signs a user and an administrator in with the
-// data keys protecting the sign-in codes and the authenticator secret
-// (#146).
-func TestSignIn_WithDataKeysOnly(t *testing.T) {
-	env := newE2EEnv(t, withDataKeysOnly)
-	require.NotNil(t, env.accounts, "admin sign-in works without admin.totp_key")
+// TestSignIn_TheDataKeysProtectCodesAndSecrets signs a user and an
+// administrator in: the data keys protect the sign-in codes and the
+// authenticator secret.
+func TestSignIn_TheDataKeysProtectCodesAndSecrets(t *testing.T) {
+	env := newE2EEnv(t)
+	require.NotNil(t, env.accounts)
 
 	status, resp := env.signInUser(t, "user@example.com")
 	require.Equal(t, http.StatusOK, status, resp.Message)
@@ -570,11 +555,37 @@ func TestSignIn_WithDataKeysOnly(t *testing.T) {
 	require.NoError(t, err)
 	var stored string
 	require.NoError(t, env.db.QueryRow(`SELECT totp_secret FROM users WHERE hk = $1`, enrollment.AdminID).Scan(&stored))
-	assert.True(t, strings.HasPrefix(stored, "v2:"), "sealed with a data key")
+	assert.True(t, strings.HasPrefix(stored, "v1:"), "sealed with a data key")
 	token := env.signInAdmin(t, enrollment)
 	assert.NotEmpty(t, token)
 
 	var otpKeys int
 	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM data_keys WHERE purpose = 'otp-mac'`).Scan(&otpKeys))
 	assert.Equal(t, 1, otpKeys, "the server creates the otp-mac key on its first start")
+	// A pending sign-in session names the otp-mac key that protects it.
+	status, resp = env.post(t, "/api/v1/public/auth", map[string]string{"username": "pending@example.com"}, "")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	client := env.handlers.Redis.Client
+	sessions, err := client.Keys(context.Background(), "otp:session:*").Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	for _, session := range sessions {
+		version, err := client.HGet(context.Background(), session, "key").Result()
+		require.NoError(t, err, session)
+		assert.Equal(t, "1", version, session)
+	}
+}
+
+// TestSignIn_WithoutDataKeys starts as development may, without
+// keys.provider: users sign in with codes that only this process can verify,
+// and admin sign-in is off, since nothing can seal an authenticator secret.
+func TestSignIn_WithoutDataKeys(t *testing.T) {
+	env := newE2EEnv(t, withoutDataKeys)
+	assert.Nil(t, env.accounts)
+
+	status, resp := env.signInUser(t, "user@example.com")
+	require.Equal(t, http.StatusOK, status, resp.Message)
+
+	status, _ = env.post(t, "/api/v1/admin/auth", map[string]string{"email": "admin@example.com"}, "")
+	assert.Equal(t, http.StatusServiceUnavailable, status)
 }

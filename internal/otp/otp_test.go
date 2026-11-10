@@ -60,11 +60,10 @@ func TestGenerateCode_DigitsAreUniform(t *testing.T) {
 }
 
 func TestSettings_Validate(t *testing.T) {
-	secret := strings.Repeat("s", MinSecretLength)
-	valid := Settings{Secret: secret, CodeLength: 6, TTL: time.Minute, AttemptsPerCode: 3,
+	valid := Settings{CodeLength: 6, TTL: time.Minute, AttemptsPerCode: 3,
 		ContactRequestsPerHour: 5, ContactAttemptsPerHour: 10}
-	require.NoError(t, valid.Validate(true))
-	assert.NoError(t, Settings{}.Validate(false), "defaults are valid, with a random secret outside release mode")
+	require.NoError(t, valid.Validate())
+	assert.NoError(t, Settings{}.Validate(), "the defaults are valid")
 
 	cases := map[string]func(*Settings){
 		"short code":                func(s *Settings) { s.CodeLength = 3 },
@@ -73,48 +72,30 @@ func TestSettings_Validate(t *testing.T) {
 		"negative attempts":         func(s *Settings) { s.AttemptsPerCode = -1 },
 		"negative contact requests": func(s *Settings) { s.ContactRequestsPerHour = -1 },
 		"contact budget below code": func(s *Settings) { s.ContactAttemptsPerHour = 2 },
-		"secret shorter than 32 B":  func(s *Settings) { s.Secret = "too-short" },
-		"no secret in release mode": func(s *Settings) { s.Secret = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			s := valid
 			mutate(&s)
-			assert.Error(t, s.Validate(true))
+			assert.Error(t, s.Validate())
 		})
 	}
-	assert.ErrorIs(t, Settings{}.Validate(true), ErrSecretRequired)
 }
 
 func TestSettingsFromConfig(t *testing.T) {
 	saved := config.Config
 	t.Cleanup(func() { config.Config = saved })
-	config.Config.OTP.Auth.Secret = "configured-secret"
 	config.Config.OTP.Auth.Length = 8
 	config.Config.OTP.Auth.TTL = 90
 	config.Config.OTP.Auth.RetryLimit = 4
 	config.Config.OTP.Auth.ContactRequestsPerHour = 6
 	config.Config.OTP.Auth.ContactAttemptsPerHour = 12
-	config.Config.Keys.Provider = config.KeysProviderLocal
-	config.Config.Keys.LegacySecrets = config.LegacySecretsWrite
 
 	assert.Equal(t, Settings{
-		Secret:                 "configured-secret",
 		CodeLength:             8,
 		TTL:                    90 * time.Second,
 		AttemptsPerCode:        4,
 		ContactRequestsPerHour: 6,
 		ContactAttemptsPerHour: 12,
-		LegacyWrites:           true,
-		DataKeys:               true,
 	}, SettingsFromConfig())
-
-	config.Config.Keys.LegacySecrets = config.LegacySecretsRead
-	assert.False(t, SettingsFromConfig().LegacyWrites, "keys.legacy_secrets read")
-}
-
-func TestSettings_DataKeysReplaceTheSecretInReleaseMode(t *testing.T) {
-	assert.ErrorIs(t, Settings{}.Validate(true), ErrSecretRequired)
-	assert.NoError(t, Settings{DataKeys: true}.Validate(true))
-	assert.NoError(t, Settings{}.Validate(false), "outside release mode a random secret is used")
 }

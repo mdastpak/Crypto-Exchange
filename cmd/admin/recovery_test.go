@@ -45,7 +45,7 @@ func TestParseArgs_Recovery(t *testing.T) {
 // and a migrated database passes restore verify until it is broken.
 func TestRun_ChecksBackupsAndRestores(t *testing.T) {
 	resetCLITestDB(t)
-	base := writeConfig(t, "")
+	base := writeConfig(t)
 	code, _, stderr := runCLI(t, append(base, "platform", "status")...)
 	require.Equal(t, 0, code, "migrate the database: %s", stderr)
 

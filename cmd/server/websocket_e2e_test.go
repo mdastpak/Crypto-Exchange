@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/keys"
+
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,9 +77,12 @@ func TestWebSocket_AnotherInstanceRelaysTheEvent(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	handlers := initializeHandlers(services)
-	key, err := legacyTOTPKey()
+	provider, err := keys.FromConfig(config.Config.Keys)
 	require.NoError(t, err)
-	require.NoError(t, configureAdminSignIn(handlers, services, key, env.sender))
+	handlers.DataKeys, err = loadDataKeys(services, provider)
+	require.NoError(t, err)
+	useDataKeysForOTP(handlers)
+	require.NoError(t, configureAdminSignIn(handlers, services, env.sender))
 	second, err := newEngine()
 	require.NoError(t, err)
 	routeForTest(t, second, handlers)

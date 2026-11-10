@@ -178,11 +178,6 @@ otp:
     ttl_seconds: 60              # Lifetime of a code and its sign-in session
     length: 6                    # 4 to 10 digits
     retry_limit: 3               # Verification attempts per code
-    # Keys the hashes of sign-in codes and the encryption of contacts in
-    # Redis. At least 32 bytes, shared by every server instance, and required
-    # in release mode. Prefer the OTP_SECRET environment variable, for example
-    # generated with: openssl rand -base64 48
-    secret: ""
     contact_requests_per_hour: 5   # Codes issued to one email address or mobile number, per client
     contact_attempts_per_hour: 10  # Verification attempts for one contact across all of its codes, per client
     contact_requests_total_per_hour: 20  # Codes for one contact from all clients; known clients are exempt
@@ -223,11 +218,6 @@ notifications:
     max_attempts: 3         # Attempts per code; delivery also stops when the code expires
 
 admin:
-  # Encrypts the authenticator (TOTP) secrets of administrators: 32 random
-  # bytes, base64-encoded (openssl rand -base64 32). Admin sign-in is disabled
-  # without it. Prefer the ADMIN_TOTP_KEY environment variable; the server and
-  # the cmd/admin command must use the same key.
-  totp_key: ""
   # Least duration of an answer to an admin sign-in request, so that it does
   # not tell administrators' addresses from unknown ones.
   sign_in_min_response_ms: 400
@@ -343,10 +333,14 @@ market_data:
     cache_seconds: 30          # Redis and client cache of an answer
 
 # Data-protection keys, wrapped by a key-encryption key (KEK) in a key
-# management service; see docs/data-protection.md. No feature uses them yet.
+# management service; see docs/data-protection.md. They protect the sign-in
+# codes in Redis, the authenticator secrets of administrators, and the row
+# seals.
 keys:
   # "transit" (HashiCorp Vault or OpenBao), "local" (development only, refused
-  # in release mode), or empty to load no keys.
+  # in release mode), or empty to load no keys, which release mode refuses:
+  # sign-in codes then use a random secret of the process, and admin sign-in
+  # is disabled.
   provider: ""
   local:
     kek: ""                 # Prefer KEYS_LOCAL_KEK (openssl rand -base64 32)
@@ -360,12 +354,6 @@ keys:
     timeout_seconds: 10
   reload_interval_seconds: 60    # How often each instance loads a change of data_keys
   activation_delay_seconds: 300  # A rotated key writes only after this; at least 2x the reload interval
-  # What admin.totp_key and otp.auth.secret still do while they are set
-  # (docs/data-protection.md#moving-off-the-legacy-secrets): "write" seals
-  # new authenticator secrets and sign-in codes with them, as releases
-  # before #146 do; "read" seals them with the data keys and only reads the
-  # old ones. Set "read" once every instance runs this release.
-  legacy_secrets: "write"
   # Row seals (#139): a keyed MAC over the protected rows, with the row-mac key.
   row_seals:
     # report records a row that does not match its seal; enforce also refuses

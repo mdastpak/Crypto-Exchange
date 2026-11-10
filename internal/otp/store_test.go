@@ -18,8 +18,6 @@ import (
 // storeTestRedisDB is the database of this package.
 const storeTestRedisDB = redistest.OTP
 
-const testSecret = "an-otp-test-secret-of-at-least-32-bytes"
-
 // newTestRedis returns a client for an empty test database, and skips the
 // test when Redis is not reachable.
 func newTestRedis(t *testing.T) *redis.Client {
@@ -40,9 +38,6 @@ func newTestRedis(t *testing.T) *redis.Client {
 func newTestStore(t *testing.T, settings Settings) (*Store, *redis.Client) {
 	t.Helper()
 	client := newTestRedis(t)
-	if settings.Secret == "" {
-		settings.Secret = testSecret
-	}
 	return NewStore(client, settings), client
 }
 
@@ -311,15 +306,15 @@ func TestStore_ContactsAreEncryptedWithTheSecret(t *testing.T) {
 	encrypted, err := client.HGet(ctx, store.sessionKey(issued.SessionID), fieldContact).Result()
 	require.NoError(t, err)
 
-	contact, err := store.legacy.decryptContact(issued.SessionID, encrypted)
+	contact, err := store.process.decryptContact(issued.SessionID, encrypted)
 	require.NoError(t, err)
 	assert.Equal(t, "alice@example.com", contact)
 
-	other := NewStore(client, Settings{Secret: strings.Repeat("x", MinSecretLength)})
-	_, err = other.legacy.decryptContact(issued.SessionID, encrypted)
+	other := NewStore(client, Settings{})
+	_, err = other.process.decryptContact(issued.SessionID, encrypted)
 	assert.Error(t, err, "the session ID, which clients know, must not be enough to decrypt the contact")
 
-	_, err = store.legacy.decryptContact("5b0c8f0e-58a6-4c3b-9d8e-2f7a1c3e9b10", encrypted)
+	_, err = store.process.decryptContact("5b0c8f0e-58a6-4c3b-9d8e-2f7a1c3e9b10", encrypted)
 	assert.Error(t, err, "a ciphertext cannot be moved to another session")
 }
 
@@ -327,7 +322,7 @@ func TestStore_CodesAreBoundToTheSecret(t *testing.T) {
 	store, client := newTestStore(t, Settings{})
 	issued := issue(t, store, "alice@example.com")
 
-	other := NewStore(client, Settings{Secret: strings.Repeat("x", MinSecretLength)})
+	other := NewStore(client, Settings{})
 	_, err := other.Verify(context.Background(), issued.SessionID, issued.Code)
 
 	assert.ErrorIs(t, err, ErrInvalidCode, "a code hash cannot be checked without the secret")
@@ -335,7 +330,7 @@ func TestStore_CodesAreBoundToTheSecret(t *testing.T) {
 
 func TestStore_NamespacesAreIndependent(t *testing.T) {
 	users, client := newTestStore(t, Settings{ContactRequestsPerHour: 1})
-	admins := NewStore(client, Settings{Secret: testSecret, Namespace: "admin", ContactRequestsPerHour: 1})
+	admins := NewStore(client, Settings{Namespace: "admin", ContactRequestsPerHour: 1})
 	ctx := context.Background()
 
 	userCode := issue(t, users, "alice@example.com")
@@ -471,7 +466,7 @@ func TestStore_TotalLimitSparesKnownClients(t *testing.T) {
 }
 
 func TestSettings_TotalRequestsAtLeastPerClient(t *testing.T) {
-	err := Settings{Secret: strings.Repeat("s", 32), ContactRequestsPerHour: 30, ContactRequestsTotalPerHour: 10}.Validate(false)
+	err := Settings{ContactRequestsPerHour: 30, ContactRequestsTotalPerHour: 10}.Validate()
 	assert.ErrorContains(t, err, "contact_requests_total_per_hour")
 	assert.Equal(t, 30, Settings{ContactRequestsPerHour: 30}.WithDefaults().ContactRequestsTotalPerHour, "the default is never below the per-client limit")
 	assert.Equal(t, DefaultContactRequestsTotalPerHour, Settings{}.WithDefaults().ContactRequestsTotalPerHour)

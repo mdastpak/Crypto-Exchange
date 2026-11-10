@@ -6,10 +6,7 @@ package adminauth
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -31,21 +28,14 @@ var (
 	ErrUserExists   = errors.New("a user with this email address already exists")
 	ErrNotFound     = errors.New("no active administrator with this email address")
 	ErrInvalidCode  = errors.New("invalid authenticator code")
-	ErrInvalidKey   = errors.New("admin.totp_key must be 32 random bytes, base64-encoded")
 )
-
-// KeySize is the size of the key that encrypts TOTP secrets.
-const KeySize = 32
 
 // Service manages administrator accounts.
 type Service struct {
 	db *sql.DB
-	// legacy is the AEAD of admin.totp_key, or nil when it is not set;
-	// dataKeys seals with the field-enc data keys, or is nil without
-	// keys.provider (#146). writes is the format of new secrets.
-	legacy   cipher.AEAD
+	// dataKeys seals the authenticator secrets with the field-enc data
+	// keys.
 	dataKeys FieldSealer
-	writes   Format
 	// issuer names the exchange in authenticator apps.
 	issuer string
 	now    func() time.Time
@@ -55,35 +45,14 @@ type Service struct {
 	Origin audit.Event
 }
 
-// DecodeKey decodes admin.totp_key.
-func DecodeKey(encoded string) ([]byte, error) {
-	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
-	if err != nil || len(key) != KeySize {
-		return nil, ErrInvalidKey
-	}
-	return key, nil
-}
-
-// NewService returns a service that stores TOTP secrets sealed with the keys
-// of secrets, at least one of which must be set. issuer names the exchange in
-// authenticator apps.
-func NewService(db *sql.DB, secrets Secrets, issuer string) (*Service, error) {
-	s := &Service{db: db, dataKeys: secrets.DataKeys, writes: secrets.WriteFormat(), now: time.Now}
-	if secrets.LegacyKey != nil {
-		if len(secrets.LegacyKey) != KeySize {
-			return nil, ErrInvalidKey
-		}
-		block, err := aes.NewCipher(secrets.LegacyKey)
-		if err != nil {
-			return nil, err
-		}
-		if s.legacy, err = cipher.NewGCM(block); err != nil {
-			return nil, err
-		}
-	}
-	if s.legacy == nil && s.dataKeys == nil {
+// NewService returns a service that stores TOTP secrets sealed with the
+// field-enc data keys of dataKeys, which must be set. issuer names the
+// exchange in authenticator apps.
+func NewService(db *sql.DB, dataKeys FieldSealer, issuer string) (*Service, error) {
+	if dataKeys == nil {
 		return nil, ErrNoKeys
 	}
+	s := &Service{db: db, dataKeys: dataKeys, now: time.Now}
 	if issuer == "" {
 		issuer = "Exchange"
 	}

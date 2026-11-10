@@ -102,7 +102,7 @@ func TestStore_EveryScriptStaysInOneHashSlot(t *testing.T) {
 	ctx := context.Background()
 
 	for _, namespace := range []string{"", "admin"} {
-		store := NewStore(client, Settings{Secret: testSecret, Namespace: namespace, AttemptsPerCode: 2, ContactAttemptsPerHour: 3})
+		store := NewStore(client, Settings{Namespace: namespace, AttemptsPerCode: 2, ContactAttemptsPerHour: 3})
 		for i := range 5 {
 			contact := fmt.Sprintf("user%d@example.com", i)
 			client := fmt.Sprintf("10.0.0.%d", i)
@@ -161,7 +161,7 @@ func TestStore_DurableWritesFailClosed(t *testing.T) {
 	issued, err := store.Issue(ctx, "durable@example.com", "client")
 	require.NoError(t, err)
 
-	durable := NewStore(client, Settings{Secret: testSecret, Durability: redisutil.Durability{Replicas: 1, Timeout: 50 * time.Millisecond}})
+	durable := NewStore(client, Settings{Durability: redisutil.Durability{Replicas: 1, Timeout: 50 * time.Millisecond}})
 	_, err = durable.Issue(ctx, "durable@example.com", "client")
 	require.ErrorIs(t, err, redisutil.ErrNotReplicated)
 

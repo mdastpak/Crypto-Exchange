@@ -401,25 +401,6 @@ func TestKeys_ReloadAndActivation(t *testing.T) {
 	}
 }
 
-// TestKeys_LegacySecrets checks keys.legacy_secrets (#146).
-func TestKeys_LegacySecrets(t *testing.T) {
-	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), nil))
-	assert.Equal(t, LegacySecretsWrite, Config.Keys.LegacySecrets)
-	assert.True(t, Config.Keys.WritesWithLegacySecrets())
-
-	require.NoError(t, loadFile(t, configFile("config.compose.yaml"), map[string]string{
-		"KEYS_PROVIDER": "local", "KEYS_LEGACY_SECRETS": "read",
-	}))
-	assert.False(t, Config.Keys.WritesWithLegacySecrets())
-
-	err := loadFile(t, configFile("config.compose.yaml"), map[string]string{"KEYS_LEGACY_SECRETS": "read"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keys.legacy_secrets (KEYS_LEGACY_SECRETS) is \"read\", which seals new secrets with the data keys, but keys.provider is not set")
-	err = loadFile(t, configFile("config.compose.yaml"), map[string]string{"KEYS_PROVIDER": "local", "KEYS_LEGACY_SECRETS": "off"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `keys.legacy_secrets (KEYS_LEGACY_SECRETS) is "off"; it must be "write" or "read"`)
-}
-
 // TestPostgres_AvailabilitySettings checks the defaults, environment
 // variables, and validation of the PostgreSQL availability settings (#230).
 func TestPostgres_AvailabilitySettings(t *testing.T) {

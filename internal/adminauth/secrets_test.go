@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -37,145 +36,57 @@ func storedSecret(t *testing.T, conn *sql.DB, adminID string) string {
 	return stored
 }
 
-func TestSecrets_TheWriteFormatFollowsTheKeys(t *testing.T) {
-	conn := migratedTestDB(t)
-	live, _ := newDataKeys(t, conn)
-	legacy := newKey(t)
-	ctx := context.Background()
-
-	i := 0
-	for name, tc := range map[string]struct {
-		secrets Secrets
-		prefix  string
-	}{
-		"admin.totp_key only":            {Secrets{LegacyKey: legacy}, "v1:"},
-		"data keys only":                 {Secrets{DataKeys: live}, "v2:"},
-		"both, legacy_secrets write":     {Secrets{LegacyKey: legacy, DataKeys: live, LegacyWrites: true}, "v1:"},
-		"both, legacy_secrets read":      {Secrets{LegacyKey: legacy, DataKeys: live}, "v2:"},
-		"data keys, write without a key": {Secrets{DataKeys: live, LegacyWrites: true}, "v2:"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			service, err := NewService(conn, tc.secrets, "Crypto Exchange")
-			require.NoError(t, err)
-			i++
-			enrollment, err := service.Create(ctx, fmt.Sprintf("admin%d@example.com", i))
-			require.NoError(t, err)
-			assert.True(t, strings.HasPrefix(storedSecret(t, conn, enrollment.AdminID), tc.prefix))
-			now := time.Unix(1_900_000_000, 0)
-			assert.NoError(t, service.VerifyTOTP(ctx, enrollment.AdminID, at(t, service, now, enrollment)))
-		})
-	}
-}
-
-// TestSecrets_InstancesReadBothFormats follows the move off admin.totp_key:
-// an instance that knows both keys reads secrets of both formats, and one
-// that knows only one key names what is missing instead of failing as a
-// wrong code.
-func TestSecrets_InstancesReadBothFormats(t *testing.T) {
-	conn := migratedTestDB(t)
-	live, _ := newDataKeys(t, conn)
-	legacy := newKey(t)
-	ctx := context.Background()
-	now := time.Unix(1_900_000_000, 0)
-
-	oldStyle, err := NewService(conn, Secrets{LegacyKey: legacy}, "")
-	require.NoError(t, err)
-	newStyle, err := NewService(conn, Secrets{DataKeys: live}, "")
-	require.NoError(t, err)
-	both, err := NewService(conn, Secrets{LegacyKey: legacy, DataKeys: live}, "")
-	require.NoError(t, err)
-
-	sealedLegacy, err := oldStyle.Create(ctx, "legacy@example.com")
-	require.NoError(t, err)
-	sealedData, err := newStyle.Create(ctx, "data@example.com")
-	require.NoError(t, err)
-
-	require.NoError(t, both.VerifyTOTP(ctx, sealedLegacy.AdminID, at(t, both, now, sealedLegacy)))
-	require.NoError(t, both.VerifyTOTP(ctx, sealedData.AdminID, at(t, both, now, sealedData)))
-
-	err = newStyle.VerifyTOTP(ctx, sealedLegacy.AdminID, at(t, newStyle, now.Add(time.Minute), sealedLegacy))
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrInvalidCode)
-	assert.Contains(t, err.Error(), "admin.totp_key, which is not set")
-	err = oldStyle.VerifyTOTP(ctx, sealedData.AdminID, at(t, oldStyle, now.Add(time.Minute), sealedData))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keys.provider is not set")
-
-	// A data-key secret copied to another administrator does not open.
-	_, err = conn.Exec(`UPDATE users SET totp_secret = (SELECT totp_secret FROM users WHERE hk = $1) WHERE hk = $2`,
-		sealedData.AdminID, sealedLegacy.AdminID)
-	require.NoError(t, err)
-	err = both.VerifyTOTP(ctx, sealedLegacy.AdminID, at(t, both, now.Add(2*time.Minute), sealedData))
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrInvalidCode)
-}
-
-func TestSecrets_ResealMovesEverySecretAndBack(t *testing.T) {
+// TestSecrets_AreSealedWithTheDataKeysOnly checks that an authenticator
+// secret is stored sealed with a field-enc data key, that it survives a
+// rotation, and that nothing else opens: a secret in any other format, or
+// one copied from another administrator, is a configuration error and
+// never a wrong code.
+func TestSecrets_AreSealedWithTheDataKeysOnly(t *testing.T) {
 	conn := migratedTestDB(t)
 	live, keyStore := newDataKeys(t, conn)
-	legacy := newKey(t)
 	ctx := context.Background()
 	now := time.Unix(1_900_000_000, 0)
+	service, err := NewService(conn, live, "")
+	require.NoError(t, err)
 
-	both, err := NewService(conn, Secrets{LegacyKey: legacy, DataKeys: live, LegacyWrites: true}, "")
+	first, err := service.Create(ctx, "first@example.com")
 	require.NoError(t, err)
-	var enrollments []Enrollment
-	for _, email := range []string{"a@example.com", "b@example.com", "c@example.com"} {
-		e, err := both.Create(ctx, email)
-		require.NoError(t, err)
-		enrollments = append(enrollments, e)
-	}
-	require.NoError(t, both.Disable(ctx, "c@example.com"))
+	stored := storedSecret(t, conn, first.AdminID)
+	require.True(t, strings.HasPrefix(stored, sealedPrefix))
+	sealed, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, sealedPrefix))
+	require.NoError(t, err)
+	opened, err := live.OpenField(sealingAAD(first.AdminID), sealed)
+	require.NoError(t, err, "the field-enc data key opens what is stored")
+	assert.Equal(t, decodeSecret(t, first.Secret), opened)
+	assert.NotContains(t, stored, first.Secret)
+	require.NoError(t, service.VerifyTOTP(ctx, first.AdminID, at(t, service, now, first)))
 
-	counts, err := both.CountSecrets(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, SecretCounts{Legacy: 3}, counts)
-
-	changed, err := both.Reseal(ctx, FormatDataKeys)
-	require.NoError(t, err)
-	assert.Equal(t, 3, changed, "disabled administrators are resealed too, so admin.totp_key can go")
-	counts, err = CountSecrets(ctx, conn)
-	require.NoError(t, err)
-	assert.Equal(t, SecretCounts{DataKeys: 3}, counts)
-	changed, err = both.Reseal(ctx, FormatDataKeys)
-	require.NoError(t, err)
-	assert.Zero(t, changed, "resealing again changes nothing")
-
-	// Without admin.totp_key, the same authenticator apps keep working.
-	dataOnly, err := NewService(conn, Secrets{DataKeys: live}, "")
-	require.NoError(t, err)
-	for _, e := range enrollments[:2] {
-		require.NoError(t, dataOnly.VerifyTOTP(ctx, e.AdminID, at(t, dataOnly, now, e)))
-	}
-
-	// After a rotation, the secrets sealed with the older version still open.
+	// After a rotation, the secret sealed with the older version still
+	// opens, and a new one is sealed with the new version.
 	_, err = keyStore.Rotate(ctx, keys.PurposeFieldEnc)
 	require.NoError(t, err)
 	_, err = live.Reload(ctx)
 	require.NoError(t, err)
-	reset, err := dataOnly.ResetTOTP(ctx, "a@example.com")
+	require.NoError(t, service.VerifyTOTP(ctx, first.AdminID, at(t, service, now.Add(time.Minute), first)))
+	second, err := service.Create(ctx, "second@example.com")
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(storedSecret(t, conn, reset.AdminID), "v2:"))
+	require.NoError(t, service.VerifyTOTP(ctx, second.AdminID, at(t, service, now, second)))
 
-	var events int
-	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = 'admin.totp_resealed'
-		AND changes->'before'->>'format' = 'legacy' AND changes->'after'->>'format' = 'data-keys'`).Scan(&events))
-	assert.Equal(t, 3, events)
-
-	_, err = dataOnly.Reseal(ctx, FormatLegacy)
-	assert.Error(t, err, "resealing to admin.totp_key needs it")
-
-	// The way back, before a rollback to a release that knows only
-	// admin.totp_key.
-	changed, err = both.Reseal(ctx, FormatLegacy)
+	// A secret copied to another administrator does not open.
+	_, err = conn.Exec(`UPDATE users SET totp_secret = (SELECT totp_secret FROM users WHERE hk = $1) WHERE hk = $2`,
+		first.AdminID, second.AdminID)
 	require.NoError(t, err)
-	assert.Equal(t, 3, changed)
-	oldStyle, err := NewService(conn, Secrets{LegacyKey: legacy}, "")
-	require.NoError(t, err)
-	later := now.Add(time.Minute)
-	require.NoError(t, oldStyle.VerifyTOTP(ctx, reset.AdminID, at(t, oldStyle, later, reset)))
-	require.NoError(t, oldStyle.VerifyTOTP(ctx, enrollments[1].AdminID, at(t, oldStyle, later, enrollments[1])))
+	err = service.VerifyTOTP(ctx, second.AdminID, at(t, service, now.Add(2*time.Minute), first))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInvalidCode)
 
-	_, err = both.Reseal(ctx, "plain")
-	assert.Error(t, err)
+	// No other format is read: not one with another marker, and not a
+	// secret in the clear.
+	for _, other := range []string{"v9:" + strings.TrimPrefix(stored, sealedPrefix), first.Secret, sealedPrefix + "not base64!"} {
+		_, err = conn.Exec(`UPDATE users SET totp_secret = $2 WHERE hk = $1`, first.AdminID, other)
+		require.NoError(t, err)
+		err = service.VerifyTOTP(ctx, first.AdminID, at(t, service, now.Add(3*time.Minute), first))
+		require.Error(t, err, other)
+		assert.NotErrorIs(t, err, ErrInvalidCode, other)
+	}
 }

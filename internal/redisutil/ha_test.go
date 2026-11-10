@@ -24,8 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const haSecret = "a-failover-drill-secret-of-32-bytes!"
-
 // durable is the durability of the drill: one replica must hold every
 // counter. Each primary has two replicas, so that the promoted one still
 // has a replica after the failover, and durable writes go on.
@@ -109,7 +107,7 @@ func failAttempts(t *testing.T, store *otp.Store, issued otp.Issued, n int) {
 func TestHA_SentinelFailoverKeepsTheAttemptsMade(t *testing.T) {
 	svc := haService(t, config.RedisModeSentinel)
 	ctx := context.Background()
-	store := otp.NewStore(svc.Client, otp.Settings{Secret: haSecret, AttemptsPerCode: 5, ContactAttemptsPerHour: 50, Durability: durable})
+	store := otp.NewStore(svc.Client, otp.Settings{AttemptsPerCode: 5, ContactAttemptsPerHour: 50, Durability: durable})
 	blacklist := &auth.TokenBlacklist{RedisClient: svc.Client, Prefix: "blacklist:token:", Durability: durable}
 
 	issued, err := store.Issue(ctx, "failover@example.com", "client")
@@ -156,7 +154,7 @@ func TestHA_ClusterRunsTheStoresAndSurvivesAFailover(t *testing.T) {
 	ctx := context.Background()
 	cluster, ok := svc.Client.(*redis.ClusterClient)
 	require.True(t, ok, "%T", svc.Client)
-	store := otp.NewStore(svc.Client, otp.Settings{Secret: haSecret, AttemptsPerCode: 5, ContactAttemptsPerHour: 50, Durability: durable})
+	store := otp.NewStore(svc.Client, otp.Settings{AttemptsPerCode: 5, ContactAttemptsPerHour: 50, Durability: durable})
 	blacklist := &auth.TokenBlacklist{RedisClient: svc.Client, Prefix: "blacklist:token:", Durability: durable}
 
 	primaries := map[string]bool{}

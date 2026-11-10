@@ -213,8 +213,6 @@ func TestOverlayEnvVars(t *testing.T) {
 		"RABBITMQ_HOST":            "mqhost",
 		"RABBITMQ_PORT":            "5673",
 		"JWT_ISSUER":               "issuer1",
-		"OTP_SECRET":               "otp-secret",
-		"ADMIN_TOTP_KEY":           "admin-totp-key",
 		"SMTP_PASSWORD":            "smtppass",
 		"KAVENEGAR_API_KEY":        "kavkey",
 		"BINANCE_API_KEY":          "bkey",
@@ -247,8 +245,6 @@ func TestOverlayEnvVars(t *testing.T) {
 	assert.Equal(t, "mqhost", Config.RabbitMQ.Host)
 	assert.Equal(t, "5673", Config.RabbitMQ.Port)
 	assert.Equal(t, "issuer1", Config.JWT.Issuer)
-	assert.Equal(t, "otp-secret", Config.OTP.Auth.Secret)
-	assert.Equal(t, "admin-totp-key", Config.Admin.TOTPKey)
 	assert.Equal(t, "smtppass", Config.Notifications.Email.Password)
 	assert.Equal(t, "kavkey", Config.Notifications.SMS.Kavenegar.APIKey)
 	assert.Equal(t, "bkey", Config.PriceAggregator.Providers[0].APIKey)
@@ -320,7 +316,7 @@ func TestComposeConfig(t *testing.T) {
 	defer resetConfig()
 	original := configPath
 	defer func() { configPath = original }()
-	for _, name := range []string{"POSTGRES_PASSWORD", "REDIS_PASSWORD", "RABBITMQ_PASSWORD", "OTP_SECRET", "ADMIN_TOTP_KEY"} {
+	for _, name := range []string{"POSTGRES_PASSWORD", "REDIS_PASSWORD", "RABBITMQ_PASSWORD"} {
 		t.Setenv(name, "")
 	}
 
@@ -338,8 +334,6 @@ func TestComposeConfig(t *testing.T) {
 	assert.Empty(t, Config.Postgres.Password, "passwords come from the environment")
 	assert.Empty(t, Config.Redis.Password)
 	assert.Empty(t, Config.RabbitMQ.Password)
-	assert.Empty(t, Config.OTP.Auth.Secret)
-	assert.Empty(t, Config.Admin.TOTPKey)
 }
 
 func TestSetDefaults_CandleTiers(t *testing.T) {

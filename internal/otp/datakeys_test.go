@@ -43,9 +43,22 @@ func TestStore_DataKeysProtectNewSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1", version, "the session names the otp-mac version")
 
-	// otp.auth.secret alone cannot read it: the data key is what protects it.
-	legacyOnly := NewStore(client, Settings{Secret: testSecret})
-	_, err = legacyOnly.Verify(ctx, issued.SessionID, issued.Code)
+	// The data key is what protects it: the session's contact opens with
+	// the keys derived from otp-mac/v1, and a store without the data keys
+	// cannot read the session.
+	key, err := live.Current(keys.PurposeOTPMAC)
+	require.NoError(t, err)
+	derived, err := store.dataKeys.Load().derive(key)
+	require.NoError(t, err)
+	encrypted, err := client.HGet(ctx, store.sessionKey(issued.SessionID), fieldContact).Result()
+	require.NoError(t, err)
+	opened, err := derived.decryptContact(issued.SessionID, encrypted)
+	require.NoError(t, err)
+	assert.Equal(t, "alice@example.com", opened)
+	_, err = store.process.decryptContact(issued.SessionID, encrypted)
+	assert.Error(t, err, "the keys of the process protect nothing once the data keys are used")
+	withoutKeys := NewStore(client, Settings{})
+	_, err = withoutKeys.Verify(ctx, issued.SessionID, issued.Code)
 	assert.Error(t, err)
 
 	contact, err := store.Verify(ctx, issue(t, store, "bob@example.com").SessionID, "000000")
@@ -57,50 +70,32 @@ func TestStore_DataKeysProtectNewSessions(t *testing.T) {
 	assert.Equal(t, "carol@example.com", contact)
 }
 
-// TestStore_InstancesOfBothKindsShareSessions follows a rolling change: some
-// instances still seal with otp.auth.secret, others with the data keys, and
-// every one of them verifies the codes of every other.
-func TestStore_InstancesOfBothKindsShareSessions(t *testing.T) {
+// TestStore_InstancesShareSessionsThroughTheDataKeys checks that every
+// instance with the data keys verifies the codes of every other, and that a
+// session written without a data key is refused by them: nothing but the
+// data keys protects a session.
+func TestStore_InstancesShareSessionsThroughTheDataKeys(t *testing.T) {
 	live, _ := newDataKeys(t)
 	client := newTestRedis(t)
-	// A release before #146: the secret only.
-	old := NewStore(client, Settings{Secret: testSecret})
-	// This release with keys.legacy_secrets "write": it reads the data keys
-	// but still writes with the secret.
-	writesLegacy := NewStore(client, Settings{Secret: testSecret, LegacyWrites: true})
-	writesLegacy.UseDataKeys(live)
-	// This release with keys.legacy_secrets "read".
-	readsLegacy := NewStore(client, Settings{Secret: testSecret})
-	readsLegacy.UseDataKeys(live)
-	// The end state: no secret at all.
-	dataOnly := NewStore(client, Settings{})
-	dataOnly.UseDataKeys(live)
+	first, second := NewStore(client, Settings{}), NewStore(client, Settings{})
+	first.UseDataKeys(live)
+	second.UseDataKeys(live)
 	ctx := context.Background()
 
-	for name, tc := range map[string]struct {
-		issuer    *Store
-		verifiers []*Store
-	}{
-		"before #146":             {old, []*Store{writesLegacy, readsLegacy}},
-		"legacy_secrets write":    {writesLegacy, []*Store{old, readsLegacy}},
-		"legacy_secrets read":     {readsLegacy, []*Store{writesLegacy, dataOnly}},
-		"without otp.auth.secret": {dataOnly, []*Store{writesLegacy, readsLegacy}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			for i, verifier := range tc.verifiers {
-				issued, err := tc.issuer.Issue(ctx, "dave@example.com", name)
-				require.NoError(t, err)
-				contact, err := verifier.Verify(ctx, issued.SessionID, issued.Code)
-				require.NoError(t, err, "verifier %d", i)
-				assert.Equal(t, "dave@example.com", contact)
-			}
-		})
-	}
-
-	issued, err := readsLegacy.Issue(ctx, "erin@example.com", "")
+	issued, err := first.Issue(ctx, "dave@example.com", "")
 	require.NoError(t, err)
-	_, err = old.Verify(ctx, issued.SessionID, issued.Code)
-	assert.Error(t, err, "a release before #146 cannot read the data keys, which is why legacy_secrets starts as write")
+	contact, err := second.Verify(ctx, issued.SessionID, issued.Code)
+	require.NoError(t, err)
+	assert.Equal(t, "dave@example.com", contact)
+
+	// A store without data keys, as in development, writes no key version.
+	withoutKeys := NewStore(client, Settings{})
+	issued, err = withoutKeys.Issue(ctx, "erin@example.com", "")
+	require.NoError(t, err)
+	_, err = first.Verify(ctx, issued.SessionID, issued.Code)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInvalidCode)
+	assert.Contains(t, err.Error(), "data keys only")
 }
 
 func TestStore_SessionsSurviveARotation(t *testing.T) {
@@ -143,7 +138,7 @@ func TestStore_UnknownKeyVersionIsAnError(t *testing.T) {
 		assert.NotErrorIs(t, err, ErrInvalidCode, "%s: a session that cannot be read is a server error, not a wrong code", version)
 	}
 
-	withoutKeys := NewStore(client, Settings{Secret: testSecret})
+	withoutKeys := NewStore(client, Settings{})
 	issued := issue(t, store, "heidi@example.com")
 	_, err := withoutKeys.Verify(ctx, issued.SessionID, issued.Code)
 	require.Error(t, err)

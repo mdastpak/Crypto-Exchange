@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -159,8 +158,8 @@ func run() error {
 		return fmt.Errorf("failed to initialize auth keys: %w", err)
 	}
 
-	if config.Config.OTP.Auth.Secret == "" && config.Config.Keys.Provider == "" {
-		log.Println("WARNING: neither otp.auth.secret nor keys.provider is set: using a random secret, so sign-in codes can only be verified by this process until it restarts")
+	if config.Config.Keys.Provider == "" {
+		log.Println("WARNING: keys.provider is not set: sign-in codes use a random secret, so only this process can verify them, until it restarts, and admin sign-in is disabled")
 	}
 	// Production runs several instances behind a load balancer, which keeps
 	// routing to a stopping instance until it sees the readiness probe fail.
@@ -170,10 +169,6 @@ func run() error {
 	otpChannels, err := notify.NewChannels(config.Config.Notifications, otpTTL())
 	if err != nil {
 		return fmt.Errorf("invalid OTP delivery configuration: %w", err)
-	}
-	adminTOTPKey, err := legacyTOTPKey()
-	if err != nil {
-		return fmt.Errorf("invalid admin sign-in configuration: %w", err)
 	}
 
 	// pg_stat_activity tells the sessions of each instance apart (#230).
@@ -241,7 +236,7 @@ func run() error {
 	if err := configureIdentity(handlers); err != nil {
 		return fmt.Errorf("failed to configure the identity checks: %w", err)
 	}
-	if err := configureAdminSignIn(handlers, services, adminTOTPKey, otpSender); err != nil {
+	if err := configureAdminSignIn(handlers, services, otpSender); err != nil {
 		return fmt.Errorf("failed to configure admin sign-in: %w", err)
 	}
 	// Forward currency events to WebSocket clients.
@@ -525,15 +520,6 @@ func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandle
 	}, delisting.Advance, rebrand.Advance)
 }
 
-// legacyTOTPKey decodes admin.totp_key, or returns nil when it is not set:
-// authenticator secrets are then sealed with the data keys (#146).
-func legacyTOTPKey() ([]byte, error) {
-	if config.Config.Admin.TOTPKey == "" {
-		return nil, nil
-	}
-	return adminauth.DecodeKey(config.Config.Admin.TOTPKey)
-}
-
 // useRowSeals seals the protected rows with the row-mac data keys (#139),
 // and starts the background verifier. Without data keys, no row is sealed.
 func useRowSeals(services *models.InfraServices, dataKeys *keys.Live) *rowseal.Verifier {
@@ -546,9 +532,8 @@ func useRowSeals(services *models.InfraServices, dataKeys *keys.Live) *rowseal.V
 	return verifier
 }
 
-// useDataKeysForOTP makes every sign-in code store read, and unless
-// keys.legacy_secrets keeps otp.auth.secret writing, protect, its sessions
-// with the otp-mac data keys (#146).
+// useDataKeysForOTP makes every sign-in code store protect its sessions with
+// the otp-mac data keys, which every instance shares.
 func useDataKeysForOTP(h *InfraHandlers) {
 	if h.DataKeys == nil {
 		return
@@ -569,7 +554,7 @@ func validateConfiguration() (keys.Provider, error) {
 	provider, keyErr := dataKeyProvider(release)
 	err := errors.Join(
 		config.ValidateServer(),
-		otp.SettingsFromConfig().Validate(release),
+		otp.SettingsFromConfig().Validate(),
 		notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, release),
 		keyErr,
 		platformSettingsErr(),
@@ -597,16 +582,24 @@ func problemList(err error) string {
 	return strings.Join(lines, "\n")
 }
 
+// errKeysProviderRequired refuses a release without the data keys.
+var errKeysProviderRequired = errors.New("keys.provider (KEYS_PROVIDER) is not set; release mode needs the data keys (docs/data-protection.md)")
+
 // dataKeyProvider returns the provider of the key-encryption key that
 // keys.provider selects, or nil when it is not set. Release mode refuses a
-// development provider and a key service reached without TLS.
+// missing provider, a development provider, and a key service reached
+// without TLS: the data keys protect the sign-in codes, the authenticator
+// secrets of administrators, and the row seals, and every instance must
+// share them.
 func dataKeyProvider(releaseMode bool) (keys.Provider, error) {
 	provider, err := keys.FromConfig(config.Config.Keys)
 	if err != nil {
 		return nil, err
 	}
 	if provider == nil {
-		log.Println("WARNING: keys.provider is not set: the data-protection keys are not loaded")
+		if releaseMode {
+			return nil, errKeysProviderRequired
+		}
 		return nil, nil
 	}
 	if err := keys.CheckRelease(provider, releaseMode); err != nil {
@@ -659,25 +652,19 @@ func configureIdentity(h *InfraHandlers) error {
 	return nil
 }
 
-// configureAdminSignIn enables admin sign-in when admin.totp_key (totpKey)
-// or the data keys are set: they seal the authenticator secrets (#146).
-// Codes are emailed through sender, like user sign-in codes.
-func configureAdminSignIn(h *InfraHandlers, services *models.InfraServices, totpKey []byte, sender notify.OTPSender) error {
+// configureAdminSignIn enables admin sign-in when the data keys are loaded:
+// they seal the authenticator secrets. Codes are emailed through sender,
+// like user sign-in codes.
+func configureAdminSignIn(h *InfraHandlers, services *models.InfraServices, sender notify.OTPSender) error {
 	h.Admin.OTPSender = sender
-	secrets := adminauth.Secrets{LegacyKey: totpKey, LegacyWrites: config.Config.Keys.WritesWithLegacySecrets()}
-	if h.DataKeys != nil {
-		secrets.DataKeys = h.DataKeys
+	if h.DataKeys == nil {
+		return nil // run has logged that keys.provider is not set
 	}
-	if secrets.LegacyKey == nil && secrets.DataKeys == nil {
-		log.Println("WARNING: neither admin.totp_key nor keys.provider is set: admin sign-in is disabled")
-		return nil
-	}
-	accounts, err := adminauth.NewService(services.Postgres.DB, secrets, config.Config.Exchange.Name)
+	accounts, err := adminauth.NewService(services.Postgres.DB, h.DataKeys, config.Config.Exchange.Name)
 	if err != nil {
 		return err
 	}
 	h.Admin.Accounts = accounts
-	warnUnreadableTOTPSecrets(services.Postgres.DB, secrets)
 	if !auth.KeysLoaded(auth.RoleAdmin) {
 		log.Println("WARNING: admin sign-in needs jwt.ssl.admin keys and is unavailable until they are set")
 	}
@@ -685,31 +672,6 @@ func configureAdminSignIn(h *InfraHandlers, services *models.InfraServices, totp
 		log.Println("WARNING: admin sign-in needs email delivery (notifications.email) and is unavailable until it is configured")
 	}
 	return nil
-}
-
-// warnUnreadableTOTPSecrets logs the administrators whose authenticator
-// secret this instance cannot open, because the key that sealed it is not
-// configured: they cannot sign in here (#146).
-func warnUnreadableTOTPSecrets(conn *sql.DB, secrets adminauth.Secrets) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	counts, err := adminauth.CountSecrets(ctx, conn)
-	if err != nil {
-		log.Printf("WARNING: %v", err)
-		return
-	}
-	if counts.Legacy > 0 && secrets.LegacyKey == nil {
-		log.Printf("WARNING: %d administrator(s) have an authenticator secret sealed with admin.totp_key, which is not set: they cannot sign in until it is set again, or until \"admin totp-secrets reseal\" moves them to the data keys", counts.Legacy)
-	}
-	if counts.DataKeys > 0 && secrets.DataKeys == nil {
-		log.Printf("WARNING: %d administrator(s) have an authenticator secret sealed with a data key, and keys.provider is not set: they cannot sign in on this instance", counts.DataKeys)
-	}
-	if counts.Unknown > 0 {
-		log.Printf("WARNING: %d administrator(s) have an authenticator secret in an unknown format: enroll them again with reset-totp", counts.Unknown)
-	}
-	if secrets.LegacyKey != nil && secrets.DataKeys != nil && !secrets.LegacyWrites && counts.Legacy == 0 {
-		log.Println("WARNING: no authenticator secret uses admin.totp_key anymore: remove it from the configuration (docs/data-protection.md#moving-off-the-legacy-secrets)")
-	}
 }
 
 // otpTTL is the lifetime of sign-in codes, including the default that the OTP

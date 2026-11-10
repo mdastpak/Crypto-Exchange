@@ -283,7 +283,7 @@ These limits apply on top of the per-IP [rate limits](#rate-limiting):
 - Each contact gets at most `otp.auth.contact_attempts_per_hour` attempts per hour across all of its codes, counted for the client that requested the codes, so requesting a new code does not bring new attempts. While they are used up, no new code is issued for the contact to that client. A successful sign-in resets the count.
 - These limits count per client so that someone who knows only a contact cannot lock its owner out by failing codes for it ([#187](https://github.com/mdastpak/Crypto-Exchange/issues/187)). They are kept in Redis, so every server instance applies the same counts.
 
-Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by `otp.auth.secret`.
+Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by the `otp-mac` [data key](data-protection.md), which every instance shares. A session names the version of its key, so a rotation does not end the pending codes.
 
 ### Session limit
 
@@ -360,7 +360,7 @@ Administrators are created by an operator with the `cmd/admin` command (see the 
 1. A one-time code sent to their email address.
 2. A code from their authenticator app (TOTP, RFC 6238: 6 digits, 30-second steps).
 
-Admin sign-in needs `jwt.ssl.admin` keys, [`admin.totp_key`](configuration.md#admin), and email delivery. Without them, both sign-in routes return `503 Admin sign-in is not available`.
+Admin sign-in needs `jwt.ssl.admin` keys, the [data keys](configuration.md#keys), which seal the authenticator secrets, and email delivery. Without them, both sign-in routes return `503 Admin sign-in is not available`.
 
 ### `POST /admin/auth`
 
