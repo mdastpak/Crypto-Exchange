@@ -164,7 +164,7 @@ func TestParse_RefusesBrokenRegistries(t *testing.T) {
     networks:
       - network: "tron"
         contract_address`, `unknown status "LIVE"`},
-		"too many decimals":        {"decimals: 2", "decimals: 19", "decimals is 19"},
+		"too many decimals":        {"decimals: 2", "decimals: 37", "decimals is 37"},
 		"the wrong fee asset":      {"        contract_address: \"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t\"\n        fee_asset: \"TRX\"", "        contract_address: \"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t\"\n        fee_asset: \"USDT\"", "network fees on tron are paid in TRX"},
 		"on-chain custody of fiat": {`custody_mode: "OFF_CHAIN"`, `custody_mode: "ON_CHAIN"`, "must be OFF_CHAIN on the internal network"},
 		"minimum over the maximum": {`min_withdrawal: "1"

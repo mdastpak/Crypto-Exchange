@@ -75,8 +75,9 @@ type Market struct {
 	TakerFeeBPS  int                 `yaml:"taker_fee_bps"`
 }
 
-// maxDecimals is the scale of the amount columns, NUMERIC(36, 18).
-const maxDecimals = 18
+// maxDecimals is the most decimals an amount holds: exact_decimal refuses
+// a value of more (#314, docs/architecture.md#amounts-prices-and-ratios).
+const maxDecimals = 36
 
 // maxFeeBPS bounds a fee at 10%; a larger fee is a typo.
 const maxFeeBPS = 1000
