@@ -299,6 +299,7 @@ internal/audit/         The append-only audit log: recording and querying events
 internal/auth/          JWT issuing and verification, key rotation, sessions, blacklist,
                         middleware
 internal/clientip/      Client identity for per-client limits, with IPv6 prefixes
+internal/codestyle/     Checks on the code itself: comments describe the code as it is
 internal/config/        Configuration loading, environment variables, defaults, validation
 internal/contact/       Normalizing and identifying the contacts and codes users type
 internal/contactclaim/  Moving a contact off an account that no longer owns it: claims and
