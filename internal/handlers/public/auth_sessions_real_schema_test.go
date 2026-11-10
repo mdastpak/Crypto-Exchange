@@ -144,7 +144,7 @@ func TestSession_RealSchema_SignInCreatesSessionAndCookie(t *testing.T) {
 	assert.True(t, cookie.HttpOnly)
 	assert.True(t, cookie.Secure)
 	assert.Equal(t, http.SameSiteStrictMode, cookie.SameSite)
-	assert.Equal(t, "/public/auth", cookie.Path)
+	assert.Equal(t, "/api/v1/public/auth", cookie.Path)
 	assert.Equal(t, 60*60, cookie.MaxAge)
 
 	session := env.sessionOf(t, email)
