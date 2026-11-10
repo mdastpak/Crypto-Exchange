@@ -71,7 +71,7 @@ var goEnums = map[string][]string{
 	"kyc_tier":        values(shared.KYCTierNone, shared.KYCTierBasic, shared.KYCTierStandard, shared.KYCTierEnhanced, shared.KYCTierInstitutional),
 	"sanction_action": values(shared.SanctionActionAllow, shared.SanctionActionReview, shared.SanctionActionBlock),
 
-	// The status of currencies, from migration 1.
+	// The status of currencies.
 	"status_enum": values(models.CurrencyStatusApproved, models.CurrencyStatusPending, models.CurrencyStatusSuspend, models.CurrencyStatusDeleted),
 }
 

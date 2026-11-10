@@ -31,8 +31,8 @@ func origin() audit.Event {
 
 func insertCurrency(t *testing.T, db *sql.DB, symbol string) string {
 	t.Helper()
-	// The backend stores symbols in upper case, and migration 36 makes the
-	// database refuse any other (#126).
+	// The backend stores symbols in upper case, and the database
+	// refuses any other (#126).
 	symbol = strings.ToUpper(symbol)
 	info, err := json.Marshal(models.CurrencyInfo{EnName: symbol, FaName: symbol, Symbol: symbol})
 	require.NoError(t, err)

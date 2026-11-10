@@ -181,7 +181,7 @@ func checkIndexes(ctx context.Context, db *sql.DB, _ Options, r *Report) error {
 }
 
 // checkBalances checks the balance invariants of #43 on every row, also
-// where the constraints of migration 17 would already refuse them, since a
+// where the constraints of the schema would already refuse them, since a
 // restore is where a broken copy shows.
 func checkBalances(ctx context.Context, db *sql.DB, _ Options, r *Report) error {
 	var broken int64

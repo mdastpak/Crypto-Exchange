@@ -80,7 +80,7 @@ A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protecte
 | `user_contacts` | `user_hk`, `type`, `value`, `is_primary`, `verified_at`, `removed_at`, `ownership_checked_at` | user sign-in, which finds the account by the contact |
 | `sessions` | `user_id`, `status`, the times, the three token hashes | every signed-in request and every refresh |
 
-Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Migration 46 adds three columns to each table: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
+Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Each of the tables has three columns for it: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
 
 ### Modes
 
@@ -95,7 +95,7 @@ Rows are sealed only when the server has data keys (`keys.provider` set). To rol
 2. The verifier (below) seals every row that has no valid seal yet, and resolves its finding as `report_mode`. Wait until every instance runs the release and one verifier pass has finished after that: `admin row-seals findings` shows no open finding.
 3. Set `enforce` and roll it out.
 
-Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns. Migration 46 is reversed with the release.
+Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns.
 
 ### The verifier
 

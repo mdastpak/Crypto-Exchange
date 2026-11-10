@@ -99,35 +99,9 @@ The API routes are registered once, under `/api/v1`, by `registerAPI`. The healt
 
 Migrations live in `internal/db/migrations` and are applied with golang-migrate.
 
-| Migration | Contents | Used by code |
-| --- | --- | --- |
-| 1 | `currencies` (JSONB `info`, status enum) | Yes |
-| 2 | `users` (JSONB `info`, status enum) | Yes |
-| 3 | `assets` | Not yet |
-| 4 | `markets`, `market_stats_24h` | Not yet |
-| 5 | `orders`, `order_events` | Not yet |
-| 6 | `trades`, `trade_events` | Not yet |
-| 7 | `balances`, `balance_snapshots`, `balance_changes` | Not yet |
-| 8 | Extra `users` columns, `sub_accounts`, `api_keys`, `sessions` | `sessions` only (sign-in sessions and refresh token rotation) |
-| 9 | `kyc_profiles`, `kyc_documents`, `kyc_applications`, `sanctions_screenings`, `aml_rules`, `aml_alerts` | Not yet |
-| 10 | `deposit_addresses`, `deposits`, `withdrawals`, `settlements`, `custody_configs` | Not yet |
-| 11 | Aligns the `users.info` constraint with OTP sign-in, and adds unique indexes on contact values | Yes |
-| 12 | Adds `users.role` (`user` or `admin`) and `users.totp_last_step` | Yes (admin sign-in) |
-| 13 | Makes only non-empty currency contracts unique | Yes |
-| 14 | Unifies the user model: contacts move from `users.info` into `user_contacts`, `users.status` becomes `account_status_type`, and `users.info` and the unused contact columns of migration 8 are dropped | Yes |
-| 15 | `data_keys`: the data-protection keys, wrapped by the key-encryption key | Yes, when `keys.provider` is set |
-| 16 | Replaces the plaintext `api_keys.secret_hash` with `secret_sealed` (HMAC secrets, sealed with a `field-enc` key) and `ed25519_public_key`, with a constraint that each key type keeps only what verifying it needs | Not yet (API keys are #63) |
-| 17 | Balance invariants: no negative amounts, `total` computed as `available + locked`, `on_chain` dropped, one balance per user, asset, and sub-account also without a sub-account | Not yet (the ledger is #60) |
-| 18 | `outbox_events`: the transactional outbox, with a partial index on the pending messages and one on the publish time for the cleanup | Yes |
-| 19 | `currencies.version`: counts the changes of a currency, for the optimistic concurrency of the admin routes | Yes |
-| 20 | `audit_events`: the append-only audit log, with triggers that refuse `UPDATE`, `DELETE`, and `TRUNCATE` | Yes |
-| 21 | `outbox_events.failed_at`: dead letters of the outbox, and the pending index by topic and id | Yes |
-| 22 | `sessions.last_used_at`, and an index of the active sessions of each user, for the session list | Yes |
-| 23 | `sessions.previous_refresh_hash` and `sessions.rotated_at`, for the grace period of concurrent refreshes | Yes |
-| 24 | `currencies.created_at`, `updated_at`, and `deleted_at` become `TIMESTAMPTZ`, read as UTC | Yes |
-| 25 | `currencies.created_at` and `updated_at` become `NOT NULL`, and an index on `(created_at DESC, hk DESC)` for the admin list | Yes |
+The schema starts from one baseline, `1_baseline`, which creates every table, type, and function of the first working version ([#312](https://github.com/mdastpak/Crypto-Exchange/issues/312)). Later changes are migrations 2 and up, one per change. The tables of the exchange domain (assets, markets, orders, trades, deposits, withdrawals, KYC, and AML) are in the schema, and no service uses them yet.
 
-Users have one model since migration 14 ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
+Users have one model ([#38](https://github.com/mdastpak/Crypto-Exchange/issues/38)):
 
 - `users` holds the account: `hk` is the ID that every other table references, `status` is `account_status_type` (`ACTIVE`, `PENDING_VERIFICATION`, `INACTIVE`, `SUSPENDED`, `BANNED`), and `deleted_at` alone marks a deleted account.
 - `user_contacts` holds the contacts: the type (`email`, `mobile`, or the legacy `username`), the value, `verified_at`, and `is_primary`. The database makes each contact value belong to one user, with emails and usernames compared case-insensitively, and allows one primary contact of each type per user.
@@ -310,7 +284,7 @@ Decision record for [#314](https://github.com/mdastpak/Crypto-Exchange/issues/31
 
 **Decision.**
 
-- Every amount (balances and their changes, order and trade quantities, fees, deposits, withdrawals, limits), price, rate, and ratio of the exchange's tables is an `exact_decimal` (migration 49): a PostgreSQL domain over `NUMERIC` without a fixed scale, so a value is stored exactly as written. It refuses, with a check violation instead of rounding, a value with more than 36 decimals or 42 integer digits.
+- Every amount (balances and their changes, order and trade quantities, fees, deposits, withdrawals, limits), price, rate, and ratio of the exchange's tables is an `exact_decimal`: a PostgreSQL domain over `NUMERIC` without a fixed scale, so a value is stored exactly as written. It refuses, with a check violation instead of rounding, a value with more than 36 decimals or 42 integer digits.
 - An asset has at most 36 decimals: `assets.decimals` and `custody_configs.decimals` are checked to be from 0 to 36, and the asset registry refuses more. Every unit of every listed asset therefore fits, including the smallest.
 - Amounts are kept in whole units of the asset (1.5 BTC is `1.5`), not in base units. Code that writes an amount checks that its scale is at most the asset's `decimals`, and rounds explicitly, in the direction that favors the books (down for what a user receives, up for what a user pays), where a computation such as a price times a quantity or a conversion ratio gives more decimals. The rounding of a conversion is recorded as dust, as [currency migrations](api.md#currency-migrations) will.
 - In Go, amounts are `shared.Decimal` (`internal/domain/shared`), which wraps `shopspring/decimal` and adds the database and JSON encodings; JSON carries amounts as strings. Code outside the domain, such as market data, uses `shopspring/decimal` directly.

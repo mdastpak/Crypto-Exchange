@@ -28,9 +28,11 @@ func pgCode(err error) string {
 	return ""
 }
 
-func TestMigration17_EnforcesTheBalanceInvariants(t *testing.T) {
+// TestSchema_EnforcesTheBalanceInvariants checks what the database itself
+// refuses on balances and their changes, whatever the application does.
+func TestSchema_EnforcesTheBalanceInvariants(t *testing.T) {
 	m := newMigrationsTestMigrator(t)
-	require.NoError(t, m.Migrate(17))
+	require.NoError(t, m.Up())
 	conn, err := sql.Open("pgx", migrationsTestDBConnStr())
 	require.NoError(t, err)
 	defer conn.Close()
@@ -39,11 +41,11 @@ func TestMigration17_EnforcesTheBalanceInvariants(t *testing.T) {
 	var balanceID, total string
 	require.NoError(t, conn.QueryRow(`INSERT INTO balances (user_id, asset_id, available, locked, pending_deposit)
 		VALUES ($1, $2, 1.5, 0.25, 7) RETURNING id, total`, user, asset).Scan(&balanceID, &total))
-	assert.Equal(t, "1.750000000000000000", total, "total is available + locked; pending deposits are not owned yet")
+	assert.Equal(t, "1.75", total, "total is available + locked; pending deposits are not owned yet")
 	_, err = conn.Exec(`UPDATE balances SET locked = locked + 1 WHERE id = $1`, balanceID)
 	require.NoError(t, err)
 	require.NoError(t, conn.QueryRow(`SELECT total FROM balances WHERE id = $1`, balanceID).Scan(&total))
-	assert.Equal(t, "2.750000000000000000", total, "the database keeps total in step")
+	assert.Equal(t, "2.75", total, "the database keeps total in step")
 
 	_, err = conn.Exec(`UPDATE balances SET total = 100 WHERE id = $1`, balanceID)
 	assert.Error(t, err, "total cannot be written")
@@ -72,49 +74,4 @@ func TestMigration17_EnforcesTheBalanceInvariants(t *testing.T) {
 	var onChain bool
 	require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'balances' AND column_name = 'on_chain')`).Scan(&onChain))
 	assert.False(t, onChain)
-
-	// Rolling back keeps the balances, with total as a plain column again.
-	require.NoError(t, m.Migrate(16))
-	require.NoError(t, conn.QueryRow(`SELECT total FROM balances WHERE id = $1`, balanceID).Scan(&total))
-	assert.Equal(t, "2.750000000000000000", total)
-	require.NoError(t, m.Migrate(17), "migrating up again works on the rolled-back data")
-}
-
-func TestMigration17_PreflightStopsOnDataItCannotKeep(t *testing.T) {
-	for name, tc := range map[string]struct {
-		insert  string
-		wantErr string
-	}{
-		"on-chain amount": {
-			insert:  `INSERT INTO balances (user_id, asset_id, on_chain) VALUES ($1, $2, 1)`,
-			wantErr: "hold on-chain amounts",
-		},
-		"negative amount": {
-			insert:  `INSERT INTO balances (user_id, asset_id, available) VALUES ($1, $2, -1)`,
-			wantErr: "negative amounts",
-		},
-		"duplicate balance without a sub-account": {
-			insert:  `INSERT INTO balances (user_id, asset_id) VALUES ($1, $2), ($1, $2)`,
-			wantErr: "several balances of one asset",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			m := newMigrationsTestMigrator(t)
-			require.NoError(t, m.Migrate(16))
-			conn, err := sql.Open("pgx", migrationsTestDBConnStr())
-			require.NoError(t, err)
-			defer conn.Close()
-			user, asset := insertUserAndAsset(t, conn, "ETH")
-			_, err = conn.Exec(tc.insert, user, asset)
-			require.NoError(t, err)
-
-			err = m.Migrate(17)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantErr)
-			assert.Contains(t, err.Error(), `run "migrate force 16"`)
-			var onChain bool
-			require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'balances' AND column_name = 'on_chain')`).Scan(&onChain))
-			assert.True(t, onChain, "a failed preflight leaves the schema unchanged")
-		})
-	}
 }

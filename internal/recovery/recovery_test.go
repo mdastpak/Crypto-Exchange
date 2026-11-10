@@ -46,7 +46,7 @@ func event(t *testing.T, db *sql.DB, at time.Time) {
 }
 
 func TestLatestMigration_IsTheNewestFile(t *testing.T) {
-	assert.GreaterOrEqual(t, latest(t), uint(31), "migration 31 is the newest when this test was written")
+	assert.GreaterOrEqual(t, latest(t), uint(1), "the baseline is migration 1")
 	_, err := LatestMigration("file:///does/not/exist")
 	assert.Error(t, err)
 }
