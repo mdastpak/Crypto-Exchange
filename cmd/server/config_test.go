@@ -45,7 +45,7 @@ func TestValidateConfiguration_ExampleInReleaseMode(t *testing.T) {
 		"  - redis.password (REDIS_PASSWORD) is empty",
 		"  - redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK) when only a trusted private network carries the connection",
 		"  - rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq: enable it, or set rabbitmq.tls.private_network (RABBITMQ_TLS_PRIVATE_NETWORK) when only a trusted private network carries the connection",
-		"  - otp.auth.secret (or OTP_SECRET) is required in release mode",
+		"  - keys.provider (KEYS_PROVIDER) is not set; release mode needs the data keys (docs/data-protection.md)",
 	}
 	for _, line := range want {
 		assert.Contains(t, list, line)
@@ -63,14 +63,14 @@ func TestValidateConfiguration_ExampleInDebugMode(t *testing.T) {
 
 func TestValidateConfiguration_ReportsTheChecksOfEveryPackage(t *testing.T) {
 	loadExample(t, map[string]string{
-		"SERVER_MODE": "release", "OTP_SECRET": "short", "KEYS_PROVIDER": "local",
+		"SERVER_MODE": "release", "OTP_AUTH_LENGTH": "3", "KEYS_PROVIDER": "local",
 		"KEYS_LOCAL_KEK": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 	})
 
 	_, err := validateConfiguration()
 	require.Error(t, err)
 	list := problemList(err)
-	assert.Contains(t, list, "  - otp.auth.secret must be at least 32 bytes")
+	assert.Contains(t, list, "  - otp.auth.length must be between 4 and 10, got 3")
 	assert.Contains(t, list, `  - keys.provider "local" keeps the key-encryption key in the configuration and is refused in release mode`)
 	assert.Contains(t, list, "  - server.tls.enabled (SERVER_TLS_ENABLED) is false", "the configuration problems come in the same list")
 }

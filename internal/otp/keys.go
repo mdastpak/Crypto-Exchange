@@ -19,7 +19,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 )
 
-// DataKeys supplies the otp-mac data keys (#146). *keys.Live implements it:
+// DataKeys supplies the otp-mac data keys. *keys.Live implements it:
 // Current is the version that writes now, and Version finds an older or a
 // newer one, reloading the keys when another instance already uses a
 // version that this one has not loaded.
@@ -28,20 +28,19 @@ type DataKeys interface {
 	Version(ctx context.Context, purpose keys.Purpose, version int) (keys.Key, error)
 }
 
-// The labels of the keys derived from a root secret. The labels are those
-// of the releases before #146, so a store keyed by otp.auth.secret reads the
-// sessions that those releases wrote.
+// The labels of the keys derived from a root secret.
 const (
 	labelContacts = "otp contact encryption"
 	labelMAC      = "otp code and contact hashing"
 )
 
-// legacyVersion is the version of the keys derived from otp.auth.secret.
-// Sessions written with it carry no key version, as before #146.
-const legacyVersion = 0
+// processVersion is the version of the keys of a store without data keys.
+// No data key has it: their versions start at 1.
+const processVersion = 0
 
-// sessionKeys are the keys of a sign-in session, derived from one root:
-// otp.auth.secret, or one version of the otp-mac data key.
+// sessionKeys are the keys of a sign-in session, derived from one root: one
+// version of the otp-mac data key, or the random secret of a store without
+// data keys.
 type sessionKeys struct {
 	version  int
 	macKey   []byte
@@ -67,9 +66,12 @@ func newSessionKeys(version int, root func() hash.Hash) (*sessionKeys, error) {
 	return &sessionKeys{version: version, macKey: derive(labelMAC), contacts: contacts}, nil
 }
 
-// legacySessionKeys derives the keys of otp.auth.secret.
-func legacySessionKeys(secret []byte) *sessionKeys {
-	k, err := newSessionKeys(legacyVersion, func() hash.Hash { return hmac.New(sha256.New, secret) })
+// processSessionKeys derives keys from a random secret that only this
+// process knows, for a store without data keys.
+func processSessionKeys() *sessionKeys {
+	secret := make([]byte, sha256.Size)
+	_, _ = rand.Read(secret) // never fails since Go 1.24
+	k, err := newSessionKeys(processVersion, func() hash.Hash { return hmac.New(sha256.New, secret) })
 	if err != nil {
 		panic(err) // unreachable: the derived key is always 32 bytes
 	}
@@ -93,10 +95,10 @@ func (k *sessionKeys) clientID(client string) string {
 	return hex.EncodeToString(k.mac("client", client))
 }
 
-// storedVersion is the key version as a session stores it: empty for
-// otp.auth.secret, as sessions of earlier releases have it.
+// storedVersion is the key version as a session stores it: empty for the
+// keys of a store without data keys.
 func (k *sessionKeys) storedVersion() string {
-	if k.version == legacyVersion {
+	if k.version == processVersion {
 		return ""
 	}
 	return strconv.Itoa(k.version)
@@ -121,8 +123,7 @@ func (k *sessionKeys) decryptContact(sessionID, encrypted string) (string, error
 	nonce, ciphertext := sealed[:k.contacts.NonceSize()], sealed[k.contacts.NonceSize():]
 	contact, err := k.contacts.Open(nil, nonce, ciphertext, []byte(sessionID))
 	if err != nil {
-		// Usually a changed secret: sessions created before the change
-		// cannot be read anymore.
+		// The session was written with another key, or changed in Redis.
 		return "", fmt.Errorf("decrypt the contact: %w", err)
 	}
 	return string(contact), nil
@@ -156,12 +157,9 @@ func (s *keySource) derive(key keys.Key) (*sessionKeys, error) {
 	return k, nil
 }
 
-// UseDataKeys makes the store protect new sessions with the otp-mac data
-// keys instead of otp.auth.secret (#146), unless the secret is set and
-// Settings.LegacyWrites asks to keep writing with it. Sessions are read with
-// whichever keys wrote them, so stores of both kinds share one Redis while
-// a release or a change of keys.legacy_secrets rolls out. Call it before
-// the store is used.
+// UseDataKeys makes the store protect its sessions with the otp-mac data
+// keys, which every instance shares, and with nothing else: a session
+// without a key version is then refused. Call it before the store is used.
 func (s *Store) UseDataKeys(dataKeys DataKeys) {
 	s.dataKeys.Store(&keySource{keys: dataKeys, derived: make(map[int]*sessionKeys)})
 }
@@ -169,8 +167,8 @@ func (s *Store) UseDataKeys(dataKeys DataKeys) {
 // writer returns the keys that protect a new session.
 func (s *Store) writer() (*sessionKeys, error) {
 	src := s.dataKeys.Load()
-	if src == nil || (s.legacySet && s.settings.LegacyWrites) {
-		return s.legacy, nil
+	if src == nil {
+		return s.process, nil
 	}
 	key, err := src.keys.Current(keys.PurposeOTPMAC)
 	if err != nil {
@@ -181,14 +179,17 @@ func (s *Store) writer() (*sessionKeys, error) {
 
 // reader returns the keys that wrote a session, from its stored version.
 func (s *Store) reader(ctx context.Context, stored string) (*sessionKeys, error) {
+	src := s.dataKeys.Load()
 	if stored == "" {
-		return s.legacy, nil
+		if src != nil {
+			return nil, errors.New("the session names no data key, and this instance protects sessions with data keys only")
+		}
+		return s.process, nil
 	}
 	version, err := strconv.Atoi(stored)
 	if err != nil || version < 1 {
 		return nil, fmt.Errorf("the session names the key version %q", stored)
 	}
-	src := s.dataKeys.Load()
 	if src == nil {
 		return nil, errors.New("the session was written with a data key, and this instance has no data keys")
 	}

@@ -6,16 +6,7 @@ This document describes the HTTP and WebSocket API as currently implemented on `
 
 ### Versions
 
-The API is versioned under `/api/v1`. The paths in this document are relative to it: `POST /public/auth` is `POST /api/v1/public/auth`, and the WebSocket gateway is `/api/v1/ws/`. The exceptions are not part of the API and have no version: the health probes under `/system/`, which orchestrators and load balancers call, `/swagger/`, and `/`.
-
-The unversioned paths of earlier releases, such as `/public/auth`, still answer the same, as deprecated aliases until a later release removes them. Their responses carry:
-
-```http
-Deprecation: @1793923200
-Link: </api/v1/public/auth>; rel="successor-version"
-```
-
-`Deprecation` (RFC 9745) gives the date of the deprecation, 2026-11-06, and `Link` (RFC 8288) the path to use instead. A path and its alias share the rate limits, so the alias does not double them.
+The API is versioned under `/api/v1`. The paths in this document are relative to it: `POST /public/auth` is `POST /api/v1/public/auth`, and the WebSocket gateway is `/api/v1/ws/`. The exceptions are not part of the API and have no version: the health probes `/system/live` and `/system/ready`, which orchestrators and load balancers call, and `/swagger/` outside release mode. No other path answers.
 
 ### Response envelope
 
@@ -165,7 +156,7 @@ Every response carries these headers ([#191](https://github.com/mdastpak/Crypto-
 | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` | `nosniff`, `DENY`, `strict-origin-when-cross-origin`, no geolocation, microphone, or camera, `same-origin`, `same-origin` |
 | `X-XSS-Protection` | `0`, which turns off the XSS auditor of old browsers, as recommended; the content security policy replaces it |
 
-For an origin in `server.cors.allowed_origins`, `Access-Control-Expose-Headers` lists `X-Request-ID`, `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Deprecation`, and `Link`, so that scripts of that origin can read them. Preflight requests (`OPTIONS`) count against the REST rate limit like other requests.
+For an origin in `server.cors.allowed_origins`, `Access-Control-Expose-Headers` lists `X-Request-ID`, `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining`, so that scripts of that origin can read them. Preflight requests (`OPTIONS`) count against the REST rate limit like other requests.
 
 ### Languages
 
@@ -267,7 +258,7 @@ The refresh token is **only** delivered in a cookie, never in the body, so scrip
 Set-Cookie: refresh_token=<jwt>; Path=/api/v1/public/auth; Max-Age=<refresh_token.expiration_minutes × 60>; HttpOnly; Secure; SameSite=Strict
 ```
 
-The browser sends the cookie only to `/api/v1/public/auth/*`, which covers the refresh and logout routes. A sign-in through the deprecated alias sets it for `/public/auth` instead, so that the cookie goes to the auth routes of the version that issued it; a client that moves to `/api/v1` signs in again. Logout clears the cookie under both paths. Because it is `Secure`, browsers only store it over HTTPS. Chrome and Firefox also store it on `http://localhost` during development.
+The browser sends the cookie only to `/api/v1/public/auth/*`, which covers the refresh and logout routes. Logout clears it. Because it is `Secure`, browsers only store it over HTTPS. Chrome and Firefox also store it on `http://localhost` during development.
 
 Errors:
 
@@ -292,7 +283,7 @@ These limits apply on top of the per-IP [rate limits](#rate-limiting):
 - Each contact gets at most `otp.auth.contact_attempts_per_hour` attempts per hour across all of its codes, counted for the client that requested the codes, so requesting a new code does not bring new attempts. While they are used up, no new code is issued for the contact to that client. A successful sign-in resets the count.
 - These limits count per client so that someone who knows only a contact cannot lock its owner out by failing codes for it ([#187](https://github.com/mdastpak/Crypto-Exchange/issues/187)). They are kept in Redis, so every server instance applies the same counts.
 
-Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by `otp.auth.secret`.
+Redis stores only an HMAC of each code and the contact encrypted with AES-GCM, both keyed by the `otp-mac` [data key](data-protection.md), which every instance shares. A session names the version of its key, so a rotation does not end the pending codes.
 
 ### Session limit
 
@@ -369,7 +360,7 @@ Administrators are created by an operator with the `cmd/admin` command (see the 
 1. A one-time code sent to their email address.
 2. A code from their authenticator app (TOTP, RFC 6238: 6 digits, 30-second steps).
 
-Admin sign-in needs `jwt.ssl.admin` keys, [`admin.totp_key`](configuration.md#admin), and email delivery. Without them, both sign-in routes return `503 Admin sign-in is not available`.
+Admin sign-in needs `jwt.ssl.admin` keys, the [data keys](configuration.md#keys), which seal the authenticator secrets, and email delivery. Without them, both sign-in routes return `503 Admin sign-in is not available`.
 
 ### `POST /admin/auth`
 
@@ -1211,16 +1202,6 @@ Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two secon
 `status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored, also while the server moves to another node of a cluster. In release mode, the response has only `status`, without `details`, because the details describe the internals.
 
 Once the instance is shutting down, it answers `503` with `{"status": "draining"}` and checks no dependency, while it keeps serving the other routes for `server.drain_seconds`. See [Startup and shutdown](architecture.md#startup-and-shutdown).
-
-### `GET /system/healthcheck`
-
-The earlier name of `/system/ready`, with the same response.
-
-### `GET /system/ping`
-
-```json
-{ "message": "pong", "timestamp": "2026-11-02T10:00:00Z" }
-```
 
 ### Sessions
 

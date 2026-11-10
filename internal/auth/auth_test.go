@@ -892,7 +892,7 @@ func TestSetRefreshTokenCookie(t *testing.T) {
 	assert.True(t, cookies[0].HttpOnly)
 	assert.True(t, cookies[0].Secure)
 	assert.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
-	assert.Equal(t, "/public/auth", cookies[0].Path, "the cookie is only sent to the authentication routes")
+	assert.Equal(t, "/api/v1/public/auth", cookies[0].Path, "the cookie is only sent to the authentication routes")
 	assert.Equal(t, config.Config.JWT.RefreshToken.Expiration*60, cookies[0].MaxAge)
 }
 

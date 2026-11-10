@@ -78,7 +78,7 @@ func resetCLITestDB(t *testing.T) {
 
 // writeConfig writes a configuration for the test database and returns the
 // arguments that select it.
-func writeConfig(t *testing.T, totpKey string) []string {
+func writeConfig(t *testing.T) []string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	yaml := fmt.Sprintf(`# A development configuration: an instance that names no mode runs in
@@ -94,11 +94,9 @@ postgres:
   sslmode: "disable"
   connect_retries: 1
   connect_retry_delay_ms: 10
-admin:
-  totp_key: %q
 exchange:
   name: "Test Exchange"
-`, cliTestDBName, totpKey)
+`, cliTestDBName)
 	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 	migrations, err := filepath.Abs(filepath.Join("..", "..", "internal", "db", "migrations"))
 	require.NoError(t, err)
@@ -121,10 +119,7 @@ func runCLI(t *testing.T, args ...string) (int, string, string) {
 
 func TestRun_ManagesAdministrators(t *testing.T) {
 	resetCLITestDB(t)
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-	base := writeConfig(t, base64.StdEncoding.EncodeToString(key))
+	base := writeLocalKeysConfig(t)
 
 	code, stdout, stderr := runCLI(t, append(base, "create", "-email", "admin@example.com")...)
 	require.Equal(t, 0, code, stderr)
@@ -151,7 +146,12 @@ func TestRun_ManagesAdministrators(t *testing.T) {
 	// Each change is audited, with the operator (#195).
 	code, _, stderr = runCLI(t, append(append(base, "-operator", "alice"), "reset-totp", "-email", "admin@example.com")...)
 	require.Equal(t, 0, code, stderr)
-	events := cliAuditEvents(t)
+	var events []cliAuditEvent
+	for _, e := range cliAuditEvents(t) {
+		if strings.HasPrefix(e.action, "admin.") { // the first command also created the data keys
+			events = append(events, e)
+		}
+	}
 	require.Len(t, events, 4, "create, reset-totp, disable, and reset-totp; the refused commands record nothing")
 	assert.Equal(t, []string{"admin.create", "admin.totp_reset", "admin.disable", "admin.totp_reset"},
 		[]string{events[0].action, events[1].action, events[2].action, events[3].action})
@@ -183,16 +183,28 @@ func cliAuditEvents(t *testing.T) []cliAuditEvent {
 	return events
 }
 
-func TestRun_RequiresTheTOTPKey(t *testing.T) {
+// TestRun_AdministratorsNeedTheDataKeys checks that nothing but the data
+// keys seals an authenticator secret: without keys.provider no
+// administrator is created, and with it the command creates the keys when
+// the server has not started yet.
+func TestRun_AdministratorsNeedTheDataKeys(t *testing.T) {
 	resetCLITestDB(t)
+	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
+	require.NoError(t, err)
+	defer conn.Close()
 
-	code, _, stderr := runCLI(t, append(writeConfig(t, ""), "create", "-email", "admin@example.com")...)
+	code, _, stderr := runCLI(t, append(writeConfig(t), "create", "-email", "admin@example.com")...)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, stderr, "admin.totp_key")
+	assert.Contains(t, stderr, "keys.provider")
 
-	code, _, stderr = runCLI(t, append(writeConfig(t, "too-short"), "create", "-email", "admin@example.com")...)
-	assert.Equal(t, 1, code)
-	assert.True(t, strings.Contains(stderr, "32 random bytes"), stderr)
+	code, _, stderr = runCLI(t, append(writeLocalKeysConfig(t), "create", "-email", "admin@example.com")...)
+	require.Equal(t, 0, code, stderr)
+	var stored string
+	require.NoError(t, conn.QueryRow(`SELECT totp_secret FROM users WHERE totp_secret IS NOT NULL`).Scan(&stored))
+	assert.True(t, strings.HasPrefix(stored, "v1:"), "sealed with a field-enc data key")
+	var created int
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM data_keys WHERE purpose = 'field-enc'`).Scan(&created))
+	assert.Equal(t, 1, created)
 }
 
 func TestParseArgs_Keys(t *testing.T) {
@@ -228,13 +240,23 @@ func TestParseArgs_Keys(t *testing.T) {
 // keys section and returns the arguments that select it.
 func writeKeysConfig(t *testing.T, keysYAML string) []string {
 	t.Helper()
-	args := writeConfig(t, "")
+	args := writeConfig(t)
 	f, err := os.OpenFile(args[1], os.O_APPEND|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
 	_, err = f.WriteString(keysYAML)
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 	return args
+}
+
+// writeLocalKeysConfig writes a configuration with the local key provider
+// and a new key-encryption key.
+func writeLocalKeysConfig(t *testing.T) []string {
+	t.Helper()
+	kek := make([]byte, 32)
+	_, err := rand.Read(kek)
+	require.NoError(t, err)
+	return writeKeysConfig(t, fmt.Sprintf("keys:\n  provider: \"local\"\n  local:\n    kek: %q\n", base64.StdEncoding.EncodeToString(kek)))
 }
 
 func TestRun_ManagesDataKeys(t *testing.T) {
@@ -341,7 +363,7 @@ func TestParseArgs_Outbox(t *testing.T) {
 
 func TestRun_ManagesDeadLetters(t *testing.T) {
 	resetCLITestDB(t)
-	base := writeConfig(t, "")
+	base := writeConfig(t)
 
 	code, stdout, stderr := runCLI(t, append(base, "outbox", "list")...)
 	require.Equal(t, 0, code, stderr)

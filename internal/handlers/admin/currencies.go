@@ -37,8 +37,8 @@ type AdminHandler struct {
 	// Currencies holds the list of public currencies, which changes drop.
 	Currencies *currencies.Catalog
 
-	// Admin sign-in. Accounts is nil, and sign-in unavailable, until the
-	// server configures admin.totp_key.
+	// Admin sign-in. Accounts is nil, and sign-in unavailable, without the
+	// data keys.
 	Accounts *adminauth.Service
 	// OTP issues the emailed sign-in codes, in its own namespace.
 	OTP *otp.Store

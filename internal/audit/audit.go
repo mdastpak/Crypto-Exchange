@@ -104,16 +104,13 @@ const (
 	// operator who ran them is named in the user agent; see Operator.
 	ActionAdminCreate    = "admin.create"
 	ActionAdminTOTPReset = "admin.totp_reset"
-	// ActionAdminTOTPResealed: an authenticator secret was sealed again with
-	// other keys, unchanged (#146).
-	ActionAdminTOTPResealed = "admin.totp_resealed"
-	ActionAdminDisable      = "admin.disable"
-	ActionDataKeyCreate     = "data_key.create"
-	ActionDataKeyRotate     = "data_key.rotate"
-	ActionDataKeyRetire     = "data_key.retire"
-	ActionDataKeyRewrap     = "data_key.rewrap"
-	ActionOutboxRetry       = "outbox.retry"
-	ActionOutboxDiscard     = "outbox.discard"
+	ActionAdminDisable   = "admin.disable"
+	ActionDataKeyCreate  = "data_key.create"
+	ActionDataKeyRotate  = "data_key.rotate"
+	ActionDataKeyRetire  = "data_key.retire"
+	ActionDataKeyRewrap  = "data_key.rewrap"
+	ActionOutboxRetry    = "outbox.retry"
+	ActionOutboxDiscard  = "outbox.discard"
 
 	// The administration of the market data catalog (#270), by an
 	// administrator or cmd/admin market-data. Pausing or resuming a source,

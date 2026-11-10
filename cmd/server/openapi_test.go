@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mdastpak/crypto-exchange/internal/helpers"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,9 +38,7 @@ func documentedOperations(t *testing.T) []string {
 
 // TestOpenAPI_DocumentsEveryRoute compares the routes of the server with the
 // operations of the OpenAPI document (#54): each route is documented, and
-// each documented operation exists. The deprecated unversioned aliases are
-// described once, in the document's description, and the Swagger UI is not
-// an operation.
+// each documented operation exists. The Swagger UI is not an operation.
 func TestOpenAPI_DocumentsEveryRoute(t *testing.T) {
 	env := newE2EEnv(t)
 	var routes []string
@@ -50,9 +46,6 @@ func TestOpenAPI_DocumentsEveryRoute(t *testing.T) {
 		path := route.Path
 		if strings.HasPrefix(path, "/swagger/") {
 			continue
-		}
-		if !strings.HasPrefix(path, helpers.APIPrefix+"/") && !unversioned(path) {
-			continue // an alias
 		}
 		routes = append(routes, route.Method+" "+ginParam.ReplaceAllString(path, "{$1}"))
 	}

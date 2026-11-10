@@ -3,7 +3,6 @@ package otp
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -53,38 +52,33 @@ const (
 	fieldClientID  = "client_id"  // HMAC of the client that requested the code
 	fieldAttempts  = "attempts"
 	// fieldKey is the version of the otp-mac data key that protects the
-	// session (#146). A session without it is protected by otp.auth.secret.
+	// session. Only a store without data keys writes a session without it.
 	fieldKey = "key"
 )
 
 // Store keeps sign-in sessions in Redis. A session holds an HMAC of its code,
 // never the code itself, and the contact encrypted, so reading Redis reveals
-// neither. The keys are derived from otp.auth.secret, or from the otp-mac data
-// keys once UseDataKeys is called (#146); a session records which.
+// neither. The keys are derived from the otp-mac data keys once UseDataKeys
+// is called, and a session records the version. Until then they are derived
+// from a random secret of this process, for development without
+// keys.provider.
 type Store struct {
 	client    redis.UniversalClient
 	settings  Settings
 	keyPrefix string
-	// legacy are the keys of otp.auth.secret, or of a random secret when it
-	// is not set; legacySet says whether it is.
-	legacy    *sessionKeys
-	legacySet bool
-	dataKeys  atomic.Pointer[keySource]
+	// process are the keys of a random secret, used without data keys.
+	process  *sessionKeys
+	dataKeys atomic.Pointer[keySource]
 }
 
-// NewStore returns a store with the given settings. Without a secret, and
-// until UseDataKeys is called, it uses a random one, which only works while a
-// single process issues and verifies the codes; Settings.Validate refuses
-// that in release mode.
+// NewStore returns a store with the given settings. Until UseDataKeys is
+// called it uses a random secret, which only works while a single process
+// issues and verifies the codes; release mode requires keys.provider, so
+// that every instance shares the data keys.
 //
 // client may be a standalone, sentinel, or cluster client (#231).
 func NewStore(client redis.UniversalClient, settings Settings) *Store {
 	settings = settings.WithDefaults()
-	secret := []byte(settings.Secret)
-	if len(secret) == 0 {
-		secret = make([]byte, MinSecretLength)
-		_, _ = rand.Read(secret) // never fails since Go 1.24
-	}
 	keyPrefix := "otp:"
 	if settings.Namespace != "" {
 		keyPrefix += settings.Namespace + ":"
@@ -93,8 +87,7 @@ func NewStore(client redis.UniversalClient, settings Settings) *Store {
 		client:    client,
 		settings:  settings,
 		keyPrefix: keyPrefix,
-		legacy:    legacySessionKeys(secret),
-		legacySet: settings.Secret != "",
+		process:   processSessionKeys(),
 	}
 }
 

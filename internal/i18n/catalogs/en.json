@@ -272,6 +272,5 @@
   "VERIFYING_CONTACT_CHANGED": "The contact you verified with has changed; start the change again.",
   "VERIFYING_CONTACT_NOT_YOURS": "The contact to verify with is not one of your verified contacts.",
   "VERIFYING_CONTACT_TOO_RECENT": "The contact you verify with was added recently and cannot change your other contacts yet. Use the contact you are changing, or an older one, or try again later.",
-  "WEBSOCKET_HANDSHAKE_INVALID": "Not a valid WebSocket handshake: {reason}",
-  "WELCOME": "Welcome to the Crypto Exchange API"
+  "WEBSOCKET_HANDSHAKE_INVALID": "Not a valid WebSocket handshake: {reason}"
 }

@@ -30,9 +30,11 @@ func TestDataKeyProvider(t *testing.T) {
 	t.Cleanup(func() { config.Config.Keys = saved })
 
 	config.Config.Keys = config.KeysConfig{}
-	provider, err := dataKeyProvider(true)
+	provider, err := dataKeyProvider(false)
 	require.NoError(t, err)
 	assert.Nil(t, provider, "without keys.provider, no keys are loaded")
+	_, err = dataKeyProvider(true)
+	assert.ErrorIs(t, err, errKeysProviderRequired, "release mode needs the data keys")
 
 	config.Config.Keys = localKeysConfig(t)
 	provider, err = dataKeyProvider(false)
@@ -58,7 +60,7 @@ func TestDataKeyProvider(t *testing.T) {
 // TestLoadDataKeys_EndToEnd loads the keys as the server does at startup,
 // against the database that the migrations build.
 func TestLoadDataKeys_EndToEnd(t *testing.T) {
-	env := newE2EEnv(t)
+	env := newE2EEnv(t, withoutDataKeys)
 	services := &models.InfraServices{Postgres: &db.PostgresService{DB: env.db}}
 
 	ring, err := loadDataKeys(services, nil)

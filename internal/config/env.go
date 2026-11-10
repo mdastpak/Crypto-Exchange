@@ -218,8 +218,6 @@ var envVars = []EnvVar{
 	intVar("OTP_AUTH_TTL_SECONDS", "otp.auth.ttl_seconds", func(c *Configuration) *int { return &c.OTP.Auth.TTL }),
 	intVar("OTP_AUTH_LENGTH", "otp.auth.length", func(c *Configuration) *int { return &c.OTP.Auth.Length }),
 	intVar("OTP_AUTH_RETRY_LIMIT", "otp.auth.retry_limit", func(c *Configuration) *int { return &c.OTP.Auth.RetryLimit }),
-	stringVar("OTP_SECRET", "otp.auth.secret", func(c *Configuration) *string { return &c.OTP.Auth.Secret }),
-	stringVar("ADMIN_TOTP_KEY", "admin.totp_key", func(c *Configuration) *string { return &c.Admin.TOTPKey }),
 	intVar("ADMIN_SIGN_IN_MIN_RESPONSE_MS", "admin.sign_in_min_response_ms", func(c *Configuration) *int { return &c.Admin.SignInMinResponseMS }),
 	intVar("CONTACTS_NEW_CONTACT_COOLDOWN_HOURS", "contacts.new_contact_cooldown_hours", func(c *Configuration) *int { return &c.Contacts.NewContactCooldownHours }),
 	intVar("SECURITY_CHANGE_HOLD_HOURS", "security.change_hold_hours", func(c *Configuration) *int { return &c.Security.ChangeHoldHours }),
@@ -263,7 +261,6 @@ var envVars = []EnvVar{
 	intVar("KEYS_TRANSIT_TIMEOUT_SECONDS", "keys.transit.timeout_seconds", func(c *Configuration) *int { return &c.Keys.Transit.Timeout }),
 	intVar("KEYS_RELOAD_INTERVAL_SECONDS", "keys.reload_interval_seconds", func(c *Configuration) *int { return &c.Keys.ReloadIntervalSeconds }),
 	intVar("KEYS_ACTIVATION_DELAY_SECONDS", "keys.activation_delay_seconds", func(c *Configuration) *int { return &c.Keys.ActivationDelaySeconds }),
-	stringVar("KEYS_LEGACY_SECRETS", "keys.legacy_secrets", func(c *Configuration) *string { return &c.Keys.LegacySecrets }),
 	stringVar("KEYS_ROW_SEALS_MODE", "keys.row_seals.mode", func(c *Configuration) *string { return &c.Keys.RowSeals.Mode }),
 	intVar("KEYS_ROW_SEALS_VERIFY_INTERVAL_MINUTES", "keys.row_seals.verify_interval_minutes", func(c *Configuration) *int { return &c.Keys.RowSeals.VerifyIntervalMinutes }),
 

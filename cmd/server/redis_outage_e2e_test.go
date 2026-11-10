@@ -54,7 +54,7 @@ func TestRedisOutage_RequestsAnswerWithinTheirDeadlines(t *testing.T) {
 		return w, time.Since(start)
 	}
 
-	w, _ := send(http.MethodGet, "/")
+	w, _ := send(http.MethodGet, "/api/v1/public/locales")
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "200", w.Header().Get("X-RateLimit-Limit"), "counted in Redis while it is up")
 
@@ -69,20 +69,20 @@ func TestRedisOutage_RequestsAnswerWithinTheirDeadlines(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, probes)
-	for _, path := range []string{"/system/live", "/system/ping"} {
+	for _, path := range []string{"/system/live"} {
 		w, took := send(http.MethodGet, path)
 		assert.Equal(t, http.StatusOK, w.Code, path)
 		assert.Less(t, took, 100*time.Millisecond, "%s does not wait for Redis", path)
 		assert.NotEmpty(t, w.Header().Get("X-RateLimit-Limit"), "%s is still rate limited", path)
 	}
-	for _, path := range []string{"/system/ready", "/system/healthcheck"} {
+	for _, path := range []string{"/system/ready"} {
 		w, took := send(http.MethodGet, path)
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code, path)
 		assert.Contains(t, w.Body.String(), `"redis":{"status":"error"`, path)
 		assert.Less(t, took, checkTimeout+500*time.Millisecond, "%s answers within its check timeout", path)
 	}
 
-	w, took := send(http.MethodGet, "/")
+	w, took := send(http.MethodGet, "/api/v1/public/locales")
 	assert.Equal(t, http.StatusOK, w.Code, "the REST limit lets requests through, as on_error says")
 	assert.Empty(t, w.Header().Get("X-RateLimit-Limit"), "the request was not counted")
 	assert.GreaterOrEqual(t, took, limiterDeadline, "the limiter waited for Redis")
@@ -97,7 +97,7 @@ func TestRedisOutage_RequestsAnswerWithinTheirDeadlines(t *testing.T) {
 	proxy.SetStalled(false)
 	proxy.Cut()
 	assert.Eventually(t, func() bool {
-		w, _ := send(http.MethodGet, "/")
+		w, _ := send(http.MethodGet, "/api/v1/public/locales")
 		return w.Header().Get("X-RateLimit-Limit") == "200"
 	}, 10*time.Second, 50*time.Millisecond, "counted in Redis again once it answers")
 	w, _ = send(http.MethodGet, "/system/ready")

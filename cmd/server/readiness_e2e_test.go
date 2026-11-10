@@ -43,7 +43,6 @@ func TestReadiness_FollowsPostgreSQL(t *testing.T) {
 	proxy.SetDown(true)
 	proxy.Cut()
 	assert.Equal(t, http.StatusServiceUnavailable, probe("/system/ready"), "PostgreSQL is down")
-	assert.Equal(t, http.StatusServiceUnavailable, probe("/system/healthcheck"))
 	assert.Equal(t, http.StatusOK, probe("/system/live"), "the process itself is still alive")
 
 	proxy.SetDown(false)

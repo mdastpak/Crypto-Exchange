@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -43,20 +42,9 @@ const (
 // The token is never returned in a response body.
 const RefreshTokenCookie = "refresh_token"
 
-// legacyRefreshTokenCookiePath limits the cookie to the routes that use it,
-// /public/auth/refresh and /public/auth/logout, under helpers.APIPrefix or,
-// for their deprecated aliases, without it.
-const legacyRefreshTokenCookiePath = "/public/auth" //nolint:gosec // G101: a URL path, not a credential.
-
-// refreshTokenCookiePath is the path of the cookie for a response to c: the
-// auth routes of the API version of the request, so that the cookie is sent
-// to the routes that issued it and to no others.
-func refreshTokenCookiePath(c *gin.Context) string {
-	if c.Request != nil && strings.HasPrefix(c.Request.URL.Path, helpers.APIPrefix+"/") {
-		return helpers.APIPrefix + legacyRefreshTokenCookiePath
-	}
-	return legacyRefreshTokenCookiePath
-}
+// refreshTokenCookiePath limits the cookie to the routes that use it,
+// /public/auth/refresh and /public/auth/logout.
+const refreshTokenCookiePath = helpers.APIPrefix + "/public/auth"
 
 // Claims represents the JWT claims structure.
 type Claims struct {
@@ -288,15 +276,12 @@ func RefreshTokenHandler(c *gin.Context, sessions SessionStore) {
 func SetRefreshTokenCookie(c *gin.Context, refreshToken string) {
 	maxAge := int(RefreshTokenLifetime().Seconds())
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie(RefreshTokenCookie, refreshToken, maxAge, refreshTokenCookiePath(c), "", true, true)
+	c.SetCookie(RefreshTokenCookie, refreshToken, maxAge, refreshTokenCookiePath, "", true, true)
 }
 
 // ClearRefreshTokenCookie tells the client to delete the refresh token
-// cookie, under both paths, so that a logout through either version also
-// ends a cookie that the other one set.
+// cookie.
 func ClearRefreshTokenCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteStrictMode)
-	for _, path := range []string{helpers.APIPrefix + legacyRefreshTokenCookiePath, legacyRefreshTokenCookiePath} {
-		c.SetCookie(RefreshTokenCookie, "", -1, path, "", true, true)
-	}
+	c.SetCookie(RefreshTokenCookie, "", -1, refreshTokenCookiePath, "", true, true)
 }

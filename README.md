@@ -150,13 +150,14 @@ Sign-in codes are delivered by email and SMS once `notifications` is configured 
 
 ### 6. Create an administrator (optional)
 
-Admin sign-in needs its own signing key pair, a key that encrypts authenticator secrets, and email delivery (or `dev_log_codes` locally):
+Admin sign-in needs its own signing key pair, the [data-protection keys](docs/data-protection.md), which seal the authenticator secrets, and email delivery (or `dev_log_codes` locally):
 
 ```bash
 mkdir -p internal/ssl/admin
 openssl genpkey -algorithm RSA -out internal/ssl/admin/private_key.pem -pkeyopt rsa_keygen_bits:2048
 openssl rsa -pubout -in internal/ssl/admin/private_key.pem -out internal/ssl/admin/public_key.pem
-export ADMIN_TOTP_KEY="$(openssl rand -base64 32)"
+export KEYS_PROVIDER=local   # development only; production uses transit
+export KEYS_LOCAL_KEK="$(openssl rand -base64 32)"
 ```
 
 Add the admin key paths under `jwt.ssl.admin` in `config/config.local.yaml`, as for the user keys. Then create the administrator. The command prints an `otpauth://` URI and a key for the authenticator app, once:
@@ -165,7 +166,7 @@ Add the admin key paths under `jwt.ssl.admin` in `config/config.local.yaml`, as 
 go run ./cmd/admin -config config/config.local.yaml create -email admin@example.com
 ```
 
-The server and the command must use the same `ADMIN_TOTP_KEY`. With [data-protection keys](docs/data-protection.md) configured (`KEYS_PROVIDER`), they seal authenticator secrets with those instead, and `ADMIN_TOTP_KEY` is only needed to read secrets sealed before; `admin totp-secrets` moves them ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)). `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. Each command records an audit event; pass `-operator <name>` before the command to name yourself in it. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
+The server and the command must use the same `keys` settings: keep `KEYS_LOCAL_KEK`, since a new one cannot open the data keys that the first one wrapped. `reset-totp` replaces a lost authenticator, and `disable` stops an administrator from signing in. Each command records an audit event; pass `-operator <name>` before the command to name yourself in it. [docs/api.md](docs/api.md#admin-sign-in) describes the sign-in.
 
 ### Run everything with Docker Compose
 
@@ -181,7 +182,7 @@ curl http://localhost:8080/system/ready
 - Sign-in codes appear in the log of the `app` service (`docker compose logs app`), because the Compose configuration enables `dev_log_codes`.
 - On Linux, run the server as your own user so that it can read the key files without widening their permissions: `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build`.
 - `JWT_USER_PRIVATE_KEY_FILE` and `JWT_USER_PUBLIC_KEY_FILE` select other key files.
-- To create an administrator in the stack, set `ADMIN_TOTP_KEY` and run the `admin` command from the image: `docker compose run --rm --no-deps --entrypoint /app/admin app -config config/config.compose.yaml create -email admin@example.com`. Admin sign-in additionally needs the admin keys, which this file does not mount.
+- To create an administrator in the stack, set `KEYS_PROVIDER=local` and `KEYS_LOCAL_KEK` in `.env` and run the `admin` command from the image: `docker compose run --rm --no-deps --entrypoint /app/admin app -config config/config.compose.yaml create -email admin@example.com`. Admin sign-in additionally needs the admin keys, which this file does not mount.
 
 The image contains only the `server` and `admin` binaries and the migrations, and runs as an unprivileged user. Configuration and keys are mounted at runtime and never built into it. Hardening for staging and production is tracked in [#103](https://github.com/mdastpak/Crypto-Exchange/issues/103).
 
@@ -197,7 +198,7 @@ Backups, point-in-time recovery, the restore drill, and the disaster-recovery ru
 
 ## API overview
 
-The API is versioned under `/api/v1`: the paths of the API in the table below are relative to it, so `/public/currencies` is `/api/v1/public/currencies`. The health probes under `/system/` are not part of the API and have no version. The unversioned paths of earlier releases still answer as deprecated aliases, with `Deprecation` and `Link` headers that point to the versioned path ([docs/api.md](docs/api.md#versions)).
+The API is versioned under `/api/v1`: the paths of the API in the table below are relative to it, so `/public/currencies` is `/api/v1/public/currencies`. The health probes under `/system/` are not part of the API and have no version. No other path answers ([docs/api.md](docs/api.md#versions)).
 
 All JSON responses, except the system endpoints, use this envelope:
 
@@ -211,8 +212,6 @@ Error responses also carry a stable `code`, such as `validation_failed` or `rate
 | --- | --- | --- | --- |
 | `GET` | `/system/live` | None | Liveness: the process serves requests |
 | `GET` | `/system/ready` | None | Readiness: `503` while PostgreSQL or Redis is unavailable; `degraded` without RabbitMQ |
-| `GET` | `/system/healthcheck` | None | Earlier name of `/system/ready` |
-| `GET` | `/system/ping` | None | Ping |
 | `GET` | `/public/currencies` | None | List cached currencies |
 | `GET` | `/public/currencies/{hk}` | None | Get a currency by its UUID |
 | `POST` | `/public/auth` | None | Request an OTP |

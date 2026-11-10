@@ -3,10 +3,9 @@ package adminauth
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/base32"
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -72,18 +71,11 @@ func migratedTestDB(t *testing.T) *sql.DB {
 	return service.DB
 }
 
-func newKey(t *testing.T) []byte {
-	t.Helper()
-	key := make([]byte, KeySize)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-	return key
-}
-
 func newTestService(t *testing.T) (*Service, *sql.DB) {
 	t.Helper()
 	conn := migratedTestDB(t)
-	service, err := NewService(conn, Secrets{LegacyKey: newKey(t)}, "Crypto Exchange")
+	live, _ := newDataKeys(t, conn)
+	service, err := NewService(conn, live, "Crypto Exchange")
 	require.NoError(t, err)
 	return service, conn
 }
@@ -129,7 +121,7 @@ func TestCreate_StoresAnAdministratorWithAnEncryptedSecret(t *testing.T) {
 	).Scan(&address, &verified))
 	assert.Equal(t, "admin@example.com", address)
 	assert.False(t, verified, "the operator entered the address; the first sign-in verifies it")
-	assert.True(t, strings.HasPrefix(stored, "v1:"))
+	assert.True(t, strings.HasPrefix(stored, sealedPrefix))
 	assert.NotContains(t, stored, enrollment.Secret, "the secret is stored encrypted")
 	assert.False(t, bytes.Contains([]byte(stored), decodeSecret(t, enrollment.Secret)))
 
@@ -189,12 +181,12 @@ func TestVerifyTOTP_NeedsTheKeyAndTheRightAdministrator(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Unix(1_900_000_000, 0)
 
-	otherKey, err := NewService(conn, Secrets{LegacyKey: newKey(t)}, "Crypto Exchange")
+	otherKey, err := NewService(conn, unopenable{service.dataKeys}, "Crypto Exchange")
 	require.NoError(t, err)
 	otherKey.now = func() time.Time { return now }
 	err = otherKey.VerifyTOTP(ctx, first.AdminID, at(t, service, now, first))
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrInvalidCode, "a wrong key is a configuration error, not a wrong code")
+	assert.NotErrorIs(t, err, ErrInvalidCode, "a key that does not open the secret is a configuration error, not a wrong code")
 
 	// A secret copied to another administrator does not decrypt.
 	_, err = conn.Exec(`UPDATE users SET totp_secret = (SELECT totp_secret FROM users WHERE hk = $1) WHERE hk = $2`,
@@ -241,19 +233,16 @@ func TestDisable_StopsSignIn(t *testing.T) {
 	assert.ErrorIs(t, service.Disable(ctx, "nobody@example.com"), ErrNotFound)
 }
 
-func TestDecodeKey(t *testing.T) {
-	key := newKey(t)
-	decoded, err := DecodeKey(base64.StdEncoding.EncodeToString(key))
-	require.NoError(t, err)
-	assert.Equal(t, key, decoded)
+// unopenable is a sealer whose keys do not open what was sealed, like an
+// instance with the keys of another deployment.
+type unopenable struct{ FieldSealer }
 
-	for _, encoded := range []string{"", "not base64!", base64.StdEncoding.EncodeToString(key[:16])} {
-		_, err := DecodeKey(encoded)
-		assert.ErrorIs(t, err, ErrInvalidKey, "%q", encoded)
-	}
-	_, err = NewService(nil, Secrets{LegacyKey: key[:16]}, "")
-	assert.ErrorIs(t, err, ErrInvalidKey)
-	_, err = NewService(nil, Secrets{}, "")
+func (unopenable) OpenField(_, _ []byte) ([]byte, error) {
+	return nil, errors.New("message authentication failed")
+}
+
+func TestNewService_NeedsTheDataKeys(t *testing.T) {
+	_, err := NewService(nil, nil, "")
 	assert.ErrorIs(t, err, ErrNoKeys)
 }
 
@@ -319,11 +308,12 @@ func TestConfirmEmail_VerifiesTheAddressOnce(t *testing.T) {
 }
 
 // auditRows returns the action, actor type, target, changes, and user agent
-// of the audit events, oldest first.
+// of the audit events of administrators, oldest first.
 func auditRows(t *testing.T, conn *sql.DB) []string {
 	t.Helper()
 	rows, err := conn.Query(`SELECT action || ' ' || actor_type || ' ' || target_type || '/' || target_id || ' ' ||
-		COALESCE(changes::text, '-') || ' ' || COALESCE(user_agent, '-') FROM audit_events ORDER BY hk`)
+		COALESCE(changes::text, '-') || ' ' || COALESCE(user_agent, '-') FROM audit_events
+		WHERE action LIKE 'admin.%' ORDER BY hk`)
 	require.NoError(t, err)
 	defer rows.Close()
 	var got []string

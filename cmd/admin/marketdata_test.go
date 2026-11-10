@@ -43,7 +43,7 @@ func TestParseArgs_MarketData(t *testing.T) {
 // changes the currency.
 func TestRun_AdministersTheMarketDataCatalog(t *testing.T) {
 	resetCLITestDB(t)
-	base := append(writeConfig(t, ""), "-operator", "Sara")
+	base := append(writeConfig(t), "-operator", "Sara")
 	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
 	require.NoError(t, err)
 	defer conn.Close()

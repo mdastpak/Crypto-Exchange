@@ -45,7 +45,7 @@ func TestParseArgs_Platform(t *testing.T) {
 // operator in the audit log.
 func TestRun_ManagesPlatformControls(t *testing.T) {
 	resetCLITestDB(t)
-	base := append(writeConfig(t, ""), "-operator", "Sara")
+	base := append(writeConfig(t), "-operator", "Sara")
 
 	code, stdout, stderr := runCLI(t, append(base, "platform", "status")...)
 	require.Equal(t, 0, code, stderr)

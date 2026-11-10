@@ -39,10 +39,10 @@ func TestRouter_SecurityHeaders(t *testing.T) {
 	assert.Contains(t, w.Header().Get("Content-Security-Policy"), "script-src 'self' 'unsafe-inline'")
 
 	config.Config.Server.TLS.BehindProxy = true
-	assert.Equal(t, "max-age=31536000", get("/").Header().Get("Strict-Transport-Security"), "HSTS behind a TLS proxy")
+	assert.Equal(t, "max-age=31536000", get("/system/live").Header().Get("Strict-Transport-Security"), "HSTS behind a TLS proxy")
 	disabled := false
 	config.Config.Server.HSTS.Enabled = &disabled
-	assert.Empty(t, get("/").Header().Get("Strict-Transport-Security"), "HSTS can be turned off")
+	assert.Empty(t, get("/system/live").Header().Get("Strict-Transport-Security"), "HSTS can be turned off")
 }
 
 // Preflight requests are counted by the REST rate limit, like any other

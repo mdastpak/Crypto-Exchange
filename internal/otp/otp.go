@@ -3,7 +3,6 @@ package otp
 
 import (
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"time"
 
@@ -23,18 +22,12 @@ const (
 	DefaultContactRequestsTotalPerHour = 20
 )
 
-// MinSecretLength is the shortest accepted secret, in bytes.
-const MinSecretLength = 32
-
 // Settings configures a Store. Zero values select the defaults.
 type Settings struct {
 	// Namespace separates independent sign-in flows that share Redis, such
 	// as user and admin sign-in: a session or a limit of one namespace is
 	// unknown to the others. Empty is the user namespace.
-	Namespace string
-	// Secret keys the hashes of codes and contacts and the encryption of
-	// contacts in Redis. Every server instance must use the same secret.
-	Secret     string
+	Namespace  string
 	CodeLength int
 	TTL        time.Duration
 	// AttemptsPerCode bounds the verification attempts for one code.
@@ -50,13 +43,6 @@ type Settings struct {
 	// for every client together, except the clients that signed in with
 	// the contact before.
 	ContactRequestsTotalPerHour int
-	// LegacyWrites keeps protecting new sessions with Secret, while it is
-	// set, after Store.UseDataKeys (keys.legacy_secrets "write", #146), so
-	// that instances of a release before #146 can verify their codes.
-	LegacyWrites bool
-	// DataKeys says that keys.provider is set, so that Store.UseDataKeys
-	// will be called and no Secret is needed.
-	DataKeys bool
 	// Durability is how many replicas must hold a counted request or
 	// attempt before the store relies on it (redis.durable_writes, #231),
 	// so that a failover cannot give attempts back.
@@ -67,7 +53,6 @@ type Settings struct {
 func SettingsFromConfig() Settings {
 	cfg := config.Config.OTP.Auth
 	return Settings{
-		Secret:                 cfg.Secret,
 		CodeLength:             cfg.Length,
 		TTL:                    time.Duration(cfg.TTL) * time.Second,
 		AttemptsPerCode:        cfg.RetryLimit,
@@ -76,8 +61,6 @@ func SettingsFromConfig() Settings {
 
 		ContactRequestsTotalPerHour: cfg.ContactRequestsTotalPerHour,
 		Durability:                  redisutil.DurabilityFromConfig(),
-		LegacyWrites:                config.Config.Keys.WritesWithLegacySecrets(),
-		DataKeys:                    config.Config.Keys.Provider != "",
 	}
 }
 
@@ -104,20 +87,10 @@ func (s Settings) WithDefaults() Settings {
 	return s
 }
 
-// ErrSecretRequired is returned when no secret and no data keys are
-// configured in release mode.
-var ErrSecretRequired = errors.New("otp.auth.secret (or OTP_SECRET) is required in release mode unless keys.provider is set")
-
-// Validate checks the settings after defaults are applied. An empty secret is
-// accepted with data keys, and outside release mode, where NewStore uses a
-// random one.
-func (s Settings) Validate(releaseMode bool) error {
+// Validate checks the settings after defaults are applied.
+func (s Settings) Validate() error {
 	s = s.WithDefaults()
 	switch {
-	case s.Secret == "" && releaseMode && !s.DataKeys:
-		return ErrSecretRequired
-	case s.Secret != "" && len(s.Secret) < MinSecretLength:
-		return fmt.Errorf("otp.auth.secret must be at least %d bytes", MinSecretLength)
 	case s.CodeLength < 4 || s.CodeLength > 10:
 		return fmt.Errorf("otp.auth.length must be between 4 and 10, got %d", s.CodeLength)
 	case s.TTL < time.Second:
