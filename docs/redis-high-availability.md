@@ -68,6 +68,24 @@ Redis replicates asynchronously: a write that the primary acknowledged may be mi
 
 With `durable_writes.replicas: 0`, the default, nothing waits, and a failover may give back the attempts made in the moment before it: as many as an attacker can send within the replication lag, usually a few milliseconds. Set it to 1 in production, with two replicas per primary, so that one replica may be down without stopping sign-in. When no replica can acknowledge, sign-in stops with `503` until one can: the service prefers that to handing out attempts.
 
+## Memory and eviction
+
+A failover is not the only way to lose a key: when Redis reaches `maxmemory`, its `maxmemory-policy` decides what happens next ([#305](https://github.com/mdastpak/Crypto-Exchange/issues/305)). Under every policy but `noeviction`, Redis drops keys to make room, and the checks that read them pass without an error: a logged-out administrator token works again, the attempts at a sign-in code and the codes sent to a contact start over, and so do the rate limits and the WebSocket connection counts. The `volatile-*` policies do not help, since every one of these keys has a TTL. The caches that share the instance, the currency list and the market data answers, are what fills the memory, and the security keys are what would be dropped.
+
+Run every Redis that the server uses with:
+
+```text
+maxmemory <a limit that leaves headroom>
+maxmemory-policy noeviction
+```
+
+A full Redis then refuses writes, which the server answers with `503 service_unavailable` ([While Redis is away](#while-redis-is-away)): sign-in stops instead of failing open. Size `maxmemory` so that this does not happen, and alert on `used_memory` before it does.
+
+The server enforces it:
+
+- At start, it reads `CONFIG GET maxmemory-policy` of each primary (every primary of a cluster). In release mode, any other policy stops the server. A policy that cannot be read, as on a managed Redis that refuses `CONFIG`, stops it too, unless `redis.assume_noeviction` (`REDIS_ASSUME_NOEVICTION`) says that you have checked the policy in the provider's settings; the server then logs a warning at every start. Outside release mode, both are logged.
+- `/system/ready` reports `redis_eviction` from `evicted_keys` of `INFO stats`: any key evicted since the instance started makes it `degraded`, with `200`, so that an operator looks into it without the instances being taken out of service.
+
 ## While Redis is away
 
 A request that needs Redis while it cannot be reached, or cannot serve, as while a replica is promoted, answers `503 service_unavailable` with `Retry-After: 1`, not `500` ([#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)). Every command of the server's client goes through a hook that notes such an error on its request, and the response helpers turn the request's `500` into that answer, in every mode. The checks still fail closed: a token whose revocation cannot be checked is refused, and a sign-in code is not checked. What does not need Redis keeps working: the currency reads fall back to PostgreSQL, and the rate limits follow their `on_error`.

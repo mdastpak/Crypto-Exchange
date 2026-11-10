@@ -69,6 +69,9 @@ func (h *SystemHandler) dependencies() []dependency {
 			return h.GeoIP.Check(time.Now())
 		}, true})
 	}
+	if h.Eviction != nil {
+		deps = append(deps, dependency{"redis_eviction", h.Eviction.Check, true})
+	}
 	return deps
 }
 

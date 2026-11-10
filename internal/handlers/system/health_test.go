@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/geoip"
+	"github.com/mdastpak/crypto-exchange/internal/redisutil"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -199,4 +202,54 @@ func TestDependencies_GeoIPIsOptional(t *testing.T) {
 	w := get(h, "/system/ready")
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "degraded", healthOf(t, w).Status)
+}
+
+// TestReadiness_ReportsRedisEvictions checks the eviction watch of #305: it
+// is reported, and only degrades the instance, since evicted keys call for
+// an operator, not for taking the instance out of service.
+func TestReadiness_ReportsRedisEvictions(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: redistest.Addr})
+	t.Cleanup(func() { client.Close() })
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis is not reachable at %s: %v", redistest.Addr, err)
+	}
+	watch, err := redisutil.NewEvictionWatch(context.Background(), client)
+	require.NoError(t, err)
+
+	h := handlerFailing()
+	h.Eviction = watch
+	h.checks = append(h.checks, dependency{"redis_eviction", watch.Check, true})
+	w := get(h, "/system/ready")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "ok", healthOf(t, w).Details["redis_eviction"].Status)
+
+	closed := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 100 * time.Millisecond, MaxRetries: -1})
+	t.Cleanup(func() { closed.Close() })
+	unreachable := redisutil.WatchOf(closed, 0)
+	h = handlerFailing()
+	h.checks = append(h.checks, dependency{"redis_eviction", unreachable.Check, true})
+	w = get(h, "/system/ready")
+	assert.Equal(t, http.StatusOK, w.Code, "an eviction check only degrades the instance")
+	status := healthOf(t, w)
+	assert.Equal(t, "degraded", status.Status)
+	assert.Equal(t, "error", status.Details["redis_eviction"].Status)
+}
+
+// TestDependencies_IncludeTheEvictionWatch checks that the watch is a
+// dependency of the probe when it is set, and an optional one.
+func TestDependencies_IncludeTheEvictionWatch(t *testing.T) {
+	h := &SystemHandler{Eviction: redisutil.WatchOf(nil, 0)}
+	found := dependencyNamed(h.dependencies(), "redis_eviction")
+	require.NotNil(t, found)
+	assert.True(t, found.optional)
+	assert.Nil(t, dependencyNamed((&SystemHandler{}).dependencies(), "redis_eviction"))
+}
+
+func dependencyNamed(deps []dependency, name string) *dependency {
+	for _, dep := range deps {
+		if dep.name == name {
+			return &dep
+		}
+	}
+	return nil
 }

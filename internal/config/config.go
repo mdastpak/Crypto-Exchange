@@ -194,6 +194,14 @@ type Configuration struct {
 		// missed invalidation can leave it out of date.
 		CurrencyCacheTTL int       `yaml:"currency_cache_ttl_seconds"`
 		TLS              ClientTLS `yaml:"tls"`
+		// AssumeNoEviction says that Redis runs with maxmemory-policy
+		// noeviction where the server cannot read the policy, as on a
+		// managed Redis that refuses CONFIG GET (#305). Release mode
+		// otherwise refuses to start without reading noeviction: under any
+		// other policy, Redis may drop the blacklist of logged-out tokens,
+		// the attempt counters of sign-in codes, and the rate limits, and
+		// their checks then pass without an error.
+		AssumeNoEviction bool `yaml:"assume_noeviction"`
 	} `yaml:"redis"`
 
 	RabbitMQ struct {
