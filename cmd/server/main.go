@@ -43,6 +43,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
+	"github.com/mdastpak/crypto-exchange/internal/redisutil"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/sites"
 
@@ -162,7 +163,13 @@ func run() error {
 	// has stopped everything that uses them.
 	defer cleanup()
 
+	evictionWatch, err := checkRedisEviction(services.Redis.Client, config.Config.Server.Mode == gin.ReleaseMode, config.Config.Redis.AssumeNoEviction)
+	if err != nil {
+		return err
+	}
+
 	handlers := initializeHandlers(services)
+	handlers.System.Eviction = evictionWatch
 	if handlers.DataKeys, err = loadDataKeys(services, keyProvider); err != nil {
 		return fmt.Errorf("failed to load the data-protection keys: %w", err)
 	}
@@ -799,6 +806,36 @@ func readKeyPair(paths config.JWTKeyPaths) (auth.KeyPair, error) {
 		pair.Next = append(pair.Next, next)
 	}
 	return pair, nil
+}
+
+// checkRedisEviction checks that Redis keeps every key (#305). Under any
+// maxmemory-policy but noeviction, Redis may drop the blacklist of
+// logged-out tokens, the attempt counters of sign-in codes, and the rate
+// limits, and their checks then pass without an error. In release mode a
+// policy that evicts, or one that cannot be read, stops the server, unless
+// assumeNoEviction says that it was checked elsewhere; otherwise it is
+// logged. It returns the watch of the readiness probe, or nil when Redis
+// does not tell how many keys it evicted.
+func checkRedisEviction(client redis.UniversalClient, release, assumeNoEviction bool) (*redisutil.EvictionWatch, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	switch err := redisutil.CheckNoEviction(ctx, client); {
+	case err == nil:
+	case assumeNoEviction:
+		log.Printf("WARNING: redis.assume_noeviction is set, and the policy of Redis could not be confirmed: %v", err)
+	case release && errors.Is(err, redisutil.ErrEvictingPolicy):
+		return nil, fmt.Errorf("redis may evict the keys that security depends on (docs/redis-high-availability.md#memory-and-eviction): %w", err)
+	case release:
+		return nil, fmt.Errorf("cannot read the maxmemory-policy of Redis: %w; set redis.assume_noeviction (REDIS_ASSUME_NOEVICTION) once you have checked that it is %s", err, redisutil.NoEviction)
+	default:
+		log.Printf("WARNING: Redis may evict the keys that security depends on, which release mode refuses: %v", err)
+	}
+	watch, err := redisutil.NewEvictionWatch(ctx, client)
+	if err != nil {
+		log.Printf("WARNING: cannot read the count of keys that Redis evicted, so /system/ready does not report evictions: %v", err)
+		return nil, nil
+	}
+	return watch, nil
 }
 
 func initializeServices() (*models.InfraServices, func(), error) {

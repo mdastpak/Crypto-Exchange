@@ -40,7 +40,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: crypto-exchange-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD:-redis} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # noeviction (#305): a full Redis refuses writes, which the server
+    # answers with 503, instead of dropping logged-out tokens or the attempt
+    # counters of sign-in codes, which would pass their checks silently.
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis} --maxmemory 256mb --maxmemory-policy noeviction
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-redis}
     ports:

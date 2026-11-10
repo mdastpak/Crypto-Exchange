@@ -58,10 +58,10 @@ docker pull -q "$REDIS_IMAGE" >/dev/null
 
 log "Sentinel: a primary, two replicas, three sentinels"
 primary=$SENTINEL_BASE
-run primary redis-server --port "$primary" --save "" --appendonly no
+run primary redis-server --port "$primary" --save "" --appendonly no --maxmemory-policy noeviction
 wait_ping "$primary"
 for i in 1 2; do
-	run "replica-$i" redis-server --port $((primary + i)) --save "" --appendonly no --replicaof 127.0.0.1 "$primary"
+	run "replica-$i" redis-server --port $((primary + i)) --save "" --appendonly no --maxmemory-policy noeviction --replicaof 127.0.0.1 "$primary"
 	wait_ping $((primary + i))
 done
 sentinels=()
@@ -82,7 +82,7 @@ log "Cluster: three primaries with two replicas each"
 nodes=()
 for i in 0 1 2 3 4 5 6 7 8; do
 	port=$((CLUSTER_BASE + i))
-	run "node-$i" redis-server --port "$port" --save "" --appendonly no \
+	run "node-$i" redis-server --port "$port" --save "" --appendonly no --maxmemory-policy noeviction \
 		--cluster-enabled yes --cluster-config-file "/tmp/nodes-$port.conf" --cluster-node-timeout 2000 \
 		--cluster-announce-ip 127.0.0.1
 	wait_ping "$port"

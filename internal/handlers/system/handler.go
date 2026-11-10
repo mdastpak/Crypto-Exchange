@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/redisutil"
 )
 
 // SystemHandler struct for system-related endpoints
@@ -19,6 +20,11 @@ type SystemHandler struct {
 	// failed to reload, or is stale makes the instance degraded, never
 	// unready, since it only makes the suggested site worse.
 	GeoIP *geoip.Resolver
+	// Eviction is checked when it is set (#305): keys that Redis evicted
+	// since the instance started make it degraded. Evicted keys may have
+	// been logged-out tokens or attempt counters, which an operator must
+	// look into, but the instance can still serve.
+	Eviction *redisutil.EvictionWatch
 
 	// checks replaces the dependency checks in tests.
 	checks []dependency
