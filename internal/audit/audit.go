@@ -142,6 +142,8 @@ const (
 	// review. The target is the table, and the row's primary key.
 	ActionIntegritySealMismatch = "integrity.seal_mismatch"
 	ActionIntegrityReseal       = "integrity.reseal"
+	// An administrator asked for a re-seal, which another approves (#308).
+	ActionIntegrityResealRequest = "integrity.reseal_request"
 )
 
 // Target types.
