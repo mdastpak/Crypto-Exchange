@@ -323,6 +323,7 @@ Failed attempts and abandoned codes are also logged with the masked contact. Del
 | Key | Default | Description |
 | --- | --- | --- |
 | `sign_in_min_response_ms` | `400` | The least time, from 1 to 5000 ms, that an answer to `POST /admin/auth` takes once the address is valid, so that its duration does not tell an administrator's address from an unknown one. It must be longer than the work for an administrator, which includes the confirm of the broker for the email; check the latency of that route in production and raise the setting if it comes close. |
+| `sessions.max_per_admin` | `2` | From 1 to 10. How many sessions an administrator has at once ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). A sign-in past it ends the oldest ones. Each admin token belongs to a session in PostgreSQL, which a logout, `DELETE /admin/sessions/{id}`, or `admin end-sessions` ends on every instance at once. |
 
 The authenticator (TOTP) secrets of administrators are sealed with a `field-enc` data key, so admin sign-in needs [`keys.provider`](#keys); without it, admin sign-in is disabled. The server and the `cmd/admin` command must use the same `keys` settings. Authenticator apps show `exchange.name` as the issuer of the account. Each sealed secret is bound to its administrator's ID, so it cannot be copied to another user row.
 
@@ -655,6 +656,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `OTP_AUTH_TTL_SECONDS` | `otp.auth.ttl_seconds` |
 | `OTP_AUTH_LENGTH` | `otp.auth.length` |
 | `OTP_AUTH_RETRY_LIMIT` | `otp.auth.retry_limit` |
+| `ADMIN_SESSIONS_MAX_PER_ADMIN` | `admin.sessions.max_per_admin` |
 | `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `CONTACTS_NEW_CONTACT_COOLDOWN_HOURS` | `contacts.new_contact_cooldown_hours` |
 | `SECURITY_CHANGE_HOLD_HOURS` | `security.change_hold_hours` |

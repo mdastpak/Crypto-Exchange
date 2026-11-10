@@ -286,6 +286,11 @@ type Configuration struct {
 		// sign-in request takes, so that its duration does not tell an
 		// administrator's address from an unknown one (#190).
 		SignInMinResponseMS int `yaml:"sign_in_min_response_ms"`
+		Sessions            struct {
+			// MaxPerAdmin caps the active sessions of one administrator
+			// (#308). A sign-in past it ends the oldest ones.
+			MaxPerAdmin int `yaml:"max_per_admin"`
+		} `yaml:"sessions"`
 	} `yaml:"admin"`
 
 	// Contacts configures the email and mobile changes of users (#199).
@@ -1602,6 +1607,7 @@ func setDefaults() {
 		{&Config.WebSocket.MaxConnectionsPerUser, DefaultWSMaxConnectionsPerUser},
 		{&Config.WebSocket.SessionCheckSeconds, DefaultWSSessionCheckSeconds},
 		{&Config.Admin.SignInMinResponseMS, DefaultAdminSignInMinResponseMS},
+		{&Config.Admin.Sessions.MaxPerAdmin, DefaultMaxSessionsPerAdmin},
 		{&Config.JWT.RefreshToken.ReuseGraceSeconds, DefaultRefreshReuseGraceSeconds},
 		{&Config.JWT.Sessions.MaxPerUser, DefaultMaxSessionsPerUser},
 		{&Config.JWT.Sessions.MaxLifetimeMinutes, DefaultSessionMaxLifetimeMinutes},
@@ -1992,6 +1998,10 @@ const (
 const (
 	DefaultAdminSignInMinResponseMS = 400
 	MaxAdminSignInMinResponseMS     = 5000
+	// DefaultMaxSessionsPerAdmin allows a second device, and
+	// MaxSessionsPerAdmin bounds what one administrator can hold.
+	DefaultMaxSessionsPerAdmin = 2
+	MaxSessionsPerAdmin        = 10
 )
 
 // The defaults of the websocket settings. Clients send small control

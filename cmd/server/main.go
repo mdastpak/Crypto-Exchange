@@ -934,8 +934,7 @@ func userLogout(ih *InfraHandlers) gin.HandlerFunc {
 	}
 }
 
-// adminLogout revokes an admin access token. Admin tokens have no session
-// or refresh token to revoke.
+// adminLogout ends the session of an admin access token.
 //
 // @Summary Sign out an administrator
 // @Tags admin sign-in
@@ -1030,6 +1029,8 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.PATCH("/platform/controls/:id", ih.Admin.UpdateControl)
 		adminGroup.POST("/platform/controls/:id/lift", ih.Admin.LiftControl)
 		adminGroup.POST("/logout", adminLogout(ih))
+		adminGroup.GET("/sessions", ih.Admin.ListSessions)
+		adminGroup.DELETE("/sessions/:id", ih.Admin.EndSession)
 		// The administration of the market data catalog (#270). A change
 		// drops the cache of the public routes on every instance.
 		if ih.MarketDataAdmin != nil {

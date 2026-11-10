@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTokenBlacklist_DurableWrites checks the blacklist of #231: an
-// administrator's token has no session, so a blacklist entry that a
-// failover loses would make a logged-out token work again. With durable
+// TestTokenBlacklist_DurableWrites checks the blacklist of #231: a
+// blacklist entry that a failover loses leaves a logged-out token to the
+// session check alone. With durable
 // writes on, a logout whose entry no replica acknowledged fails, and the
 // client retries it; without them, the entry is written as before.
 func TestTokenBlacklist_DurableWrites(t *testing.T) {

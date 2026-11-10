@@ -48,10 +48,11 @@ func (h *AdminHandler) signInAvailable() bool {
 }
 
 // RequireActiveAdmin runs after auth.JWTAdminVerification and checks the
-// stored record of the token's administrator on every request. A token stays
-// valid only while its administrator keeps the admin role, the approved
-// status, and an enrolled authenticator, so demoting or disabling an
-// administrator takes effect at once instead of when its token expires.
+// stored record of the token's administrator and session on every request. A
+// token stays valid only while its administrator keeps the admin role, the
+// approved status, and an enrolled authenticator, and while its session is
+// active, so demoting or disabling an administrator, or ending the session,
+// takes effect at once instead of when its token expires.
 func (h *AdminHandler) RequireActiveAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := auth.GetClaims(c)
@@ -71,6 +72,22 @@ func (h *AdminHandler) RequireActiveAdmin() gin.HandlerFunc {
 		if !active {
 			log.Printf("Rejected a token of administrator %s, who is no longer active", claims.UUID)
 			helpers.SendError(c, http.StatusUnauthorized, "admin_inactive", i18n.M("UNAUTHORIZED_ADMIN_NOT_ACTIVE"), nil)
+			c.Abort()
+			return
+		}
+		// The token's session, which a logout, a newer sign-in past the cap,
+		// or an operator ends in the database (#308), on every instance at
+		// once and whatever Redis holds.
+		err = h.Accounts.VerifySession(c.Request.Context(), claims.SessionID, claims.UUID)
+		if errors.Is(err, adminauth.ErrSessionEnded) {
+			c.Header("WWW-Authenticate", `Bearer`)
+			helpers.SendError(c, http.StatusUnauthorized, "session_inactive", i18n.M("UNAUTHORIZED_SESSION_IS_NOT_ACTIVE"), nil)
+			c.Abort()
+			return
+		}
+		if err != nil {
+			log.Printf("Failed to check the session of administrator %s: %v", claims.UUID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CHECK_ADMIN"), nil)
 			c.Abort()
 			return
 		}
@@ -266,21 +283,41 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 	}
 
 	// Admin tokens have no refresh token: an administrator signs in again
-	// with both factors when the access token expires.
-	accessToken, err := auth.GenerateAccessToken(admin.ID, auth.RoleAdmin, "")
+	// with both factors when the access token expires. The token belongs
+	// to a session, which is stored with the record of the sign-in: an
+	// administrator signs in only with both.
+	session := adminauth.NewSession{
+		ID:        adminauth.NewSessionID(),
+		AdminID:   admin.ID,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		ExpiresAt: time.Now().Add(auth.AccessTokenLifetime()),
+		Max:       maxSessionsPerAdmin(),
+	}
+	accessToken, err := auth.GenerateAccessToken(admin.ID, auth.RoleAdmin, session.ID)
 	if err != nil {
 		log.Printf("Failed to issue an admin token: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_ACCESS_TOKEN"), nil)
 		return
 	}
-	// An administrator signs in only with a record of it.
-	if err := h.auditSignIn(ctx, c, audit.ActionAdminSignIn, admin.ID, audit.Success, ""); err != nil {
+	event := h.signInEvent(c, audit.ActionAdminSignIn, admin.ID, audit.Success, "")
+	event.TargetType, event.TargetID = audit.TargetAdminSession, session.ID
+	if err := h.Accounts.StartSession(ctx, session, event); err != nil {
 		log.Printf("Refused the sign-in of administrator %s, which could not be recorded: %v", admin.ID, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_VERIFY_SIGN_IN"), nil)
 		return
 	}
 	log.Printf("Administrator %s signed in", admin.ID)
 	helpers.SendResponse(c, http.StatusOK, i18n.M("SIGNED_IN_SUCCESSFULLY"), gin.H{"access_token": accessToken})
+}
+
+// maxSessionsPerAdmin is admin.sessions.max_per_admin, or its default where
+// the configuration was not loaded from a file.
+func maxSessionsPerAdmin() int {
+	if limit := config.Config.Admin.Sessions.MaxPerAdmin; limit > 0 {
+		return limit
+	}
+	return config.DefaultMaxSessionsPerAdmin
 }
 
 // padResponse waits until minimum has passed since start, so that every
@@ -302,13 +339,19 @@ func padResponse(ctx context.Context, start time.Time, minimum time.Duration) {
 // own: an attempt changes nothing that it could share a transaction with.
 // An empty adminID is an anonymous actor, such as an unknown address.
 func (h *AdminHandler) auditSignIn(ctx context.Context, c *gin.Context, action, adminID, outcome, reason string) error {
+	return audit.Record(ctx, h.PostgresDB.DB, h.signInEvent(c, action, adminID, outcome, reason))
+}
+
+// signInEvent returns an event of the admin sign-in. An empty adminID is an
+// anonymous actor, such as an unknown address.
+func (h *AdminHandler) signInEvent(c *gin.Context, action, adminID, outcome, reason string) audit.Event {
 	e := audit.FromRequest(c)
 	e.Action, e.Outcome, e.Reason = action, outcome, reason
 	e.ActorType = audit.ActorAnonymous
 	if adminID != "" {
 		e.ActorType, e.ActorID = audit.ActorAdmin, adminID
 	}
-	return audit.Record(ctx, h.PostgresDB.DB, e)
+	return e
 }
 
 // noteSignIn records an event that must not block the answer: an attempt
@@ -320,17 +363,95 @@ func (h *AdminHandler) noteSignIn(ctx context.Context, c *gin.Context, action, a
 	}
 }
 
-// Logout revokes the admin access token of the request, and records it.
-// The record is best effort: a sign-out is never refused.
+// Logout ends the session of the request's admin token in the database,
+// with its record, so that the token stops working on every instance
+// whatever Redis holds (#308). The token also joins the blacklist, which is
+// a second check and never the reason a sign-out fails.
 func (h *AdminHandler) Logout(tb *auth.TokenBlacklist) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		auth.LogoutHandler(c, tb, nil)
 		claims, ok := auth.GetClaims(c)
-		if !ok || c.Writer.Status() != http.StatusOK {
+		if !ok || h.Accounts == nil {
+			helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
 		defer cancel()
-		h.noteSignIn(ctx, c, audit.ActionAdminLogout, claims.UUID, audit.Success, "")
+		event := h.signInEvent(c, audit.ActionAdminLogout, claims.UUID, audit.Success, "")
+		event.TargetType, event.TargetID = audit.TargetAdminSession, claims.SessionID
+		err := h.Accounts.EndSession(ctx, claims.SessionID, claims.UUID, adminauth.SessionLoggedOut, event)
+		if err != nil && !errors.Is(err, adminauth.ErrSessionEnded) {
+			log.Printf("Failed to end session %s of administrator %s: %v", claims.SessionID, claims.UUID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LOGOUT"), nil)
+			return
+		}
+		if token, ok := auth.BearerToken(c.GetHeader("Authorization")); ok && tb != nil && claims.ExpiresAt != nil {
+			if err := tb.AddTokenToBlacklist(ctx, token, claims.ExpiresAt.Time); err != nil {
+				log.Printf("Failed to blacklist the token of the ended session %s: %v", claims.SessionID, err)
+			}
+		}
+		helpers.SendResponse(c, http.StatusOK, i18n.M("LOGGED_OUT_SUCCESSFULLY"), nil)
+	}
+}
+
+// ListSessions lists the active sessions of the administrator.
+//
+// @Summary List the administrator's sessions
+// @Description The active sessions of the administrator of the token, newest first, each with the address and client that signed in. The session of the request has current true.
+// @Tags admin sign-in
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse{info=[]adminauth.Session}
+// @Failure 401 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/sessions [get]
+func (h *AdminHandler) ListSessions(c *gin.Context) {
+	claims, ok := auth.GetClaims(c)
+	if !ok || h.Accounts == nil {
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	sessions, err := h.Accounts.ListSessions(ctx, claims.UUID, claims.SessionID)
+	if err != nil {
+		log.Printf("Failed to list the sessions of administrator %s: %v", claims.UUID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_SESSIONS"), nil)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SESSIONS_RETRIEVED_SUCCESSFULLY"), sessions)
+}
+
+// EndSession ends one of the administrator's own sessions.
+//
+// @Summary End one of the administrator's sessions
+// @Description Ends an active session of the administrator of the token, on every instance at once; its token stops working. Ending the session of the request signs out. Audited as admin.session_revoke.
+// @Tags admin sign-in
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "The session" format(uuid)
+// @Success 200 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/sessions/{id} [delete]
+func (h *AdminHandler) EndSession(c *gin.Context) {
+	claims, ok := auth.GetClaims(c)
+	if !ok || h.Accounts == nil {
+		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	event := h.signInEvent(c, audit.ActionAdminSessionRevoke, claims.UUID, audit.Success, "")
+	event.TargetType, event.TargetID = audit.TargetAdminSession, c.Param("id")
+	err := h.Accounts.EndSession(ctx, c.Param("id"), claims.UUID, adminauth.SessionRevoked, event)
+	switch {
+	case errors.Is(err, adminauth.ErrSessionEnded):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("SESSION_NOT_FOUND"), nil)
+	case err != nil:
+		log.Printf("Failed to end session %s of administrator %s: %v", c.Param("id"), claims.UUID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_END_SESSION"), nil)
+	default:
+		helpers.SendResponse(c, http.StatusOK, i18n.M("SESSION_ENDED"), nil)
 	}
 }

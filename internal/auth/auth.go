@@ -79,6 +79,9 @@ func refreshReuseGrace() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// AccessTokenLifetime is how long an access token is valid.
+func AccessTokenLifetime() time.Duration { return accessTokenLifetime() }
+
 func accessTokenLifetime() time.Duration {
 	return time.Duration(config.Config.JWT.AccessToken.Expiration) * time.Minute
 }
