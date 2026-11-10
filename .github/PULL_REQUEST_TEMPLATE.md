@@ -28,6 +28,6 @@ Fixes #
 - [ ] `gofmt -l .` is empty, and `go vet ./...` and `go build ./...` pass.
 - [ ] Tests are added or updated, and `go test -p 1 ./...` passes.
 - [ ] New migrations include both up and down files, and no merged migration was modified.
-- [ ] Documentation is updated when behavior or configuration changes.
+- [ ] Documentation is updated when behavior or configuration changes: the README (its status table and architecture notes), `docs/architecture.md`, `docs/configuration.md`, the API reference, and the CHANGELOG, as they apply.
 - [ ] No secrets, keys, or personal data are included.
 - [ ] All code, comments, and text are in English.
