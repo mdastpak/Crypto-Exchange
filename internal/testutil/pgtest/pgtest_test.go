@@ -1,6 +1,7 @@
 package pgtest
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -8,6 +9,32 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestLock_LetsAFewProcessesChangeSchemasAtOnce takes every schema slot, and
+// expects another session to get none until one is released (#338). Other
+// test packages may hold slots meanwhile; each Lock waits for its turn.
+func TestLock_LetsAFewProcessesChangeSchemasAtOnce(t *testing.T) {
+	unlocks := make([]func(), schemaSlots)
+	for i := range unlocks {
+		unlocks[i] = Lock(t)
+	}
+	other := open(t, "postgres")
+	defer other.Close()
+	ctx := context.Background()
+	session, err := other.Conn(ctx)
+	require.NoError(t, err)
+	defer session.Close()
+	for i := int64(0); i < schemaSlots; i++ {
+		var taken bool
+		require.NoError(t, session.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, schemaLockBase+i).Scan(&taken))
+		assert.False(t, taken, "slot %d is held", i)
+	}
+
+	// A released slot is taken again; Lock fails the test if no slot comes
+	// free within schemaLockWait.
+	unlocks[0]()
+	Lock(t)()
+}
 
 func TestValidName_AcceptsOnlyTestDatabases(t *testing.T) {
 	for _, name := range []string{"testdb_x", "testdb_admin_currencies", "testdb_2"} {

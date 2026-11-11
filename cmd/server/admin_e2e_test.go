@@ -25,6 +25,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 
@@ -173,6 +174,9 @@ func pemKeyPair(t *testing.T) auth.KeyPair {
 func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	t.Helper()
 	skipUnlessReachable(t)
+	// The schema is emptied here and migrated by initializeServices, both
+	// one package at a time (#338).
+	unlock := pgtest.Lock(t)
 	resetE2EDatabase(t)
 
 	saved := config.Config
@@ -221,6 +225,7 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 		option(c)
 	}
 	services, cleanup, err := initializeServices()
+	unlock()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		services.Redis.Client.FlushDB(context.Background())

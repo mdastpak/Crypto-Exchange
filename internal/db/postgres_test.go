@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -164,6 +165,9 @@ func resetMigrationsTestSchema(t *testing.T) {
 // run.
 func TestMigrations_FullUpDownUpCycle(t *testing.T) {
 	ensureMigrationsTestDB(t)
+	// One package at a time empties and migrates a schema (#338); the lock
+	// is held until the reset of the cleanup has run.
+	pgtest.Lock(t)
 	resetMigrationsTestSchema(t)
 	t.Cleanup(func() { resetMigrationsTestSchema(t) })
 
@@ -195,6 +199,8 @@ func newMigrationsTestMigrator(t *testing.T) *migrate.Migrate {
 func newTestMigratorOf(t *testing.T, dir string) *migrate.Migrate {
 	t.Helper()
 	ensureMigrationsTestDB(t)
+	// Held for the whole test, which migrates with the migrator (#338).
+	pgtest.Lock(t)
 	resetMigrationsTestSchema(t)
 	t.Cleanup(func() { resetMigrationsTestSchema(t) })
 
