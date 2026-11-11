@@ -48,6 +48,8 @@ type Passwords struct {
 	MinLength   int
 	MaxFailures int
 	Lock        time.Duration
+	// RecoveryWait replaces security.recovery.wait_hours when set.
+	RecoveryWait time.Duration
 }
 
 // NewPasswords returns the store with the settings of security.password,
@@ -187,6 +189,12 @@ func (p *Passwords) Verify(ctx context.Context, userHK, password string) error {
 	if _, err := p.DB.ExecContext(ctx, `UPDATE user_passwords SET failed_attempts = 0, locked_until = NULL
 		WHERE user_hk = $1 AND password_hash = $2`, userHK, hash); err != nil {
 		return fmt.Errorf("clear the password attempts: %w", err)
+	}
+	// The owner of the account is here: a recovery that waits to replace
+	// this password ends (#307). A password that cannot end it is not
+	// accepted, so that the recovery cannot outlive the sign-in.
+	if err := p.cancelRecovery(ctx, userHK); err != nil {
+		return err
 	}
 	if outdated {
 		p.rehash(ctx, userHK, hash, password)
@@ -425,6 +433,11 @@ func (p *Passwords) Reset(ctx context.Context, userHK, recoveryCode, password st
 	event.TargetType, event.TargetID = audit.TargetUser, userHK
 	if err := audit.Record(ctx, tx, event); err != nil {
 		return none, fmt.Errorf("record the password reset: %w", err)
+	}
+	// The account is back with a recovery code: a recovery that waits has
+	// nothing left to do.
+	if _, err := endRecovery(ctx, tx, userHK, RecoveryCancelled, reasonRecoveryPasswordReset, event); err != nil {
+		return none, err
 	}
 	if err := tx.Commit(); err != nil {
 		return none, fmt.Errorf("store the password: %w", err)

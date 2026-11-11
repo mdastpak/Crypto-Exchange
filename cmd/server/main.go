@@ -1001,6 +1001,8 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.VerifyOTP)
 		publicGroup.POST("/auth/second-step", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStep)
 		publicGroup.POST("/auth/password-reset", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ResetPassword)
+		publicGroup.POST("/auth/recovery", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.Recover)
+		publicGroup.POST("/auth/recovery/complete", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.CompleteRecovery)
 		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ReplaceSession)
 		publicGroup.POST("/auth/refresh", service, ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives

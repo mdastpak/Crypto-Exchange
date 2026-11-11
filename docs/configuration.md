@@ -357,6 +357,9 @@ Writing to the database is not enough to create an administrator: changing `user
 | `password.max_failures` | `5` | From 1 to 20. How many wrong passwords in a row lock the password of an account. The count is in PostgreSQL, so every instance shares it. |
 | `password.lock_minutes` | `15` | From 1 to 1440. How long a locked password is not checked. |
 | `second_factor.mode` | `required_for_funds` | `required_for_funds`: a user must set a second factor, the account password, before deposits and withdrawals ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). `optional`: users without one are not asked. Either way, a user who has one must prove it for the [operations it protects](api.md#second-factor-and-step-up). |
+| `recovery.mode` | `standard` | How a user without the password and the recovery codes [recovers the account](api.md#account-recovery) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). `standard`: every verified contact is proved with a code, then the wait. `strict`: an account with a verified national ID also passes `recovery.steps`. |
+| `recovery.wait_hours` | `72` | From 1 to 720. How long a proved recovery waits before it can set a new password. The owner cancels it meanwhile by proving the password. |
+| `recovery.steps` | both | The identity steps of the strict mode: `national_id`, the owner sends the national ID again, and `mobile_ownership`, the provider confirms that a proved mobile number belongs to it, which needs `identity.mobile_ownership.provider`. Empty means both. |
 | `second_factor.step_up_minutes` | `5` | From 1 to 60. How long a sign-in with the second factor, or `POST /user/step-up`, lets a session run those operations. |
 
 ### `identity`
@@ -684,6 +687,9 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SECURITY_PASSWORD_MIN_LENGTH` | `security.password.min_length` |
 | `SECURITY_PASSWORD_MAX_FAILURES` | `security.password.max_failures` |
 | `SECURITY_PASSWORD_LOCK_MINUTES` | `security.password.lock_minutes` |
+| `SECURITY_RECOVERY_MODE` | `security.recovery.mode` |
+| `SECURITY_RECOVERY_WAIT_HOURS` | `security.recovery.wait_hours` |
+| `SECURITY_RECOVERY_STEPS` | `security.recovery.steps`, separated by commas |
 | `SECURITY_SECOND_FACTOR_MODE` | `security.second_factor.mode` |
 | `SECURITY_SECOND_FACTOR_STEP_UP_MINUTES` | `security.second_factor.step_up_minutes` |
 | `IDENTITY_MOBILE_OWNERSHIP_PROVIDER` | `identity.mobile_ownership.provider` |

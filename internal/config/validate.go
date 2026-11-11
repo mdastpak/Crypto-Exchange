@@ -235,6 +235,23 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Security.SecondFactor.StepUpMinutes; v < 1 || v > MaxUserStepUpMinutes {
 		p.add("security.second_factor.step_up_minutes", "is %d; it must be from 1 to %d", v, MaxUserStepUpMinutes)
 	}
+	if m := c.Security.Recovery.Mode; m != RecoveryStandard && m != RecoveryStrict {
+		p.add("security.recovery.mode", "is %q; it must be %q or %q", m, RecoveryStandard, RecoveryStrict)
+	}
+	if v := c.Security.Recovery.WaitHours; v < 1 || v > MaxRecoveryWaitHours {
+		p.add("security.recovery.wait_hours", "is %d; it must be from 1 to %d", v, MaxRecoveryWaitHours)
+	}
+	for _, step := range c.Security.Recovery.Steps {
+		switch step {
+		case RecoveryStepNationalID:
+		case RecoveryStepMobileOwnership:
+			if c.Security.Recovery.Mode == RecoveryStrict && (c.Identity.MobileOwnership.Provider == "" || c.Identity.MobileOwnership.Provider == "none") {
+				p.add("security.recovery.steps", "has %q, which needs identity.mobile_ownership.provider", step)
+			}
+		default:
+			p.add("security.recovery.steps", "has %q; the identity steps are %q and %q", step, RecoveryStepNationalID, RecoveryStepMobileOwnership)
+		}
+	}
 	mobileOwnershipProblems(p, c.Identity.MobileOwnership)
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)

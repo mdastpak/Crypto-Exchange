@@ -253,6 +253,14 @@ security:
     # withdrawals. optional: users without one are not asked.
     mode: required_for_funds
     step_up_minutes: 5   # How long a proof of the factor opens the operations it protects
+  # Recovery of an account whose password and recovery codes are lost.
+  recovery:
+    # standard: every verified contact is proved, then the wait. strict:
+    # an account with a verified national ID also proves its identity again.
+    mode: standard
+    wait_hours: 72       # How long a proved recovery waits; the password cancels it
+    # The identity steps of the strict mode. Empty means both.
+    # steps: [national_id, mobile_ownership]
 
 # Identity checks with a KYC provider.
 identity:

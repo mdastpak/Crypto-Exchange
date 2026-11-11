@@ -289,7 +289,7 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 	if method != methodCode {
-		h.askSecondStep(c, ctx, userHK, attempt)
+		h.askSecondStep(c, ctx, userHK, contactType, contact, attempt)
 		return
 	}
 	h.startSession(c, ctx, userHK, "", attempt)

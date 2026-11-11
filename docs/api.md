@@ -80,6 +80,13 @@ An error response contains only a fixed message for each error. Internal details
 | `second_factor_not_set` | `409` | A step-up of a user who has no password |
 | `password_invalid` | `401`, `403` | The account password is wrong: `401` at the second step of a sign-in, `403` when changing it |
 | `recovery_code_invalid` | `401` | The recovery code of a password reset is wrong, used, or replaced |
+| `recovery_identity_mismatch` | `401` | An identity check of an [account recovery](#account-recovery) failed; `info.identity_attempts_left` says how many may still fail |
+| `recovery_failed` | `403` | The recovery failed its identity checks and has ended |
+| `recovery_cooldown` | `429` | A recovery of the account failed in the last 24 hours; `Retry-After` says when another can start |
+| `recovery_contact_invalid` | `401` | The contact of the challenge is not a verified contact of the account, or not one that the recovery proved |
+| `recovery_not_ready` | `409` | The recovery has more to prove, or its wait ends at `info.ready_at` |
+| `recovery_not_found` | `404` | The account has no recovery in progress |
+| `recovery_unavailable` | `503` | An identity check of a strict recovery cannot run now |
 | `password_locked` | `429` | Too many wrong passwords in a row; `Retry-After` says when the password is checked again |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
@@ -330,7 +337,56 @@ Response `200`, with the access token and the refresh cookie: the reset signs in
 - `401 recovery_code_invalid`: the code is wrong, used, or replaced. The challenge stays usable. Each try counts toward the lock of the password, so the codes cannot be guessed: `429 password_locked` with `Retry-After`.
 - `401 challenge_invalid`, `403 account_frozen` and `account_unavailable`: as for the second step.
 - Audited as `user.password_reset`, also when it is refused. A code may be typed in lower case and with or without its dashes.
-- An account with no recovery code left cannot reset its password here. It needs account recovery.
+- An account with no recovery code left cannot reset its password here. It needs [account recovery](#account-recovery).
+- A reset cancels an account recovery in progress.
+
+### Account recovery
+
+For a user who has neither the [account password](#account-password) nor a [recovery code](#recovery-codes) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). The recovery is slow on purpose: what it proves, the contacts of the account, is exactly what the password protects the account against losing. So it proves **every** contact, can ask for the identity of the owner again, and then **waits**, during which the owner stops it by proving the password.
+
+`POST /public/auth/recovery` starts a recovery, or adds a proof to the one in progress:
+
+```json
+{ "challenge": "<challenge>", "national_id": "0012345678" }
+```
+
+1. **Every contact.** The challenge comes from the `202` answer to a correct sign-in code, and proves the contact of that code. The recovery needs each verified email address and mobile number of the account, so the user signs in with each in turn and sends each challenge here.
+2. **The identity, in the strict mode.** With `security.recovery.mode: strict`, an account with a verified national ID also passes the steps of `security.recovery.steps`:
+   - `national_id`: the national ID of the owner, in `national_id` of a request. Persian digits are accepted.
+   - `mobile_ownership`: the identity provider confirms that each proved mobile number is registered to that national ID, so a number that was given to someone else recovers nothing.
+
+   An account without a verified national ID has no identity to check again, and recovers in the standard mode. It holds no funds either ([#157](https://github.com/mdastpak/Crypto-Exchange/issues/157)).
+3. **The wait.** When everything is proved, the recovery is `waiting` until `ready_at`, `security.recovery.wait_hours` later (72 by default).
+
+Response `200`, with the state:
+
+```json
+{ "id": "…", "mode": "strict", "status": "verifying", "contacts_required": 2, "contacts_proven": 1,
+  "steps_required": ["national_id", "mobile_ownership"], "steps_remaining": ["national_id"],
+  "identity_attempts_left": 3, "started_at": "…", "expires_at": "…" }
+```
+
+- `401 recovery_identity_mismatch`: an identity check failed; `info` has the state, with `identity_attempts_left`. The third failure ends the recovery with `403 recovery_failed`, and the account starts no other for 24 hours: `429 recovery_cooldown` with `Retry-After`.
+- `503 recovery_unavailable`: the identity provider, or the keys that open the national ID, cannot answer. Nothing is decided, and a strict recovery never falls back to the standard one.
+- `401 recovery_contact_invalid`: the contact of the challenge is no longer a verified contact of the account. `401 challenge_invalid`, `403 account_frozen` and `account_unavailable`: as for the second step.
+- A recovery has 24 hours to prove everything. An account has one recovery at a time.
+
+`POST /public/auth/recovery/complete` sets the new password once the wait has ended:
+
+```json
+{ "challenge": "<challenge>", "new_password": "a new and better password" }
+```
+
+Response `200`, with ten new `recovery_codes`, shown this once, and `hold_until`. It does not sign in: the user signs in with a code and the new password.
+
+- The challenge must be of a contact that the recovery proved: `401 recovery_contact_invalid` otherwise.
+- `409 recovery_not_ready`, with `info.ready_at` and `Retry-After`, before the wait ends; `404 recovery_not_found` without a recovery, also after one was cancelled. A recovery can be completed for seven days after its wait.
+- The new password follows the policy of `PUT /user/password`.
+- **Every** session of the user ends, the earlier recovery codes stop working, and the [security hold](#security-hold) starts, so an account that was recovered cannot withdraw at once.
+
+**The password cancels a recovery.** Whenever the account password is proved, at the second step of a sign-in, at `POST /user/step-up`, or for a password change, an open recovery of the account is cancelled, on every instance, since its state is in PostgreSQL. The owner sees a recovery in progress in `recovery` of the `202` answer to a code and of `GET /user/security`.
+
+Audited as `user.recovery_start`, `user.recovery_identity` (a failed identity check), `user.recovery_cancel` (with the reason: `password_proven`, `password_reset`, or `identity_failed`), and `user.recovery_complete`, each in the transaction of its change, with the recovery as the target.
 
 ### Sign-in limits
 
@@ -1176,7 +1232,7 @@ A user may set a password on the account ([#307](https://github.com/mdastpak/Cry
 - Setting or changing the password is a change of the second factor, so it starts the [security hold](#security-hold); the answer has `security_hold_until`. Someone who took over the contacts of an account and set its password cannot withdraw at once.
 - Audited as `user.password_set` and `user.password_change`, also when a change is refused. The route closes during a lockdown of profile changes.
 
-A password cannot be removed. A forgotten one is reset with a recovery code at [`POST /public/auth/password-reset`](#post-publicauthpassword-reset).
+A password cannot be removed. A forgotten one is reset with a recovery code at [`POST /public/auth/password-reset`](#post-publicauthpassword-reset), and without one by an [account recovery](#account-recovery).
 
 ### Recovery codes
 
