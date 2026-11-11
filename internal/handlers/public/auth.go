@@ -67,6 +67,9 @@ type PublicHandler struct {
 	// (#307). The server sets it, with the slow hash that this package
 	// must not import. Without it, a code alone signs in.
 	Passwords *userauth.Passwords
+	// TOTP checks the authenticator apps, a second step that a user can
+	// prove instead of the password.
+	TOTP *userauth.TOTP
 	// Guard elevates the session of a sign-in that proved the second
 	// factor, for the operations that it protects.
 	Guard *userauth.Guard

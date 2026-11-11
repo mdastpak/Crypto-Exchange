@@ -62,7 +62,10 @@ const (
 	// ReasonRecoveryPasswordProven ends a recovery of an account whose
 	// password was proved meanwhile.
 	ReasonRecoveryPasswordProven = "password_proven"
-	reasonRecoveryPasswordReset  = "password_reset"
+	// ReasonRecoveryFactorProven ends one when another second factor of
+	// the account was proved.
+	ReasonRecoveryFactorProven  = "second_factor_proven"
+	reasonRecoveryPasswordReset = "password_reset"
 )
 
 // The refusals of a recovery.

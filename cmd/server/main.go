@@ -557,6 +557,11 @@ func useDataKeysForOTP(h *InfraHandlers) {
 			store.UseDataKeys(h.DataKeys)
 		}
 	}
+	// The secrets of the authenticator apps of users are sealed with the
+	// same keys (#307). Without keys, none is enrolled or checked.
+	if h.User != nil && h.User.TOTP != nil {
+		h.User.TOTP.Sealer = h.DataKeys
+	}
 }
 
 // validateConfiguration checks the loaded configuration as the server needs
@@ -898,6 +903,9 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// code issued, and an attempt counted against the lock.
 	passwords := userauth.NewPasswords(services.Postgres.DB, passwordhash.Argon2id{})
 	userHandler.Passwords, publicHandler.Passwords = passwords, passwords
+	// The authenticator apps; useDataKeysForOTP gives them the keys.
+	totpStore := &userauth.TOTP{DB: services.Postgres.DB, Passwords: passwords, Issuer: config.Config.Exchange.Name}
+	userHandler.TOTP, publicHandler.TOTP = totpStore, totpStore
 	guard := &userauth.Guard{DB: services.Postgres.DB}
 	userHandler.Guard, publicHandler.Guard = guard, guard
 	marketData := newMarketDataAPI(services)
@@ -1099,6 +1107,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.PUT("/password", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.SetPassword)
 		activeGroup.POST("/step-up", rl.AuthRateLimit(middleware.AuthLogin), ih.User.StepUp)
 		activeGroup.POST("/recovery-codes", profileChanges, ih.User.RequireSecondFactor(false), ih.User.GenerateRecoveryCodes)
+		activeGroup.POST("/totp", profileChanges, ih.User.RequireSecondFactor(false), ih.User.BeginTOTP)
+		activeGroup.POST("/totp/confirm", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.RequireSecondFactor(false), ih.User.ConfirmTOTP)
+		activeGroup.DELETE("/totp", profileChanges, ih.User.RequireSecondFactor(false), ih.User.RemoveTOTP)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)

@@ -87,6 +87,10 @@ An error response contains only a fixed message for each error. Internal details
 | `recovery_not_ready` | `409` | The recovery has more to prove, or its wait ends at `info.ready_at` |
 | `recovery_not_found` | `404` | The account has no recovery in progress |
 | `recovery_unavailable` | `503` | An identity check of a strict recovery cannot run now |
+| `totp_invalid` | `401`, `403` | The code of the [authenticator app](#authenticator-app) is wrong or was used: `401` at a sign-in or a password reset, `403` in a session |
+| `totp_locked` | `429` | Too many wrong authenticator codes in a row; `Retry-After` says when a code is checked again |
+| `totp_enabled` | `409` | The user already has an authenticator app |
+| `totp_not_enabled` | `409` | The user has no authenticator app, or no secret that waits for its first code |
 | `password_locked` | `429` | Too many wrong passwords in a row; `Retry-After` says when the password is checked again |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
@@ -1240,6 +1244,27 @@ The first password comes with ten recovery codes, in `recovery_codes` of the ans
 
 - `GET /user/security` has `recovery_codes_left`.
 - `POST /user/recovery-codes` replaces them: the unused codes stop working, and the answer has ten new ones. It needs a fresh proof of the password (`403 step_up_required`), so a stolen session cannot take new codes. `409 second_factor_not_set` answers a user without a password. Audited as `user.recovery_codes_generate`.
+
+### Authenticator app
+
+A user who has an account password can add an authenticator app (TOTP: RFC 6238, HMAC-SHA1, 6 digits, 30 seconds) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). A code of the app then proves the second step **instead of** the password, wherever the password is asked for: the password stays, with its recovery codes, as the way back when the device is lost.
+
+- `POST /user/totp` answers a new `secret`, in base32, and its otpauth `uri` for a QR code. It needs a password (`409 second_factor_not_set`) and a fresh proof of it (`403 step_up_required`). Until the secret is confirmed, a new call replaces it. `409 totp_enabled` answers a user who has an authenticator.
+- `POST /user/totp/confirm` with `{"code": "123456"}` checks the first code and turns the authenticator on. `403 totp_invalid`: the code is wrong; `409 totp_not_enabled`: no secret waits for its code.
+- `DELETE /user/totp` turns it off, with a fresh proof of the second factor.
+- `GET /user/security` has `totp_enabled`.
+
+Once it is on:
+
+- The `202` answer to a sign-in code lists `"totp"` in `methods` and in `password_reset`.
+- [`POST /public/auth/second-step`](#post-publicauthsecond-step) takes `totp_code` instead of `password`. The session's `auth_method` is `OTP+TOTP`.
+- `POST /user/step-up` takes `totp_code` instead of `password`.
+- [`POST /public/auth/password-reset`](#post-publicauthpassword-reset) takes `totp_code` instead of `recovery_code`, and uses no recovery code.
+- A right code cancels an [account recovery](#account-recovery), as the password does.
+
+A code is accepted once: the time step of the last accepted code is stored, so a code that was seen cannot be replayed, on any instance. Wrong codes are counted in PostgreSQL with the limits of the password, `security.password.max_failures` and `lock_minutes`, but separately from it: `429 totp_locked` with `Retry-After` locks the authenticator, and the password still works. A wrong code answers `401 totp_invalid` at a sign-in and `403 totp_invalid` in a session.
+
+The secret is sealed with the [data-protection keys](data-protection.md), bound to the user, and is shown only at enrollment. Without the keys no authenticator is enrolled or checked. Turning the authenticator on or off is a change of the second factor, so it starts the [security hold](#security-hold); both are audited, as `user.totp_enable`, also when the first code is wrong, and `user.totp_disable`.
 
 ### Second factor and step-up
 
