@@ -75,6 +75,9 @@ An error response contains only a fixed message for each error. Internal details
 | `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
 | `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
+| `second_factor_required` | `403` | The operation moves funds, and the user has not set an [account password](#second-factor-and-step-up) yet |
+| `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
+| `second_factor_not_set` | `409` | A step-up of a user who has no password |
 | `password_invalid` | `401`, `403` | The account password is wrong: `401` at the second step of a sign-in, `403` when changing it |
 | `password_locked` | `429` | Too many wrong passwords in a row; `Retry-After` says when the password is checked again |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
@@ -1149,9 +1152,24 @@ A user may set a password on the account ([#307](https://github.com/mdastpak/Cry
 - A new password has at least `security.password.min_length` characters (10 by default), at most 256 bytes, and at least five different characters. No character classes are asked for (NIST SP 800-63B). A password that is refused answers `400 validation_failed` with the reason under `errors.new_password`.
 - `403 password_invalid`: the current password is wrong. It counts toward the lock of the password, and `429 password_locked` answers while it is locked.
 - The answer has `sessions_ended`: setting or changing the password ends every other session of the user, which signed in without it.
+- Setting or changing the password is a change of the second factor, so it starts the [security hold](#security-hold); the answer has `security_hold_until`. Someone who took over the contacts of an account and set its password cannot withdraw at once.
 - Audited as `user.password_set` and `user.password_change`, also when a change is refused. The route closes during a lockdown of profile changes.
 
 A password cannot be removed. Resetting a forgotten one and recovering an account are separate flows.
+
+### Second factor and step-up
+
+The account password is the second factor of a user ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). `GET /user/security` shows where the session stands:
+
+```json
+{ "second_factor": { "mode": "required_for_funds", "enrolled": true, "elevated_until": "2026-11-11T09:35:00Z" } }
+```
+
+- **Funds need a second factor.** With `security.second_factor.mode: required_for_funds`, the default, a user must set a password before the first deposit or withdrawal, fiat or crypto: without one, those operations answer `403 second_factor_required`. With `optional`, a user without a password is not asked for one.
+- **Protected operations need a fresh proof.** A user who has a password must have proved it in the same session within `security.second_factor.step_up_minutes` (5 by default); otherwise the operation answers `403 step_up_required`. A sign-in with the password counts as the proof. Setting a password does not: a stolen session could set one.
+- `POST /user/step-up` with `{"password": "…"}` renews the proof and answers `200` with `elevated_until`. `403 password_invalid` and `429 password_locked` are as for a password change; `409 second_factor_not_set` answers a user without a password. Audited as `user.step_up`.
+- Today the protected operations are the [contact changes](#contacts). Deposits, withdrawals, and API keys call the same guard (`userauth.Guard.Check`, in the transaction of the change) when they are built.
+- The proof belongs to one session and is kept in PostgreSQL, so every instance sees it.
 
 ### `GET /user/profile`
 
@@ -1222,6 +1240,8 @@ A user holds at most one email address and one mobile number, both verified, and
 ```json
 { "items": [ { "type": "email", "value": "ali*****@example.com", "verified_at": "2026-11-07T10:00:00Z" } ] }
 ```
+
+A user who has an account password must have proved it in the session shortly before: both routes of a change answer `403 step_up_required` otherwise ([Second factor and step-up](#second-factor-and-step-up)).
 
 `POST /user/contacts/changes` starts a change:
 

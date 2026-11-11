@@ -67,6 +67,9 @@ type PublicHandler struct {
 	// (#307). The server sets it, with the slow hash that this package
 	// must not import. Without it, a code alone signs in.
 	Passwords *userauth.Passwords
+	// Guard elevates the session of a sign-in that proved the second
+	// factor, for the operations that it protects.
+	Guard *userauth.Guard
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {

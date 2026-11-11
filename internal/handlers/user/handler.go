@@ -39,6 +39,9 @@ type UserHandler struct {
 	// Passwords keeps the account passwords, the second step of a sign-in
 	// (#307). The server sets it.
 	Passwords *userauth.Passwords
+	// Guard decides whether a session may run the operations that the
+	// second factor protects. The server sets it.
+	Guard *userauth.Guard
 }
 
 // NewHandler function to initialize CurrenciesUserHandler with dependencies

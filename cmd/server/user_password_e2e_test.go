@@ -38,6 +38,11 @@ func (e *e2eEnv) setPassword(t *testing.T, token, password string) {
 	t.Helper()
 	status, resp := e.put(t, passwordRoute, map[string]string{"new_password": password}, token)
 	require.Equal(t, http.StatusOK, status, resp.Message)
+	// A new second factor holds withdrawals (#251).
+	require.NotEmpty(t, resp.Info["security_hold_until"])
+	var held bool
+	require.NoError(t, e.db.QueryRow(`SELECT COUNT(*) > 0 FROM users WHERE security_hold_until > NOW() + INTERVAL '23 hours'`).Scan(&held))
+	require.True(t, held)
 }
 
 // challengeOf signs in with a code and returns the challenge of the second

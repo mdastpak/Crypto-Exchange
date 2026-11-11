@@ -248,6 +248,11 @@ security:
     min_length: 10       # Characters; at least 8
     max_failures: 5      # Wrong passwords in a row that lock the password
     lock_minutes: 15     # How long a locked password is not checked
+  second_factor:
+    # required_for_funds: a password must be set before deposits and
+    # withdrawals. optional: users without one are not asked.
+    mode: required_for_funds
+    step_up_minutes: 5   # How long a proof of the factor opens the operations it protects
 
 # Identity checks with a KYC provider.
 identity:

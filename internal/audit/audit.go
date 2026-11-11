@@ -84,6 +84,9 @@ const (
 	// sign-in, or changing it with the current one (#307).
 	ActionUserPasswordSet    = "user.password_set"
 	ActionUserPasswordChange = "user.password_change"
+	// ActionUserStepUp is a session proving the second factor again, for
+	// the operations that it protects (#307).
+	ActionUserStepUp = "user.step_up"
 	// The contact changes of a user (#199). The target is the user, and the
 	// event holds the contacts masked.
 	ActionUserContactAdd     = "user.contact_add"
