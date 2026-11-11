@@ -39,12 +39,14 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
+	"github.com/mdastpak/crypto-exchange/internal/passwordhash"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/redisutil"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/sites"
+	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -891,6 +893,11 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	userHandler.Sessions = sessions
 	publicHandler := public.NewHandler(services)
 	publicHandler.Blacklist = tb
+	// The account passwords (#307). The slow hash is wired in here, and
+	// runs only behind the checks of userauth: a challenge that a correct
+	// code issued, and an attempt counted against the lock.
+	passwords := userauth.NewPasswords(services.Postgres.DB, passwordhash.Argon2id{})
+	userHandler.Passwords, publicHandler.Passwords = passwords, passwords
 	marketData := newMarketDataAPI(services)
 	return &InfraHandlers{
 		Socket:     ws,
@@ -990,6 +997,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.GET("/currencies/:hk", service, ih.Public.GetCurrencyByHK)
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
 		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.VerifyOTP)
+		publicGroup.POST("/auth/second-step", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStep)
 		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ReplaceSession)
 		publicGroup.POST("/auth/refresh", service, ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
@@ -1080,6 +1088,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/profile", ih.User.GetProfile)
 		activeGroup.PATCH("/profile", profileChanges, ih.User.UpdateProfile)
 		activeGroup.GET("/sessions", ih.User.ListSessions)
+		activeGroup.GET("/security", ih.User.GetSecurity)
+		// A password change checks the current password, so it has the
+		// limit of a sign-in on top of the lock of the password.
+		activeGroup.PUT("/password", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.SetPassword)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)

@@ -70,10 +70,16 @@ var (
 		timestamptz("revoked_at"), secret("access_token_hash"), secret("refresh_token_hash"),
 		secret("previous_refresh_hash"), timestamptz("rotated_at"),
 	}}
+	// UserPasswords covers the hash of the account password, the second
+	// step of a sign-in (#307), and when it was changed. The attempt
+	// counts are outside it: a wrong password writes them on its own.
+	UserPasswords = &Table{Name: "user_passwords", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		secret("password_hash"), timestamptz("changed_at"),
+	}}
 )
 
 // Tables lists the protected tables.
-var Tables = []*Table{Users, UserContacts, Sessions}
+var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords}
 
 // TableNamed returns the protected table name, or nil.
 func TableNamed(name string) *Table {

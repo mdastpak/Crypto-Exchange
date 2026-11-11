@@ -151,7 +151,7 @@ func (s *Sealer) ReviewReseal(ctx context.Context, id int64, origin audit.Event,
 // rowOwner returns the account that the row of a finding belongs to, or ""
 // when the row is gone.
 func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string, error) {
-	column := map[string]string{Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id"}[t.Name]
+	column := map[string]string{Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id", UserPasswords.Name: "user_hk"}[t.Name]
 	if column == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)
 	}

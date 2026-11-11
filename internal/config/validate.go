@@ -220,6 +220,15 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Security.ChangeHoldHours; v < 1 || v > MaxSecurityChangeHoldHours {
 		p.add("security.change_hold_hours", "is %d; it must be from 1 to %d", v, MaxSecurityChangeHoldHours)
 	}
+	if v := c.Security.Password.MinLength; v < MinPasswordMinLength || v > MaxPasswordMinLength {
+		p.add("security.password.min_length", "is %d; it must be from %d to %d", v, MinPasswordMinLength, MaxPasswordMinLength)
+	}
+	if v := c.Security.Password.MaxFailures; v < 1 || v > MaxPasswordMaxFailures {
+		p.add("security.password.max_failures", "is %d; it must be from 1 to %d", v, MaxPasswordMaxFailures)
+	}
+	if v := c.Security.Password.LockMinutes; v < 1 || v > MaxPasswordLockMinutes {
+		p.add("security.password.lock_minutes", "is %d; it must be from 1 to %d", v, MaxPasswordLockMinutes)
+	}
 	mobileOwnershipProblems(p, c.Identity.MobileOwnership)
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)

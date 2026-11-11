@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -17,7 +16,6 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
-	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
@@ -85,6 +83,14 @@ func maxSessionsPerUser() int {
 // audit event of a refusal. It reports whether replace was not one of the
 // user's active sessions.
 func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK uuid.UUID, replace string, attempt audit.Event) (replaceNotFound bool) {
+	// The method says what the user proved. Every caller comes after the
+	// second step of an account that has one.
+	method, err := h.sessionMethod(ctx, userHK)
+	if err != nil {
+		log.Printf("Failed to read the second step of a sign-in: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return false
+	}
 	sessionID := uuid.NewString()
 	accessToken, err := auth.GenerateAccessToken(userHK.String(), auth.RoleUser, sessionID)
 	if err != nil {
@@ -100,7 +106,7 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 	err = h.Sessions.Create(ctx, auth.Session{
 		ID:               sessionID,
 		UserID:           userHK.String(),
-		AuthMethod:       "OTP",
+		AuthMethod:       method,
 		AccessTokenHash:  auth.HashToken(accessToken),
 		RefreshTokenHash: auth.HashToken(refreshToken),
 		UserAgent:        c.Request.UserAgent(),
@@ -273,16 +279,13 @@ func (h *PublicHandler) ReplaceSession(c *gin.Context) {
 	attempt.TargetType, attempt.TargetID = audit.TargetSession, req.SessionID
 
 	// The account may have been disabled since the code was verified.
-	var status, role string
-	var deleted, frozen bool
-	err = h.PostgresDB.DB.QueryRowContext(ctx, `SELECT status, role, deleted_at IS NOT NULL, `+restrictions.FrozenSQL("users.hk")+`
-		FROM users WHERE hk = $1`, userHK).Scan(&status, &role, &deleted, &frozen)
+	allowed, frozen, err := h.canSignIn(ctx, userHK)
 	if err == nil && frozen {
 		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
 		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
 		return
 	}
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && (deleted || role != auth.RoleUser || !account.UserStatus(status).CanSignIn())) {
+	if err == nil && !allowed {
 		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
 		return

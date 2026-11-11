@@ -80,6 +80,10 @@ const (
 	ActionUserSessionRevoke = "user.session_revoke"
 	// ActionUserProfileUpdate is a user changing their names (#195).
 	ActionUserProfileUpdate = "user.profile_update"
+	// A user setting the account password, the second step of their
+	// sign-in, or changing it with the current one (#307).
+	ActionUserPasswordSet    = "user.password_set"
+	ActionUserPasswordChange = "user.password_change"
 	// The contact changes of a user (#199). The target is the user, and the
 	// event holds the contacts masked.
 	ActionUserContactAdd     = "user.contact_add"

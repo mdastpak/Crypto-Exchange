@@ -79,6 +79,7 @@ A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protecte
 | `users` | `status`, `role`, `deleted_at`, `totp_secret`, `totp_enabled`, `security_hold_until`, `kyc_status`, `kyc_tier`, the names | every signed-in request (the session check), user sign-in, admin sign-in and its TOTP check |
 | `user_contacts` | `user_hk`, `type`, `value`, `is_primary`, `verified_at`, `removed_at`, `ownership_checked_at` | user sign-in, which finds the account by the contact |
 | `sessions` | `user_id`, `status`, the times, the three token hashes | every signed-in request and every refresh |
+| `user_passwords` | `password_hash`, `changed_at` | the second step of a sign-in, and a change of the password |
 
 Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Each of the tables has three columns for it: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
 

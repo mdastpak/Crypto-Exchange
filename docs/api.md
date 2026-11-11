@@ -75,6 +75,8 @@ An error response contains only a fixed message for each error. Internal details
 | `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
 | `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
+| `password_invalid` | `401`, `403` | The account password is wrong: `401` at the second step of a sign-in, `403` when changing it |
+| `password_locked` | `429` | Too many wrong passwords in a row; `Retry-After` says when the password is checked again |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
 | `too_many_connections` | `429` | A WebSocket upgrade of a user who already has `websocket.max_connections_per_user` connections, over all server instances ([#234](https://github.com/mdastpak/Crypto-Exchange/issues/234)) |
@@ -270,9 +272,41 @@ Errors:
 - `429`: the attempts of the code or of the contact are used up. See [Sign-in limits](#sign-in-limits).
 - `500`: the user could not be created or loaded, or the session could not be read
 
+A user who has an [account password](#account-password) gets `202` instead of `200` for a correct code ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)): no token, no cookie, and a challenge for the [second step](#post-publicauthsecond-step).
+
 The first successful verification for a contact creates the user. Each email address and mobile number belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
 
 A mobile number of an account with a verified national ID is checked again at sign-in once its last check is older than `identity.mobile_ownership.recheck_days` ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)). Mobile numbers are recycled, so a number that the provider no longer matches to that national ID is taken off the account. The account keeps its data, every one of its sessions ends, and a [security hold](#security-hold) starts. The sign-in then continues as for an unknown number, with a new, empty account: the new subscriber never sees the previous owner's account. When the check is due and the provider cannot answer, the sign-in answers `503 identity_unavailable`; request a new code later, or sign in with the email address.
+
+### `POST /public/auth/second-step`
+
+Finishes the sign-in of a user who has an [account password](#account-password) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). A code alone proves control of a mobile number or a mailbox, which a SIM swap or a compromised mailbox gives away; the password is a second step after it, never a replacement for it.
+
+A correct code answers `202`:
+
+```json
+{
+  "status": 202,
+  "message": "The code is correct. Enter your password to finish signing in.",
+  "info": { "second_step_required": true, "challenge": "<challenge>", "expires_in": 300, "methods": ["password"] }
+}
+```
+
+The password, with the challenge, signs in:
+
+```json
+{ "challenge": "<challenge>", "password": "correct horse battery" }
+```
+
+Response `200`, with the access token and the refresh cookie as for a sign-in without a second step. The session's `auth_method` is `OTP+PASSWORD`.
+
+- The challenge works for five minutes, until a sign-in succeeds with it. It is in Redis, as a hash, so any instance finishes a sign-in that another one started.
+- `401 password_invalid`: the password is wrong. The challenge stays usable.
+- `429 password_locked`, with `Retry-After`: after `security.password.max_failures` wrong passwords in a row (5 by default), the password of the account is locked for `security.password.lock_minutes` (15 by default), and no password is checked. Each attempt is counted in PostgreSQL before the password is checked, so concurrent guesses on any instance cannot pass the limit. Only someone who already has a correct code can reach it.
+- `401 challenge_invalid`: the challenge is unknown, expired, or used.
+- `403 account_frozen` or `account_unavailable`: the account was frozen or disabled since the code, or its password row [was changed outside the backend](data-protection.md).
+- `409 session_limit_reached`: as for the code; see [Session limit](#session-limit).
+- The route has the per-IP limit of a code verification. Every refusal is in the [audit log](#audit-log) as a failed `user.sign_in`, with the reason and never the password.
 
 ### Sign-in limits
 
@@ -1094,6 +1128,30 @@ Errors: `400` `validation_failed` naming each invalid parameter; `401` and `403`
 ## User
 
 The user routes require a user access token. The profile routes take no user ID: they always act on the user that the token names, so a user cannot read or change another user's profile.
+
+### Account password
+
+A user may set a password on the account ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). From then on, their sign-in needs it after the code, as a [second step](#post-publicauthsecond-step). It is stored as an Argon2id hash (64 MiB, three passes) with its own salt, in a row that is [sealed](data-protection.md) like the account.
+
+`GET /user/security` returns the sign-in protections of the user:
+
+```json
+{ "password": { "set": true, "changed_at": "2026-11-11T09:30:00Z" }, "password_min_length": 10 }
+```
+
+`PUT /user/password` sets the first password, or changes it:
+
+```json
+{ "current_password": "correct horse battery", "new_password": "a new and better password" }
+```
+
+- `current_password` is required for a change and left out for the first password.
+- A new password has at least `security.password.min_length` characters (10 by default), at most 256 bytes, and at least five different characters. No character classes are asked for (NIST SP 800-63B). A password that is refused answers `400 validation_failed` with the reason under `errors.new_password`.
+- `403 password_invalid`: the current password is wrong. It counts toward the lock of the password, and `429 password_locked` answers while it is locked.
+- The answer has `sessions_ended`: setting or changing the password ends every other session of the user, which signed in without it.
+- Audited as `user.password_set` and `user.password_change`, also when a change is refused. The route closes during a lockdown of profile changes.
+
+A password cannot be removed. Resetting a forgotten one and recovering an account are separate flows.
 
 ### `GET /user/profile`
 
