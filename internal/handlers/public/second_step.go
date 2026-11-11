@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
@@ -47,10 +49,12 @@ const (
 	methodCode         = "OTP"
 	methodCodePassword = "OTP+PASSWORD"
 	methodCodeTOTP     = "OTP+TOTP"
+	methodCodePasskey  = "OTP+PASSKEY"
 	// factorPassword and factorTOTP name the account password and the
 	// authenticator app among the second steps.
 	factorPassword = "password"
 	factorTOTP     = "totp"
+	factorPasskey  = "passkey"
 	// provedMethodKey holds, in the request context, the session method
 	// of a second step that was proved with something else than the
 	// password.
@@ -64,6 +68,8 @@ const (
 	codePasswordLocked     = "password_locked"
 	codeTOTPInvalid        = "totp_invalid"
 	codeTOTPLocked         = "totp_locked"
+	codePasskeyInvalid     = "passkey_invalid"
+	codePasskeyUnavailable = "passkey_unavailable"
 )
 
 // SecondStepInfo is the info of a 202 answer to a correct code: the sign-in
@@ -108,6 +114,109 @@ type SecondStepRequest struct {
 	// TOTPCode is a code of the authenticator app, for an account whose
 	// methods list "totp".
 	TOTPCode string `json:"totp_code,omitempty" example:"123456"`
+	// Passkey is the answer of navigator.credentials.get to the options
+	// of POST /public/auth/second-step/passkey, for an account whose
+	// methods list "passkey".
+	Passkey json.RawMessage `json:"passkey,omitempty" swaggertype:"object"`
+}
+
+// PasskeyOptionsRequest asks for the options of a passkey proof.
+type PasskeyOptionsRequest struct {
+	Challenge string `json:"challenge"`
+}
+
+// signInScope names the sign-in of a challenge to the passkeys: a proof
+// that began for one challenge finishes no other.
+func signInScope(challenge string) string { return "sign_in:" + challenge }
+
+// hasPasskey reports whether the user can prove the second step with a
+// passkey. A failure to read it reports false: the password still signs in.
+func (h *PublicHandler) hasPasskey(ctx context.Context, userHK uuid.UUID) bool {
+	if h.Passkeys == nil {
+		return false
+	}
+	n, err := h.Passkeys.Count(ctx, userHK.String())
+	if err != nil {
+		log.Printf("Failed to read the passkeys of a sign-in: %v", err)
+		return false
+	}
+	return n > 0
+}
+
+// verifyPasskey checks the passkey answer of a challenge. It answers, and
+// reports false, when the answer does not prove the user.
+func (h *PublicHandler) verifyPasskey(c *gin.Context, ctx context.Context, userHK uuid.UUID, challenge string, response []byte, attempt audit.Event) bool {
+	if h.Passkeys == nil {
+		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
+		return false
+	}
+	err := h.Passkeys.FinishAssertion(ctx, userHK.String(), signInScope(challenge), response)
+	switch {
+	case errors.Is(err, passkey.ErrDisabled):
+		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
+		return false
+	case errors.Is(err, passkey.ErrInvalid), errors.Is(err, passkey.ErrNoCeremony), errors.Is(err, passkey.ErrCloned), errors.Is(err, passkey.ErrNoPasskey):
+		reason := codePasskeyInvalid
+		if errors.Is(err, passkey.ErrCloned) {
+			reason = "passkey_cloned"
+		}
+		h.noteSignIn(ctx, attempt, audit.Failure, reason)
+		helpers.SendError(c, http.StatusUnauthorized, codePasskeyInvalid, i18n.M("PASSKEY_INVALID"), nil)
+		return false
+	case err != nil:
+		log.Printf("Failed to check the passkey of a sign-in: %v", err)
+		h.noteSignIn(ctx, attempt, audit.Failure, "passkey_check_failed")
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return false
+	}
+	return true
+}
+
+// @Summary Get the options of a passkey proof for a sign-in
+// @Description For an account whose methods list passkey: answers the options for navigator.credentials.get, bound to the challenge of the sign-in. The answer of the device goes, as passkey, to POST /public/auth/second-step or POST /public/auth/password-reset within five minutes, once. The device must verify its holder, with a biometric or a PIN.
+// @Tags sign-in
+// @Accept json
+// @Produce json
+// @Param body body PasskeyOptionsRequest true "The challenge"
+// @Success 200 {object} models.APIResponse{info=passkey.Options} "The options, under publicKey"
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse "challenge_invalid"
+// @Failure 403 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "passkey_not_found: the account has no passkey"
+// @Failure 503 {object} models.APIResponse "passkey_unavailable: passkeys are not configured"
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/public/auth/second-step/passkey [post]
+func (h *PublicHandler) SecondStepPasskeyOptions(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	var req PasskeyOptionsRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Challenge == "" || len(req.Challenge) > 128 {
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"),
+			gin.H{"errors": map[string]string{"challenge": "is required"}})
+		return
+	}
+	if h.RedisClient == nil || h.PostgresDB == nil || h.Passkeys == nil {
+		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
+		return
+	}
+	userHK, _, _, ok := h.challengedUser(c, ctx, req.Challenge)
+	if !ok {
+		return
+	}
+	options, err := h.Passkeys.BeginAssertion(ctx, userHK.String(), signInScope(req.Challenge))
+	switch {
+	case errors.Is(err, passkey.ErrDisabled):
+		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
+		return
+	case errors.Is(err, passkey.ErrNoPasskey):
+		helpers.SendError(c, http.StatusConflict, "passkey_not_found", i18n.M("PASSKEY_NOT_FOUND"), nil)
+		return
+	case err != nil:
+		log.Printf("Failed to begin the passkey proof of a sign-in: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("PASSKEY_OPTIONS"), options)
 }
 
 // hasTOTP reports whether the user can prove the second step with an
@@ -188,6 +297,10 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 		methods = append(methods, factorTOTP)
 		reset = append(reset, factorTOTP)
 	}
+	if h.hasPasskey(ctx, userHK) {
+		methods = append(methods, factorPasskey)
+		reset = append(reset, factorPasskey)
+	}
 	h.noteSignIn(ctx, attempt, audit.Success, codeSecondStepRequired)
 	helpers.SendResponse(c, http.StatusAccepted, i18n.M("SECOND_STEP_REQUIRED"), SecondStepInfo{
 		Recovery:           recovery,
@@ -265,7 +378,7 @@ func (h *PublicHandler) challenge(c *gin.Context, ctx context.Context, challenge
 }
 
 // @Summary Finish a sign-in with the account password
-// @Description After a correct code answered 202 with a challenge, the account password signs in, or a code of the authenticator app (totp_code) for an account whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked after too many. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.
+// @Description After a correct code answered 202 with a challenge, the account password signs in, or a code of the authenticator app (totp_code) for an account whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked after too many. An account whose methods list passkey can send, as passkey, the answer of the device to the options of POST /public/auth/second-step/passkey: 401 passkey_invalid when it proves nothing. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.
 // @Tags sign-in
 // @Accept json
 // @Produce json
@@ -273,7 +386,7 @@ func (h *PublicHandler) challenge(c *gin.Context, ctx context.Context, challenge
 // @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo} "The access token. The refresh token is set as an HttpOnly cookie."
 // @Header 200 {string} Set-Cookie "The refresh token, HttpOnly"
 // @Failure 400 {object} models.APIResponse
-// @Failure 401 {object} models.APIResponse "challenge_invalid, password_invalid, or totp_invalid"
+// @Failure 401 {object} models.APIResponse "challenge_invalid, password_invalid, totp_invalid, or passkey_invalid"
 // @Failure 403 {object} models.APIResponse
 // @Failure 409 {object} models.APIResponse{info=SessionLimitInfo} "session_limit_reached: the user has the most active sessions allowed"
 // @Failure 429 {object} models.APIResponse "password_locked, or a rate limit"
@@ -292,8 +405,11 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 	if req.Challenge == "" || len(req.Challenge) > 128 {
 		errs["challenge"] = "is required"
 	}
-	byTOTP := req.TOTPCode != ""
+	byTOTP, byPasskey := req.TOTPCode != "", len(req.Passkey) > 0
 	switch {
+	case byPasskey && (byTOTP || req.Password != ""):
+		errs["passkey"] = "cannot be sent with password or totp_code"
+	case byPasskey:
 	case byTOTP && req.Password != "":
 		errs["totp_code"] = "cannot be sent with password"
 	case byTOTP:
@@ -318,6 +434,14 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 		return
 	}
 
+	if byPasskey {
+		if !h.verifyPasskey(c, ctx, userHK, req.Challenge, req.Passkey, attempt) {
+			return
+		}
+		c.Set(provedMethodKey, methodCodePasskey)
+		h.finishSecondStep(c, ctx, key, userHK, attempt)
+		return
+	}
 	if byTOTP {
 		if !h.verifyTOTP(c, ctx, userHK, req.TOTPCode, attempt) {
 			return

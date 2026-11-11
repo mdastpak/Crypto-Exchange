@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 )
@@ -42,6 +43,9 @@ type UserHandler struct {
 	// TOTP keeps the authenticator apps, a second step that a user can
 	// prove instead of the password.
 	TOTP *userauth.TOTP
+	// Passkeys keeps the passkeys, another second step that a user can
+	// prove instead of the password.
+	Passkeys *passkey.Service
 	// Guard decides whether a session may run the operations that the
 	// second factor protects. The server sets it.
 	Guard *userauth.Guard

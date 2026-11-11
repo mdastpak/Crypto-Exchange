@@ -322,6 +322,10 @@ func (p *Passwords) Set(ctx context.Context, userHK, current, password string, e
 }
 
 // holdDuration returns security.change_hold_hours, or its default.
+// HoldDuration returns how long a change of the second factor holds the
+// operations that it protects: security.change_hold_hours, or its default.
+func HoldDuration() time.Duration { return holdDuration() }
+
 func holdDuration() time.Duration {
 	hours := config.Config.Security.ChangeHoldHours
 	if hours == 0 {

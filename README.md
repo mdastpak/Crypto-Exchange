@@ -328,6 +328,7 @@ internal/notify/        Delivery of sign-in codes by email and SMS through Rabbi
 internal/otp/           One-time codes: generation, hashed storage in Redis, attempt limits
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
+internal/passkey/       Passkeys of users: WebAuthn registration and proof, sealed credentials
 internal/passwordhash/  Argon2id hashes of account passwords, wired in by the server only
 internal/platform/      Maintenance and feature lockdowns: controls, watcher, route gate
 internal/redisutil/     Durable Redis writes, hash slots, and following cluster failovers

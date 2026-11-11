@@ -1424,6 +1424,30 @@ definitions:
         example: 2
         type: integer
     type: object
+  passkey.Options:
+    properties:
+      publicKey:
+        additionalProperties: {}
+        description: PublicKey holds the options, as the WebAuthn API defines them.
+        type: object
+    type: object
+  passkey.Passkey:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        example: iPhone
+        type: string
+      synced:
+        description: |-
+          Synced reports a passkey that its provider backs up and syncs to
+          the other devices of the user.
+        type: boolean
+    type: object
   platform.Control:
     properties:
       active:
@@ -1662,6 +1686,11 @@ definitions:
       username:
         type: string
     type: object
+  public.PasskeyOptionsRequest:
+    properties:
+      challenge:
+        type: string
+    type: object
   public.PasswordResetRequest:
     properties:
       challenge:
@@ -1669,6 +1698,12 @@ definitions:
         type: string
       new_password:
         type: string
+      passkey:
+        description: |-
+          Passkey is the answer of the device to the options of
+          POST /public/auth/second-step/passkey, for an account whose
+          password_reset lists "passkey". It replaces the two above.
+        type: object
       recovery_code:
         description: |-
           RecoveryCode is one of the unused recovery codes of the account.
@@ -1771,6 +1806,12 @@ definitions:
     properties:
       challenge:
         type: string
+      passkey:
+        description: |-
+          Passkey is the answer of navigator.credentials.get to the options
+          of POST /public/auth/second-step/passkey, for an account whose
+          methods list "passkey".
+        type: object
       password:
         description: |-
           Password is the account password. Exactly one of Password and
@@ -2250,6 +2291,18 @@ definitions:
       status:
         type: string
     type: object
+  user.AddPasskeyRequest:
+    properties:
+      credential:
+        description: |-
+          Credential is the answer of navigator.credentials.create to the
+          options of POST /user/passkey-registration.
+        type: object
+      name:
+        description: Name is what the user calls the passkey, such as the device.
+        example: iPhone
+        type: string
+    type: object
   user.Contact:
     properties:
       type:
@@ -2350,6 +2403,25 @@ definitions:
           type: string
         type: array
     type: object
+  user.PasskeyAdded:
+    properties:
+      passkey:
+        $ref: '#/definitions/passkey.Passkey'
+      security_hold_until:
+        description: SecurityHoldUntil is when the security hold on withdrawals ends.
+        type: string
+    type: object
+  user.PasskeyList:
+    properties:
+      max:
+        description: Max is how many passkeys an account can have.
+        example: 10
+        type: integer
+      passkeys:
+        items:
+          $ref: '#/definitions/passkey.Passkey'
+        type: array
+    type: object
   user.PasswordChanged:
     properties:
       password:
@@ -2442,6 +2514,14 @@ definitions:
     type: object
   user.SecuritySettings:
     properties:
+      passkeys:
+        description: |-
+          Passkeys is how many passkeys the user has, and PasskeysAvailable
+          whether this deployment offers them.
+        example: 1
+        type: integer
+      passkeys_available:
+        type: boolean
       password:
         allOf:
         - $ref: '#/definitions/userauth.Status'
@@ -2486,6 +2566,11 @@ definitions:
     type: object
   user.StepUpRequest:
     properties:
+      passkey:
+        description: |-
+          Passkey is the answer of the device to the options of
+          POST /user/step-up/passkey. It replaces the two above.
+        type: object
       password:
         description: |-
           Password is the account password. Exactly one of Password and
@@ -5985,12 +6070,13 @@ paths:
       description: 'A user who forgot the account password proves the account twice:
         with the code sent to a contact, which answered 202 with a challenge, and
         with one of the recovery codes, or with a code of the authenticator app (totp_code)
-        for an account whose password_reset lists totp. The new password follows the
-        policy of PUT /user/password. The recovery code is used up, every session
-        of the user ends, the security hold starts, and the answer signs in. A wrong
-        recovery code answers 401 recovery_code_invalid, leaves the challenge usable,
-        and counts toward the lock of the password: 429 password_locked with Retry-After.
-        An account without unused recovery codes needs account recovery.'
+        for an account whose password_reset lists totp, or with a passkey (passkey)
+        for one that lists passkey. The new password follows the policy of PUT /user/password.
+        The recovery code is used up, every session of the user ends, the security
+        hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid,
+        leaves the challenge usable, and counts toward the lock of the password: 429
+        password_locked with Retry-After. An account without unused recovery codes
+        needs account recovery.'
       parameters:
       - description: The challenge, a recovery code, and the new password
         in: body
@@ -6019,7 +6105,8 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "401":
-          description: challenge_invalid, recovery_code_invalid, or totp_invalid
+          description: challenge_invalid, recovery_code_invalid, totp_invalid, or
+            passkey_invalid
           schema:
             $ref: '#/definitions/models.APIResponse'
         "403":
@@ -6203,11 +6290,13 @@ paths:
       description: 'After a correct code answered 202 with a challenge, the account
         password signs in, or a code of the authenticator app (totp_code) for an account
         whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked
-        after too many. The challenge works for five minutes, until a sign-in succeeds
-        with it. A wrong password answers 401 password_invalid and leaves the challenge
-        usable; after security.password.max_failures wrong passwords in a row the
-        password is locked for security.password.lock_minutes, on every instance,
-        and the answer is 429 password_locked with Retry-After.'
+        after too many. An account whose methods list passkey can send, as passkey,
+        the answer of the device to the options of POST /public/auth/second-step/passkey:
+        401 passkey_invalid when it proves nothing. The challenge works for five minutes,
+        until a sign-in succeeds with it. A wrong password answers 401 password_invalid
+        and leaves the challenge usable; after security.password.max_failures wrong
+        passwords in a row the password is locked for security.password.lock_minutes,
+        on every instance, and the answer is 429 password_locked with Retry-After.'
       parameters:
       - description: The challenge and the password
         in: body
@@ -6236,7 +6325,7 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "401":
-          description: challenge_invalid, password_invalid, or totp_invalid
+          description: challenge_invalid, password_invalid, totp_invalid, or passkey_invalid
           schema:
             $ref: '#/definitions/models.APIResponse'
         "403":
@@ -6262,6 +6351,61 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
       summary: Finish a sign-in with the account password
+      tags:
+      - sign-in
+  /api/v1/public/auth/second-step/passkey:
+    post:
+      consumes:
+      - application/json
+      description: 'For an account whose methods list passkey: answers the options
+        for navigator.credentials.get, bound to the challenge of the sign-in. The
+        answer of the device goes, as passkey, to POST /public/auth/second-step or
+        POST /public/auth/password-reset within five minutes, once. The device must
+        verify its holder, with a biometric or a PIN.'
+      parameters:
+      - description: The challenge
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.PasskeyOptionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The options, under publicKey
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/passkey.Options'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: challenge_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: 'passkey_not_found: the account has no passkey'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: 'passkey_unavailable: passkeys are not configured'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Get the options of a passkey proof for a sign-in
       tags:
       - sign-in
   /api/v1/public/auth/sessions/replace:
@@ -7133,6 +7277,181 @@ paths:
       summary: Sign out
       tags:
       - sign-in
+  /api/v1/user/passkey-registration:
+    post:
+      description: 'Answers the options for navigator.credentials.create: a passkey
+        of the device, such as Face ID, a fingerprint, Windows Hello, or a security
+        key. The device must verify its holder. The answer of the device goes to POST
+        /user/passkeys within five minutes. A passkey comes after the account password,
+        409 second_factor_not_set without one, and needs a fresh proof of the second
+        factor: 403 step_up_required.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The options, under publicKey
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/passkey.Options'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: second_factor_not_set or passkey_limit_reached
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: 'passkey_unavailable: passkeys are not configured'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Start adding a passkey
+      tags:
+      - user-security
+  /api/v1/user/passkeys:
+    get:
+      description: The passkeys of the user, oldest first, without their keys. A passkey
+        whose row was changed outside the backend is left out, and proves nothing.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.PasskeyList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the passkeys of the signed-in user
+      tags:
+      - user-security
+    post:
+      consumes:
+      - application/json
+      description: 'Checks the answer of the device to the options of POST /user/passkey-registration
+        and adds the passkey. From then on the user can prove the second step with
+        it instead of the account password: at a sign-in, at a step-up, and to reset
+        a forgotten password. It is a change of the second factor, so the security
+        hold starts. An account has at most ten passkeys.'
+      parameters:
+      - description: A name, and the answer of the device
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.AddPasskeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.PasskeyAdded'
+              type: object
+        "400":
+          description: 'validation_failed, or passkey_invalid: the answer does not
+            match the registration'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: passkey_exists or passkey_limit_reached
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: passkey_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a passkey
+      tags:
+      - user-security
+  /api/v1/user/passkeys/{id}:
+    delete:
+      description: Removes a passkey of the user. The account password stays the second
+        step. It needs a fresh proof of the second factor, and starts the security
+        hold.
+      parameters:
+      - description: The ID of the passkey
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.TOTPChanged'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: passkey_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Remove a passkey
+      tags:
+      - user-security
   /api/v1/user/password:
     put:
       consumes:
@@ -7552,6 +7871,44 @@ paths:
       summary: Prove the second factor again
       tags:
       - user security
+  /api/v1/user/step-up/passkey:
+    post:
+      description: Answers the options for navigator.credentials.get, bound to the
+        session. The answer of the device goes, as passkey, to POST /user/step-up
+        within five minutes, once.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The options, under publicKey
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/passkey.Options'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: 'passkey_not_found: the user has no passkey'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: passkey_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the options of a passkey proof for a step-up
+      tags:
+      - user-security
   /api/v1/user/totp:
     delete:
       description: Removes the authenticator of the user, also one that waits for

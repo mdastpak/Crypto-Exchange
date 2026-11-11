@@ -39,6 +39,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/passwordhash"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
@@ -906,6 +907,14 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// The authenticator apps; useDataKeysForOTP gives them the keys.
 	totpStore := &userauth.TOTP{DB: services.Postgres.DB, Passwords: passwords, Issuer: config.Config.Exchange.Name}
 	userHandler.TOTP, publicHandler.TOTP = totpStore, totpStore
+	// The passkeys of users. Without security.passkeys.rp_id the service
+	// is disabled, and its routes say so.
+	passkeys, err := passkey.New(services.Postgres.DB, services.Redis.Client, passkeyConfig())
+	if err != nil {
+		log.Printf("WARNING: passkeys are off: %v", err)
+		passkeys, _ = passkey.New(services.Postgres.DB, services.Redis.Client, passkey.Config{})
+	}
+	userHandler.Passkeys, publicHandler.Passkeys = passkeys, passkeys
 	guard := &userauth.Guard{DB: services.Postgres.DB}
 	userHandler.Guard, publicHandler.Guard = guard, guard
 	marketData := newMarketDataAPI(services)
@@ -1008,6 +1017,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
 		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.VerifyOTP)
 		publicGroup.POST("/auth/second-step", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStep)
+		publicGroup.POST("/auth/second-step/passkey", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStepPasskeyOptions)
 		publicGroup.POST("/auth/password-reset", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ResetPassword)
 		publicGroup.POST("/auth/recovery", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.Recover)
 		publicGroup.POST("/auth/recovery/complete", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.CompleteRecovery)
@@ -1110,6 +1120,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.POST("/totp", profileChanges, ih.User.RequireSecondFactor(false), ih.User.BeginTOTP)
 		activeGroup.POST("/totp/confirm", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.RequireSecondFactor(false), ih.User.ConfirmTOTP)
 		activeGroup.DELETE("/totp", profileChanges, ih.User.RequireSecondFactor(false), ih.User.RemoveTOTP)
+		activeGroup.GET("/passkeys", ih.User.ListPasskeys)
+		activeGroup.POST("/passkey-registration", profileChanges, ih.User.RequireSecondFactor(false), ih.User.BeginPasskey)
+		activeGroup.POST("/passkeys", profileChanges, ih.User.RequireSecondFactor(false), ih.User.AddPasskey)
+		activeGroup.DELETE("/passkeys/:id", profileChanges, ih.User.RequireSecondFactor(false), ih.User.RemovePasskey)
+		activeGroup.POST("/step-up/passkey", rl.AuthRateLimit(middleware.AuthLogin), ih.User.StepUpPasskeyOptions)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
@@ -1226,4 +1241,15 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	// other path.
 	registerAPI(r.Group(helpers.APIPrefix), ih, rl, adminAccess)
 	return nil
+}
+
+// passkeyConfig returns the relying party of the passkeys from
+// security.passkeys. The name falls back to exchange.name.
+func passkeyConfig() passkey.Config {
+	cfg := config.Config.Security.Passkeys
+	name := cfg.RPName
+	if name == "" {
+		name = config.Config.Exchange.Name
+	}
+	return passkey.Config{RPID: cfg.RPID, RPName: name, Origins: cfg.Origins}
 }

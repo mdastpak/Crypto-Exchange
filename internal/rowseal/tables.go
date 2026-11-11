@@ -76,10 +76,16 @@ var (
 	UserPasswords = &Table{Name: "user_passwords", Key: "user_hk", KeyType: "uuid", Columns: []Column{
 		secret("password_hash"), timestamptz("changed_at"),
 	}}
+	// UserPasskeys covers the passkeys of users (#307): whose a credential
+	// is, its public key, and whether it was removed. The signature
+	// counter and the last use are outside it: each use writes them.
+	UserPasskeys = &Table{Name: "user_passkeys", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("credential_id"), text("credential"), timestamptz("removed_at"),
+	}}
 )
 
 // Tables lists the protected tables.
-var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords}
+var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys}
 
 // TableNamed returns the protected table name, or nil.
 func TableNamed(name string) *Table {

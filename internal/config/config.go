@@ -345,6 +345,22 @@ type Configuration struct {
 			// that it protects.
 			StepUpMinutes int `yaml:"step_up_minutes"`
 		} `yaml:"second_factor"`
+		// Passkeys configures WebAuthn for users (#307): Face ID, a
+		// fingerprint, Windows Hello, or a security key as the second
+		// step. Passkeys are off while RPID is empty.
+		Passkeys struct {
+			// RPID is the relying party ID: the domain that the passkeys
+			// are bound to, such as "example.com". Changing it makes
+			// every passkey unusable.
+			RPID string `yaml:"rp_id"`
+			// RPName names the exchange in the passkey prompt. Empty
+			// takes exchange.name.
+			RPName string `yaml:"rp_name"`
+			// Origins are the origins of the clients that may use the
+			// passkeys, such as "https://app.example.com". Each host is
+			// RPID or a subdomain of it.
+			Origins []string `yaml:"origins"`
+		} `yaml:"passkeys"`
 		// Recovery configures how a user who lost the second factor gets
 		// the account back (#307).
 		Recovery struct {

@@ -253,6 +253,12 @@ security:
     # withdrawals. optional: users without one are not asked.
     mode: required_for_funds
     step_up_minutes: 5   # How long a proof of the factor opens the operations it protects
+  # Passkeys of users (WebAuthn): Face ID, a fingerprint, Windows Hello, or
+  # a security key as the second step. Off while rp_id is empty.
+  passkeys:
+    rp_id: ""            # The domain the passkeys are bound to, such as example.com
+    rp_name: ""          # Shown in the passkey prompt; empty takes exchange.name
+    origins: []          # Such as https://app.example.com; each under rp_id
   # Recovery of an account whose password and recovery codes are lost.
   recovery:
     # standard: every verified contact is proved, then the wait. strict:

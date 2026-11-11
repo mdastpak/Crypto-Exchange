@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -30,8 +31,12 @@ type PasswordResetRequest struct {
 	RecoveryCode string `json:"recovery_code,omitempty" example:"ABCD-EFGH-JKLM-NPQR"`
 	// TOTPCode is a code of the authenticator app, for an account whose
 	// password_reset lists "totp".
-	TOTPCode    string `json:"totp_code,omitempty" example:"123456"`
-	NewPassword string `json:"new_password"`
+	TOTPCode string `json:"totp_code,omitempty" example:"123456"`
+	// Passkey is the answer of the device to the options of
+	// POST /public/auth/second-step/passkey, for an account whose
+	// password_reset lists "passkey". It replaces the two above.
+	Passkey     json.RawMessage `json:"passkey,omitempty" swaggertype:"object"`
+	NewPassword string          `json:"new_password"`
 }
 
 const codeRecoveryCodeInvalid = "recovery_code_invalid"
@@ -42,7 +47,7 @@ type sessionEnder interface {
 }
 
 // @Summary Reset a forgotten account password
-// @Description A user who forgot the account password proves the account twice: with the code sent to a contact, which answered 202 with a challenge, and with one of the recovery codes, or with a code of the authenticator app (totp_code) for an account whose password_reset lists totp. The new password follows the policy of PUT /user/password. The recovery code is used up, every session of the user ends, the security hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid, leaves the challenge usable, and counts toward the lock of the password: 429 password_locked with Retry-After. An account without unused recovery codes needs account recovery.
+// @Description A user who forgot the account password proves the account twice: with the code sent to a contact, which answered 202 with a challenge, and with one of the recovery codes, or with a code of the authenticator app (totp_code) for an account whose password_reset lists totp, or with a passkey (passkey) for one that lists passkey. The new password follows the policy of PUT /user/password. The recovery code is used up, every session of the user ends, the security hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid, leaves the challenge usable, and counts toward the lock of the password: 429 password_locked with Retry-After. An account without unused recovery codes needs account recovery.
 // @Tags sign-in
 // @Accept json
 // @Produce json
@@ -50,7 +55,7 @@ type sessionEnder interface {
 // @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo} "The access token. The refresh token is set as an HttpOnly cookie."
 // @Header 200 {string} Set-Cookie "The refresh token, HttpOnly"
 // @Failure 400 {object} models.APIResponse
-// @Failure 401 {object} models.APIResponse "challenge_invalid, recovery_code_invalid, or totp_invalid"
+// @Failure 401 {object} models.APIResponse "challenge_invalid, recovery_code_invalid, totp_invalid, or passkey_invalid"
 // @Failure 403 {object} models.APIResponse
 // @Failure 429 {object} models.APIResponse "password_locked, or a rate limit"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
@@ -68,8 +73,11 @@ func (h *PublicHandler) ResetPassword(c *gin.Context) {
 	if req.Challenge == "" || len(req.Challenge) > 128 {
 		errs["challenge"] = "is required"
 	}
-	byTOTP := req.TOTPCode != ""
+	byTOTP, byPasskey := req.TOTPCode != "", len(req.Passkey) > 0
 	switch {
+	case byPasskey && (byTOTP || req.RecoveryCode != ""):
+		errs["passkey"] = "cannot be sent with recovery_code or totp_code"
+	case byPasskey:
 	case byTOTP && req.RecoveryCode != "":
 		errs["totp_code"] = "cannot be sent with recovery_code"
 	case byTOTP:
@@ -104,10 +112,13 @@ func (h *PublicHandler) ResetPassword(c *gin.Context) {
 	event.ActorType, event.ActorID = audit.ActorUser, userHK.String()
 
 	var err error
-	if byTOTP {
-		// The policy first: a password that is refused uses no code.
+	if byTOTP || byPasskey {
+		// The policy first: a password that is refused uses no proof.
 		if err = userauth.CheckPolicy(req.NewPassword, h.Passwords.MinPasswordLength()); err == nil {
-			if !h.verifyTOTP(c, ctx, userHK, req.TOTPCode, attempt) {
+			if byPasskey && !h.verifyPasskey(c, ctx, userHK, req.Challenge, req.Passkey, attempt) {
+				return
+			}
+			if byTOTP && !h.verifyTOTP(c, ctx, userHK, req.TOTPCode, attempt) {
 				return
 			}
 			_, err = h.Passwords.ResetWithFactor(ctx, userHK.String(), req.NewPassword, event)

@@ -4983,7 +4983,7 @@ const docTemplate = `{
         },
         "/api/v1/public/auth/password-reset": {
             "post": {
-                "description": "A user who forgot the account password proves the account twice: with the code sent to a contact, which answered 202 with a challenge, and with one of the recovery codes, or with a code of the authenticator app (totp_code) for an account whose password_reset lists totp. The new password follows the policy of PUT /user/password. The recovery code is used up, every session of the user ends, the security hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid, leaves the challenge usable, and counts toward the lock of the password: 429 password_locked with Retry-After. An account without unused recovery codes needs account recovery.",
+                "description": "A user who forgot the account password proves the account twice: with the code sent to a contact, which answered 202 with a challenge, and with one of the recovery codes, or with a code of the authenticator app (totp_code) for an account whose password_reset lists totp, or with a passkey (passkey) for one that lists passkey. The new password follows the policy of PUT /user/password. The recovery code is used up, every session of the user ends, the security hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid, leaves the challenge usable, and counts toward the lock of the password: 429 password_locked with Retry-After. An account without unused recovery codes needs account recovery.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5037,7 +5037,7 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "challenge_invalid, recovery_code_invalid, or totp_invalid",
+                        "description": "challenge_invalid, recovery_code_invalid, totp_invalid, or passkey_invalid",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -5291,7 +5291,7 @@ const docTemplate = `{
         },
         "/api/v1/public/auth/second-step": {
             "post": {
-                "description": "After a correct code answered 202 with a challenge, the account password signs in, or a code of the authenticator app (totp_code) for an account whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked after too many. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.",
+                "description": "After a correct code answered 202 with a challenge, the account password signs in, or a code of the authenticator app (totp_code) for an account whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked after too many. An account whose methods list passkey can send, as passkey, the answer of the device to the options of POST /public/auth/second-step/passkey: 401 passkey_invalid when it proves nothing. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5345,7 +5345,7 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "challenge_invalid, password_invalid, or totp_invalid",
+                        "description": "challenge_invalid, password_invalid, totp_invalid, or passkey_invalid",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -5376,6 +5376,88 @@ const docTemplate = `{
                     },
                     "429": {
                         "description": "password_locked, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/auth/second-step/passkey": {
+            "post": {
+                "description": "For an account whose methods list passkey: answers the options for navigator.credentials.get, bound to the challenge of the sign-in. The answer of the device goes, as passkey, to POST /public/auth/second-step or POST /public/auth/password-reset within five minutes, once. The device must verify its holder, with a biometric or a PIN.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sign-in"
+                ],
+                "summary": "Get the options of a passkey proof for a sign-in",
+                "parameters": [
+                    {
+                        "description": "The challenge",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.PasskeyOptionsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The options, under publicKey",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/passkey.Options"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "challenge_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "passkey_not_found: the account has no passkey",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "passkey_unavailable: passkeys are not configured",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -6830,6 +6912,277 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/passkey-registration": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Answers the options for navigator.credentials.create: a passkey of the device, such as Face ID, a fingerprint, Windows Hello, or a security key. The device must verify its holder. The answer of the device goes to POST /user/passkeys within five minutes. A passkey comes after the account password, 409 second_factor_not_set without one, and needs a fresh proof of the second factor: 403 step_up_required.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Start adding a passkey",
+                "responses": {
+                    "200": {
+                        "description": "The options, under publicKey",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/passkey.Options"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "second_factor_not_set or passkey_limit_reached",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "passkey_unavailable: passkeys are not configured",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/passkeys": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The passkeys of the user, oldest first, without their keys. A passkey whose row was changed outside the backend is left out, and proves nothing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "List the passkeys of the signed-in user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.PasskeyList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks the answer of the device to the options of POST /user/passkey-registration and adds the passkey. From then on the user can prove the second step with it instead of the account password: at a sign-in, at a step-up, and to reset a forgotten password. It is a change of the second factor, so the security hold starts. An account has at most ten passkeys.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Add a passkey",
+                "parameters": [
+                    {
+                        "description": "A name, and the answer of the device",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.AddPasskeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.PasskeyAdded"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed, or passkey_invalid: the answer does not match the registration",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "passkey_exists or passkey_limit_reached",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "passkey_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/passkeys/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes a passkey of the user. The account password stays the second step. It needs a fresh proof of the second factor, and starts the security hold.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Remove a passkey",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The ID of the passkey",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.TOTPChanged"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "passkey_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/password": {
             "put": {
                 "security": [
@@ -7476,6 +7829,67 @@ const docTemplate = `{
                     },
                     "429": {
                         "description": "password_locked, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/step-up/passkey": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Answers the options for navigator.credentials.get, bound to the session. The answer of the device goes, as passkey, to POST /user/step-up within five minutes, once.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Get the options of a passkey proof for a step-up",
+                "responses": {
+                    "200": {
+                        "description": "The options, under publicKey",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/passkey.Options"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "passkey_not_found: the user has no passkey",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "passkey_unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -9778,6 +10192,38 @@ const docTemplate = `{
                 }
             }
         },
+        "passkey.Options": {
+            "type": "object",
+            "properties": {
+                "publicKey": {
+                    "description": "PublicKey holds the options, as the WebAuthn API defines them.",
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "passkey.Passkey": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "iPhone"
+                },
+                "synced": {
+                    "description": "Synced reports a passkey that its provider backs up and syncs to\nthe other devices of the user.",
+                    "type": "boolean"
+                }
+            }
+        },
         "platform.Control": {
             "type": "object",
             "properties": {
@@ -10088,6 +10534,14 @@ const docTemplate = `{
                 }
             }
         },
+        "public.PasskeyOptionsRequest": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "type": "string"
+                }
+            }
+        },
         "public.PasswordResetRequest": {
             "type": "object",
             "properties": {
@@ -10097,6 +10551,10 @@ const docTemplate = `{
                 },
                 "new_password": {
                     "type": "string"
+                },
+                "passkey": {
+                    "description": "Passkey is the answer of the device to the options of\nPOST /public/auth/second-step/passkey, for an account whose\npassword_reset lists \"passkey\". It replaces the two above.",
+                    "type": "object"
                 },
                 "recovery_code": {
                     "description": "RecoveryCode is one of the unused recovery codes of the account.\nExactly one of RecoveryCode and TOTPCode is sent.",
@@ -10218,6 +10676,10 @@ const docTemplate = `{
             "properties": {
                 "challenge": {
                     "type": "string"
+                },
+                "passkey": {
+                    "description": "Passkey is the answer of navigator.credentials.get to the options\nof POST /public/auth/second-step/passkey, for an account whose\nmethods list \"passkey\".",
+                    "type": "object"
                 },
                 "password": {
                     "description": "Password is the account password. Exactly one of Password and\nTOTPCode is sent.",
@@ -10869,6 +11331,20 @@ const docTemplate = `{
                 }
             }
         },
+        "user.AddPasskeyRequest": {
+            "type": "object",
+            "properties": {
+                "credential": {
+                    "description": "Credential is the answer of navigator.credentials.create to the\noptions of POST /user/passkey-registration.",
+                    "type": "object"
+                },
+                "name": {
+                    "description": "Name is what the user calls the passkey, such as the device.",
+                    "type": "string",
+                    "example": "iPhone"
+                }
+            }
+        },
         "user.Contact": {
             "type": "object",
             "properties": {
@@ -10997,6 +11473,34 @@ const docTemplate = `{
                 }
             }
         },
+        "user.PasskeyAdded": {
+            "type": "object",
+            "properties": {
+                "passkey": {
+                    "$ref": "#/definitions/passkey.Passkey"
+                },
+                "security_hold_until": {
+                    "description": "SecurityHoldUntil is when the security hold on withdrawals ends.",
+                    "type": "string"
+                }
+            }
+        },
+        "user.PasskeyList": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "description": "Max is how many passkeys an account can have.",
+                    "type": "integer",
+                    "example": 10
+                },
+                "passkeys": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/passkey.Passkey"
+                    }
+                }
+            }
+        },
         "user.PasswordChanged": {
             "type": "object",
             "properties": {
@@ -11110,6 +11614,14 @@ const docTemplate = `{
         "user.SecuritySettings": {
             "type": "object",
             "properties": {
+                "passkeys": {
+                    "description": "Passkeys is how many passkeys the user has, and PasskeysAvailable\nwhether this deployment offers them.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "passkeys_available": {
+                    "type": "boolean"
+                },
                 "password": {
                     "description": "Password is the account password, the second step of the sign-in.",
                     "allOf": [
@@ -11165,6 +11677,10 @@ const docTemplate = `{
         "user.StepUpRequest": {
             "type": "object",
             "properties": {
+                "passkey": {
+                    "description": "Passkey is the answer of the device to the options of\nPOST /user/step-up/passkey. It replaces the two above.",
+                    "type": "object"
+                },
                 "password": {
                     "description": "Password is the account password. Exactly one of Password and\nTOTPCode is sent.",
                     "type": "string"
