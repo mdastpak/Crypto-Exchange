@@ -68,8 +68,8 @@ The API routes are registered once, under `/api/v1`, by `registerAPI`. The healt
 | --- | --- |
 | `/ws` | WebSocket rate limit (applied to the upgrade request) |
 | `/public` | Authentication rate limit |
-| `/admin/auth` | Authentication rate limit. Admin sign-in, without a token. |
-| `/admin` | `JWTAdminVerification` (Bearer access token signed with an admin key, blacklist check), `RequireActiveAdmin` (the token's administrator is still active in the database), trading rate limit |
+| `/admin/auth` | `AdminAccess` (the admin listener and the allowed networks, when configured), authentication rate limit. Admin sign-in, without a token. |
+| `/admin` | `AdminAccess`, `JWTAdminVerification` (Bearer access token signed with an admin key, blacklist check), `RequireActiveAdmin` (the token's administrator is still active in the database), trading rate limit |
 | `/user` | `JWTUserVerification` (Bearer access token signed with a user key, blacklist check), trading rate limit, and on every route except `/user/logout` `RequireActiveSession` (the token's session is active and its user can still sign in, checked in the database) |
 | `POST /public/auth/logout` | `JWTUserVerification`, like `/user/logout` |
 

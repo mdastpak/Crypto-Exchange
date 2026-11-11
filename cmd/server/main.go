@@ -161,6 +161,9 @@ func run() error {
 	if config.Config.Keys.Provider == "" {
 		log.Println("WARNING: keys.provider is not set: sign-in codes use a random secret, so only this process can verify them, until it restarts, and admin sign-in is disabled")
 	}
+	if gin.Mode() == gin.ReleaseMode && config.Config.Server.AdminListenAddr == "" && len(config.Config.Admin.AllowedCIDRs) == 0 {
+		log.Println("WARNING: the admin routes are served on the public address to every network; set server.admin_listen_addr or admin.allowed_cidrs, or keep them private at the proxy (docs/configuration.md)")
+	}
 	// Production runs several instances behind a load balancer, which keeps
 	// routing to a stopping instance until it sees the readiness probe fail.
 	if gin.Mode() == gin.ReleaseMode && config.Config.Server.DrainSeconds == 0 {
@@ -279,11 +282,20 @@ func run() error {
 		WriteTimeout: time.Duration(config.Config.Server.WriteTimeout) * time.Second,
 		IdleTimeout:  time.Duration(config.Config.Server.IdleTimeout) * time.Second,
 	}
-	listen := srv.ListenAndServe
-	if config.Config.Server.TLS.Enabled {
-		listen = func() error {
-			return srv.ListenAndServeTLS(config.Config.Server.TLS.CertFile, config.Config.Server.TLS.KeyFile)
+	adminAddr := config.Config.Server.AdminListenAddr
+	bound, err := openListeners(serverAddr, adminAddr)
+	if err != nil {
+		return err
+	}
+	bound.attach(srv)
+	if adminAddr != "" {
+		log.Printf("Serving the admin routes only on: %s://%s", protocol, adminAddr)
+	}
+	listen := func() error {
+		if config.Config.Server.TLS.Enabled {
+			return bound.serve(srv, config.Config.Server.TLS.CertFile, config.Config.Server.TLS.KeyFile)
 		}
+		return bound.serve(srv, "", "")
 	}
 
 	ctx, stop := stopSignals()
@@ -949,7 +961,7 @@ func adminLogout(ih *InfraHandlers) gin.HandlerFunc {
 }
 
 // registerAPI registers the routes of the API under g.
-func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimiter) {
+func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimiter, adminAccess middleware.AdminAccess) {
 	// The platform controls (#235): a full maintenance closes every route
 	// of users but the status, sign-out, and ending sessions; a lockdown
 	// closes its feature. The WebSocket checks them at the upgrade, after
@@ -987,7 +999,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 
 	// Admin sign-in is public, rate-limited like user sign-in, and separate
 	// from the admin group, which requires an admin token.
+	// Where the admin routes can be reached from (#308) is checked before
+	// a token or a sign-in request is read.
 	adminAuthGroup := g.Group("/admin/auth")
+	adminAuthGroup.Use(adminAccess.Middleware())
 	{
 		adminAuthGroup.POST("", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.RequestSignIn)
 		adminAuthGroup.POST("/:uuid", rl.AuthRateLimit(middleware.AuthLogin), ih.Admin.VerifySignIn)
@@ -998,6 +1013,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	ih.MarketData.Register(g, service)
 
 	adminGroup := g.Group("/admin")
+	adminGroup.Use(adminAccess.Middleware())
 	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
 	adminGroup.Use(ih.Admin.RequireActiveAdmin())
 	adminGroup.Use(rl.TradingRateLimit())
@@ -1095,6 +1111,11 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		return fmt.Errorf("invalid server.cors.allowed_origins: %w", err)
 	}
 
+	adminAccess, err := middleware.ParseAdminAccess(config.Config.Server.AdminListenAddr != "", config.Config.Admin.AllowedCIDRs)
+	if err != nil {
+		return fmt.Errorf("invalid admin.allowed_cidrs: %w", err)
+	}
+
 	if ih.Locales == nil {
 		locales, err := config.Config.Locales()
 		if err != nil {
@@ -1170,6 +1191,6 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 	// not part of the API: orchestrators and load balancers call them.
 	// Swagger, only where it is enabled (never in release mode), is the one
 	// other path.
-	registerAPI(r.Group(helpers.APIPrefix), ih, rl)
+	registerAPI(r.Group(helpers.APIPrefix), ih, rl, adminAccess)
 	return nil
 }

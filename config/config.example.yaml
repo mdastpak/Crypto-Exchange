@@ -33,6 +33,11 @@ server:
   # X-Forwarded-For and X-Real-IP headers are trusted. Leave empty when clients
   # connect directly; otherwise they could spoof their address.
   trusted_proxies: []
+  # A second address (host:port) on a private network for the admin routes,
+  # which the main address then answers with 404. Empty: they are served on
+  # the main address. See "Where the admin routes are served" in
+  # docs/configuration.md.
+  admin_listen_addr: ""
   tls:
     # Serve HTTPS with this certificate and key, which are checked at startup.
     enabled: false
@@ -224,6 +229,9 @@ admin:
   # Minutes that a sign-in or a fresh authenticator code opens the sensitive
   # admin routes (platform controls, restrictions, delistings, re-seals).
   step_up_minutes: 5
+  # CIDR ranges or addresses whose clients may call the admin routes, such as
+  # the range of a VPN. Empty: every address.
+  allowed_cidrs: []
   sessions:
     # Sessions of one administrator at once; a sign-in past it ends the oldest.
     max_per_admin: 2

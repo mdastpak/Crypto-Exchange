@@ -6,6 +6,7 @@
   "ACCOUNT_UNAVAILABLE": "این حساب در دسترس نیست. لطفاً با پشتیبانی تماس بگیرید.",
   "ACTIVE_CURRENCIES_RETRIEVED_SUCCESSFULLY": "فهرست ارزهای فعال دریافت شد.",
   "ADMINS_USE_ADMIN_SIGN_IN": "مدیران باید از صفحه ورود مدیریت وارد شوند.",
+  "ADMIN_NETWORK_DENIED": "رابط مدیریت از این شبکه در دسترس نیست.",
   "ADMIN_ROUTE_NOT_CLASSIFIED": "این مسیر مدیریتی در دسترس نیست.",
   "ADMIN_SIGN_IN_CODE_SENT": "اگر این نشانی متعلق به یک مدیر باشد، کد ورود به آن ارسال شد.",
   "ADMIN_SIGN_IN_IS_NOT_AVAILABLE": "ورود مدیران در حال حاضر در دسترس نیست.",

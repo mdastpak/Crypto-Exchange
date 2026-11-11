@@ -6,6 +6,7 @@
   "ACCOUNT_UNAVAILABLE": "This account is not available. Please contact support.",
   "ACTIVE_CURRENCIES_RETRIEVED_SUCCESSFULLY": "Active currencies retrieved successfully.",
   "ADMINS_USE_ADMIN_SIGN_IN": "Administrators must use the admin sign-in.",
+  "ADMIN_NETWORK_DENIED": "The admin API is not available from this network.",
   "ADMIN_ROUTE_NOT_CLASSIFIED": "This admin route is not available.",
   "ADMIN_SIGN_IN_CODE_SENT": "If this address belongs to an administrator, a sign-in code was sent to it",
   "ADMIN_SIGN_IN_IS_NOT_AVAILABLE": "Admin sign-in is not available",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -240,6 +241,22 @@ func (c *Configuration) rangeProblems(p *problems) {
 	}
 	if v := c.JWT.Sessions.MaxPerUser; v < 1 || v > MaxSessionsPerUser {
 		p.add("jwt.sessions.max_per_user", "is %d; it must be from 1 to %d", v, MaxSessionsPerUser)
+	}
+	for _, entry := range c.Admin.AllowedCIDRs {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(entry)); err != nil {
+			if _, err := netip.ParseAddr(strings.TrimSpace(entry)); err != nil {
+				p.add("admin.allowed_cidrs", "has %q, which is neither a CIDR range nor an IP address", entry)
+			}
+		}
+	}
+	if addr := c.Server.AdminListenAddr; addr != "" {
+		host, port, err := net.SplitHostPort(addr)
+		switch {
+		case err != nil || port == "":
+			p.add("server.admin_listen_addr", "is %q; it must be host:port, such as 10.0.0.5:8444", addr)
+		case port == c.Server.Port && (host == c.Server.IP || host == "" || host == "0.0.0.0" || c.Server.IP == "" || c.Server.IP == "0.0.0.0"):
+			p.add("server.admin_listen_addr", "is %q, which is the address of the server; give the admin routes an address of their own", addr)
+		}
 	}
 	if v := c.Admin.StepUpMinutes; v < 1 || v > MaxAdminStepUpMinutes {
 		p.add("admin.step_up_minutes", "is %d; it must be from 1 to %d", v, MaxAdminStepUpMinutes)
