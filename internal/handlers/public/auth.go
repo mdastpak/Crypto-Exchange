@@ -30,6 +30,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
@@ -70,6 +71,9 @@ type PublicHandler struct {
 	// TOTP checks the authenticator apps, a second step that a user can
 	// prove instead of the password.
 	TOTP *userauth.TOTP
+	// Passkeys checks the passkeys, another second step that a user can
+	// prove instead of the password.
+	Passkeys *passkey.Service
 	// Guard elevates the session of a sign-in that proved the second
 	// factor, for the operations that it protects.
 	Guard *userauth.Guard

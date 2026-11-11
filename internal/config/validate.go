@@ -235,6 +235,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Security.SecondFactor.StepUpMinutes; v < 1 || v > MaxUserStepUpMinutes {
 		p.add("security.second_factor.step_up_minutes", "is %d; it must be from 1 to %d", v, MaxUserStepUpMinutes)
 	}
+	passkeyProblems(p, c)
 	if m := c.Security.Recovery.Mode; m != RecoveryStandard && m != RecoveryStrict {
 		p.add("security.recovery.mode", "is %q; it must be %q or %q", m, RecoveryStandard, RecoveryStrict)
 	}
@@ -789,5 +790,40 @@ func (c *Configuration) geoIPProblems(p *problems) {
 	}
 	if _, err := geoip.New(geoip.Options{Overrides: g.Overrides}); err != nil {
 		p.add("geoip.overrides", "is not valid: %v", err)
+	}
+}
+
+// passkeyProblems checks security.passkeys: with a relying party ID, the
+// origins must be set, and each must be the ID or a subdomain of it, over
+// HTTPS unless it is a local address in development.
+func passkeyProblems(p *problems, c *Configuration) {
+	pk := c.Security.Passkeys
+	if pk.RPID == "" {
+		if len(pk.Origins) > 0 {
+			p.add("security.passkeys.origins", "is set without security.passkeys.rp_id")
+		}
+		return
+	}
+	if strings.ContainsAny(pk.RPID, ":/ ") || pk.RPID != strings.ToLower(pk.RPID) {
+		p.add("security.passkeys.rp_id", "is %q; it must be a domain in lower case, without a scheme or a port", pk.RPID)
+		return
+	}
+	if len(pk.Origins) == 0 {
+		p.add("security.passkeys.origins", "is empty; passkeys need the origins of the clients")
+	}
+	for _, origin := range pk.Origins {
+		u, err := url.Parse(origin)
+		if err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" {
+			p.add("security.passkeys.origins", "has %q, which is not an origin such as https://app.example.com", origin)
+			continue
+		}
+		host := u.Hostname()
+		if host != pk.RPID && !strings.HasSuffix(host, "."+pk.RPID) {
+			p.add("security.passkeys.origins", "has %q, whose host is not %q or a subdomain of it", origin, pk.RPID)
+		}
+		local := host == "localhost"
+		if u.Scheme != "https" && (!local || c.Server.Mode == "release") {
+			p.add("security.passkeys.origins", "has %q; an origin uses https", origin)
+		}
 	}
 }

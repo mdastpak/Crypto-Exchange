@@ -572,3 +572,23 @@ func mustLocales(t *testing.T, c Configuration) *i18n.Registry {
 	require.NoError(t, err)
 	return r
 }
+
+func TestValidate_Passkeys(t *testing.T) {
+	problemsOf := func(mode, rpID string, origins ...string) string {
+		c := Configuration{}
+		c.Server.Mode = mode
+		c.Security.Passkeys.RPID, c.Security.Passkeys.Origins = rpID, origins
+		p := &problems{}
+		passkeyProblems(p, &c)
+		return strings.Join(*p, "\n")
+	}
+	assert.NotContains(t, problemsOf("release", ""), "passkeys")
+	assert.NotContains(t, problemsOf("release", "example.com", "https://example.com", "https://app.example.com"), "passkeys")
+	assert.NotContains(t, problemsOf("debug", "localhost", "http://localhost:3000"), "passkeys")
+	assert.Contains(t, problemsOf("release", "localhost", "http://localhost:3000"), "uses https")
+	assert.Contains(t, problemsOf("release", "example.com"), "origins")
+	assert.Contains(t, problemsOf("release", "", "https://example.com"), "without security.passkeys.rp_id")
+	assert.Contains(t, problemsOf("release", "https://example.com", "https://example.com"), "rp_id")
+	assert.Contains(t, problemsOf("release", "example.com", "https://example.com.evil.test"), "subdomain")
+	assert.Contains(t, problemsOf("release", "example.com", "https://app.example.com/path"), "not an origin")
+}

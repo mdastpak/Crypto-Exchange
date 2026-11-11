@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
@@ -27,6 +29,9 @@ type StepUpRequest struct {
 	Password string `json:"password,omitempty"`
 	// TOTPCode is a code of the authenticator app of a user who has one.
 	TOTPCode string `json:"totp_code,omitempty" example:"123456"`
+	// Passkey is the answer of the device to the options of
+	// POST /user/step-up/passkey. It replaces the two above.
+	Passkey json.RawMessage `json:"passkey,omitempty" swaggertype:"object"`
 }
 
 // SteppedUp is the answer to a step-up.
@@ -110,9 +115,12 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
-	byTOTP := req.TOTPCode != ""
+	byTOTP, byPasskey := req.TOTPCode != "", len(req.Passkey) > 0
 	errs := map[string]string{}
 	switch {
+	case byPasskey && (byTOTP || req.Password != ""):
+		errs["passkey"] = "cannot be sent with password or totp_code"
+	case byPasskey:
 	case byTOTP && req.Password != "":
 		errs["totp_code"] = "cannot be sent with password"
 	case byTOTP:
@@ -136,7 +144,13 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 	event := auth.SessionEvent(c, audit.ActionUserStepUp, claims.UUID, claims.SessionID)
 
 	var err error
-	if byTOTP {
+	if byPasskey {
+		if h.Passkeys == nil {
+			helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
+			return
+		}
+		err = h.Passkeys.FinishAssertion(ctx, claims.UUID, sessionScope(claims.SessionID), req.Passkey)
+	} else if byTOTP {
 		if h.TOTP == nil {
 			helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
 			return
@@ -147,6 +161,17 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 	}
 	var locked *userauth.LockedError
 	switch {
+	case errors.Is(err, passkey.ErrDisabled):
+		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
+		return
+	case errors.Is(err, passkey.ErrInvalid), errors.Is(err, passkey.ErrNoCeremony), errors.Is(err, passkey.ErrCloned), errors.Is(err, passkey.ErrNoPasskey):
+		reason := codePasskeyInvalid
+		if errors.Is(err, passkey.ErrCloned) {
+			reason = "passkey_cloned"
+		}
+		h.noteSecurity(ctx, event, audit.Failure, reason)
+		helpers.SendError(c, http.StatusForbidden, codePasskeyInvalid, i18n.M("PASSKEY_INVALID"), nil)
+		return
 	case errors.Is(err, userauth.ErrNoTOTP), errors.Is(err, userauth.ErrWrongTOTP):
 		// A user without an authenticator answers like a wrong code.
 		h.noteSecurity(ctx, event, audit.Failure, codeTOTPInvalid)

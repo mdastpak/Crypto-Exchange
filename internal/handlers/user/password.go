@@ -39,6 +39,10 @@ type SecuritySettings struct {
 	// TOTPEnabled is whether the user has an authenticator app, which
 	// proves the second step instead of the password.
 	TOTPEnabled bool `json:"totp_enabled"`
+	// Passkeys is how many passkeys the user has, and PasskeysAvailable
+	// whether this deployment offers them.
+	Passkeys          int  `json:"passkeys" example:"1"`
+	PasskeysAvailable bool `json:"passkeys_available"`
 	// SecondFactor is where this session stands with the second factor.
 	SecondFactor userauth.State `json:"second_factor"`
 	// Recovery is the account recovery in progress, if any: someone
@@ -108,6 +112,14 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 	if h.TOTP != nil {
 		if settings.TOTPEnabled, err = h.TOTP.Enabled(ctx, claims.UUID); err != nil {
 			log.Printf("Failed to read the authenticator of user %s: %v", claims.UUID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
+			return
+		}
+	}
+	if h.Passkeys != nil && h.Passkeys.Enabled() {
+		settings.PasskeysAvailable = true
+		if settings.Passkeys, err = h.Passkeys.Count(ctx, claims.UUID); err != nil {
+			log.Printf("Failed to read the passkeys of user %s: %v", claims.UUID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
 			return
 		}

@@ -99,6 +99,9 @@ const (
 	// off (#307). The target is the user.
 	ActionUserTOTPEnable  = "user.totp_enable"
 	ActionUserTOTPDisable = "user.totp_disable"
+	// A user adding or removing a passkey (#307). The target is the user.
+	ActionUserPasskeyAdd    = "user.passkey_add"
+	ActionUserPasskeyRemove = "user.passkey_remove" //nolint:gosec // G101: the name of a code, not a credential.
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"

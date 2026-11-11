@@ -357,6 +357,9 @@ Writing to the database is not enough to create an administrator: changing `user
 | `password.max_failures` | `5` | From 1 to 20. How many wrong passwords in a row lock the password of an account. The count is in PostgreSQL, so every instance shares it. |
 | `password.lock_minutes` | `15` | From 1 to 1440. How long a locked password is not checked. |
 | `second_factor.mode` | `required_for_funds` | `required_for_funds`: a user must set a second factor, the account password, before deposits and withdrawals ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). `optional`: users without one are not asked. Either way, a user who has one must prove it for the [operations it protects](api.md#second-factor-and-step-up). |
+| `passkeys.rp_id` | empty | The relying party ID of the [passkeys](api.md#passkeys) of users ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)): the domain they are bound to, such as `example.com`, in lower case, without a scheme or a port. Empty turns passkeys off. Changing it makes every passkey unusable. |
+| `passkeys.rp_name` | `exchange.name` | The name of the exchange in the passkey prompt. |
+| `passkeys.origins` | empty | **Required** with `rp_id`. The origins of the clients that may use the passkeys, such as `https://app.example.com`. Each host is `rp_id` or a subdomain of it, over HTTPS; `http://localhost` is accepted outside the release mode. |
 | `recovery.mode` | `standard` | How a user without the password and the recovery codes [recovers the account](api.md#account-recovery) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). `standard`: every verified contact is proved with a code, then the wait. `strict`: an account with a verified national ID also passes `recovery.steps`. |
 | `recovery.wait_hours` | `72` | From 1 to 720. How long a proved recovery waits before it can set a new password. The owner cancels it meanwhile by proving the password. |
 | `recovery.steps` | both | The identity steps of the strict mode: `national_id`, the owner sends the national ID again, and `mobile_ownership`, the provider confirms that a proved mobile number belongs to it, which needs `identity.mobile_ownership.provider`. Empty means both. |
@@ -687,6 +690,9 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SECURITY_PASSWORD_MIN_LENGTH` | `security.password.min_length` |
 | `SECURITY_PASSWORD_MAX_FAILURES` | `security.password.max_failures` |
 | `SECURITY_PASSWORD_LOCK_MINUTES` | `security.password.lock_minutes` |
+| `SECURITY_PASSKEYS_RP_ID` | `security.passkeys.rp_id` |
+| `SECURITY_PASSKEYS_RP_NAME` | `security.passkeys.rp_name` |
+| `SECURITY_PASSKEYS_ORIGINS` | `security.passkeys.origins`, separated by commas |
 | `SECURITY_RECOVERY_MODE` | `security.recovery.mode` |
 | `SECURITY_RECOVERY_WAIT_HOURS` | `security.recovery.wait_hours` |
 | `SECURITY_RECOVERY_STEPS` | `security.recovery.steps`, separated by commas |

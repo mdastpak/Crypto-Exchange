@@ -495,3 +495,11 @@ func (p *Passwords) CompleteRecovery(ctx context.Context, userHK string, contact
 	}
 	return SetResult{Changed: true, HoldUntil: holdUntil, RecoveryCodes: codes}, nil
 }
+
+// CancelRecoveryFor ends the open recovery of a user within tx, the
+// transaction in which a second factor of the account, other than the
+// password, was proved.
+func CancelRecoveryFor(ctx context.Context, tx *sql.Tx, userHK string) error {
+	_, err := endRecovery(ctx, tx, userHK, RecoveryCancelled, ReasonRecoveryFactorProven, audit.Event{})
+	return err
+}

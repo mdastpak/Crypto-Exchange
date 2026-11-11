@@ -91,6 +91,11 @@ An error response contains only a fixed message for each error. Internal details
 | `totp_locked` | `429` | Too many wrong authenticator codes in a row; `Retry-After` says when a code is checked again |
 | `totp_enabled` | `409` | The user already has an authenticator app |
 | `totp_not_enabled` | `409` | The user has no authenticator app, or no secret that waits for its first code |
+| `passkey_invalid` | `400`, `401`, `403` | The answer of the device does not prove a [passkey](#passkeys) of the account, or no proof waits for it: `400` when adding one, `401` at a sign-in or a password reset, `403` in a session |
+| `passkey_unavailable` | `503` | Passkeys are not configured in this deployment |
+| `passkey_not_found` | `404`, `409` | The account has no such passkey, or none to prove |
+| `passkey_exists` | `409` | The credential is already a passkey |
+| `passkey_limit_reached` | `409` | The account has the most passkeys allowed; `info.max` says how many |
 | `password_locked` | `429` | Too many wrong passwords in a row; `Retry-After` says when the password is checked again |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
@@ -1265,6 +1270,27 @@ Once it is on:
 A code is accepted once: the time step of the last accepted code is stored, so a code that was seen cannot be replayed, on any instance. Wrong codes are counted in PostgreSQL with the limits of the password, `security.password.max_failures` and `lock_minutes`, but separately from it: `429 totp_locked` with `Retry-After` locks the authenticator, and the password still works. A wrong code answers `401 totp_invalid` at a sign-in and `403 totp_invalid` in a session.
 
 The secret is sealed with the [data-protection keys](data-protection.md), bound to the user, and is shown only at enrollment. Without the keys no authenticator is enrolled or checked. Turning the authenticator on or off is a change of the second factor, so it starts the [security hold](#security-hold); both are audited, as `user.totp_enable`, also when the first code is wrong, and `user.totp_disable`.
+
+### Passkeys
+
+A passkey is a WebAuthn credential that lives on a device of the user or in their password manager: Face ID, Touch ID, a fingerprint, Windows Hello, or a security key ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). It is bound to the domain of the exchange, so a phishing site gets nothing from it, and the server stores only a public key. A user who has an account password can add up to ten passkeys, and then prove the second step with one **instead of** the password. The device must verify its holder, with a biometric or a PIN, at every use.
+
+Passkeys need `security.passkeys.rp_id` and `origins`; without them every route below answers `503 passkey_unavailable`, and `GET /user/security` has `passkeys_available: false`.
+
+Each ceremony has two calls: the first answers the options for the browser, under `publicKey`, and the second takes the answer of the device as JSON, as `navigator.credentials.create` or `get` returns it. A ceremony is answered once, within five minutes; its state is in Redis, so any instance finishes it.
+
+- **Add.** `POST /user/passkey-registration` answers the options for `navigator.credentials.create`. `POST /user/passkeys` with `{"name": "iPhone", "credential": { … }}` adds the passkey: `201` with `passkey` and `security_hold_until`. Both need a password (`409 second_factor_not_set`) and a fresh proof of the second factor (`403 step_up_required`). `400 passkey_invalid`: the answer does not match the registration; `409 passkey_exists`; `409 passkey_limit_reached`.
+- **List.** `GET /user/passkeys` answers `passkeys`, each with `id`, `name`, `synced` (the provider backs it up and syncs it), `created_at`, and `last_used_at`, and `max`.
+- **Remove.** `DELETE /user/passkeys/{id}`, with a fresh proof of the second factor. `404 passkey_not_found`.
+- **Sign in.** The `202` answer to a sign-in code lists `"passkey"` in `methods` and in `password_reset`. `POST /public/auth/second-step/passkey` with `{"challenge": "<challenge>"}` answers the options for `navigator.credentials.get`, and [`POST /public/auth/second-step`](#post-publicauthsecond-step) takes the answer as `passkey` instead of `password`. The session's `auth_method` is `OTP+PASSKEY`. `401 passkey_invalid`: the answer proves nothing, and a new proof must begin.
+- **Step up.** `POST /user/step-up/passkey` answers the options, and `POST /user/step-up` takes the answer as `passkey`. `403 passkey_invalid`.
+- **Reset a forgotten password.** [`POST /public/auth/password-reset`](#post-publicauthpassword-reset) takes `passkey`, from the options of `POST /public/auth/second-step/passkey`, instead of `recovery_code`.
+
+A proof is bound to what it began for: one sign-in challenge, or one session. A right proof cancels an [account recovery](#account-recovery), as the password does. A credential whose signature counter goes back may have been copied: it is refused, and the refusal is audited with the reason `passkey_cloned`.
+
+The rows of `user_passkeys` are [sealed](data-protection.md) like the account: a credential that is written or moved in SQL is left out, and proves nothing. Adding or removing a passkey is a change of the second factor, so it starts the [security hold](#security-hold); both are audited, as `user.passkey_add` and `user.passkey_remove`.
+
+A passkey belongs to one relying party ID. A deployment that serves several registrable domains ([country sites](configuration.md)) uses one `rp_id` for the origins under it; the others sign in with the password or the authenticator app.
 
 ### Second factor and step-up
 
