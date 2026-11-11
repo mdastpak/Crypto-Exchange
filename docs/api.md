@@ -74,6 +74,7 @@ An error response contains only a fixed message for each error. Internal details
 | `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
 | `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
 | `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
+| `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
 | `too_many_connections` | `429` | A WebSocket upgrade of a user who already has `websocket.max_connections_per_user` connections, over all server instances ([#234](https://github.com/mdastpak/Crypto-Exchange/issues/234)) |
@@ -452,6 +453,8 @@ The sensitive routes:
 Every admin route that changes something is classified in one table, `adminRoutes` of `cmd/server/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
 
 ### Checks on admin routes
+
+Before anything else, the admin routes, sign-in included, check where the request comes from ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): with [`server.admin_listen_addr`](configuration.md#where-the-admin-routes-are-served) they exist only on that address and answer `404` on the public one, and with `admin.allowed_cidrs` a client outside the listed networks gets `403 admin_network_denied`.
 
 On every request, all `/admin/*` routes except sign-in check that the token's administrator still has the admin role, the approved status, and an enrolled authenticator. Demoting or disabling an administrator therefore revokes its tokens at once, also when the change is made directly in the database. Such a token gets `401 Unauthorized - Administrator is not active`. They also check that the token's session is active: a token of an ended session, or without one, gets `401 session_inactive`.
 

@@ -60,7 +60,13 @@ type Configuration struct {
 		// proxies whose X-Forwarded-For and X-Real-IP headers are trusted.
 		// Empty means none: the client address is the TCP peer address.
 		TrustedProxies []string `yaml:"trusted_proxies"`
-		TLS            struct {
+		// AdminListenAddr is a second address, host:port, that serves the
+		// admin routes, which the main address then does not (#308): a
+		// private network, or behind a VPN or a zero-trust proxy. It uses
+		// the TLS settings of the server. Empty serves them on the main
+		// address.
+		AdminListenAddr string `yaml:"admin_listen_addr"`
+		TLS             struct {
 			Enabled  bool   `yaml:"enabled"`
 			CertFile string `yaml:"cert_file"`
 			KeyFile  string `yaml:"key_file"`
@@ -286,6 +292,11 @@ type Configuration struct {
 		// sign-in request takes, so that its duration does not tell an
 		// administrator's address from an unknown one (#190).
 		SignInMinResponseMS int `yaml:"sign_in_min_response_ms"`
+		// AllowedCIDRs are the networks, as CIDR ranges or addresses, whose
+		// clients may call the admin routes, sign-in included (#308). The
+		// client address is the one server.trusted_proxies resolves. Empty
+		// allows every address.
+		AllowedCIDRs []string `yaml:"allowed_cidrs"`
 		// StepUpMinutes is how long a sign-in or a fresh authenticator
 		// code lets a session use the sensitive admin routes (#308).
 		StepUpMinutes int `yaml:"step_up_minutes"`

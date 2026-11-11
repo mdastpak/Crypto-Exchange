@@ -98,6 +98,7 @@ A new feature that only one region may have adds itself to the table `regionFeat
 | `idle_timeout_seconds` | `120` | HTTP keep-alive idle timeout |
 | `mode` | `release` | `debug`, `release`, or `test`. An instance that names none runs in release mode ([#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)); development sets `debug`. Sets Gin's mode, and `release` turns on the [release checks](#release-mode). Any other value stops the server. `SERVER_MODE` overrides it, and so does `GIN_MODE`, its older name. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers are trusted. With an empty list the client address is the TCP peer address, and forwarding headers are ignored. Behind a load balancer or ingress, list only its addresses; otherwise clients can spoof their address and bypass IP-based rate limits. An invalid entry stops the server at startup. |
+| `admin_listen_addr` | empty | A second address, `host:port`, for the [admin routes](#where-the-admin-routes-are-served) ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)), such as `10.0.0.5:8444` on a private interface. With it, the main address answers `/api/v1/admin/*` with `404`, and the admin address serves only those routes and the health probes. It uses the same TLS settings, limits, and timeouts, and stops with the server. It must differ from the address of the server; an address that cannot be bound stops the start. |
 | `swagger.enabled` | unset | Serves the Swagger UI at `/swagger/index.html`. When it is not set, the UI is served outside release mode only. |
 | `max_body_bytes` | `1048576` | The largest request body accepted, in bytes. A larger body gets `413`. |
 | `shutdown_timeout_seconds` | `30` | How long a shutdown may take in total, from `SIGINT` or `SIGTERM` until the connections to PostgreSQL, Redis, and RabbitMQ are closed. It includes `drain_seconds`. The orchestrator must wait longer before it kills the process, or the shutdown is cut short: Docker's `stop_grace_period` is 10 seconds by default, and `docker-compose.yml` sets it to 40; Kubernetes' `terminationGracePeriodSeconds` is 30 by default. See [Shutdown](architecture.md#startup-and-shutdown). |
@@ -325,6 +326,17 @@ Failed attempts and abandoned codes are also logged with the masked contact. Del
 | `sign_in_min_response_ms` | `400` | The least time, from 1 to 5000 ms, that an answer to `POST /admin/auth` takes once the address is valid, so that its duration does not tell an administrator's address from an unknown one. It must be longer than the work for an administrator, which includes the confirm of the broker for the email; check the latency of that route in production and raise the setting if it comes close. |
 | `step_up_minutes` | `5` | From 1 to 30. How long a sign-in or a fresh authenticator code (`POST /admin/step-up`) lets a session use the [sensitive admin routes](api.md#post-adminstep-up) ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). |
 | `sessions.max_per_admin` | `2` | From 1 to 10. How many sessions an administrator has at once ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). A sign-in past it ends the oldest ones. Each admin token belongs to a session in PostgreSQL, which a logout, `DELETE /admin/sessions/{id}`, or `admin end-sessions` ends on every instance at once. |
+| `allowed_cidrs` | `[]` | CIDR ranges or addresses whose clients may call the [admin routes](#where-the-admin-routes-are-served), sign-in included ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)), such as `[10.20.0.0/16]` for a VPN. Any other client gets `403 admin_network_denied` before its token or request is read. The client address is the one `server.trusted_proxies` resolves, so behind a proxy list the proxies there, or every client has the address of the proxy. Empty allows every address. An invalid entry stops the server at startup. |
+
+#### Where the admin routes are served
+
+The admin routes can lock the platform, restrict users, and re-seal rows, so a production release keeps them off the public internet ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). Three ways, which can be combined:
+
+- **A private address.** `server.admin_listen_addr` binds the admin routes to an interface of a private network, reached through a VPN or a zero-trust proxy. The public address then answers them with `404`. Every instance has its own admin address; an internal load balancer in front of them uses `/system/ready` on that address.
+- **Allowed networks.** `admin.allowed_cidrs` refuses every client outside the listed ranges. It works on either address, and suits a single address behind a proxy that passes the client address on.
+- **At the proxy.** The reverse proxy or ingress refuses `/api/v1/admin/` from the internet. The server cannot check this one.
+
+In release mode, a server with neither of the two settings logs a warning at start. Neither replaces the sign-in: the email code, the authenticator, the sessions, and the step-up apply as before.
 
 The authenticator (TOTP) secrets of administrators are sealed with a `field-enc` data key, so admin sign-in needs [`keys.provider`](#keys); without it, admin sign-in is disabled. The server and the `cmd/admin` command must use the same `keys` settings. Authenticator apps show `exchange.name` as the issuer of the account. Each sealed secret is bound to its administrator's ID, so it cannot be copied to another user row.
 
@@ -572,6 +584,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SERVER_WRITE_TIMEOUT_SECONDS` | `server.write_timeout_seconds` |
 | `SERVER_IDLE_TIMEOUT_SECONDS` | `server.idle_timeout_seconds` |
 | `SERVER_TRUSTED_PROXIES` | `server.trusted_proxies`, as a comma-separated list |
+| `SERVER_ADMIN_LISTEN_ADDR` | `server.admin_listen_addr` |
 | `SERVER_CORS_ALLOWED_ORIGINS` | `server.cors.allowed_origins`, as a comma-separated list |
 | `SERVER_TLS_ENABLED` | `server.tls.enabled` |
 | `SERVER_TLS_CERT_FILE` | `server.tls.cert_file` |
@@ -657,6 +670,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `OTP_AUTH_TTL_SECONDS` | `otp.auth.ttl_seconds` |
 | `OTP_AUTH_LENGTH` | `otp.auth.length` |
 | `OTP_AUTH_RETRY_LIMIT` | `otp.auth.retry_limit` |
+| `ADMIN_ALLOWED_CIDRS` | `admin.allowed_cidrs`, as a comma-separated list |
 | `ADMIN_SESSIONS_MAX_PER_ADMIN` | `admin.sessions.max_per_admin` |
 | `ADMIN_SIGN_IN_MIN_RESPONSE_MS` | `admin.sign_in_min_response_ms` |
 | `ADMIN_STEP_UP_MINUTES` | `admin.step_up_minutes` |

@@ -105,6 +105,9 @@ func TestValidateServer_Rules(t *testing.T) {
 		"WebSocket over http": {func(c *Configuration) { c.WebSocket.AllowedOrigins = []string{"http://localhost:3000"} }, `websocket.allowed_origins (WS_ALLOWED_ORIGINS) contains "http://localhost:3000"`},
 
 		// Ranges, in every mode.
+		"admin network not a range":        {func(c *Configuration) { c.Admin.AllowedCIDRs = []string{"10.0.0.0/8", "office"} }, `admin.allowed_cidrs (ADMIN_ALLOWED_CIDRS) has "office", which is neither a CIDR range nor an IP address`},
+		"admin address without a port":     {func(c *Configuration) { c.Server.AdminListenAddr = "10.0.0.5" }, `server.admin_listen_addr (SERVER_ADMIN_LISTEN_ADDR) is "10.0.0.5"; it must be host:port`},
+		"admin address of the server":      {func(c *Configuration) { c.Server.AdminListenAddr = "0.0.0.0:" + c.Server.Port }, "which is the address of the server"},
 		"port zero":                        {func(c *Configuration) { c.Server.Port = "0" }, `server.port (SERVER_PORT) is "0"; it must be a port number from 1 to 65535`},
 		"port too large":                   {func(c *Configuration) { c.Postgres.Port = "65536" }, `postgres.port (POSTGRES_PORT) is "65536"`},
 		"port not a number":                {func(c *Configuration) { c.Redis.Port = "redis" }, `redis.port (REDIS_PORT) is "redis"`},
