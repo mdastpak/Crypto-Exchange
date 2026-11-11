@@ -147,6 +147,10 @@ Schema (see docs/configuration.md#database-roles):
                      change the schema.
 `
 
+// The commands work in UTC whatever the host's time zone, as the server
+// (#339): they print times read from PostgreSQL.
+func init() { time.Local = time.UTC }
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
