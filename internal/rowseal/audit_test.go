@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
@@ -159,29 +160,28 @@ func TestAuditEvents_ReportWhatCannotBeChecked(t *testing.T) {
 	assert.Equal(t, audit.IntegrityUnsealed, integrityOf(t, e.conn, "plain"))
 }
 
-// TestSealsWithKey names a table whose rows still need a row-mac version,
-// so that the version is not retired under them.
+// TestSealsWithKey names a table whose rows still need a key version, so
+// that the version is not retired under them: row-mac for the sealed
+// tables, and audit-mac for the audit events.
 func TestSealsWithKey(t *testing.T) {
 	e := newEnv(t)
 	e.sealEvents(t)
 	ctx := context.Background()
+	sealsWith := func(purpose keys.Purpose, version int) string {
+		t.Helper()
+		table, err := rowseal.SealsWithKey(ctx, e.conn, purpose, version)
+		require.NoError(t, err)
+		return table
+	}
 
-	table, err := rowseal.SealsWithKey(ctx, e.conn, 1)
-	require.NoError(t, err)
-	assert.Empty(t, table, "nothing is sealed yet")
-
+	assert.Empty(t, sealsWith(keys.PurposeAuditMAC, 1), "nothing is sealed yet")
 	require.NoError(t, audit.Record(ctx, e.conn, audit.Event{ActorType: audit.ActorSystem, Action: "test.keys",
 		Outcome: audit.Success}))
-	table, err = rowseal.SealsWithKey(ctx, e.conn, 1)
-	require.NoError(t, err)
-	assert.Equal(t, rowseal.AuditEvents.Name, table)
+	assert.Equal(t, rowseal.AuditEvents.Name, sealsWith(keys.PurposeAuditMAC, 1))
+	assert.Empty(t, sealsWith(keys.PurposeRowMAC, 1), "events are sealed with audit-mac, not row-mac")
 
 	e.newUser(t)
-	table, err = rowseal.SealsWithKey(ctx, e.conn, 1)
-	require.NoError(t, err)
-	assert.Equal(t, rowseal.Users.Name, table, "the tables that the verifier moves come first")
-
-	table, err = rowseal.SealsWithKey(ctx, e.conn, 2)
-	require.NoError(t, err)
-	assert.Empty(t, table)
+	assert.Equal(t, rowseal.Users.Name, sealsWith(keys.PurposeRowMAC, 1))
+	assert.Empty(t, sealsWith(keys.PurposeRowMAC, 2))
+	assert.Empty(t, sealsWith(keys.PurposeFieldEnc, 1), "other purposes seal no rows")
 }

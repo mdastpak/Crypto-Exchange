@@ -82,7 +82,7 @@ Administrators:
   end-sessions -email <address>
                                Sign an administrator out everywhere.
 
-Data-protection keys (purposes row-mac, field-enc, blind-index):
+Data-protection keys (purposes row-mac, field-enc, blind-index, otp-mac, audit-mac):
   keys list                                    List the keys, never their values.
   keys rotate -purpose <purpose>               Create the next version of a key.
   keys retire -purpose <purpose> -version <n>  Stop loading an old version.
@@ -503,18 +503,17 @@ func executeKeys(ctx context.Context, store *keys.Store, cmd command, stdout io.
 	case "keys retire":
 		// Rows still sealed with the version could no longer be checked:
 		// the verifier moves the rows of the sealed tables to the current
-		// version first, and audit events are never sealed again (#337).
-		if cmd.purpose == keys.PurposeRowMAC {
-			table, err := rowseal.SealsWithKey(ctx, store.DB, cmd.version)
-			if err != nil {
-				return err
-			}
-			if table == rowseal.AuditEvents.Name {
-				return fmt.Errorf("data key %s/v%d seals audit events, which are never sealed again; it must stay readable", cmd.purpose, cmd.version)
-			}
-			if table != "" {
-				return fmt.Errorf("data key %s/v%d still seals rows of %s; retire it once the row seal verifier has moved them to the current version", cmd.purpose, cmd.version, table)
-			}
+		// row-mac version first, and audit events are never sealed again
+		// (#337).
+		table, err := rowseal.SealsWithKey(ctx, store.DB, cmd.purpose, cmd.version)
+		if err != nil {
+			return err
+		}
+		if table == rowseal.AuditEvents.Name {
+			return fmt.Errorf("data key %s/v%d seals audit events, which are never sealed again; it must stay readable", cmd.purpose, cmd.version)
+		}
+		if table != "" {
+			return fmt.Errorf("data key %s/v%d still seals rows of %s; retire it once the row seal verifier has moved them to the current version", cmd.purpose, cmd.version, table)
 		}
 		if err := store.Retire(ctx, cmd.purpose, cmd.version); err != nil {
 			return err

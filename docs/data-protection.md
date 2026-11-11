@@ -30,6 +30,7 @@ flowchart LR
 | `field-enc` | AES-256-GCM | Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)), the secrets of HMAC API keys (`api_keys.secret_sealed`), and verified national IDs (`user_national_ids.national_id_sealed`, [#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) |
 | `blind-index` | HMAC-SHA-256 | Equality lookups of encrypted values ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) |
 | `otp-mac` | HMAC-SHA-256 | Sign-in codes in Redis ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)): the root from which the HMAC key of codes, contacts, and clients and the AES-256-GCM key of contacts are derived, each with a label of its own. Each session stores the version that protects it. |
+| `audit-mac` | HMAC-SHA-256 | The seals of [audit events](#audit-events) ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)). A purpose of its own, since events are never sealed again: a version that seals an event stays readable for good, while `row-mac` keeps its rotate, re-seal, and retire cycle. |
 
 Every key has one purpose and only offers the operation of that purpose. A MAC key cannot encrypt, and an encryption key cannot seal.
 
@@ -86,7 +87,7 @@ Columns that the backend writes on its own often, such as `sessions.last_used_at
 
 ### Audit events
 
-`audit_events` is sealed too ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337), migration 11), over every column of an event. Its rows never change: triggers refuse `UPDATE` and `DELETE`, and nothing re-seals them. So `audit.Record` seals each event in its `INSERT`, at `row_version` 0. One query before the insert returns the canonical text of the columns, in the form that a read returns, and the time of the event, which the insert then writes.
+`audit_events` is sealed too ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337), migration 11), over every column of an event, with the same encoding and the `audit-mac` key. Its rows never change: triggers refuse `UPDATE` and `DELETE`, and nothing re-seals them. So `audit.Record` seals each event in its `INSERT`, at `row_version` 0. One query before the insert returns the canonical text of the columns, in the form that a read returns, and the time of the event, which the insert then writes.
 
 The admin query of the log (`GET /api/v1/admin/audit`) checks each event it returns, and reports its `integrity`:
 
@@ -99,7 +100,7 @@ The admin query of the log (`GET /api/v1/admin/audit`) checks each event it retu
 
 An event that fails is not recorded as an integrity finding: a finding is resolved by a re-seal, which an event cannot have. The verifier does not walk the events yet.
 
-A `row-mac` version that seals audit events must stay readable, since the events are never sealed again: `admin keys retire` refuses it.
+An `audit-mac` version that seals audit events must stay readable, since the events are never sealed again: `admin keys retire` refuses it. Rotate `audit-mac` like any key; new events take the new version, and the older ones keep theirs. The server creates the first `audit-mac` key at its first start after migration 11; until then, and in `cmd/admin` before that start, events are written without a seal.
 
 ### Modes
 
@@ -200,7 +201,7 @@ docker compose run --rm --no-deps --entrypoint /app/admin app -config config/con
 | --- | --- |
 | `keys list` | Purpose, version, state (`current`, `readable`, or `retired`), KEK, creation time, and retirement time of every key |
 | `keys rotate -purpose <purpose>` | Creates the next version of one purpose |
-| `keys retire -purpose <purpose> -version <n>` | Stops loading one version. The newest version cannot be retired, nor a `row-mac` version that still seals rows: of the sealed tables until the verifier has moved them, and of `audit_events` for good. |
+| `keys retire -purpose <purpose> -version <n>` | Stops loading one version. The newest version cannot be retired, nor a version that still seals rows: a `row-mac` version until the verifier has moved the rows of the sealed tables, and an `audit-mac` version that seals an event, for good. |
 | `keys rewrap` | Unwraps every key, including retired ones, and wraps it again with the newest version of the KEK. The keys themselves do not change. |
 
 Every change, and the creation of the first keys by the server, records a `data_key.*` event in the audit log, in its transaction, with the key's purpose, version, and KEK, never the key. Pass `-operator <name>` before the command to name yourself in the event ([#195](https://github.com/mdastpak/Crypto-Exchange/issues/195)).
@@ -216,7 +217,7 @@ Rotate a data key on a schedule, such as once a year, and whenever it may have l
 
 If an instance cannot load the new version, because it cannot reach the key management service, it keeps writing with the older version, which every instance still reads, and logs the failure.
 
-For `row-mac`, the [verifier](#the-verifier) re-seals the rows: run `admin row-seals verify` after the activation, check that it reports no finding, and then retire the older version. A version that sealed [audit events](#audit-events) stays readable: `retire` refuses it. Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will re-encrypt its rows in the same way.
+For `row-mac`, the [verifier](#the-verifier) re-seals the rows: run `admin row-seals verify` after the activation, check that it reports no finding, and then retire the older version; `retire` refuses it while a row still uses it. An `audit-mac` version that sealed [audit events](#audit-events) stays readable: `retire` refuses it. Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will re-encrypt its rows in the same way.
 
 Rotating a `blind-index` key also needs a second index during the change ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)).
 
@@ -245,7 +246,7 @@ If the Transit key is deleted, or the storage of Vault or OpenBao is lost withou
 | What leaked | What to do |
 | --- | --- |
 | The server's Transit token | Revoke it (`vault token revoke`), issue a new one, and restart the servers with it. Check the audit log of Vault or OpenBao for decrypt requests that the servers did not make. If whoever had the token also had the `data_keys` table, they could unwrap the data keys: handle it as a leak of the data keys. |
-| A data key, for example through a memory dump | Rotate its purpose, let the background jobs re-seal or re-encrypt the rows, and then retire the leaked version. |
+| A data key, for example through a memory dump | Rotate its purpose, let the background jobs re-seal or re-encrypt the rows, and then retire the leaked version. A leaked `audit-mac` version stays readable to check the events that it sealed, but whoever has it can forge their seals: trust those events only as far as a copy kept outside the database confirms them. |
 | The KEK, or the key management service itself | Rotate the KEK and re-wrap, as above. Then rotate every data key, since whoever had the KEK could unwrap them. |
 | `KEYS_LOCAL_KEK` (development) | Development data only: create a new database with a new KEK. |
 
