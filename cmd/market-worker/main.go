@@ -45,6 +45,8 @@ var (
 )
 
 func init() {
+	// UTC whatever the host's time zone, as the server (#339).
+	time.Local = time.UTC
 	flag.StringVar(&configPath, "config", "config/config.yaml", "Path to config file")
 	flag.StringVar(&migrationsPath, "migrations", "file://internal/db/migrations", "Path to migrations")
 }

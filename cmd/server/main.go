@@ -92,6 +92,10 @@ var (
 )
 
 func init() {
+	// The process works in UTC, whatever the time zone of its host: times
+	// read from PostgreSQL, which pgx returns in time.Local, and times from
+	// time.Now reach the answers and the logs in one form (#339).
+	time.Local = time.UTC
 	flag.StringVar(&configPath, "config", "config/config.yaml", "Path to config file")
 	flag.StringVar(&migrationsPath, "migrations", "file://internal/db/migrations", "Path to migrations")
 }
