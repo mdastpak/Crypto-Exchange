@@ -93,6 +93,11 @@ var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys
 // row_version 0, through the Sealer's audit methods, and nothing re-seals
 // them. So the table is not in Tables, which the verifier and the re-seals
 // of findings walk.
+//
+// Its columns are fixed for good: the seal covers their names and order,
+// and the events written before cannot be sealed again. A column added to
+// audit_events later stays outside the seal, or needs a seal format of its
+// own that the check tells apart.
 var AuditEvents = &Table{Name: "audit_events", Key: "hk", KeyType: "uuid", Columns: []Column{
 	timestamptz("occurred_at"), text("actor_type"), text("actor_id"), text("action"),
 	text("target_type"), text("target_id"), text("outcome"), text("reason"),
