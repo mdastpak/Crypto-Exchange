@@ -95,6 +95,10 @@ const (
 	ActionUserRecoveryIdentity = "user.recovery_identity"
 	ActionUserRecoveryCancel   = "user.recovery_cancel"
 	ActionUserRecoveryComplete = "user.recovery_complete"
+	// A user turning an authenticator app on, with its first code, and
+	// off (#307). The target is the user.
+	ActionUserTOTPEnable  = "user.totp_enable"
+	ActionUserTOTPDisable = "user.totp_disable"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"

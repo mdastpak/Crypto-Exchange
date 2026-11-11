@@ -36,6 +36,9 @@ type SecuritySettings struct {
 	PasswordMinLength int `json:"password_min_length" example:"10"`
 	// RecoveryCodesLeft is how many unused recovery codes the user has.
 	RecoveryCodesLeft int `json:"recovery_codes_left" example:"10"`
+	// TOTPEnabled is whether the user has an authenticator app, which
+	// proves the second step instead of the password.
+	TOTPEnabled bool `json:"totp_enabled"`
 	// SecondFactor is where this session stands with the second factor.
 	SecondFactor userauth.State `json:"second_factor"`
 	// Recovery is the account recovery in progress, if any: someone
@@ -101,6 +104,13 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		log.Printf("Failed to count the recovery codes of user %s: %v", claims.UUID, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
 		return
+	}
+	if h.TOTP != nil {
+		if settings.TOTPEnabled, err = h.TOTP.Enabled(ctx, claims.UUID); err != nil {
+			log.Printf("Failed to read the authenticator of user %s: %v", claims.UUID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
+			return
+		}
 	}
 	if settings.Recovery, err = h.Passwords.OpenRecovery(ctx, claims.UUID); err != nil {
 		log.Printf("Failed to read the recovery of user %s: %v", claims.UUID, err)

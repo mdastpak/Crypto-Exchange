@@ -91,6 +91,9 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return false
 	}
+	if proved := c.GetString(provedMethodKey); proved != "" && method != methodCode {
+		method = proved
+	}
 	sessionID := uuid.NewString()
 	accessToken, err := auth.GenerateAccessToken(userHK.String(), auth.RoleUser, sessionID)
 	if err != nil {
@@ -136,7 +139,7 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 
 	// A sign-in with the second factor is a fresh proof of it. A failure
 	// costs the user a step-up, not the sign-in.
-	if method == methodCodePassword && h.Guard != nil {
+	if method != methodCode && h.Guard != nil {
 		if _, err := h.Guard.Elevate(ctx, userHK.String(), sessionID); err != nil {
 			log.Printf("Failed to elevate the session of a sign-in: %v", err)
 		}

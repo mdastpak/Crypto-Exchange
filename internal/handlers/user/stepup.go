@@ -10,9 +10,11 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/totp"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
@@ -20,7 +22,11 @@ import (
 
 // StepUpRequest proves the second factor of the signed-in user again.
 type StepUpRequest struct {
-	Password string `json:"password"`
+	// Password is the account password. Exactly one of Password and
+	// TOTPCode is sent.
+	Password string `json:"password,omitempty"`
+	// TOTPCode is a code of the authenticator app of a user who has one.
+	TOTPCode string `json:"totp_code,omitempty" example:"123456"`
 }
 
 // SteppedUp is the answer to a step-up.
@@ -104,9 +110,21 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
-	if req.Password == "" || len(req.Password) > userauth.MaxPasswordBytes {
-		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"),
-			gin.H{"errors": map[string]string{"password": "is required"}})
+	byTOTP := req.TOTPCode != ""
+	errs := map[string]string{}
+	switch {
+	case byTOTP && req.Password != "":
+		errs["totp_code"] = "cannot be sent with password"
+	case byTOTP:
+		var valid bool
+		if req.TOTPCode, valid = contact.Code(req.TOTPCode, totp.Digits); !valid {
+			errs["totp_code"] = "must be " + strconv.Itoa(totp.Digits) + " digits"
+		}
+	case req.Password == "" || len(req.Password) > userauth.MaxPasswordBytes:
+		errs["password"] = "is required"
+	}
+	if len(errs) > 0 {
+		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
 	if h.Passwords == nil || h.Guard == nil {
@@ -117,9 +135,28 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 	defer cancel()
 	event := auth.SessionEvent(c, audit.ActionUserStepUp, claims.UUID, claims.SessionID)
 
-	err := h.Passwords.Verify(ctx, claims.UUID, req.Password)
+	var err error
+	if byTOTP {
+		if h.TOTP == nil {
+			helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
+			return
+		}
+		err = h.TOTP.Verify(ctx, claims.UUID, req.TOTPCode)
+	} else {
+		err = h.Passwords.Verify(ctx, claims.UUID, req.Password)
+	}
 	var locked *userauth.LockedError
 	switch {
+	case errors.Is(err, userauth.ErrNoTOTP), errors.Is(err, userauth.ErrWrongTOTP):
+		// A user without an authenticator answers like a wrong code.
+		h.noteSecurity(ctx, event, audit.Failure, codeTOTPInvalid)
+		helpers.SendError(c, http.StatusForbidden, codeTOTPInvalid, i18n.M("TOTP_INVALID"), nil)
+		return
+	case byTOTP && errors.As(err, &locked):
+		h.noteSecurity(ctx, event, audit.Denied, codeTOTPLocked)
+		c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(locked.Until).Seconds())+1)))
+		helpers.SendError(c, http.StatusTooManyRequests, codeTOTPLocked, i18n.M("TOTP_LOCKED"), nil)
+		return
 	case errors.Is(err, userauth.ErrNoPassword):
 		helpers.SendError(c, http.StatusConflict, codeSecondFactorNotSet, i18n.M("SECOND_FACTOR_NOT_SET"), nil)
 		return

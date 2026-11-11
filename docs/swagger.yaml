@@ -1670,8 +1670,16 @@ definitions:
       new_password:
         type: string
       recovery_code:
-        description: RecoveryCode is one of the unused recovery codes of the account.
+        description: |-
+          RecoveryCode is one of the unused recovery codes of the account.
+          Exactly one of RecoveryCode and TOTPCode is sent.
         example: ABCD-EFGH-JKLM-NPQR
+        type: string
+      totp_code:
+        description: |-
+          TOTPCode is a code of the authenticator app, for an account whose
+          password_reset lists "totp".
+        example: "123456"
         type: string
     type: object
   public.RecoveryCompleteInfo:
@@ -1732,6 +1740,7 @@ definitions:
         description: Methods are the second steps that the account can use.
         example:
         - password
+        - totp
         items:
           type: string
         type: array
@@ -1743,6 +1752,7 @@ definitions:
           needs account recovery.
         example:
         - recovery_code
+        - totp
         items:
           type: string
         type: array
@@ -1762,6 +1772,15 @@ definitions:
       challenge:
         type: string
       password:
+        description: |-
+          Password is the account password. Exactly one of Password and
+          TOTPCode is sent.
+        type: string
+      totp_code:
+        description: |-
+          TOTPCode is a code of the authenticator app, for an account whose
+          methods list "totp".
+        example: "123456"
         type: string
     type: object
   public.SessionLimitInfo:
@@ -2449,6 +2468,11 @@ definitions:
         allOf:
         - $ref: '#/definitions/userauth.State'
         description: SecondFactor is where this session stands with the second factor.
+      totp_enabled:
+        description: |-
+          TOTPEnabled is whether the user has an authenticator app, which
+          proves the second step instead of the password.
+        type: boolean
     type: object
   user.SetPasswordRequest:
     properties:
@@ -2463,6 +2487,14 @@ definitions:
   user.StepUpRequest:
     properties:
       password:
+        description: |-
+          Password is the account password. Exactly one of Password and
+          TOTPCode is sent.
+        type: string
+      totp_code:
+        description: TOTPCode is a code of the authenticator app of a user who has
+          one.
+        example: "123456"
         type: string
     type: object
   user.SteppedUp:
@@ -2471,6 +2503,18 @@ definitions:
         description: |-
           ElevatedUntil is until when the session may run the operations that
           the second factor protects.
+        type: string
+    type: object
+  user.TOTPChanged:
+    properties:
+      security_hold_until:
+        description: SecurityHoldUntil is when the security hold on withdrawals ends.
+        type: string
+    type: object
+  user.TOTPCodeRequest:
+    properties:
+      code:
+        example: "123456"
         type: string
     type: object
   user.profileUpdate:
@@ -2571,6 +2615,17 @@ definitions:
       set:
         description: Set reports whether the account has a password.
         type: boolean
+    type: object
+  userauth.TOTPEnrollment:
+    properties:
+      secret:
+        description: Secret is the secret in base32, for apps that cannot scan.
+        example: JBSWY3DPEHPK3PXP
+        type: string
+      uri:
+        description: URI is the otpauth URI, which the client shows as a QR code.
+        example: otpauth://totp/Exchange:user?secret=JBSWY3DPEHPK3PXP&issuer=Exchange
+        type: string
     type: object
 info:
   contact: {}
@@ -5929,12 +5984,13 @@ paths:
       - application/json
       description: 'A user who forgot the account password proves the account twice:
         with the code sent to a contact, which answered 202 with a challenge, and
-        with one of the recovery codes. The new password follows the policy of PUT
-        /user/password. The recovery code is used up, every session of the user ends,
-        the security hold starts, and the answer signs in. A wrong recovery code answers
-        401 recovery_code_invalid, leaves the challenge usable, and counts toward
-        the lock of the password: 429 password_locked with Retry-After. An account
-        without unused recovery codes needs account recovery.'
+        with one of the recovery codes, or with a code of the authenticator app (totp_code)
+        for an account whose password_reset lists totp. The new password follows the
+        policy of PUT /user/password. The recovery code is used up, every session
+        of the user ends, the security hold starts, and the answer signs in. A wrong
+        recovery code answers 401 recovery_code_invalid, leaves the challenge usable,
+        and counts toward the lock of the password: 429 password_locked with Retry-After.
+        An account without unused recovery codes needs account recovery.'
       parameters:
       - description: The challenge, a recovery code, and the new password
         in: body
@@ -5963,7 +6019,7 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "401":
-          description: challenge_invalid or recovery_code_invalid
+          description: challenge_invalid, recovery_code_invalid, or totp_invalid
           schema:
             $ref: '#/definitions/models.APIResponse'
         "403":
@@ -6144,12 +6200,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: After a correct code answered 202 with a challenge, the account
-        password signs in. The challenge works for five minutes, until a sign-in succeeds
+      description: 'After a correct code answered 202 with a challenge, the account
+        password signs in, or a code of the authenticator app (totp_code) for an account
+        whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked
+        after too many. The challenge works for five minutes, until a sign-in succeeds
         with it. A wrong password answers 401 password_invalid and leaves the challenge
         usable; after security.password.max_failures wrong passwords in a row the
         password is locked for security.password.lock_minutes, on every instance,
-        and the answer is 429 password_locked with Retry-After.
+        and the answer is 429 password_locked with Retry-After.'
       parameters:
       - description: The challenge and the password
         in: body
@@ -6178,7 +6236,7 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "401":
-          description: challenge_invalid or password_invalid
+          description: challenge_invalid, password_invalid, or totp_invalid
           schema:
             $ref: '#/definitions/models.APIResponse'
         "403":
@@ -7494,6 +7552,143 @@ paths:
       summary: Prove the second factor again
       tags:
       - user security
+  /api/v1/user/totp:
+    delete:
+      description: Removes the authenticator of the user, also one that waits for
+        its first code. The account password stays the second step. It needs a fresh
+        proof of the second factor, and starts the security hold.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.TOTPChanged'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: second_factor_required or step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: totp_not_enabled
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Turn the authenticator app off
+      tags:
+      - user-security
+    post:
+      description: 'Gives the user a new secret for an authenticator app (TOTP: RFC
+        6238, SHA-1, 6 digits, 30 seconds), as text and as an otpauth URI for a QR
+        code. The authenticator works once POST /user/totp/confirm has checked its
+        first code; until then a new call replaces the secret. It comes after the
+        account password, 409 second_factor_not_set without one, and needs a fresh
+        proof of it: 403 step_up_required. 409 totp_enabled answers a user who has
+        an authenticator.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/userauth.TOTPEnrollment'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: second_factor_required or step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: totp_enabled or second_factor_not_set
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Start enrolling an authenticator app
+      tags:
+      - user-security
+  /api/v1/user/totp/confirm:
+    post:
+      consumes:
+      - application/json
+      description: 'Checks the first code of the secret that POST /user/totp gave,
+        and turns the authenticator on. From then on the user can prove the second
+        step with a code of the app instead of the account password: at a sign-in,
+        at a step-up, and to reset a forgotten password. It is a change of the second
+        factor, so the security hold starts. 403 totp_invalid answers a wrong code;
+        429 totp_locked after too many.'
+      parameters:
+      - description: The code that the app shows
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.TOTPCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.TOTPChanged'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: totp_invalid, second_factor_required, or step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: 'totp_not_enabled: no secret waits for its code'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: totp_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Turn the authenticator app on
+      tags:
+      - user-security
   /api/v1/ws/:
     get:
       description: 'Upgrades to a WebSocket. An optional user access token comes as

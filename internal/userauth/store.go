@@ -400,7 +400,32 @@ func (p *Passwords) Reset(ctx context.Context, userHK, recoveryCode, password st
 	if err != nil {
 		return none, err
 	}
+	return p.storeReset(ctx, userHK, hash, id, event)
+}
 
+// ResetWithFactor resets the password of a user whose other second factor,
+// an authenticator code for example, the caller has just checked. The
+// caller checks the policy first, so that a refused password uses no code.
+func (p *Passwords) ResetWithFactor(ctx context.Context, userHK, password string, event audit.Event) (time.Time, error) {
+	if err := CheckPolicy(password, p.MinPasswordLength()); err != nil {
+		return time.Time{}, err
+	}
+	// As for a reset with a recovery code: not while the password is
+	// locked, and never over a row that was written outside the backend.
+	if _, err := p.attempt(ctx, userHK); err != nil {
+		return time.Time{}, err
+	}
+	hash, err := p.Hasher.Hash(ctx, password)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return p.storeReset(ctx, userHK, hash, 0, event)
+}
+
+// storeReset stores the hash of a reset password, uses up the recovery
+// code recoveryCodeID when it is set, and starts the security hold.
+func (p *Passwords) storeReset(ctx context.Context, userHK, hash string, recoveryCodeID int64, event audit.Event) (time.Time, error) {
+	none := time.Time{}
 	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return none, fmt.Errorf("start the password reset: %w", err)
@@ -409,14 +434,16 @@ func (p *Passwords) Reset(ctx context.Context, userHK, recoveryCode, password st
 	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM users WHERE hk = $1 FOR UPDATE`, userHK); err != nil {
 		return none, fmt.Errorf("lock the user: %w", err)
 	}
-	// The code resets once: of two requests with it, one retires it.
-	used, err := tx.ExecContext(ctx, `UPDATE user_recovery_codes SET retired_at = NOW(), retired_reason = 'used'
-		WHERE id = $1 AND retired_at IS NULL`, id)
-	if err != nil {
-		return none, fmt.Errorf("use the recovery code: %w", err)
-	}
-	if n, err := used.RowsAffected(); err != nil || n != 1 {
-		return none, ErrWrongRecoveryCode
+	if recoveryCodeID != 0 {
+		// The code resets once: of two requests with it, one retires it.
+		used, err := tx.ExecContext(ctx, `UPDATE user_recovery_codes SET retired_at = NOW(), retired_reason = 'used'
+			WHERE id = $1 AND retired_at IS NULL`, recoveryCodeID)
+		if err != nil {
+			return none, fmt.Errorf("use the recovery code: %w", err)
+		}
+		if n, err := used.RowsAffected(); err != nil || n != 1 {
+			return none, ErrWrongRecoveryCode
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE user_passwords SET password_hash = $2, changed_at = NOW(),
 		failed_attempts = 0, locked_until = NULL WHERE user_hk = $1`, userHK, hash); err != nil {

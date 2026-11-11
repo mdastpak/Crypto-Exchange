@@ -47,7 +47,7 @@ The wrapped plaintext contains the purpose and the version besides the key. Afte
 
 ### Sealed values
 
-`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`, for national IDs `user_national_ids.national_id_sealed:<user hk>`, and for authenticator secrets `users.totp_secret:<admin hk>`. An authenticator secret is stored as `v1:`, which marks the format, and the sealed value in base64. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
+`Keyring.SealField` encrypts a value with the current `field-enc` key. It stores the key version in decimal, a colon, a random 96-bit nonce, and the AES-256-GCM ciphertext with its tag. The associated data names the value's place, so a sealed value copied to another row or column does not decrypt. For API key secrets, that place is `api_keys.secret_sealed:<key ID>`, for national IDs `user_national_ids.national_id_sealed:<user hk>`, for the authenticator secrets of administrators `users.totp_secret:<admin hk>`, and for those of users `user_totp.secret_sealed:<user hk>`. An authenticator secret is stored as `v1:`, which marks the format, and the sealed value in base64. `Keyring.OpenField` finds the key by the stored version, so values sealed before a rotation stay readable until that version is retired.
 
 ### Versions
 

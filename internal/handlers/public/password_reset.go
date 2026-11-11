@@ -10,9 +10,11 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/totp"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
@@ -24,8 +26,12 @@ type PasswordResetRequest struct {
 	// Challenge is the challenge that a correct code answered with.
 	Challenge string `json:"challenge"`
 	// RecoveryCode is one of the unused recovery codes of the account.
-	RecoveryCode string `json:"recovery_code" example:"ABCD-EFGH-JKLM-NPQR"`
-	NewPassword  string `json:"new_password"`
+	// Exactly one of RecoveryCode and TOTPCode is sent.
+	RecoveryCode string `json:"recovery_code,omitempty" example:"ABCD-EFGH-JKLM-NPQR"`
+	// TOTPCode is a code of the authenticator app, for an account whose
+	// password_reset lists "totp".
+	TOTPCode    string `json:"totp_code,omitempty" example:"123456"`
+	NewPassword string `json:"new_password"`
 }
 
 const codeRecoveryCodeInvalid = "recovery_code_invalid"
@@ -36,7 +42,7 @@ type sessionEnder interface {
 }
 
 // @Summary Reset a forgotten account password
-// @Description A user who forgot the account password proves the account twice: with the code sent to a contact, which answered 202 with a challenge, and with one of the recovery codes. The new password follows the policy of PUT /user/password. The recovery code is used up, every session of the user ends, the security hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid, leaves the challenge usable, and counts toward the lock of the password: 429 password_locked with Retry-After. An account without unused recovery codes needs account recovery.
+// @Description A user who forgot the account password proves the account twice: with the code sent to a contact, which answered 202 with a challenge, and with one of the recovery codes, or with a code of the authenticator app (totp_code) for an account whose password_reset lists totp. The new password follows the policy of PUT /user/password. The recovery code is used up, every session of the user ends, the security hold starts, and the answer signs in. A wrong recovery code answers 401 recovery_code_invalid, leaves the challenge usable, and counts toward the lock of the password: 429 password_locked with Retry-After. An account without unused recovery codes needs account recovery.
 // @Tags sign-in
 // @Accept json
 // @Produce json
@@ -44,7 +50,7 @@ type sessionEnder interface {
 // @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo} "The access token. The refresh token is set as an HttpOnly cookie."
 // @Header 200 {string} Set-Cookie "The refresh token, HttpOnly"
 // @Failure 400 {object} models.APIResponse
-// @Failure 401 {object} models.APIResponse "challenge_invalid or recovery_code_invalid"
+// @Failure 401 {object} models.APIResponse "challenge_invalid, recovery_code_invalid, or totp_invalid"
 // @Failure 403 {object} models.APIResponse
 // @Failure 429 {object} models.APIResponse "password_locked, or a rate limit"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
@@ -62,7 +68,16 @@ func (h *PublicHandler) ResetPassword(c *gin.Context) {
 	if req.Challenge == "" || len(req.Challenge) > 128 {
 		errs["challenge"] = "is required"
 	}
-	if req.RecoveryCode == "" || len(req.RecoveryCode) > 64 {
+	byTOTP := req.TOTPCode != ""
+	switch {
+	case byTOTP && req.RecoveryCode != "":
+		errs["totp_code"] = "cannot be sent with recovery_code"
+	case byTOTP:
+		var ok bool
+		if req.TOTPCode, ok = contact.Code(req.TOTPCode, totp.Digits); !ok {
+			errs["totp_code"] = "must be " + strconv.Itoa(totp.Digits) + " digits"
+		}
+	case req.RecoveryCode == "" || len(req.RecoveryCode) > 64:
 		errs["recovery_code"] = "is required"
 	}
 	if req.NewPassword == "" {
@@ -88,7 +103,18 @@ func (h *PublicHandler) ResetPassword(c *gin.Context) {
 	event := audit.FromRequest(c)
 	event.ActorType, event.ActorID = audit.ActorUser, userHK.String()
 
-	_, err := h.Passwords.Reset(ctx, userHK.String(), req.RecoveryCode, req.NewPassword, event)
+	var err error
+	if byTOTP {
+		// The policy first: a password that is refused uses no code.
+		if err = userauth.CheckPolicy(req.NewPassword, h.Passwords.MinPasswordLength()); err == nil {
+			if !h.verifyTOTP(c, ctx, userHK, req.TOTPCode, attempt) {
+				return
+			}
+			_, err = h.Passwords.ResetWithFactor(ctx, userHK.String(), req.NewPassword, event)
+		}
+	} else {
+		_, err = h.Passwords.Reset(ctx, userHK.String(), req.RecoveryCode, req.NewPassword, event)
+	}
 	var locked *userauth.LockedError
 	switch {
 	case errors.Is(err, userauth.ErrPasswordTooShort):

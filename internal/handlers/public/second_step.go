@@ -16,12 +16,14 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/totp"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
@@ -44,8 +46,15 @@ const (
 	// The session methods: what a user proved to start the session.
 	methodCode         = "OTP"
 	methodCodePassword = "OTP+PASSWORD"
-	// factorPassword names the account password among the second steps.
+	methodCodeTOTP     = "OTP+TOTP"
+	// factorPassword and factorTOTP name the account password and the
+	// authenticator app among the second steps.
 	factorPassword = "password"
+	factorTOTP     = "totp"
+	// provedMethodKey holds, in the request context, the session method
+	// of a second step that was proved with something else than the
+	// password.
+	provedMethodKey = "sign_in_proved_method"
 	// proofRecoveryCode names the recovery codes among the proofs of a
 	// password reset.
 	proofRecoveryCode = "recovery_code"
@@ -53,6 +62,8 @@ const (
 	codeSecondStepRequired = "second_step_required"
 	codePasswordInvalid    = "password_invalid"
 	codePasswordLocked     = "password_locked"
+	codeTOTPInvalid        = "totp_invalid"
+	codeTOTPLocked         = "totp_locked"
 )
 
 // SecondStepInfo is the info of a 202 answer to a correct code: the sign-in
@@ -65,12 +76,12 @@ type SecondStepInfo struct {
 	// ExpiresIn is how long the challenge can be used, in seconds.
 	ExpiresIn int `json:"expires_in" example:"300"`
 	// Methods are the second steps that the account can use.
-	Methods []string `json:"methods" example:"password"`
+	Methods []string `json:"methods" example:"password,totp"`
 	// PasswordReset are the proofs with which this account can reset a
 	// forgotten password at POST /public/auth/password-reset, besides the
 	// code that was just checked. Empty: none is left, and the account
 	// needs account recovery.
-	PasswordReset []string `json:"password_reset" example:"recovery_code"`
+	PasswordReset []string `json:"password_reset" example:"recovery_code,totp"`
 	// Recovery is the account recovery in progress, if any. The right
 	// password cancels it.
 	Recovery *userauth.Recovery `json:"recovery,omitempty"`
@@ -91,7 +102,27 @@ type challenged struct {
 // SecondStepRequest finishes a sign-in with the account password.
 type SecondStepRequest struct {
 	Challenge string `json:"challenge"`
-	Password  string `json:"password"`
+	// Password is the account password. Exactly one of Password and
+	// TOTPCode is sent.
+	Password string `json:"password,omitempty"`
+	// TOTPCode is a code of the authenticator app, for an account whose
+	// methods list "totp".
+	TOTPCode string `json:"totp_code,omitempty" example:"123456"`
+}
+
+// hasTOTP reports whether the user can prove the second step with an
+// authenticator app. A failure to read it reports false: the password
+// still signs in.
+func (h *PublicHandler) hasTOTP(ctx context.Context, userHK uuid.UUID) bool {
+	if h.TOTP == nil {
+		return false
+	}
+	enabled, err := h.TOTP.Enabled(ctx, userHK.String())
+	if err != nil {
+		log.Printf("Failed to read the authenticator of a sign-in: %v", err)
+		return false
+	}
+	return enabled
 }
 
 func secondStepKey(challenge string) string {
@@ -152,13 +183,18 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 	if err != nil {
 		log.Printf("Failed to read the recovery of a sign-in: %v", err)
 	}
+	methods := []string{factorPassword}
+	if h.hasTOTP(ctx, userHK) {
+		methods = append(methods, factorTOTP)
+		reset = append(reset, factorTOTP)
+	}
 	h.noteSignIn(ctx, attempt, audit.Success, codeSecondStepRequired)
 	helpers.SendResponse(c, http.StatusAccepted, i18n.M("SECOND_STEP_REQUIRED"), SecondStepInfo{
 		Recovery:           recovery,
 		SecondStepRequired: true,
 		Challenge:          challenge,
 		ExpiresIn:          int(secondStepTTL.Seconds()),
-		Methods:            []string{factorPassword},
+		Methods:            methods,
 		PasswordReset:      reset,
 	})
 }
@@ -229,7 +265,7 @@ func (h *PublicHandler) challenge(c *gin.Context, ctx context.Context, challenge
 }
 
 // @Summary Finish a sign-in with the account password
-// @Description After a correct code answered 202 with a challenge, the account password signs in. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.
+// @Description After a correct code answered 202 with a challenge, the account password signs in, or a code of the authenticator app (totp_code) for an account whose methods list totp: 401 totp_invalid for a wrong or used code, 429 totp_locked after too many. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.
 // @Tags sign-in
 // @Accept json
 // @Produce json
@@ -237,7 +273,7 @@ func (h *PublicHandler) challenge(c *gin.Context, ctx context.Context, challenge
 // @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo} "The access token. The refresh token is set as an HttpOnly cookie."
 // @Header 200 {string} Set-Cookie "The refresh token, HttpOnly"
 // @Failure 400 {object} models.APIResponse
-// @Failure 401 {object} models.APIResponse "challenge_invalid or password_invalid"
+// @Failure 401 {object} models.APIResponse "challenge_invalid, password_invalid, or totp_invalid"
 // @Failure 403 {object} models.APIResponse
 // @Failure 409 {object} models.APIResponse{info=SessionLimitInfo} "session_limit_reached: the user has the most active sessions allowed"
 // @Failure 429 {object} models.APIResponse "password_locked, or a rate limit"
@@ -256,7 +292,16 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 	if req.Challenge == "" || len(req.Challenge) > 128 {
 		errs["challenge"] = "is required"
 	}
-	if req.Password == "" || len(req.Password) > userauth.MaxPasswordBytes {
+	byTOTP := req.TOTPCode != ""
+	switch {
+	case byTOTP && req.Password != "":
+		errs["totp_code"] = "cannot be sent with password"
+	case byTOTP:
+		var ok bool
+		if req.TOTPCode, ok = contact.Code(req.TOTPCode, totp.Digits); !ok {
+			errs["totp_code"] = "must be " + strconv.Itoa(totp.Digits) + " digits"
+		}
+	case req.Password == "" || len(req.Password) > userauth.MaxPasswordBytes:
 		errs["password"] = "is required"
 	}
 	if len(errs) > 0 {
@@ -270,6 +315,15 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 
 	userHK, key, attempt, ok := h.challengedUser(c, ctx, req.Challenge)
 	if !ok {
+		return
+	}
+
+	if byTOTP {
+		if !h.verifyTOTP(c, ctx, userHK, req.TOTPCode, attempt) {
+			return
+		}
+		c.Set(provedMethodKey, methodCodeTOTP)
+		h.finishSecondStep(c, ctx, key, userHK, attempt)
 		return
 	}
 
@@ -303,7 +357,41 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 		return
 	}
 
-	// The challenge signs in once: of two requests with the right password,
+	h.finishSecondStep(c, ctx, key, userHK, attempt)
+}
+
+// verifyTOTP checks an authenticator code of a challenge. It answers, and
+// reports false, when the code does not prove the user.
+func (h *PublicHandler) verifyTOTP(c *gin.Context, ctx context.Context, userHK uuid.UUID, code string, attempt audit.Event) bool {
+	if h.TOTP == nil {
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
+		return false
+	}
+	err := h.TOTP.Verify(ctx, userHK.String(), code)
+	var locked *userauth.LockedError
+	switch {
+	case errors.As(err, &locked):
+		h.noteSignIn(ctx, attempt, audit.Denied, codeTOTPLocked)
+		c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(locked.Until).Seconds())+1)))
+		helpers.SendError(c, http.StatusTooManyRequests, codeTOTPLocked, i18n.M("TOTP_LOCKED"), nil)
+		return false
+	case errors.Is(err, userauth.ErrWrongTOTP), errors.Is(err, userauth.ErrNoTOTP):
+		// An account without an authenticator answers like a wrong code.
+		h.noteSignIn(ctx, attempt, audit.Failure, codeTOTPInvalid)
+		helpers.SendError(c, http.StatusUnauthorized, codeTOTPInvalid, i18n.M("TOTP_INVALID"), nil)
+		return false
+	case err != nil:
+		log.Printf("Failed to check the authenticator code of a sign-in: %v", err)
+		h.noteSignIn(ctx, attempt, audit.Failure, "totp_check_failed")
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return false
+	}
+	return true
+}
+
+// finishSecondStep spends the challenge of a proved second step and signs in.
+func (h *PublicHandler) finishSecondStep(c *gin.Context, ctx context.Context, key string, userHK uuid.UUID, attempt audit.Event) {
+	// The challenge signs in once: of two requests with the right proof,
 	// the one that takes it gets the session.
 	taken, err := h.RedisClient.Client.Del(ctx, key).Result()
 	if err != nil {
