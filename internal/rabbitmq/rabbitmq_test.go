@@ -52,9 +52,12 @@ func TestNewRabbitMQService_StartsWithoutTheBroker(t *testing.T) {
 			_, err = svc.OpenChannel()
 			assert.Error(t, err)
 
+			// Close waits for a dial in progress, which dialTimeout bounds: a
+			// slow resolver can take that long to give up on the unknown
+			// host (#342).
 			started := time.Now()
 			require.NoError(t, svc.Close())
-			assert.Less(t, time.Since(started), 2*time.Second, "Close stops the background connection")
+			assert.Less(t, time.Since(started), dialTimeout+time.Second, "Close stops the background connection")
 		})
 	}
 }

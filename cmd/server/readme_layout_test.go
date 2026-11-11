@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,9 @@ import (
 func TestReadme_LayoutListsEveryPackage(t *testing.T) {
 	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
 	require.NoError(t, err)
+	// A Windows checkout has CRLF line endings (core.autocrlf), and the
+	// layout is matched line by line (#340).
+	readme = bytes.ReplaceAll(readme, []byte("\r\n"), []byte("\n"))
 	layout := regexp.MustCompile("(?s)## Project layout\n\n```text\n(.*?)```").FindSubmatch(readme)
 	require.NotNil(t, layout, "README.md has no project layout block")
 
