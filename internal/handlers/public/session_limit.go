@@ -134,6 +134,14 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 		return false
 	}
 
+	// A sign-in with the second factor is a fresh proof of it. A failure
+	// costs the user a step-up, not the sign-in.
+	if method == methodCodePassword && h.Guard != nil {
+		if _, err := h.Guard.Elevate(ctx, userHK.String(), sessionID); err != nil {
+			log.Printf("Failed to elevate the session of a sign-in: %v", err)
+		}
+	}
+
 	// The refresh token is only delivered in the HttpOnly cookie, never in the
 	// body, so scripts running in the page cannot read it.
 	auth.SetRefreshTokenCookie(c, refreshToken)

@@ -227,6 +227,8 @@ var envVars = []EnvVar{
 	intVar("SECURITY_CHANGE_HOLD_HOURS", "security.change_hold_hours", func(c *Configuration) *int { return &c.Security.ChangeHoldHours }),
 	intVar("SECURITY_PASSWORD_MIN_LENGTH", "security.password.min_length", func(c *Configuration) *int { return &c.Security.Password.MinLength }),
 	intVar("SECURITY_PASSWORD_MAX_FAILURES", "security.password.max_failures", func(c *Configuration) *int { return &c.Security.Password.MaxFailures }),
+	stringVar("SECURITY_SECOND_FACTOR_MODE", "security.second_factor.mode", func(c *Configuration) *string { return &c.Security.SecondFactor.Mode }),
+	intVar("SECURITY_SECOND_FACTOR_STEP_UP_MINUTES", "security.second_factor.step_up_minutes", func(c *Configuration) *int { return &c.Security.SecondFactor.StepUpMinutes }),
 	intVar("SECURITY_PASSWORD_LOCK_MINUTES", "security.password.lock_minutes", func(c *Configuration) *int { return &c.Security.Password.LockMinutes }),
 	stringVar("IDENTITY_MOBILE_OWNERSHIP_PROVIDER", "identity.mobile_ownership.provider", func(c *Configuration) *string { return &c.Identity.MobileOwnership.Provider }),
 	stringVar("IDENTITY_MOBILE_OWNERSHIP_ENDPOINT", "identity.mobile_ownership.endpoint", func(c *Configuration) *string { return &c.Identity.MobileOwnership.Endpoint }),

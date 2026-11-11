@@ -2272,6 +2272,11 @@ definitions:
     properties:
       password:
         $ref: '#/definitions/userauth.Status'
+      security_hold_until:
+        description: |-
+          SecurityHoldUntil is until when withdrawals are held after this
+          change of the second factor.
+        type: string
       sessions_ended:
         description: SessionsEnded is how many other sessions the change ended.
         example: 1
@@ -2349,6 +2354,10 @@ definitions:
           characters.
         example: 10
         type: integer
+      second_factor:
+        allOf:
+        - $ref: '#/definitions/userauth.State'
+        description: SecondFactor is where this session stands with the second factor.
     type: object
   user.SetPasswordRequest:
     properties:
@@ -2358,6 +2367,19 @@ definitions:
           set the first one.
         type: string
       new_password:
+        type: string
+    type: object
+  user.StepUpRequest:
+    properties:
+      password:
+        type: string
+    type: object
+  user.SteppedUp:
+    properties:
+      elevated_until:
+        description: |-
+          ElevatedUntil is until when the session may run the operations that
+          the second factor protects.
         type: string
     type: object
   user.profileUpdate:
@@ -2381,6 +2403,25 @@ definitions:
         - dark
         - system
         example: dark
+        type: string
+    type: object
+  userauth.State:
+    properties:
+      elevated_until:
+        description: |-
+          ElevatedUntil is until when the session may run the protected
+          operations without proving the factor again. It is left out when
+          the session is not elevated.
+        type: string
+      enrolled:
+        description: Enrolled reports whether the user has a second factor.
+        type: boolean
+      mode:
+        description: Mode is security.second_factor.mode.
+        enum:
+        - optional
+        - required_for_funds
+        example: required_for_funds
         type: string
     type: object
   userauth.Status:
@@ -7032,6 +7073,65 @@ paths:
       summary: End one of the signed-in user's sessions
       tags:
       - user sessions
+  /api/v1/user/step-up:
+    post:
+      consumes:
+      - application/json
+      description: 'The operations that the second factor protects, such as changing
+        a contact and, once they exist, deposits and withdrawals, need a session that
+        proved the factor within security.second_factor.step_up_minutes (5 by default).
+        A sign-in with the password counts; afterwards this route renews it with the
+        account password. A wrong password answers 403 password_invalid and counts
+        toward the lock of the password: 429 password_locked with Retry-After. A user
+        without a password gets 409 second_factor_not_set.'
+      parameters:
+      - description: The account password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.StepUpRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.SteppedUp'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: password_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: second_factor_not_set
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: password_locked, or a rate limit
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Prove the second factor again
+      tags:
+      - user security
   /api/v1/ws/:
     get:
       description: 'Upgrades to a WebSocket. An optional user access token comes as

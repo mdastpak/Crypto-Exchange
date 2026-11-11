@@ -356,6 +356,8 @@ Writing to the database is not enough to create an administrator: changing `user
 | `password.min_length` | `10` | From 8 to 64. The least length, in characters, of a new [account password](api.md#account-password) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). |
 | `password.max_failures` | `5` | From 1 to 20. How many wrong passwords in a row lock the password of an account. The count is in PostgreSQL, so every instance shares it. |
 | `password.lock_minutes` | `15` | From 1 to 1440. How long a locked password is not checked. |
+| `second_factor.mode` | `required_for_funds` | `required_for_funds`: a user must set a second factor, the account password, before deposits and withdrawals ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). `optional`: users without one are not asked. Either way, a user who has one must prove it for the [operations it protects](api.md#second-factor-and-step-up). |
+| `second_factor.step_up_minutes` | `5` | From 1 to 60. How long a sign-in with the second factor, or `POST /user/step-up`, lets a session run those operations. |
 
 ### `identity`
 
@@ -682,6 +684,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SECURITY_PASSWORD_MIN_LENGTH` | `security.password.min_length` |
 | `SECURITY_PASSWORD_MAX_FAILURES` | `security.password.max_failures` |
 | `SECURITY_PASSWORD_LOCK_MINUTES` | `security.password.lock_minutes` |
+| `SECURITY_SECOND_FACTOR_MODE` | `security.second_factor.mode` |
+| `SECURITY_SECOND_FACTOR_STEP_UP_MINUTES` | `security.second_factor.step_up_minutes` |
 | `IDENTITY_MOBILE_OWNERSHIP_PROVIDER` | `identity.mobile_ownership.provider` |
 | `IDENTITY_MOBILE_OWNERSHIP_ENDPOINT` | `identity.mobile_ownership.endpoint` |
 | `IDENTITY_MOBILE_OWNERSHIP_API_KEY` | `identity.mobile_ownership.api_key` |

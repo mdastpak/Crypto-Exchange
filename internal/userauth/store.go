@@ -9,6 +9,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
@@ -219,39 +220,45 @@ func (p *Passwords) rehash(ctx context.Context, userHK, oldHash, password string
 // password, which counts as an attempt. It records event, as
 // user.password_set or user.password_change, in the transaction, and
 // reports whether it was a change.
-func (p *Passwords) Set(ctx context.Context, userHK, current, password string, event audit.Event) (changed bool, err error) {
+//
+// Either one is a change of the second factor, so it starts the security
+// hold (#251) in the same transaction: someone who took over the contacts
+// of an account, set its password, and proved it cannot move funds out at
+// once. Set returns when the hold ends.
+func (p *Passwords) Set(ctx context.Context, userHK, current, password string, event audit.Event) (changed bool, holdUntil time.Time, err error) {
+	none := time.Time{}
 	if err := CheckPolicy(password, p.MinPasswordLength()); err != nil {
-		return false, err
+		return false, none, err
 	}
 	has, err := p.Has(ctx, userHK)
 	if err != nil {
-		return false, err
+		return false, none, err
 	}
 	if has {
 		if current == "" {
-			return true, ErrCurrentRequired
+			return true, none, ErrCurrentRequired
 		}
 		if err := p.Verify(ctx, userHK, current); err != nil {
-			return true, err
+			return true, none, err
 		}
 		if current == password {
-			return true, ErrSamePassword
+			return true, none, ErrSamePassword
 		}
 	}
 	hash, err := p.Hasher.Hash(ctx, password)
 	if err != nil {
-		return has, err
+		return has, none, err
 	}
 
 	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return has, fmt.Errorf("start the password change: %w", err)
+		return has, none, fmt.Errorf("start the password change: %w", err)
 	}
 	defer tx.Rollback()
 	// The user row orders this change with the other changes of the
 	// account, such as a concurrent first password.
 	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM users WHERE hk = $1 FOR UPDATE`, userHK); err != nil {
-		return has, fmt.Errorf("lock the user: %w", err)
+		return has, none, fmt.Errorf("lock the user: %w", err)
 	}
 	var inserted bool
 	err = tx.QueryRowContext(ctx, `
@@ -260,15 +267,23 @@ func (p *Passwords) Set(ctx context.Context, userHK, current, password string, e
 			failed_attempts = 0, locked_until = NULL
 		RETURNING (xmax = 0)`, userHK, hash).Scan(&inserted)
 	if err != nil {
-		return has, fmt.Errorf("store the password: %w", err)
+		return has, none, fmt.Errorf("store the password: %w", err)
 	}
 	if inserted == has {
 		// Another request set or changed the password since it was read:
 		// what this one proved no longer holds.
-		return has, ErrCurrentRequired
+		return has, none, ErrCurrentRequired
 	}
 	if err := rowseal.Reseal(ctx, tx, rowseal.UserPasswords, "user_hk = $1", userHK); err != nil {
-		return has, err
+		return has, none, err
+	}
+	hours := config.Config.Security.ChangeHoldHours
+	if hours == 0 {
+		hours = config.DefaultSecurityChangeHoldHours
+	}
+	holdUntil, err = restrictions.StartSecurityHold(ctx, tx, userHK, time.Duration(hours)*time.Hour)
+	if err != nil {
+		return has, none, err
 	}
 	event.Action = audit.ActionUserPasswordSet
 	if has {
@@ -276,10 +291,10 @@ func (p *Passwords) Set(ctx context.Context, userHK, current, password string, e
 	}
 	event.Outcome, event.TargetType, event.TargetID = audit.Success, audit.TargetUser, userHK
 	if err := audit.Record(ctx, tx, event); err != nil {
-		return has, fmt.Errorf("record the password change: %w", err)
+		return has, none, fmt.Errorf("record the password change: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return has, fmt.Errorf("store the password: %w", err)
+		return has, none, fmt.Errorf("store the password: %w", err)
 	}
-	return has, nil
+	return has, holdUntil, nil
 }

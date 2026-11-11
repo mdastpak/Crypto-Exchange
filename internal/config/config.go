@@ -335,6 +335,16 @@ type Configuration struct {
 			MaxFailures int `yaml:"max_failures"`
 			LockMinutes int `yaml:"lock_minutes"`
 		} `yaml:"password"`
+		// SecondFactor says when users need their second factor (#307).
+		SecondFactor struct {
+			// Mode is "optional" or "required_for_funds": whether a user
+			// must set a second factor before deposits and withdrawals.
+			Mode string `yaml:"mode"`
+			// StepUpMinutes is how long a sign-in with the second factor,
+			// or a fresh proof of it, lets a session run the operations
+			// that it protects.
+			StepUpMinutes int `yaml:"step_up_minutes"`
+		} `yaml:"second_factor"`
 	} `yaml:"security"`
 
 	// Identity configures the checks of a user's identity with a KYC
@@ -1485,6 +1495,9 @@ func setDefaults() {
 	// Row seals refuse a changed row by default in release mode (#306);
 	// report, which records it and serves it anyway, is a setting of a
 	// rollout, which the server logs at every start.
+	if Config.Security.SecondFactor.Mode == "" {
+		Config.Security.SecondFactor.Mode = DefaultSecondFactorMode
+	}
 	if Config.Keys.RowSeals.Mode == "" {
 		Config.Keys.RowSeals.Mode = RowSealsReport
 		if Config.Server.Mode == "release" && Config.Keys.Provider != "" {
@@ -1643,6 +1656,7 @@ func setDefaults() {
 		{&Config.Security.Password.MinLength, DefaultPasswordMinLength},
 		{&Config.Security.Password.MaxFailures, DefaultPasswordMaxFailures},
 		{&Config.Security.Password.LockMinutes, DefaultPasswordLockMinutes},
+		{&Config.Security.SecondFactor.StepUpMinutes, DefaultUserStepUpMinutes},
 		{&Config.Identity.MobileOwnership.TimeoutSeconds, 10},
 		{&Config.Identity.MobileOwnership.RecheckDays, 30},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
@@ -2010,6 +2024,13 @@ const (
 	MaxPasswordMaxFailures     = 20
 	DefaultPasswordLockMinutes = 15
 	MaxPasswordLockMinutes     = 1440
+	// The modes of security.second_factor.mode (#307), and the bounds of
+	// its step_up_minutes.
+	SecondFactorOptional         = "optional"
+	SecondFactorRequiredForFunds = "required_for_funds"
+	DefaultSecondFactorMode      = SecondFactorRequiredForFunds
+	DefaultUserStepUpMinutes     = 5
+	MaxUserStepUpMinutes         = 60
 
 	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
 	// favorites of a user, which are listed in one answer.

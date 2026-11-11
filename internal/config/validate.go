@@ -229,6 +229,12 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Security.Password.LockMinutes; v < 1 || v > MaxPasswordLockMinutes {
 		p.add("security.password.lock_minutes", "is %d; it must be from 1 to %d", v, MaxPasswordLockMinutes)
 	}
+	if m := c.Security.SecondFactor.Mode; m != SecondFactorOptional && m != SecondFactorRequiredForFunds {
+		p.add("security.second_factor.mode", "is %q; it must be %q or %q", m, SecondFactorOptional, SecondFactorRequiredForFunds)
+	}
+	if v := c.Security.SecondFactor.StepUpMinutes; v < 1 || v > MaxUserStepUpMinutes {
+		p.add("security.second_factor.step_up_minutes", "is %d; it must be from 1 to %d", v, MaxUserStepUpMinutes)
+	}
 	mobileOwnershipProblems(p, c.Identity.MobileOwnership)
 	if v := c.Favorites.MaxPerUser; v < 1 || v > MaxFavoritesPerUser {
 		p.add("favorites.max_per_user", "is %d; it must be from 1 to %d", v, MaxFavoritesPerUser)

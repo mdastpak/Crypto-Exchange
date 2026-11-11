@@ -898,6 +898,8 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// code issued, and an attempt counted against the lock.
 	passwords := userauth.NewPasswords(services.Postgres.DB, passwordhash.Argon2id{})
 	userHandler.Passwords, publicHandler.Passwords = passwords, passwords
+	guard := &userauth.Guard{DB: services.Postgres.DB}
+	userHandler.Guard, publicHandler.Guard = guard, guard
 	marketData := newMarketDataAPI(services)
 	return &InfraHandlers{
 		Socket:     ws,
@@ -1092,6 +1094,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// A password change checks the current password, so it has the
 		// limit of a sign-in on top of the lock of the password.
 		activeGroup.PUT("/password", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.SetPassword)
+		activeGroup.POST("/step-up", rl.AuthRateLimit(middleware.AuthLogin), ih.User.StepUp)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
@@ -1102,8 +1105,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.DELETE("/favorites/pairs/:hk", ih.User.RemoveFavoritePair)
 		// Starting a change sends codes, so it has the limit of a code
 		// request, on top of the limits of the codes themselves.
-		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.StartContactChange)
-		activeGroup.POST("/contacts/changes/:id", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.ConfirmContactChange)
+		// A user who has a second factor proves it before changing the
+		// contacts that sign in to the account (#307).
+		stepUp := ih.User.RequireSecondFactor(false)
+		activeGroup.POST("/contacts/changes", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, stepUp, ih.User.StartContactChange)
+		activeGroup.POST("/contacts/changes/:id", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, stepUp, ih.User.ConfirmContactChange)
 	}
 }
 

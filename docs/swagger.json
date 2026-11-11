@@ -7076,6 +7076,93 @@
                 }
             }
         },
+        "/api/v1/user/step-up": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The operations that the second factor protects, such as changing a contact and, once they exist, deposits and withdrawals, need a session that proved the factor within security.second_factor.step_up_minutes (5 by default). A sign-in with the password counts; afterwards this route renews it with the account password. A wrong password answers 403 password_invalid and counts toward the lock of the password: 429 password_locked with Retry-After. A user without a password gets 409 second_factor_not_set.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user security"
+                ],
+                "summary": "Prove the second factor again",
+                "parameters": [
+                    {
+                        "description": "The account password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.StepUpRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.SteppedUp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "password_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "second_factor_not_set",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "password_locked, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ws/": {
             "get": {
                 "description": "Upgrades to a WebSocket. An optional user access token comes as Authorization: Bearer, or from a browser as the subprotocols access_token and the token. docs/api.md describes the messages.",
@@ -10294,6 +10381,10 @@
                 "password": {
                     "$ref": "#/definitions/userauth.Status"
                 },
+                "security_hold_until": {
+                    "description": "SecurityHoldUntil is until when withdrawals are held after this\nchange of the second factor.",
+                    "type": "string"
+                },
                 "sessions_ended": {
                     "description": "SessionsEnded is how many other sessions the change ended.",
                     "type": "integer",
@@ -10390,6 +10481,14 @@
                     "description": "PasswordMinLength is the least length of a new password, in\ncharacters.",
                     "type": "integer",
                     "example": 10
+                },
+                "second_factor": {
+                    "description": "SecondFactor is where this session stands with the second factor.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/userauth.State"
+                        }
+                    ]
                 }
             }
         },
@@ -10401,6 +10500,23 @@
                     "type": "string"
                 },
                 "new_password": {
+                    "type": "string"
+                }
+            }
+        },
+        "user.StepUpRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "user.SteppedUp": {
+            "type": "object",
+            "properties": {
+                "elevated_until": {
+                    "description": "ElevatedUntil is until when the session may run the operations that\nthe second factor protects.",
                     "type": "string"
                 }
             }
@@ -10431,6 +10547,28 @@
                         "system"
                     ],
                     "example": "dark"
+                }
+            }
+        },
+        "userauth.State": {
+            "type": "object",
+            "properties": {
+                "elevated_until": {
+                    "description": "ElevatedUntil is until when the session may run the protected\noperations without proving the factor again. It is left out when\nthe session is not elevated.",
+                    "type": "string"
+                },
+                "enrolled": {
+                    "description": "Enrolled reports whether the user has a second factor.",
+                    "type": "boolean"
+                },
+                "mode": {
+                    "description": "Mode is security.second_factor.mode.",
+                    "type": "string",
+                    "enum": [
+                        "optional",
+                        "required_for_funds"
+                    ],
+                    "example": "required_for_funds"
                 }
             }
         },

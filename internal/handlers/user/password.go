@@ -34,6 +34,8 @@ type SecuritySettings struct {
 	// PasswordMinLength is the least length of a new password, in
 	// characters.
 	PasswordMinLength int `json:"password_min_length" example:"10"`
+	// SecondFactor is where this session stands with the second factor.
+	SecondFactor userauth.State `json:"second_factor"`
 }
 
 // SetPasswordRequest sets the account password, or changes it.
@@ -49,6 +51,9 @@ type PasswordChanged struct {
 	Password userauth.Status `json:"password"`
 	// SessionsEnded is how many other sessions the change ended.
 	SessionsEnded int `json:"sessions_ended" example:"1"`
+	// SecurityHoldUntil is until when withdrawals are held after this
+	// change of the second factor.
+	SecurityHoldUntil time.Time `json:"security_hold_until"`
 }
 
 // GetSecurity returns the sign-in protections of the signed-in user.
@@ -80,8 +85,16 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
 		return
 	}
-	helpers.SendResponse(c, http.StatusOK, i18n.M("SECURITY_SETTINGS_RETRIEVED"),
-		SecuritySettings{Password: status, PasswordMinLength: h.Passwords.MinPasswordLength()})
+	settings := SecuritySettings{Password: status, PasswordMinLength: h.Passwords.MinPasswordLength()}
+	if h.Guard != nil {
+		settings.SecondFactor, err = h.Guard.State(ctx, h.PostgresDB.DB, claims.UUID, claims.SessionID)
+		if err != nil {
+			log.Printf("Failed to read the second factor of user %s: %v", claims.UUID, err)
+			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
+			return
+		}
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SECURITY_SETTINGS_RETRIEVED"), settings)
 }
 
 // SetPassword sets the account password of the signed-in user, or changes
@@ -134,7 +147,7 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 	event := audit.FromRequest(c)
 	event.ActorType, event.ActorID = audit.ActorUser, claims.UUID
 
-	changed, err := h.Passwords.Set(ctx, claims.UUID, req.CurrentPassword, req.NewPassword, event)
+	changed, holdUntil, err := h.Passwords.Set(ctx, claims.UUID, req.CurrentPassword, req.NewPassword, event)
 	var locked *userauth.LockedError
 	switch {
 	case errors.Is(err, userauth.ErrPasswordTooShort):
@@ -186,7 +199,7 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 	if changed {
 		message = i18n.M("PASSWORD_CHANGED")
 	}
-	helpers.SendResponse(c, http.StatusOK, message, PasswordChanged{Password: status, SessionsEnded: ended})
+	helpers.SendResponse(c, http.StatusOK, message, PasswordChanged{Password: status, SessionsEnded: ended, SecurityHoldUntil: holdUntil})
 }
 
 // notePassword records a refused change of the password. It is best
