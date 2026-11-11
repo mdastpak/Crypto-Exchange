@@ -22,7 +22,7 @@ const (
 	Middleware
 	// OTP is the database of internal/otp.
 	OTP
-	// Server is the database of cmd/server.
+	// Server is the database of the server's end-to-end tests, in internal/app.
 	Server
 	// Admin is the database of internal/handlers/admin.
 	Admin

@@ -94,7 +94,7 @@ func TestVerifyOTP_RealSchema_DatabaseFailuresRevealNoDetails(t *testing.T) {
 // server gives to internal/userauth through an interface, so this tree
 // still imports none. It runs only for a challenge that a correct code
 // issued, after an attempt was counted against the lock of the password,
-// and a bounded number at once: cmd/server
+// and a bounded number at once: internal/app
 // TestUserPassword_NothingIsHashedWithoutAChallenge holds that.
 func TestUnauthenticatedPathsUseNoPasswordHashing(t *testing.T) {
 	goTool, err := exec.LookPath("go")

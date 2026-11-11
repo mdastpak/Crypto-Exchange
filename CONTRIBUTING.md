@@ -124,7 +124,7 @@ go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o doc
 
 CI regenerates it and fails when it differs from the committed one, and `TestOpenAPI_DocumentsEveryRoute` fails when a route of the server is missing from it, or when it documents one that does not exist. Paths in the annotations are absolute, such as `/api/v1/public/currencies`.
 
-The end-to-end tests of `cmd/server` also check every response they receive against the document ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53)): its status must be documented for its operation, or covered by a `default` response, and its body must match the schema, with no property that the schema lacks. A route that sends a new field, status, or type fails its tests until its annotations describe it. Routers that tests build must use `routeForTest`, which adds the check; `internal/testutil/openapitest` does the checking.
+The end-to-end tests of the server, in `internal/app`, also check every response they receive against the document ([#53](https://github.com/mdastpak/Crypto-Exchange/issues/53)): its status must be documented for its operation, or covered by a `default` response, and its body must match the schema, with no property that the schema lacks. A route that sends a new field, status, or type fails its tests until its annotations describe it. Routers that tests build must use `routeForTest`, which adds the check; `internal/testutil/openapitest` does the checking.
 
 ## Dependencies
 

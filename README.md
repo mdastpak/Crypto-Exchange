@@ -291,12 +291,14 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 cmd/admin/              Operator command: administrators, data keys, outbox dead letters,
                         platform controls, backup and restore checks
 cmd/market-worker/      Worker of the global market data catalog (docs/market-data.md)
-cmd/server/             Application entry point, routing, and lifecycle
+cmd/server/             Application entry point; it calls internal/app
 config/                 Configuration files: the example and Compose configurations,
                         the local config.yaml (ignored), and the asset registry and
                         AML rules (not loaded yet)
 docs/                   Generated Swagger files and project documentation
 internal/adminauth/     Administrator accounts and authenticator (TOTP) enrollment
+internal/app/           The composition root of the server: wiring, routes, lifecycle,
+                        and the end-to-end tests
 internal/assetregistry/ Loading and checking the asset registry file
 internal/audit/         The append-only audit log: recording and querying events
 internal/auth/          JWT issuing and verification, key rotation, sessions, blacklist,

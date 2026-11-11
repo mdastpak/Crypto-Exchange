@@ -90,7 +90,7 @@ Protected routes require `Authorization: Bearer <token>` since [#17](https://git
 
 ## 1. User Handler and `/user/profile`
 
-Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `cmd/server/main.go`.
+Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `internal/app/app.go`.
 
 > [!IMPORTANT]
 > `/user/profile` returns the authenticated user's profile since [#27](https://github.com/mdastpak/Crypto-Exchange/issues/27), and the user handler no longer lists currencies. Therefore:
@@ -141,7 +141,7 @@ Implementation: `internal/handlers/user/users.go`, routes in `RouteHandler` in `
 
 ## 2. Public Active Currencies
 
-Implementation: `PublicHandler.GetActiveCurrencies` in `internal/handlers/public/auth.go`, which reads `internal/currencies.Catalog`; routes in `RouteHandler` in `cmd/server/main.go`.
+Implementation: `PublicHandler.GetActiveCurrencies` in `internal/handlers/public/auth.go`, which reads `internal/currencies.Catalog`; routes in `RouteHandler` in `internal/app/app.go`.
 
 > [!IMPORTANT]
 > **The cache and the database.** Since [#52](https://github.com/mdastpak/Crypto-Exchange/issues/52), Redis holds one copy of the whole list of public currencies, shared by every instance, and PostgreSQL is the source. A miss, an unreadable value, or an unavailable Redis reads the database, so these scenarios expect the data from PostgreSQL, and `503 service_unavailable` with `Retry-After` only when PostgreSQL fails as well ([#130](https://github.com/mdastpak/Crypto-Exchange/issues/130)). The list is paged by cursor since [#218](https://github.com/mdastpak/Crypto-Exchange/issues/218).
@@ -258,7 +258,7 @@ Implementation: `AdminHandler.CreateCurrency` and the other currency handlers in
 
 ## 5. Middleware, Security, and API Contract
 
-Relevant code: `internal/middleware/security.go:11`, `internal/middleware/validation.go:34`, `internal/middleware/ratelimit.go:65`, `cmd/server/main.go:275`.
+Relevant code: `internal/middleware/security.go:11`, `internal/middleware/validation.go:34`, `internal/middleware/ratelimit.go:65`, `RouteHandler` in `internal/app/app.go`.
 
 | ID | Priority / level | Input and setup | Expected behavior | Current review |
 |---|---|---|---|---|
