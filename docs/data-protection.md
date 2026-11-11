@@ -84,6 +84,23 @@ A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protecte
 
 Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Each of the tables has three columns for it: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
 
+### Audit events
+
+`audit_events` is sealed too ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337), migration 11), over every column of an event. Its rows never change: triggers refuse `UPDATE` and `DELETE`, and nothing re-seals them. So `audit.Record` seals each event in its `INSERT`, at `row_version` 0. One query before the insert returns the canonical text of the columns, in the form that a read returns, and the time of the event, which the insert then writes.
+
+The admin query of the log (`GET /api/v1/admin/audit`) checks each event it returns, and reports its `integrity`:
+
+| Integrity | Meaning |
+| --- | --- |
+| `verified` | The event matches its seal. |
+| `mismatch` | The event does not match its seal, or its seal names a key version that does not exist. Only a change made outside the backend causes either, for example with the triggers turned off; the server also logs a `SECURITY` line. |
+| `unsealed` | The event has no seal: it was written before migration 11, or without data keys. |
+| `unchecked` | The event is sealed, but this instance cannot check it: it has no data keys, or the key service did not answer. |
+
+An event that fails is not recorded as an integrity finding: a finding is resolved by a re-seal, which an event cannot have. The verifier does not walk the events yet.
+
+A `row-mac` version that seals audit events must stay readable, since the events are never sealed again: `admin keys retire` refuses it.
+
 ### Modes
 
 `keys.row_seals.mode` (`KEYS_ROW_SEALS_MODE`) decides what a row without a valid seal does:
@@ -118,8 +135,8 @@ Re-sealing makes a row valid as it is, so re-seal only a row that is right. A ro
 ### Limits of row seals
 
 - **Replay.** Someone with write access to the database can put back an older version of a row with its seal, such as a session from before its revocation, and the seal matches. A later step of #139 detects that, with a hash-chained log of the seals.
-- **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it.
-- **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139.
+- **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it. Removing the seal of an audit event makes it look `unsealed`, and deleting the event leaves nothing to check.
+- **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139. Neither are the tables of the second factors, recoveries, step-ups, and admin sessions ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)).
 - **The operator.** A re-seal through the API needs two administrators, but `cmd/admin` needs one operator: whoever holds the data keys and a database role that writes can seal any row.
 
 ## Setup
@@ -183,7 +200,7 @@ docker compose run --rm --no-deps --entrypoint /app/admin app -config config/con
 | --- | --- |
 | `keys list` | Purpose, version, state (`current`, `readable`, or `retired`), KEK, creation time, and retirement time of every key |
 | `keys rotate -purpose <purpose>` | Creates the next version of one purpose |
-| `keys retire -purpose <purpose> -version <n>` | Stops loading one version. The newest version cannot be retired. |
+| `keys retire -purpose <purpose> -version <n>` | Stops loading one version. The newest version cannot be retired, nor a `row-mac` version that still seals rows: of the sealed tables until the verifier has moved them, and of `audit_events` for good. |
 | `keys rewrap` | Unwraps every key, including retired ones, and wraps it again with the newest version of the KEK. The keys themselves do not change. |
 
 Every change, and the creation of the first keys by the server, records a `data_key.*` event in the audit log, in its transaction, with the key's purpose, version, and KEK, never the key. Pass `-operator <name>` before the command to name yourself in the event ([#195](https://github.com/mdastpak/Crypto-Exchange/issues/195)).
@@ -199,7 +216,7 @@ Rotate a data key on a schedule, such as once a year, and whenever it may have l
 
 If an instance cannot load the new version, because it cannot reach the key management service, it keeps writing with the older version, which every instance still reads, and logs the failure.
 
-For `row-mac`, the [verifier](#the-verifier) re-seals the rows: run `admin row-seals verify` after the activation, check that it reports no finding, and then retire the older version. Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will re-encrypt its rows in the same way.
+For `row-mac`, the [verifier](#the-verifier) re-seals the rows: run `admin row-seals verify` after the activation, check that it reports no finding, and then retire the older version. A version that sealed [audit events](#audit-events) stays readable: `retire` refuses it. Field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will re-encrypt its rows in the same way.
 
 Rotating a `blind-index` key also needs a second index during the change ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)).
 

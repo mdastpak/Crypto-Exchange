@@ -10,6 +10,10 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,11 +103,62 @@ func TestAudit_CurrencyChangesThroughTheRouter(t *testing.T) {
 type auditPage struct {
 	Info struct {
 		Items []struct {
-			Action  string `json:"action"`
-			ActorID string `json:"actor_id"`
+			Action    string `json:"action"`
+			ActorID   string `json:"actor_id"`
+			Integrity string `json:"integrity"`
 		} `json:"items"`
 		NextCursor string `json:"next_cursor"`
 	} `json:"info"`
+}
+
+// TestAudit_SealedWithTheRowSeals turns row seals on as the server does
+// (useRowSeals), and expects the events written since to be sealed and
+// reported as verified by the admin query (#337). An event changed in SQL,
+// with the append-only trigger turned off, is then reported as a mismatch.
+func TestAudit_SealedWithTheRowSeals(t *testing.T) {
+	env := newE2EEnv(t)
+	require.NotNil(t, env.handlers.DataKeys)
+	saved := config.Config.Keys.RowSeals
+	t.Cleanup(func() { config.Config.Keys.RowSeals = saved })
+	config.Config.Keys.RowSeals.VerifyIntervalMinutes = config.DefaultRowSealsVerifyIntervalMinutes
+	verifier := useRowSeals(&models.InfraServices{Postgres: &db.PostgresService{DB: env.db}}, env.handlers.DataKeys)
+	t.Cleanup(func() {
+		require.NoError(t, verifier.Stop(context.Background()))
+		rowseal.Use(nil)
+		audit.UseSealer(nil)
+	})
+
+	enrollment, err := env.accounts.Create(context.Background(), "sealed@example.com")
+	require.NoError(t, err)
+	token := env.signInAdmin(t, enrollment)
+	status, resp := env.post(t, "/api/v1/admin/currencies", testCurrency("SLD"), token)
+	require.Equal(t, http.StatusCreated, status, resp.Message)
+
+	integrity := func() string {
+		t.Helper()
+		status, body := env.call(t, http.MethodGet, "/api/v1/admin/audit?action=currency.create", nil, token)
+		require.Equal(t, http.StatusOK, status, string(body))
+		var page auditPage
+		require.NoError(t, json.Unmarshal(body, &page))
+		require.Len(t, page.Info.Items, 1)
+		return page.Info.Items[0].Integrity
+	}
+	assert.Equal(t, audit.IntegrityVerified, integrity(), "the event of the change, with its changes, is sealed")
+
+	// The owner of the table, as someone with direct database access.
+	tx, err := e2eOwnerDB(t).Begin()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`ALTER TABLE audit_events DISABLE TRIGGER audit_events_no_update_or_delete`,
+		`UPDATE audit_events SET actor_id = gen_random_uuid() WHERE action = 'currency.create'`,
+		`ALTER TABLE audit_events ENABLE TRIGGER audit_events_no_update_or_delete`,
+	} {
+		_, err := tx.Exec(statement)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+	assert.Equal(t, audit.IntegrityMismatch, integrity(), "a change of the actor is detected")
 }
 
 // TestAudit_AdminQuery queries the audit log through the router as an

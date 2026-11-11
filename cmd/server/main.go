@@ -16,6 +16,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/docs"
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
@@ -541,6 +542,8 @@ func useRowSeals(services *models.InfraServices, dataKeys *keys.Live) *rowseal.V
 	mode := config.Config.Keys.RowSeals.Mode
 	sealer := rowseal.New(services.Postgres.DB, dataKeys, mode)
 	rowseal.Use(sealer)
+	// The audit events are sealed with the same keys, at insert (#337).
+	audit.UseSealer(sealer)
 	log.Printf("Row seals are on, in %s mode", sealer.Mode())
 	verifier := rowseal.NewVerifier(sealer, time.Duration(config.Config.Keys.RowSeals.VerifyIntervalMinutes)*time.Minute)
 	verifier.Start()

@@ -30,6 +30,10 @@ type Entry struct {
 	IP        string   `json:"ip,omitempty" example:"203.0.113.7"`
 	UserAgent string   `json:"user_agent,omitempty"`
 	Changes   *Changes `json:"changes,omitempty"`
+	// Integrity tells whether the event matches its seal: verified;
+	// mismatch, changed without the backend; unsealed, written without a
+	// seal; or unchecked, since this instance cannot check it now.
+	Integrity string `json:"integrity" enums:"verified,mismatch,unsealed,unchecked"`
 }
 
 // EntryPage is a page of entries. It describes pagination.Page[Entry] in
@@ -101,10 +105,21 @@ func List(ctx context.Context, db *sql.DB, f Filter, page pagination.Request) (p
 		add("hk < $%d", after.HK)
 	}
 
+	// With a sealer, the columns are also read in the form that their seal
+	// covers.
+	sealer := currentSealer()
+	var sealed []string
+	if sealer != nil {
+		sealed = sealer.EventFields("")
+	}
 	query := `SELECT hk, occurred_at, actor_type, COALESCE(actor_id::text, ''), action,
 		COALESCE(target_type, ''), COALESCE(target_id, ''), outcome, COALESCE(reason, ''),
-		COALESCE(request_id, ''), COALESCE(host(ip), ''), COALESCE(user_agent, ''), changes::text
-		FROM audit_events`
+		COALESCE(request_id, ''), COALESCE(host(ip), ''), COALESCE(user_agent, ''), changes::text,
+		row_seal, seal_key_version::bigint`
+	for _, field := range sealed {
+		query += ", " + field
+	}
+	query += " FROM audit_events"
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -121,11 +136,19 @@ func List(ctx context.Context, db *sql.DB, f Filter, page pagination.Request) (p
 		var e Entry
 		var occurred time.Time
 		var changes sql.NullString
-		if err := rows.Scan(&e.HK, &occurred, &e.ActorType, &e.ActorID, &e.Action, &e.TargetType, &e.TargetID,
-			&e.Outcome, &e.Reason, &e.RequestID, &e.IP, &e.UserAgent, &changes); err != nil {
+		var seal []byte
+		var keyVersion sql.NullInt64
+		values := make([]sql.NullString, len(sealed))
+		dest := []interface{}{&e.HK, &occurred, &e.ActorType, &e.ActorID, &e.Action, &e.TargetType, &e.TargetID,
+			&e.Outcome, &e.Reason, &e.RequestID, &e.IP, &e.UserAgent, &changes, &seal, &keyVersion}
+		for i := range values {
+			dest = append(dest, &values[i])
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return pagination.Page[Entry]{}, err
 		}
 		e.OccurredAt = occurred.UTC().Format(time.RFC3339Nano)
+		e.Integrity = integrity(ctx, sealer, e.HK, values, seal, keyVersion)
 		if changes.Valid {
 			e.Changes = &Changes{}
 			if err := json.Unmarshal([]byte(changes.String), e.Changes); err != nil {

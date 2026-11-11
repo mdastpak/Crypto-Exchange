@@ -338,6 +338,17 @@ definitions:
       hk:
         format: uuid
         type: string
+      integrity:
+        description: |-
+          Integrity tells whether the event matches its seal: verified;
+          mismatch, changed without the backend; unsealed, written without a
+          seal; or unchecked, since this instance cannot check it now.
+        enum:
+        - verified
+        - mismatch
+        - unsealed
+        - unchecked
+        type: string
       ip:
         example: 203.0.113.7
         type: string

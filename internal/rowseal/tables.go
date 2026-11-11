@@ -87,6 +87,18 @@ var (
 // Tables lists the protected tables.
 var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys}
 
+// AuditEvents covers every column of an audit event (#337), so that an
+// event changed after the append-only triggers were turned off is detected.
+// Events never change: audit.Record seals each one in its INSERT, at
+// row_version 0, through the Sealer's audit methods, and nothing re-seals
+// them. So the table is not in Tables, which the verifier and the re-seals
+// of findings walk.
+var AuditEvents = &Table{Name: "audit_events", Key: "hk", KeyType: "uuid", Columns: []Column{
+	timestamptz("occurred_at"), text("actor_type"), text("actor_id"), text("action"),
+	text("target_type"), text("target_id"), text("outcome"), text("reason"),
+	text("request_id"), text("ip"), text("user_agent"), text("changes"),
+}}
+
 // TableNamed returns the protected table name, or nil.
 func TableNamed(name string) *Table {
 	for _, t := range Tables {
@@ -121,6 +133,20 @@ func (t *Table) fields(alias, prefix string) string {
 		}
 	}
 	return strings.Join(items, ", ")
+}
+
+// ColumnFields returns the expressions of the canonical text of the sealed
+// columns of t alone, in their order, qualified by alias as Fields does.
+func (t *Table) ColumnFields(alias string) []string {
+	p := ""
+	if alias != "" {
+		p = alias + "."
+	}
+	items := make([]string, len(t.Columns))
+	for i, c := range t.Columns {
+		items[i] = fmt.Sprintf(c.Expr, p)
+	}
+	return items
 }
 
 // Names lists the names that FieldsAs gave, for a select from a CTE.

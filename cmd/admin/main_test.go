@@ -13,6 +13,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
@@ -322,6 +323,46 @@ func TestRun_ManagesDataKeys(t *testing.T) {
 		"data_key.rotate row-mac/v1", "data_key.rotate row-mac/v2", "data_key.retire row-mac/v1",
 		"data_key.rewrap row-mac/v1", "data_key.rewrap row-mac/v2",
 	}, targets)
+}
+
+// TestRun_KeepsTheKeysOfSealedRows refuses to retire a row-mac version that
+// still seals rows (#337): audit events for good, since they are never
+// sealed again, and the rows of the sealed tables until the verifier has
+// moved them to the current version.
+func TestRun_KeepsTheKeysOfSealedRows(t *testing.T) {
+	resetCLITestDB(t)
+	kek := make([]byte, 32)
+	_, err := rand.Read(kek)
+	require.NoError(t, err)
+	base := writeKeysConfig(t, fmt.Sprintf("keys:\n  provider: \"local\"\n  local:\n    kek: %q\n", base64.StdEncoding.EncodeToString(kek)))
+	for range 3 {
+		code, _, stderr := runCLI(t, append(base, "keys", "rotate", "-purpose", "row-mac")...)
+		require.Equal(t, 0, code, stderr)
+	}
+	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.Exec(`UPDATE data_keys SET active_from = NOW() - INTERVAL '1 second'`)
+	require.NoError(t, err, "every version is active")
+	_, err = conn.Exec(`INSERT INTO audit_events (hk, actor_type, action, outcome, row_seal, seal_key_version)
+		VALUES (gen_random_uuid(), 'system', 'test.seal', 'success', '\x00', 1)`)
+	require.NoError(t, err)
+	hk := usertest.Insert(t, conn, usertest.User{Status: "ACTIVE"})
+	_, err = conn.Exec(`UPDATE users SET row_seal = '\x00', seal_key_version = 2 WHERE hk = $1`, hk)
+	require.NoError(t, err)
+
+	code, _, stderr := runCLI(t, append(base, "keys", "retire", "-purpose", "row-mac", "-version", "1")...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "row-mac/v1 seals audit events")
+	code, _, stderr = runCLI(t, append(base, "keys", "retire", "-purpose", "row-mac", "-version", "2")...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "row-mac/v2 still seals rows of users")
+
+	_, err = conn.Exec(`UPDATE users SET seal_key_version = 3 WHERE hk = $1`, hk)
+	require.NoError(t, err, "the verifier moved the row")
+	code, stdout, stderr := runCLI(t, append(base, "keys", "retire", "-purpose", "row-mac", "-version", "2")...)
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "Retired data key row-mac/v2")
 }
 
 func TestRun_KeysNeedAProvider(t *testing.T) {

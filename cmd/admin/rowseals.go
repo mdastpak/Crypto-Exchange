@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
@@ -103,10 +104,12 @@ func rowSealer(ctx context.Context, conn *sql.DB, cmd command) (*rowseal.Sealer,
 	return useRing(conn, ring), nil
 }
 
-// useRing makes a sealer of ring the sealer of the process.
+// useRing makes a sealer of ring the sealer of the process, of its rows and
+// of its audit events (#337).
 func useRing(conn *sql.DB, ring *keys.Keyring) *rowseal.Sealer {
 	sealer := rowseal.New(conn, rowseal.KeyringKeys{Ring: ring}, config.Config.Keys.RowSeals.Mode)
 	rowseal.Use(sealer)
+	audit.UseSealer(sealer)
 	return sealer
 }
 

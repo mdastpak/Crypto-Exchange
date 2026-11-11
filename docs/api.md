@@ -1210,7 +1210,7 @@ Returns the audit log, newest first, in pages ([#51](https://github.com/mdastpak
 | `since`, `until` | Events at or after `since`, and before `until`, in RFC 3339 |
 | `limit`, `cursor` | The page, as in [Pagination](#pagination) |
 
-All parameters are optional and combine. Each item has the event's `hk`, `occurred_at`, `actor_type` and `actor_id`, `action`, `target_type` and `target_id`, `outcome` and `reason`, `request_id`, `ip`, `user_agent`, and, for a change, `changes` with the fields before and after.
+All parameters are optional and combine. Each item has the event's `hk`, `occurred_at`, `actor_type` and `actor_id`, `action`, `target_type` and `target_id`, `outcome` and `reason`, `request_id`, `ip`, `user_agent`, for a change, `changes` with the fields before and after, and its `integrity`: `verified`, `mismatch` (changed outside the backend), `unsealed`, or `unchecked` ([audit events](data-protection.md#audit-events)).
 
 Errors: `400` `validation_failed` naming each invalid parameter; `401` and `403` as for the other admin routes.
 

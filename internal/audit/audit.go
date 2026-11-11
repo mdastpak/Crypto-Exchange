@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -258,10 +259,11 @@ type Changes struct {
 	After  map[string]interface{} `json:"after,omitempty"`
 }
 
-// Execer runs a statement: a *sql.DB, or the *sql.Tx of the change that an
+// Execer runs statements: a *sql.DB, or the *sql.Tx of the change that an
 // event belongs to.
 type Execer interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
 // FromRequest returns an event with the request's ID, client address, and
@@ -270,8 +272,20 @@ func FromRequest(c *gin.Context) Event {
 	return Event{RequestID: c.GetString("request_id"), IP: c.ClientIP(), UserAgent: c.Request.UserAgent()}
 }
 
+// eventValues are the columns of a new event, with the types of
+// audit_events, from the arguments of Record; occurred_at is the time of the
+// database.
+const eventValues = `SELECT NOW() AS occurred_at, $2::text AS actor_type, NULLIF($3, '')::uuid AS actor_id,
+	$4::text AS action, NULLIF($5, '')::text AS target_type, NULLIF($6, '')::text AS target_id,
+	$7::text AS outcome, NULLIF($8, '')::text AS reason, NULLIF($9, '')::text AS request_id,
+	NULLIF($10, '')::inet AS ip, NULLIF($11, '')::text AS user_agent, $12::jsonb AS changes, $1::uuid AS hk`
+
 // Record writes e. In the transaction of a change, it commits or rolls back
 // with the change.
+//
+// With a sealer (UseSealer), the event is sealed in its INSERT: one query
+// first returns its columns as a read of the table will, which the seal
+// covers, and the time, which the INSERT then writes.
 func Record(ctx context.Context, db Execer, e Event) error {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -289,13 +303,35 @@ func Record(ctx context.Context, db Execer, e Event) error {
 	if net.ParseIP(e.IP) != nil {
 		ip = e.IP
 	}
+	args := []interface{}{id, e.ActorType, e.ActorID, e.Action, e.TargetType, e.TargetID,
+		e.Outcome, e.Reason, e.RequestID, ip, shorten(e.UserAgent, maxUserAgent), changes}
+
+	var occurredAt, seal, keyVersion interface{}
+	if sealer := currentSealer(); sealer != nil {
+		var at time.Time
+		fields := sealer.EventFields("v")
+		values := make([]sql.NullString, len(fields))
+		dest := []interface{}{&at}
+		for i := range values {
+			dest = append(dest, &values[i])
+		}
+		if err := db.QueryRowContext(ctx, `SELECT v.occurred_at, `+strings.Join(fields, ", ")+` FROM (`+eventValues+`) v`,
+			args...).Scan(dest...); err != nil {
+			return fmt.Errorf("seal the audit event %s: %w", e.Action, err)
+		}
+		mac, version, err := sealer.SealEvent(id.String(), values)
+		if err != nil {
+			return fmt.Errorf("seal the audit event %s: %w", e.Action, err)
+		}
+		occurredAt, seal, keyVersion = at, mac, version
+	}
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO audit_events (hk, actor_type, actor_id, action, target_type, target_id,
-			outcome, reason, request_id, ip, user_agent, changes)
+			outcome, reason, request_id, ip, user_agent, changes, occurred_at, row_seal, seal_key_version)
 		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, NULLIF($5, ''), NULLIF($6, ''),
-			$7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, '')::inet, NULLIF($11, ''), $12::jsonb)`,
-		id, e.ActorType, e.ActorID, e.Action, e.TargetType, e.TargetID,
-		e.Outcome, e.Reason, e.RequestID, ip, shorten(e.UserAgent, maxUserAgent), changes)
+			$7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, '')::inet, NULLIF($11, ''), $12::jsonb,
+			COALESCE($13::timestamptz, NOW()), $14, $15)`,
+		append(args, occurredAt, seal, keyVersion)...)
 	if err != nil {
 		return fmt.Errorf("record the audit event %s: %w", e.Action, err)
 	}
