@@ -173,10 +173,15 @@ type Verdict string
 
 // verdict checks r against its seal.
 func (s *Sealer) verdict(ctx context.Context, t *Table, r *Row) (Verdict, error) {
+	return s.verdictWith(ctx, keys.PurposeRowMAC, t, r)
+}
+
+// verdictWith checks r against its seal, made with a key of purpose.
+func (s *Sealer) verdictWith(ctx context.Context, purpose keys.Purpose, t *Table, r *Row) (Verdict, error) {
 	if len(r.Seal) == 0 || !r.KeyVersion.Valid {
 		return CheckMissing, nil
 	}
-	key, err := s.keys.Version(ctx, keys.PurposeRowMAC, int(r.KeyVersion.Int64))
+	key, err := s.keys.Version(ctx, purpose, int(r.KeyVersion.Int64))
 	if errors.Is(err, keys.ErrNoKey) {
 		return CheckUnknownKey, nil
 	}

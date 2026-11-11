@@ -164,7 +164,8 @@ func TestStore_RotateAndRetire(t *testing.T) {
 			assert.NotNil(t, info.RetiredAt)
 		}
 	}
-	assert.Equal(t, map[string]bool{"row-mac/v1": false, "row-mac/v2": true, "field-enc/v1": true, "blind-index/v1": true, "otp-mac/v1": true}, states)
+	assert.Equal(t, map[string]bool{"row-mac/v1": false, "row-mac/v2": true, "field-enc/v1": true, "blind-index/v1": true, "otp-mac/v1": true,
+		"audit-mac/v1": true}, states)
 }
 
 func TestStore_LoadRefusesKeysItCannotTrust(t *testing.T) {
@@ -307,7 +308,7 @@ func TestStore_TheFirstKeysAreAudited(t *testing.T) {
 		assert.Equal(t, store.Provider.ID(), kek)
 		got = append(got, target)
 	}
-	assert.Equal(t, []string{"blind-index/v1", "field-enc/v1", "otp-mac/v1", "row-mac/v1"}, got)
+	assert.Equal(t, []string{"audit-mac/v1", "blind-index/v1", "field-enc/v1", "otp-mac/v1", "row-mac/v1"}, got)
 }
 
 // TestStore_VerifyUnwrapsWithoutCreating checks the restore-drill check of

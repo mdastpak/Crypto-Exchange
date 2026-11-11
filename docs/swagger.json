@@ -8671,6 +8671,16 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "integrity": {
+                    "description": "Integrity tells whether the event matches its seal: verified;\nmismatch, changed without the backend; unsealed, written without a\nseal; or unchecked, since this instance cannot check it now.",
+                    "type": "string",
+                    "enum": [
+                        "verified",
+                        "mismatch",
+                        "unsealed",
+                        "unchecked"
+                    ]
+                },
                 "ip": {
                     "type": "string",
                     "example": "203.0.113.7"

@@ -37,10 +37,16 @@ const (
 	// its own. The values it protects live for minutes, so a rotation
 	// needs no re-encryption.
 	PurposeOTPMAC Purpose = "otp-mac"
+	// PurposeAuditMAC seals the audit events with HMAC-SHA-256 (#337).
+	// Events never change, so they are never sealed again with a newer
+	// version: unlike row-mac, a version that seals an event stays
+	// readable for good, and row-mac keeps its rotate, re-seal, and retire
+	// cycle.
+	PurposeAuditMAC Purpose = "audit-mac"
 )
 
 // Purposes lists every purpose, in a fixed order.
-var Purposes = []Purpose{PurposeRowMAC, PurposeFieldEnc, PurposeBlindIndex, PurposeOTPMAC}
+var Purposes = []Purpose{PurposeRowMAC, PurposeFieldEnc, PurposeBlindIndex, PurposeOTPMAC, PurposeAuditMAC}
 
 // Valid reports whether p is one of Purposes.
 func (p Purpose) Valid() bool {
@@ -53,7 +59,7 @@ func (p Purpose) Valid() bool {
 }
 
 func (p Purpose) isMAC() bool {
-	return p == PurposeRowMAC || p == PurposeBlindIndex || p == PurposeOTPMAC
+	return p == PurposeRowMAC || p == PurposeBlindIndex || p == PurposeOTPMAC || p == PurposeAuditMAC
 }
 
 // KeySize is the size of every data key: 256 bits.

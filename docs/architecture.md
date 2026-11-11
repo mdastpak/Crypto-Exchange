@@ -142,6 +142,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
 
 - **One event per action.** An event of a change is written in the transaction of the change, so it commits or rolls back with it: a currency cannot change without its event. If the event cannot be written, the change is refused with `500`. An attempt that changes nothing, such as a wrong code, writes its event on its own.
 - **Append-only.** Triggers refuse `UPDATE`, `DELETE`, and `TRUNCATE` on the table, to every role, the owner included. Removing them takes a schema change. A superuser could still turn the triggers off; running the server with a database role that cannot change the schema is [#180](https://github.com/mdastpak/Crypto-Exchange/issues/180).
+- **Sealed.** With data keys, each event carries a row seal of every column, written in its `INSERT` ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337), migration 11), so an event changed after the triggers were turned off no longer matches it. The admin query reports each event's `integrity`. [Audit events](data-protection.md#audit-events) describes the seal and its limits.
 - **Fields.**
   - The actor: a type (`user`, `admin`, `anonymous`, `system`) and the actor's hk, never a contact.
   - The action, the target (type and id), and the outcome: `success`; `failure`, a wrong code; or `denied`, refused before it was tried, such as a rate limit. A failure or a denial adds a reason code.
