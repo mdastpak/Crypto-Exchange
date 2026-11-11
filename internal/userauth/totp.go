@@ -9,6 +9,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 )
 
@@ -70,15 +71,24 @@ func (t *TOTP) now() time.Time {
 	return time.Now()
 }
 
-// Enabled reports whether the user has a confirmed authenticator.
+// Enabled reports whether the user has a confirmed authenticator. The row
+// is checked against its seal (#337): in enforce mode, a row changed in SQL,
+// such as one turned back on, returns rowseal.ErrUnverified.
 func (t *TOTP) Enabled(ctx context.Context, userHK string) (bool, error) {
-	var enabled bool
-	err := t.DB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_totp
-		WHERE user_hk = $1 AND confirmed_at IS NOT NULL AND removed_at IS NULL)`, userHK).Scan(&enabled)
+	row := rowseal.UserTOTP.NewRow()
+	err := t.DB.QueryRowContext(ctx, `SELECT `+rowseal.UserTOTP.Fields("")+` FROM user_totp WHERE user_hk = $1`, userHK).Scan(row.Dest()...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("read the authenticator: %w", err)
 	}
-	return enabled, nil
+	if err := rowseal.Check(ctx, rowseal.UserTOTP, row); err != nil {
+		return false, err
+	}
+	confirmed := row.Values[rowseal.UserTOTP.Index("confirmed_at")].Valid
+	removed := row.Values[rowseal.UserTOTP.Index("removed_at")].Valid
+	return confirmed && !removed, nil
 }
 
 // Begin gives the user a new secret, which works once Confirm has checked a
@@ -96,7 +106,12 @@ func (t *TOTP) Begin(ctx context.Context, userHK, account string) (TOTPEnrollmen
 	if err != nil {
 		return TOTPEnrollment{}, fmt.Errorf("seal the authenticator secret: %w", err)
 	}
-	result, err := t.DB.ExecContext(ctx, `
+	tx, err := t.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return TOTPEnrollment{}, fmt.Errorf("start the authenticator secret: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO user_totp (user_hk, secret_sealed) VALUES ($1, $2)
 		ON CONFLICT (user_hk) DO UPDATE SET secret_sealed = EXCLUDED.secret_sealed, created_at = NOW(),
 			confirmed_at = NULL, removed_at = NULL, last_step = 0, failed_attempts = 0, locked_until = NULL
@@ -106,6 +121,12 @@ func (t *TOTP) Begin(ctx context.Context, userHK, account string) (TOTPEnrollmen
 	}
 	if n, err := result.RowsAffected(); err != nil || n == 0 {
 		return TOTPEnrollment{}, ErrTOTPEnabled
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserTOTP, "user_hk = $1", userHK); err != nil {
+		return TOTPEnrollment{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TOTPEnrollment{}, fmt.Errorf("store the authenticator secret: %w", err)
 	}
 	issuer := t.Issuer
 	if issuer == "" {
@@ -133,14 +154,19 @@ func (t *TOTP) check(ctx context.Context, userHK, code string, confirmed bool, t
 	var failures int
 	var lockedUntil sql.NullTime
 	var now time.Time
-	err = tx.QueryRowContext(ctx, `SELECT secret_sealed, last_step, failed_attempts, locked_until, NOW()
+	row := rowseal.UserTOTP.NewRow()
+	err = tx.QueryRowContext(ctx, `SELECT secret_sealed, last_step, failed_attempts, locked_until, NOW(), `+rowseal.UserTOTP.Fields("")+`
 		FROM user_totp WHERE user_hk = $1 AND removed_at IS NULL AND (confirmed_at IS NOT NULL) = $2 FOR UPDATE`, userHK, confirmed).
-		Scan(&sealed, &lastStep, &failures, &lockedUntil, &now)
+		Scan(append([]any{&sealed, &lastStep, &failures, &lockedUntil, &now}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNoTOTP
 	}
 	if err != nil {
 		return fmt.Errorf("read the authenticator: %w", err)
+	}
+	// An authenticator turned on, or back on, in SQL proves nothing (#337).
+	if err := rowseal.Check(ctx, rowseal.UserTOTP, row); err != nil {
+		return err
 	}
 	if lockedUntil.Valid && lockedUntil.Time.After(now) {
 		return &LockedError{Until: lockedUntil.Time}
@@ -201,6 +227,9 @@ func (t *TOTP) Confirm(ctx context.Context, userHK, code string, event audit.Eve
 		if _, err := tx.ExecContext(ctx, `UPDATE user_totp SET confirmed_at = NOW() WHERE user_hk = $1`, userHK); err != nil {
 			return fmt.Errorf("confirm the authenticator: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.UserTOTP, "user_hk = $1", userHK); err != nil {
+			return err
+		}
 		var err error
 		if holdUntil, err = restrictions.StartSecurityHold(ctx, tx, userHK, holdDuration()); err != nil {
 			return err
@@ -241,6 +270,9 @@ func (t *TOTP) Remove(ctx context.Context, userHK string, event audit.Event) (ti
 	}
 	if n, err := result.RowsAffected(); err != nil || n == 0 {
 		return time.Time{}, ErrNoTOTP
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserTOTP, "user_hk = $1", userHK); err != nil {
+		return time.Time{}, err
 	}
 	holdUntil, err := restrictions.StartSecurityHold(ctx, tx, userHK, holdDuration())
 	if err != nil {

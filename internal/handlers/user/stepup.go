@@ -200,6 +200,12 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 		c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(locked.Until).Seconds())+1)))
 		helpers.SendError(c, http.StatusTooManyRequests, codePasswordLocked, i18n.M("PASSWORD_LOCKED"), nil)
 		return
+	case byTOTP && errors.Is(err, rowseal.ErrUnverified):
+		// An authenticator turned on, or back on, outside the backend
+		// proves nothing (#337).
+		h.noteSecurity(ctx, event, audit.Failure, "totp_unverified")
+		helpers.SendError(c, http.StatusForbidden, codeTOTPInvalid, i18n.M("TOTP_INVALID"), nil)
+		return
 	case errors.Is(err, rowseal.ErrUnverified):
 		// A password changed outside the backend proves nothing (#139).
 		h.noteSecurity(ctx, event, audit.Failure, "password_unverified")

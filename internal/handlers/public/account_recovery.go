@@ -217,6 +217,11 @@ func (h *PublicHandler) Recover(c *gin.Context) {
 	case errors.Is(err, userauth.ErrNoPassword):
 		helpers.SendError(c, http.StatusUnauthorized, "challenge_invalid", i18n.M("CHALLENGE_INVALID_OR_EXPIRED"), nil)
 		return
+	case errors.Is(err, rowseal.ErrUnverified):
+		// The recovery, or the account, changed outside the backend
+		// (#337): it proves nothing until an administrator has looked.
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+		return
 	case err != nil:
 		log.Printf("Failed to advance the recovery of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RECOVER_ACCOUNT"), nil)

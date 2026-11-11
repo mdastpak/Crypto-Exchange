@@ -82,6 +82,9 @@ A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protecte
 | `sessions` | `user_id`, `status`, the times, the three token hashes | every signed-in request and every refresh |
 | `user_passwords` | `password_hash`, `changed_at` | the second step of a sign-in, and a change of the password |
 | `user_passkeys` | `user_hk`, `credential_id`, `credential`, `removed_at` | every proof of a passkey, and its list; a row that does not match is left out |
+| `user_totp` | `secret_sealed`, `confirmed_at`, `removed_at` ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)) | every check of a code, and whether the authenticator is on; an authenticator turned on, or back on, in SQL proves nothing |
+| `account_recoveries` | `user_hk`, `mode`, `status`, the proved contacts and identity steps, `identity_failures`, and the times ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)) | every read of the open recovery, which advancing and completing it start with; a recovery moved forward in SQL is refused |
+| `session_step_ups` | `elevated_until` ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)) | every check of the [guard](api.md#second-factor-and-step-up); in `enforce` mode a step-up lengthened in SQL counts as none, and the user proves the factor again |
 
 Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Each of the tables has three columns for it: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
 
@@ -96,7 +99,7 @@ A seal shows a row that was changed, never one that was deleted. Where deleting 
 - **The verifier** looks for records without their row on every pass, and records them as findings in both modes. `report` mode cannot seal a row that is not there. The finding stays until the row is restored from a backup; a re-seal of it resolves it as `row_gone`, and the next read finds the record without its row again.
 - **The rows written before migration 12** have no record, and their seals still match. The record is written the next time the password is proved, at a sign-in or a step-up, or changed. A migration cannot write it: a value written outside the backend would not match the seal.
 
-The authenticator and the passkeys are alternatives to the password, which stays required, so deleting their rows takes nothing away from the second step.
+The authenticator and the passkeys are alternatives to the password, which stays required, so deleting their rows takes nothing away from the second step. Deleting a recovery or a step-up only ends it: the user starts the recovery again, or proves the factor again.
 
 ### Audit events
 
@@ -128,6 +131,8 @@ Rows are sealed only when the server has data keys (`keys.provider` set). To rol
 2. The verifier (below) seals every row that has no valid seal yet, and resolves its finding as `report_mode`. Wait until every instance runs the release and one verifier pass has finished after that: `admin row-seals findings` shows no open finding.
 3. Set `enforce` and roll it out.
 
+A release that seals another table needs the same steps. Migration 13 seals `user_totp`, `account_recoveries`, and `session_step_ups` from then on, and leaves their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys that release: otherwise every authenticator turned on before it stops proving codes, and every open recovery is refused, until the rows are sealed.
+
 Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns.
 
 ### The verifier
@@ -150,7 +155,7 @@ Re-sealing makes a row valid as it is, so re-seal only a row that is right. A ro
 
 - **Replay.** Someone with write access to the database can put back an older version of a row with its seal, such as a session from before its revocation, and the seal matches. A later step of #139 detects that, with a hash-chained log of the seals.
 - **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it, except for the rows that a [record](#records-of-rows) names: the account password. Removing the seal of an audit event makes it look `unsealed`, and deleting the event leaves nothing to check.
-- **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139. Neither are the tables of the second factors, recoveries, step-ups, and admin sessions ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)).
+- **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139.
 - **The operator.** A re-seal through the API needs two administrators, but `cmd/admin` needs one operator: whoever holds the data keys and a database role that writes can seal any row.
 
 ## Setup

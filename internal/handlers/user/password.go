@@ -111,7 +111,11 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		return
 	}
 	if h.TOTP != nil {
-		if settings.TOTPEnabled, err = h.TOTP.Enabled(ctx, claims.UUID); err != nil {
+		// An authenticator that fails its seal check is not shown as on
+		// (#337); the check recorded the finding.
+		if settings.TOTPEnabled, err = h.TOTP.Enabled(ctx, claims.UUID); errors.Is(err, rowseal.ErrUnverified) {
+			settings.TOTPEnabled = false
+		} else if err != nil {
 			log.Printf("Failed to read the authenticator of user %s: %v", claims.UUID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
 			return

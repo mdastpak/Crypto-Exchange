@@ -25,7 +25,7 @@ const recordTestPassword = "correct horse battery"
 
 // newRecordEnv migrates the test database and seals its rows in mode, with
 // throwaway data keys.
-func newRecordEnv(t *testing.T, mode string) (*Passwords, *sql.DB) {
+func newRecordEnv(t *testing.T, mode string) (*Passwords, *sql.DB, *keys.Live) {
 	t.Helper()
 	db := pgtest.Migrated(t, testDBName)
 	kek := make([]byte, 32)
@@ -36,7 +36,7 @@ func newRecordEnv(t *testing.T, mode string) (*Passwords, *sql.DB) {
 	live, err := keys.NewLive(context.Background(), &keys.Store{DB: db, Provider: provider}, keys.LiveOptions{})
 	require.NoError(t, err)
 	t.Cleanup(rowseal.Use(rowseal.New(db, live, mode)))
-	return NewPasswords(db, passwordhash.Argon2id{}), db
+	return NewPasswords(db, passwordhash.Argon2id{}), db, live
 }
 
 // newSealedUser inserts a user and seals it, as the backend writes one.
@@ -63,7 +63,7 @@ func setPassword(t *testing.T, p *Passwords, hk string) {
 // TestPasswords_TheUsersRowRecordsThePassword checks that the first password
 // of an account is recorded in its sealed users row (#337).
 func TestPasswords_TheUsersRowRecordsThePassword(t *testing.T) {
-	p, db := newRecordEnv(t, rowseal.ModeEnforce)
+	p, db, _ := newRecordEnv(t, rowseal.ModeEnforce)
 	ctx := context.Background()
 	hk := newSealedUser(t, db)
 
@@ -87,7 +87,7 @@ func TestPasswords_TheUsersRowRecordsThePassword(t *testing.T) {
 func TestPasswords_ADeletedPasswordIsFound(t *testing.T) {
 	for _, mode := range []string{rowseal.ModeEnforce, rowseal.ModeReport} {
 		t.Run(mode, func(t *testing.T) {
-			p, db := newRecordEnv(t, mode)
+			p, db, _ := newRecordEnv(t, mode)
 			ctx := context.Background()
 			hk := newSealedUser(t, db)
 			setPassword(t, p, hk)
@@ -120,7 +120,7 @@ func TestPasswords_ADeletedPasswordIsFound(t *testing.T) {
 // row that does not record it, under a valid seal. Proving the password
 // records it, and the users row keeps a valid seal.
 func TestPasswords_AnOlderAccountRecordsItsPasswordWhenProved(t *testing.T) {
-	p, db := newRecordEnv(t, rowseal.ModeEnforce)
+	p, db, _ := newRecordEnv(t, rowseal.ModeEnforce)
 	ctx := context.Background()
 	hk := newSealedUser(t, db)
 	setPassword(t, p, hk)
@@ -142,7 +142,7 @@ func TestPasswords_AnOlderAccountRecordsItsPasswordWhenProved(t *testing.T) {
 // back to NULL in SQL, to hide the password: the users row no longer matches
 // its seal.
 func TestPasswords_ARemovedRecordIsAMismatch(t *testing.T) {
-	p, db := newRecordEnv(t, rowseal.ModeEnforce)
+	p, db, _ := newRecordEnv(t, rowseal.ModeEnforce)
 	ctx := context.Background()
 	hk := newSealedUser(t, db)
 	setPassword(t, p, hk)

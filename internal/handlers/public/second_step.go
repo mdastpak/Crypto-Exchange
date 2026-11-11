@@ -504,6 +504,12 @@ func (h *PublicHandler) verifyTOTP(c *gin.Context, ctx context.Context, userHK u
 		h.noteSignIn(ctx, attempt, audit.Failure, codeTOTPInvalid)
 		helpers.SendError(c, http.StatusUnauthorized, codeTOTPInvalid, i18n.M("TOTP_INVALID"), nil)
 		return false
+	case errors.Is(err, rowseal.ErrUnverified):
+		// An authenticator turned on, or back on, outside the backend
+		// proves nothing (#337), as a password changed there.
+		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+		return false
 	case err != nil:
 		log.Printf("Failed to check the authenticator code of a sign-in: %v", err)
 		h.noteSignIn(ctx, attempt, audit.Failure, "totp_check_failed")

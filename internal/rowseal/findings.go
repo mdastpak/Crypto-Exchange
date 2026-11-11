@@ -151,16 +151,26 @@ func (s *Sealer) ReviewReseal(ctx context.Context, id int64, origin audit.Event,
 // rowOwner returns the account that the row of a finding belongs to, or ""
 // when the row is gone.
 func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string, error) {
-	column := map[string]string{Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id", UserPasswords.Name: "user_hk", UserPasskeys.Name: "user_hk"}[t.Name]
-	if column == "" {
+	// The hk of the user that a row belongs to, as an expression of its
+	// table; a step-up belongs to the user of its session.
+	owner := map[string]string{
+		Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id",
+		UserPasswords.Name: "user_hk", UserPasskeys.Name: "user_hk", UserTOTP.Name: "user_hk",
+		AccountRecoveries.Name: "user_hk",
+		SessionStepUps.Name:    "(SELECT s.user_id FROM sessions s WHERE s.id = session_step_ups.session_id)",
+	}[t.Name]
+	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)
 	}
-	var owner string
-	err := tx.QueryRowContext(ctx, `SELECT `+column+`::text FROM `+t.Name+` WHERE `+t.Key+` = $1::`+t.KeyType, rowKey).Scan(&owner)
+	var hk sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT (`+owner+`)::text FROM `+t.Name+` WHERE `+t.Key+` = $1::`+t.KeyType, rowKey).Scan(&hk)
+	if err == nil {
+		return hk.String, nil
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
-	return owner, err
+	return "", err
 }
 
 func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reason string, twoPerson bool) (Finding, bool, error) {

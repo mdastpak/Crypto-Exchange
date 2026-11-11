@@ -154,6 +154,11 @@ func (h *UserHandler) ConfirmTOTP(c *gin.Context) {
 		c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(locked.Until).Seconds())+1)))
 		helpers.SendError(c, http.StatusTooManyRequests, codeTOTPLocked, i18n.M("TOTP_LOCKED"), nil)
 		return
+	case errors.Is(err, rowseal.ErrUnverified):
+		// A secret written outside the backend is not confirmed (#337).
+		h.noteSecurity(ctx, event, audit.Failure, "totp_unverified")
+		helpers.SendError(c, http.StatusForbidden, codeTOTPInvalid, i18n.M("TOTP_INVALID"), nil)
+		return
 	case err != nil:
 		log.Printf("Failed to confirm the authenticator of user %s: %v", userHK, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)

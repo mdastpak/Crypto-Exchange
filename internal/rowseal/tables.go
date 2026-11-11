@@ -112,8 +112,33 @@ var (
 	}}
 )
 
+// The state of second factors and recoveries (#337), which decides whether
+// a factor proves the owner, whether a recovery may set a new password, and
+// whether a session may run the operations that a factor protects.
+var (
+	// UserTOTP covers the authenticator apps of users: the sealed secret,
+	// and whether it is confirmed or removed. The attempt counts and the
+	// last time step are outside it: each code writes them.
+	UserTOTP = &Table{Name: "user_totp", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		secret("secret_sealed"), timestamptz("confirmed_at"), timestamptz("removed_at"),
+	}}
+	// AccountRecoveries covers what a recovery proved and when it may set a
+	// new password: changing it in SQL would skip the proofs or the wait.
+	AccountRecoveries = &Table{Name: "account_recoveries", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("mode"), text("status"), text("proven_contacts"),
+		text("steps_required"), text("steps_passed"), text("identity_failures"),
+		timestamptz("started_at"), timestamptz("ready_at"), timestamptz("expires_at"),
+		timestamptz("ended_at"), text("end_reason"),
+	}}
+	// SessionStepUps covers until when a session may run the protected
+	// operations without proving the factor again.
+	SessionStepUps = &Table{Name: "session_step_ups", Key: "session_id", KeyType: "uuid", Columns: []Column{
+		timestamptz("elevated_until"),
+	}}
+)
+
 // Tables lists the protected tables.
-var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys}
+var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps}
 
 // AuditEvents covers every column of an audit event (#337), so that an
 // event changed after the append-only triggers were turned off is detected.

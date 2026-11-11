@@ -422,3 +422,49 @@ func TestReviewReseal_NeedsASecondAdministrator(t *testing.T) {
 	assert.True(t, waits, "the late approval is a new request")
 	assert.Equal(t, third.ActorID, late.ResealRequestedBy)
 }
+
+// TestReviewReseal_TheStateOfASecondFactorBelongsToItsUser checks the owner
+// of each table of #337: an administrator cannot ask for the re-seal of
+// their own authenticator, recovery, or step-up, which they could change in
+// SQL to skip their own second factor.
+func TestReviewReseal_TheStateOfASecondFactorBelongsToItsUser(t *testing.T) {
+	e := newEnv(t)
+	sealer := e.sealer(rowseal.ModeEnforce)
+	ctx := context.Background()
+	admin := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	other := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+
+	var session, recovery string
+	require.NoError(t, e.conn.QueryRow(`INSERT INTO sessions (user_id, auth_method, access_token_hash, refresh_token_hash, expires_at)
+		VALUES ($1, 'otp', 'a', 'r', NOW() + INTERVAL '1 hour') RETURNING id`, admin.ActorID).Scan(&session))
+	_, err := e.conn.Exec(`INSERT INTO session_step_ups (session_id, elevated_until) VALUES ($1, NOW() + INTERVAL '5 minutes')`, session)
+	require.NoError(t, err)
+	_, err = e.conn.Exec(`INSERT INTO user_totp (user_hk, secret_sealed) VALUES ($1, 'sealed')`, admin.ActorID)
+	require.NoError(t, err)
+	require.NoError(t, e.conn.QueryRow(`INSERT INTO account_recoveries (id, user_hk, mode, expires_at)
+		VALUES (gen_random_uuid(), $1, 'standard', NOW() + INTERVAL '1 day') RETURNING id`, admin.ActorID).Scan(&recovery))
+
+	for _, tc := range []struct {
+		table *rowseal.Table
+		key   string
+	}{
+		{rowseal.SessionStepUps, session},
+		{rowseal.UserTOTP, admin.ActorID},
+		{rowseal.AccountRecoveries, recovery},
+	} {
+		t.Run(tc.table.Name, func(t *testing.T) {
+			r := tc.table.NewRow()
+			require.NoError(t, e.conn.QueryRow(`SELECT `+tc.table.Fields("")+` FROM `+tc.table.Name+` WHERE `+tc.table.Key+` = $1`, tc.key).Scan(r.Dest()...))
+			require.ErrorIs(t, rowseal.Check(ctx, tc.table, r), rowseal.ErrUnverified, "a row written in SQL has no seal")
+			var id int64
+			require.NoError(t, e.conn.QueryRow(`SELECT id FROM integrity_findings WHERE table_name = $1 AND row_key = $2 AND resolved_at IS NULL`,
+				tc.table.Name, tc.key).Scan(&id))
+
+			_, _, err := sealer.ReviewReseal(ctx, id, admin, "my own row")
+			require.ErrorIs(t, err, rowseal.ErrOwnRow)
+			_, waits, err := sealer.ReviewReseal(ctx, id, other, "reviewed")
+			require.NoError(t, err)
+			assert.True(t, waits, "another administrator may ask")
+		})
+	}
+}
