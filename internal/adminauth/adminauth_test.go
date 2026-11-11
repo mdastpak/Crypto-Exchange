@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 
@@ -59,6 +60,8 @@ func migratedTestDB(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 	config.SetMigrationsPath("file://" + filepath.ToSlash(migrations))
 
+	// Emptied and migrated one package at a time (#338).
+	unlock := pgtest.Lock(t)
 	reset, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", adminAuthTestDBName))
 	require.NoError(t, err)
 	_, err = reset.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
@@ -66,6 +69,7 @@ func migratedTestDB(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 
 	service, err := db.NewPostgresService()
+	unlock()
 	require.NoError(t, err)
 	t.Cleanup(func() { service.Close() })
 	return service.DB

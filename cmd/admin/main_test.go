@@ -13,6 +13,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -73,6 +74,9 @@ func resetCLITestDB(t *testing.T) {
 	conn, err := sql.Open("pgx", fmt.Sprintf("host=localhost port=5432 user=postgres password=test dbname=%s sslmode=disable", cliTestDBName))
 	require.NoError(t, err)
 	defer conn.Close()
+	// One package at a time empties a schema (#338). The commands migrate
+	// it, so the migration is not under the lock.
+	defer pgtest.Lock(t)()
 	_, err = conn.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
 	require.NoError(t, err)
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
 
 	"github.com/gin-gonic/gin"
@@ -101,10 +102,16 @@ func migrateRealSchema(t *testing.T) *db.PostgresService {
 	config.SetMigrationsPath("file://" + strings.ReplaceAll(migrationsDir, "\\", "/"))
 
 	ensureRealSchemaTestDB(t)
+	// Emptied and migrated one package at a time (#338).
+	unlock := pgtest.Lock(t)
 	resetRealSchema(t)
-	t.Cleanup(func() { resetRealSchema(t) })
+	t.Cleanup(func() {
+		defer pgtest.Lock(t)()
+		resetRealSchema(t)
+	})
 
 	postgresService, err := db.NewPostgresService()
+	unlock()
 	require.NoError(t, err, "the repository migrations must apply to an empty database")
 	t.Cleanup(func() { postgresService.Close() })
 	return postgresService
