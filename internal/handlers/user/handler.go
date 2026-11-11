@@ -9,6 +9,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/userauth"
 )
 
 // UserHandler struct to hold dependencies for User routes
@@ -35,6 +36,9 @@ type UserHandler struct {
 	// Sealer reads national IDs. Without it, a user who has one cannot
 	// change their mobile number.
 	Sealer identity.Sealer
+	// Passwords keeps the account passwords, the second step of a sign-in
+	// (#307). The server sets it.
+	Passwords *userauth.Passwords
 }
 
 // NewHandler function to initialize CurrenciesUserHandler with dependencies

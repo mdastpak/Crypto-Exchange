@@ -324,6 +324,17 @@ type Configuration struct {
 		// email address, the mobile number, or the second factor of a user
 		// (#251).
 		ChangeHoldHours int `yaml:"change_hold_hours"`
+		// Password configures the account password of users, the second
+		// step of their sign-in (#307).
+		Password struct {
+			// MinLength is the least length of a new password, in
+			// characters.
+			MinLength int `yaml:"min_length"`
+			// MaxFailures wrong passwords in a row lock the password of
+			// the account for LockMinutes.
+			MaxFailures int `yaml:"max_failures"`
+			LockMinutes int `yaml:"lock_minutes"`
+		} `yaml:"password"`
 	} `yaml:"security"`
 
 	// Identity configures the checks of a user's identity with a KYC
@@ -1629,6 +1640,9 @@ func setDefaults() {
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 		{&Config.Contacts.NewContactCooldownHours, DefaultNewContactCooldownHours},
 		{&Config.Security.ChangeHoldHours, DefaultSecurityChangeHoldHours},
+		{&Config.Security.Password.MinLength, DefaultPasswordMinLength},
+		{&Config.Security.Password.MaxFailures, DefaultPasswordMaxFailures},
+		{&Config.Security.Password.LockMinutes, DefaultPasswordLockMinutes},
 		{&Config.Identity.MobileOwnership.TimeoutSeconds, 10},
 		{&Config.Identity.MobileOwnership.RecheckDays, 30},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
@@ -1987,6 +2001,15 @@ const (
 	// thirty.
 	DefaultSecurityChangeHoldHours = 24
 	MaxSecurityChangeHoldHours     = 720
+	// The defaults and bounds of security.password (#307). The least
+	// length follows NIST SP 800-63B, which allows no less than 8.
+	DefaultPasswordMinLength   = 10
+	MinPasswordMinLength       = 8
+	MaxPasswordMinLength       = 64
+	DefaultPasswordMaxFailures = 5
+	MaxPasswordMaxFailures     = 20
+	DefaultPasswordLockMinutes = 15
+	MaxPasswordLockMinutes     = 1440
 
 	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
 	// favorites of a user, which are listed in one answer.

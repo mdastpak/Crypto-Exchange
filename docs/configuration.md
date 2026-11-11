@@ -353,6 +353,9 @@ Writing to the database is not enough to create an administrator: changing `user
 | Key | Default | Description |
 | --- | --- | --- |
 | `change_hold_hours` | `24` | From 1 to 720. How long the operations that a second factor protects are held after a security change of a user: adding, replacing, or removing an email address or mobile number, and later a change of the second factor ([#251](https://github.com/mdastpak/Crypto-Exchange/issues/251)). Withdrawals then answer `403 security_hold` with `info.until`. A change extends the hold and never shortens it. Contact changes are not held. The hold is stored in the user's row, so it applies on every instance at once; a new value applies to holds that start after it. See [Security hold](api.md#security-hold). |
+| `password.min_length` | `10` | From 8 to 64. The least length, in characters, of a new [account password](api.md#account-password) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). |
+| `password.max_failures` | `5` | From 1 to 20. How many wrong passwords in a row lock the password of an account. The count is in PostgreSQL, so every instance shares it. |
+| `password.lock_minutes` | `15` | From 1 to 1440. How long a locked password is not checked. |
 
 ### `identity`
 
@@ -676,6 +679,9 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `ADMIN_STEP_UP_MINUTES` | `admin.step_up_minutes` |
 | `CONTACTS_NEW_CONTACT_COOLDOWN_HOURS` | `contacts.new_contact_cooldown_hours` |
 | `SECURITY_CHANGE_HOLD_HOURS` | `security.change_hold_hours` |
+| `SECURITY_PASSWORD_MIN_LENGTH` | `security.password.min_length` |
+| `SECURITY_PASSWORD_MAX_FAILURES` | `security.password.max_failures` |
+| `SECURITY_PASSWORD_LOCK_MINUTES` | `security.password.lock_minutes` |
 | `IDENTITY_MOBILE_OWNERSHIP_PROVIDER` | `identity.mobile_ownership.provider` |
 | `IDENTITY_MOBILE_OWNERSHIP_ENDPOINT` | `identity.mobile_ownership.endpoint` |
 | `IDENTITY_MOBILE_OWNERSHIP_API_KEY` | `identity.mobile_ownership.api_key` |

@@ -34,6 +34,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -62,6 +63,10 @@ type PublicHandler struct {
 	// belongs to the national ID of its account (#252, #253).
 	Ownership identity.MobileOwnership
 	Sealer    identity.Sealer
+	// Passwords checks the account passwords, the second step of a sign-in
+	// (#307). The server sets it, with the slow hash that this package
+	// must not import. Without it, a code alone signs in.
+	Passwords *userauth.Passwords
 }
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
@@ -176,6 +181,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 // @Param uuid path string true "The sign-in session from the code request" format(uuid)
 // @Param body body VerifyOTPRequest true "The code"
 // @Success 200 {object} models.APIResponse{info=models.AccessTokenInfo}
+// @Success 202 {object} models.APIResponse{info=SecondStepInfo} "The code is right and the account has a second step: no token, and a challenge for POST /public/auth/second-step"
 // @Failure 400 {object} models.APIResponse
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse
@@ -271,6 +277,18 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	}
 
 	attempt.ActorType, attempt.ActorID = audit.ActorUser, userHK.String()
+	// A user with a second step gets no token for the code alone (#307).
+	method, err := h.sessionMethod(ctx, userHK)
+	if err != nil {
+		// Never a session without knowing whether a second step applies.
+		log.Printf("Failed to read the second step of a sign-in: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return
+	}
+	if method != methodCode {
+		h.askSecondStep(c, ctx, userHK, attempt)
+		return
+	}
 	h.startSession(c, ctx, userHK, "", attempt)
 }
 

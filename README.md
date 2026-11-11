@@ -251,7 +251,7 @@ Run the unit tests, which need no infrastructure:
 ```bash
 go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./internal/config/... \
   ./internal/assetregistry/... ./internal/clientip/... ./internal/contact/... ./internal/pagination/... ./internal/totp/... \
-  ./internal/i18n/... ./internal/geoip/... ./internal/sites/... \
+  ./internal/i18n/... ./internal/geoip/... ./internal/sites/... ./internal/userauth/... ./internal/passwordhash/... \
   ./internal/testutil/openapitest/... ./internal/testutil/tcpproxy/... ./pkg/...
 ```
 
@@ -328,6 +328,7 @@ internal/notify/        Delivery of sign-in codes by email and SMS through Rabbi
 internal/otp/           One-time codes: generation, hashed storage in Redis, attempt limits
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
+internal/passwordhash/  Argon2id hashes of account passwords, wired in by the server only
 internal/platform/      Maintenance and feature lockdowns: controls, watcher, route gate
 internal/redisutil/     Durable Redis writes, hash slots, and following cluster failovers
 internal/recovery/      Backup and restore checks: WAL archiving age, restored-database
@@ -344,6 +345,7 @@ internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
                         checks, users, a field sealer, and network proxies
 internal/totp/          Time-based one-time passwords (RFC 6238)
+internal/userauth/      The account password of users, the second step of their sign-in
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
 scripts/doc-status/     The check that the status table agrees with the issues it links
 scripts/rabbitmq-ha/    The RabbitMQ failover drill: a three-node cluster on Docker

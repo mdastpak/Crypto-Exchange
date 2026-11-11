@@ -88,6 +88,14 @@ func TestVerifyOTP_RealSchema_DatabaseFailuresRevealNoDetails(t *testing.T) {
 // packages behind those requests; libraries are out of scope, since pgx uses
 // PBKDF2 once per database connection for SCRAM authentication. A KDF needed
 // for an authenticated feature belongs in a package outside this tree.
+//
+// The account password (#307) is checked on a route without a token, the
+// second step of a sign-in. Its hash is internal/passwordhash, which the
+// server gives to internal/userauth through an interface, so this tree
+// still imports none. It runs only for a challenge that a correct code
+// issued, after an attempt was counted against the lock of the password,
+// and a bounded number at once: cmd/server
+// TestUserPassword_NothingIsHashedWithoutAChallenge holds that.
 func TestUnauthenticatedPathsUseNoPasswordHashing(t *testing.T) {
 	goTool, err := exec.LookPath("go")
 	if err != nil {

@@ -5024,6 +5024,106 @@
                 }
             }
         },
+        "/api/v1/public/auth/second-step": {
+            "post": {
+                "description": "After a correct code answered 202 with a challenge, the account password signs in. The challenge works for five minutes, until a sign-in succeeds with it. A wrong password answers 401 password_invalid and leaves the challenge usable; after security.password.max_failures wrong passwords in a row the password is locked for security.password.lock_minutes, on every instance, and the answer is 429 password_locked with Retry-After.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sign-in"
+                ],
+                "summary": "Finish a sign-in with the account password",
+                "parameters": [
+                    {
+                        "description": "The challenge and the password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.SecondStepRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The access token. The refresh token is set as an HttpOnly cookie.",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/models.AccessTokenInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "headers": {
+                            "Set-Cookie": {
+                                "type": "string",
+                                "description": "The refresh token, HttpOnly"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "challenge_invalid or password_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "session_limit_reached: the user has the most active sessions allowed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SessionLimitInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "password_locked, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth/sessions/replace": {
             "post": {
                 "description": "After a sign-in answered 409 session_limit_reached, ends one of the listed sessions and signs in, without a new code. The challenge works once, for five minutes. A session_id that is not one of the user's active sessions answers 409 session_not_found and leaves the challenge usable.",
@@ -5169,6 +5269,24 @@
                                     "properties": {
                                         "info": {
                                             "$ref": "#/definitions/models.AccessTokenInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "The code is right and the account has a second step: no token, and a challenge for POST /public/auth/second-step",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SecondStepInfo"
                                         }
                                     }
                                 }
@@ -6447,6 +6565,87 @@
                 }
             }
         },
+        "/api/v1/user/password": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The account password is a second step of the sign-in, after the code, never a replacement for it. The first password needs only the session; a change needs current_password. A new password has at least security.password.min_length characters (10 by default) and at most 256 bytes, and at least five different characters. A change ends every other session of the user. A wrong current password answers 403 password_invalid and counts toward the lock of the password: 429 password_locked with Retry-After.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user security"
+                ],
+                "summary": "Set or change the account password",
+                "parameters": [
+                    {
+                        "description": "The new password, and the current one for a change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.SetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.PasswordChanged"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "password_invalid: the current password is wrong",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "password_locked, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/profile": {
             "get": {
                 "security": [
@@ -6602,6 +6801,61 @@
                                     "properties": {
                                         "info": {
                                             "$ref": "#/definitions/user.RestrictionList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/security": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Whether the account has a password, the second step of its sign-in, and since when.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user security"
+                ],
+                "summary": "Get the sign-in protections of the signed-in user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.SecuritySettings"
                                         }
                                     }
                                 }
@@ -9227,6 +9481,46 @@
                 }
             }
         },
+        "public.SecondStepInfo": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "description": "Challenge finishes the sign-in with POST /public/auth/second-step.",
+                    "type": "string"
+                },
+                "expires_in": {
+                    "description": "ExpiresIn is how long the challenge can be used, in seconds.",
+                    "type": "integer",
+                    "example": 300
+                },
+                "methods": {
+                    "description": "Methods are the second steps that the account can use.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "password"
+                    ]
+                },
+                "second_step_required": {
+                    "description": "SecondStepRequired is always true.",
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "public.SecondStepRequest": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
         "public.SessionLimitInfo": {
             "type": "object",
             "properties": {
@@ -9994,6 +10288,19 @@
                 }
             }
         },
+        "user.PasswordChanged": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "$ref": "#/definitions/userauth.Status"
+                },
+                "sessions_ended": {
+                    "description": "SessionsEnded is how many other sessions the change ended.",
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
         "user.Profile": {
             "type": "object",
             "properties": {
@@ -10068,6 +10375,36 @@
                 }
             }
         },
+        "user.SecuritySettings": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "description": "Password is the account password, the second step of the sign-in.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/userauth.Status"
+                        }
+                    ]
+                },
+                "password_min_length": {
+                    "description": "PasswordMinLength is the least length of a new password, in\ncharacters.",
+                    "type": "integer",
+                    "example": 10
+                }
+            }
+        },
+        "user.SetPasswordRequest": {
+            "type": "object",
+            "properties": {
+                "current_password": {
+                    "description": "CurrentPassword is required to change a password, and left out to\nset the first one.",
+                    "type": "string"
+                },
+                "new_password": {
+                    "type": "string"
+                }
+            }
+        },
         "user.profileUpdate": {
             "type": "object",
             "properties": {
@@ -10094,6 +10431,19 @@
                         "system"
                     ],
                     "example": "dark"
+                }
+            }
+        },
+        "userauth.Status": {
+            "type": "object",
+            "properties": {
+                "changed_at": {
+                    "description": "ChangedAt is when it was set or last changed.",
+                    "type": "string"
+                },
+                "set": {
+                    "description": "Set reports whether the account has a password.",
+                    "type": "boolean"
                 }
             }
         }
