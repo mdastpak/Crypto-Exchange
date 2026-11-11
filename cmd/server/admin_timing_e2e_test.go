@@ -35,11 +35,10 @@ func TestAdminSignIn_DoesNotRevealAdministrators(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("both take the same minimum time", func(t *testing.T) {
-		const minimum, sendDelay = 300 * time.Millisecond, 100 * time.Millisecond
-		config.Config.Admin.SignInMinResponseMS = int(minimum / time.Millisecond)
-		t.Cleanup(func() { config.Config.Admin.SignInMinResponseMS = 0 })
+		const sendDelay = 100 * time.Millisecond
 		env.handlers.Admin.OTPSender = slowSender{env.sender, sendDelay}
 		t.Cleanup(func() { env.handlers.Admin.OTPSender = env.sender })
+		t.Cleanup(func() { config.Config.Admin.SignInMinResponseMS = 0 })
 
 		timed := func(email string) time.Duration {
 			start := time.Now()
@@ -50,6 +49,15 @@ func TestAdminSignIn_DoesNotRevealAdministrators(t *testing.T) {
 			assert.NotEmpty(t, resp.Info["uuid"])
 			return elapsed
 		}
+		// The padding hides the work only when the minimum is above it. On a
+		// machine busy with the other test packages, the work can take
+		// longer than a fixed minimum (#342), so the minimum follows the
+		// work of this run: twice an unpadded request of the administrator.
+		config.Config.Admin.SignInMinResponseMS = 0
+		ms := int(max(300*time.Millisecond, 2*timed(admin)) / time.Millisecond)
+		config.Config.Admin.SignInMinResponseMS = ms
+		minimum := time.Duration(ms) * time.Millisecond
+
 		adminTime, unknownTime := timed(admin), timed(unknown)
 		assert.GreaterOrEqual(t, adminTime, minimum)
 		assert.GreaterOrEqual(t, unknownTime, minimum)
@@ -59,8 +67,8 @@ func TestAdminSignIn_DoesNotRevealAdministrators(t *testing.T) {
 		if diff < 0 {
 			diff = -diff
 		}
-		assert.Less(t, diff, sendDelay/2, "administrator %v, unknown %v", adminTime, unknownTime)
-		assert.Equal(t, 1, env.sender.count(admin))
+		assert.Less(t, diff, sendDelay/2, "administrator %v, unknown %v, minimum %v", adminTime, unknownTime, minimum)
+		assert.Equal(t, 2, env.sender.count(admin), "the unpadded request and the padded one")
 		assert.Zero(t, env.sender.count(unknown), "an unknown address gets no email")
 	})
 
