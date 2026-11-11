@@ -173,6 +173,66 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 	return "", err
 }
 
+// requestRecorded reports whether the waiting re-seal request of finding id
+// has its audit event, under a seal that matches (#337): an
+// integrity.reseal_request of the administrator who asked, at the time of
+// the request, for this finding and row, with the same reason. The backend
+// writes the event in the transaction that writes the request, so both have
+// the same time. The request columns of integrity_findings have no seal, so
+// without the event, a request written in SQL in the name of another
+// administrator would let one approve a re-seal alone.
+func (s *Sealer) requestRecorded(ctx context.Context, tx *sql.Tx, id int64) (bool, error) {
+	fields := AuditEvents.ColumnFields("e")
+	rows, err := tx.QueryContext(ctx, `SELECT e.hk::text, e.row_seal, e.seal_key_version::bigint, `+strings.Join(fields, ", ")+`
+		FROM integrity_findings f
+		JOIN audit_events e ON e.target_type = f.table_name AND e.target_id = f.row_key
+			AND e.action = $2 AND e.actor_id = f.reseal_requested_by AND e.occurred_at = f.reseal_requested_at
+			AND e.changes->'after'->>'finding' = f.id::text AND e.changes->'after'->>'reason' = f.reseal_request_reason
+		WHERE f.id = $1
+		LIMIT 10`, id, audit.ActionIntegrityResealRequest)
+	if err != nil {
+		return false, fmt.Errorf("read the audit event of the re-seal request: %w", err)
+	}
+	type event struct {
+		hk         string
+		seal       []byte
+		keyVersion sql.NullInt64
+		values     []sql.NullString
+	}
+	var events []event
+	for rows.Next() {
+		e := event{values: make([]sql.NullString, len(fields))}
+		dest := []any{&e.hk, &e.seal, &e.keyVersion}
+		for i := range e.values {
+			dest = append(dest, &e.values[i])
+		}
+		if err := rows.Scan(dest...); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("read the audit event of the re-seal request: %w", err)
+		}
+		events = append(events, e)
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("read the audit event of the re-seal request: %w", err)
+	}
+	// Anyone who writes to the database can insert an event; only the
+	// backend can seal one.
+	for _, e := range events {
+		verdict, err := s.CheckEvent(ctx, e.hk, e.values, e.seal, e.keyVersion)
+		if err != nil {
+			return false, err
+		}
+		if verdict == "" {
+			return true, nil
+		}
+		s.logf("SECURITY: audit event %s, a re-seal request of finding %d, fails its seal check (%s)", e.hk, id, verdict)
+	}
+	return false, nil
+}
+
 func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reason string, twoPerson bool) (Finding, bool, error) {
 	reason = strings.TrimSpace(reason)
 	if s == nil {
@@ -212,6 +272,19 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 		waiting := f.ResealRequestedAt != nil && time.Since(*f.ResealRequestedAt) < ResealApprovalTTL
 		if waiting && f.ResealRequestedBy == origin.ActorID {
 			return Finding{}, false, ErrSameApprover
+		}
+		if waiting {
+			// The request columns have no seal; the request counts only with
+			// its sealed audit event (#337).
+			recorded, err := s.requestRecorded(ctx, tx, id)
+			if err != nil {
+				return Finding{}, false, err
+			}
+			if !recorded {
+				s.logf("SECURITY: the re-seal request of finding %d, by %s, has no sealed audit event; it counts as none, and this call asks again",
+					id, f.ResealRequestedBy)
+				waiting = false
+			}
 		}
 		if !waiting {
 			if _, err := tx.ExecContext(ctx, `
