@@ -1674,6 +1674,40 @@ definitions:
         example: ABCD-EFGH-JKLM-NPQR
         type: string
     type: object
+  public.RecoveryCompleteInfo:
+    properties:
+      hold_until:
+        description: HoldUntil is when the security hold on withdrawals ends.
+        type: string
+      recovery_codes:
+        description: |-
+          RecoveryCodes are the new recovery codes of the account, shown this
+          once. The earlier ones no longer work.
+        items:
+          type: string
+        type: array
+    type: object
+  public.RecoveryCompleteRequest:
+    properties:
+      challenge:
+        type: string
+      new_password:
+        type: string
+    type: object
+  public.RecoveryRequest:
+    properties:
+      challenge:
+        description: |-
+          Challenge is the challenge that a correct code answered with. Its
+          contact counts as proved.
+        type: string
+      national_id:
+        description: |-
+          NationalID is the national ID of the owner, for the step
+          "national_id" of a strict recovery.
+        example: "0012345678"
+        type: string
+    type: object
   public.ReplaceSessionRequest:
     properties:
       challenge:
@@ -1712,6 +1746,12 @@ definitions:
         items:
           type: string
         type: array
+      recovery:
+        allOf:
+        - $ref: '#/definitions/userauth.Recovery'
+        description: |-
+          Recovery is the account recovery in progress, if any. The right
+          password cancels it.
       second_step_required:
         description: SecondStepRequired is always true.
         example: true
@@ -2393,6 +2433,13 @@ definitions:
           characters.
         example: 10
         type: integer
+      recovery:
+        allOf:
+        - $ref: '#/definitions/userauth.Recovery'
+        description: |-
+          Recovery is the account recovery in progress, if any: someone
+          proved the contacts of the account to replace its password. Proving
+          the password, as POST /user/step-up does, cancels it.
       recovery_codes_left:
         description: RecoveryCodesLeft is how many unused recovery codes the user
           has.
@@ -2448,6 +2495,54 @@ definitions:
         - system
         example: dark
         type: string
+    type: object
+  userauth.Recovery:
+    properties:
+      contacts_proven:
+        example: 2
+        type: integer
+      contacts_required:
+        description: |-
+          ContactsRequired and ContactsProven count the verified email
+          addresses and mobile numbers of the account, and those of them that
+          the recovery proved.
+        example: 2
+        type: integer
+      expires_at:
+        description: ExpiresAt is when the recovery stops being usable.
+        type: string
+      id:
+        type: string
+      identity_attempts_left:
+        description: IdentityAttemptsLeft is how many identity checks may still fail.
+        example: 3
+        type: integer
+      mode:
+        description: Mode is "standard" or "strict".
+        example: standard
+        type: string
+      ready_at:
+        description: ReadyAt is when the wait ends and the new password can be set.
+        type: string
+      started_at:
+        type: string
+      status:
+        description: |-
+          Status is "verifying" while there is more to prove, and "waiting"
+          once everything is proved.
+        example: waiting
+        type: string
+      steps_remaining:
+        items:
+          type: string
+        type: array
+      steps_required:
+        description: |-
+          StepsRequired are the identity steps; StepsRemaining those that
+          have not passed.
+        items:
+          type: string
+        type: array
     type: object
   userauth.State:
     properties:
@@ -5884,6 +5979,132 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
       summary: Reset a forgotten account password
+      tags:
+      - sign-in
+  /api/v1/public/auth/recovery:
+    post:
+      consumes:
+      - application/json
+      description: 'For a user who has neither the account password nor a recovery
+        code. A correct code answered 202 with a challenge; sent here, it proves the
+        contact of that code. The recovery needs every verified email address and
+        mobile number of the account, so the user signs in with each in turn and sends
+        each challenge here. With security.recovery.mode strict, an account with a
+        verified national ID also passes the steps of security.recovery.steps: national_id,
+        the national ID sent in this request, and mobile_ownership, the provider''s
+        confirmation that a proved mobile number belongs to that national ID. A failed
+        identity check answers 401 recovery_identity_mismatch; the third one ends
+        the recovery with 403 recovery_failed, and the account can start another after
+        24 hours: 429 recovery_cooldown. When everything is proved the recovery is
+        waiting, and after security.recovery.wait_hours POST /public/auth/recovery/complete
+        sets the new password. Proving the account password anywhere cancels the recovery.
+        A recovery has 24 hours to prove everything.'
+      parameters:
+      - description: The challenge, and the national ID for a strict recovery
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.RecoveryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The state of the recovery
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/userauth.Recovery'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: challenge_invalid, recovery_contact_invalid, or recovery_identity_mismatch
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/userauth.Recovery'
+              type: object
+        "403":
+          description: recovery_failed, or the account cannot sign in
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: recovery_cooldown, or a rate limit
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: 'recovery_unavailable: an identity check cannot run now'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Start or continue an account recovery
+      tags:
+      - sign-in
+  /api/v1/public/auth/recovery/complete:
+    post:
+      consumes:
+      - application/json
+      description: 'Completes an account recovery whose wait has ended. The challenge
+        comes from a correct code of a contact that the recovery proved. The new password
+        follows the policy of PUT /user/password. Every session of the user ends,
+        the earlier recovery codes stop working and new ones are returned once, and
+        the security hold starts. The answer does not sign in: the user signs in with
+        a code and the new password. Before the wait ends the answer is 409 recovery_not_ready
+        with Retry-After.'
+      parameters:
+      - description: The challenge and the new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.RecoveryCompleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/public.RecoveryCompleteInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: challenge_invalid or recovery_contact_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: recovery_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: recovery_not_ready
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Set a new password with a recovery
       tags:
       - sign-in
   /api/v1/public/auth/refresh:

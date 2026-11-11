@@ -11,10 +11,12 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
@@ -69,6 +71,21 @@ type SecondStepInfo struct {
 	// code that was just checked. Empty: none is left, and the account
 	// needs account recovery.
 	PasswordReset []string `json:"password_reset" example:"recovery_code"`
+	// Recovery is the account recovery in progress, if any. The right
+	// password cancels it.
+	Recovery *userauth.Recovery `json:"recovery,omitempty"`
+}
+
+// challenged is a second-step challenge that is valid.
+type challenged struct {
+	UserHK uuid.UUID
+	// ContactID is the contact whose code the challenge answered, and 0
+	// when it is not a verified contact of the account.
+	ContactID int64
+	// Key is the Redis key of the challenge.
+	Key string
+	// Attempt is the audit event of a refusal.
+	Attempt audit.Event
 }
 
 // SecondStepRequest finishes a sign-in with the account password.
@@ -100,15 +117,25 @@ func (h *PublicHandler) sessionMethod(ctx context.Context, userHK uuid.UUID) (st
 
 // askSecondStep answers a correct code of a user who has a second step with
 // a challenge, and no token. Redis holds only the hash of the challenge.
-func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userHK uuid.UUID, attempt audit.Event) {
+// The challenge names the contact whose code was right, which an account
+// recovery counts as proved.
+func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userHK uuid.UUID, contactType, contact string, attempt audit.Event) {
 	if h.RedisClient == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
+		return
+	}
+	var contactID int64
+	err := h.PostgresDB.DB.QueryRowContext(ctx, `SELECT c.id FROM user_contacts c
+		WHERE c.user_hk = $3 AND c.verified_at IS NOT NULL AND `+db.ContactMatch, contactType, contact, userHK).Scan(&contactID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("Failed to read the contact of a sign-in: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
 	}
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw) // never fails since Go 1.24
 	challenge := base64.RawURLEncoding.EncodeToString(raw)
-	if err := h.RedisClient.Client.Set(ctx, secondStepKey(challenge), userHK.String(), secondStepTTL).Err(); err != nil {
+	if err := h.RedisClient.Client.Set(ctx, secondStepKey(challenge), userHK.String()+"|"+strconv.FormatInt(contactID, 10), secondStepTTL).Err(); err != nil {
 		// Without the challenge the sign-in cannot continue, and it never
 		// continues without the second step.
 		log.Printf("Failed to store a second-step challenge: %v", err)
@@ -121,8 +148,13 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 	} else if left > 0 {
 		reset = append(reset, proofRecoveryCode)
 	}
+	recovery, err := h.Passwords.OpenRecovery(ctx, userHK.String())
+	if err != nil {
+		log.Printf("Failed to read the recovery of a sign-in: %v", err)
+	}
 	h.noteSignIn(ctx, attempt, audit.Success, codeSecondStepRequired)
 	helpers.SendResponse(c, http.StatusAccepted, i18n.M("SECOND_STEP_REQUIRED"), SecondStepInfo{
+		Recovery:           recovery,
 		SecondStepRequired: true,
 		Challenge:          challenge,
 		ExpiresIn:          int(secondStepTTL.Seconds()),
@@ -152,17 +184,25 @@ func (h *PublicHandler) canSignIn(ctx context.Context, userHK uuid.UUID) (allowe
 // and reports false, when the challenge is not valid or the account may no
 // longer sign in.
 func (h *PublicHandler) challengedUser(c *gin.Context, ctx context.Context, challenge string) (uuid.UUID, string, audit.Event, bool) {
+	ch, ok := h.challenge(c, ctx, challenge)
+	return ch.UserHK, ch.Key, ch.Attempt, ok
+}
+
+// challenge is challengedUser with the contact of the challenge.
+func (h *PublicHandler) challenge(c *gin.Context, ctx context.Context, challenge string) (challenged, bool) {
 	key := secondStepKey(challenge)
 	value, err := h.RedisClient.Client.Get(ctx, key).Result()
-	userHK, parseErr := uuid.Parse(value)
+	owner, contactPart, _ := strings.Cut(value, "|")
+	userHK, parseErr := uuid.Parse(owner)
+	contactID, _ := strconv.ParseInt(contactPart, 10, 64)
 	if errors.Is(err, redis.Nil) || (err == nil && parseErr != nil) {
 		helpers.SendError(c, http.StatusUnauthorized, "challenge_invalid", i18n.M("CHALLENGE_INVALID_OR_EXPIRED"), nil)
-		return uuid.Nil, "", audit.Event{}, false
+		return challenged{}, false
 	}
 	if err != nil {
 		log.Printf("Failed to read a second-step challenge: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
-		return uuid.Nil, "", audit.Event{}, false
+		return challenged{}, false
 	}
 
 	attempt := audit.FromRequest(c)
@@ -174,18 +214,18 @@ func (h *PublicHandler) challengedUser(c *gin.Context, ctx context.Context, chal
 	case err != nil:
 		log.Printf("Failed to read the user of a second-step challenge: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
-		return uuid.Nil, "", audit.Event{}, false
+		return challenged{}, false
 	case frozen:
 		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
 		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
-		return uuid.Nil, "", audit.Event{}, false
+		return challenged{}, false
 	case !allowed:
 		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
-		return uuid.Nil, "", audit.Event{}, false
+		return challenged{}, false
 	}
 
-	return userHK, key, attempt, true
+	return challenged{UserHK: userHK, ContactID: contactID, Key: key, Attempt: attempt}, true
 }
 
 // @Summary Finish a sign-in with the account password

@@ -5056,6 +5056,182 @@
                 }
             }
         },
+        "/api/v1/public/auth/recovery": {
+            "post": {
+                "description": "For a user who has neither the account password nor a recovery code. A correct code answered 202 with a challenge; sent here, it proves the contact of that code. The recovery needs every verified email address and mobile number of the account, so the user signs in with each in turn and sends each challenge here. With security.recovery.mode strict, an account with a verified national ID also passes the steps of security.recovery.steps: national_id, the national ID sent in this request, and mobile_ownership, the provider's confirmation that a proved mobile number belongs to that national ID. A failed identity check answers 401 recovery_identity_mismatch; the third one ends the recovery with 403 recovery_failed, and the account can start another after 24 hours: 429 recovery_cooldown. When everything is proved the recovery is waiting, and after security.recovery.wait_hours POST /public/auth/recovery/complete sets the new password. Proving the account password anywhere cancels the recovery. A recovery has 24 hours to prove everything.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sign-in"
+                ],
+                "summary": "Start or continue an account recovery",
+                "parameters": [
+                    {
+                        "description": "The challenge, and the national ID for a strict recovery",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.RecoveryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The state of the recovery",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/userauth.Recovery"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "challenge_invalid, recovery_contact_invalid, or recovery_identity_mismatch",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/userauth.Recovery"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "recovery_failed, or the account cannot sign in",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "recovery_cooldown, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "recovery_unavailable: an identity check cannot run now",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/auth/recovery/complete": {
+            "post": {
+                "description": "Completes an account recovery whose wait has ended. The challenge comes from a correct code of a contact that the recovery proved. The new password follows the policy of PUT /user/password. Every session of the user ends, the earlier recovery codes stop working and new ones are returned once, and the security hold starts. The answer does not sign in: the user signs in with a code and the new password. Before the wait ends the answer is 409 recovery_not_ready with Retry-After.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sign-in"
+                ],
+                "summary": "Set a new password with a recovery",
+                "parameters": [
+                    {
+                        "description": "The challenge and the new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.RecoveryCompleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.RecoveryCompleteInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "challenge_invalid or recovery_contact_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "recovery_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "recovery_not_ready",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth/refresh": {
             "post": {
                 "description": "Exchanges the refresh_token cookie for a new access token, and rotates the cookie. A rotated refresh token that is presented again revokes the session, except within jwt.refresh_token.reuse_grace_seconds of its rotation, when it gets a new access token and no new cookie.",
@@ -9715,6 +9891,47 @@
                 }
             }
         },
+        "public.RecoveryCompleteInfo": {
+            "type": "object",
+            "properties": {
+                "hold_until": {
+                    "description": "HoldUntil is when the security hold on withdrawals ends.",
+                    "type": "string"
+                },
+                "recovery_codes": {
+                    "description": "RecoveryCodes are the new recovery codes of the account, shown this\nonce. The earlier ones no longer work.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "public.RecoveryCompleteRequest": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "type": "string"
+                },
+                "new_password": {
+                    "type": "string"
+                }
+            }
+        },
+        "public.RecoveryRequest": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "description": "Challenge is the challenge that a correct code answered with. Its\ncontact counts as proved.",
+                    "type": "string"
+                },
+                "national_id": {
+                    "description": "NationalID is the national ID of the owner, for the step\n\"national_id\" of a strict recovery.",
+                    "type": "string",
+                    "example": "0012345678"
+                }
+            }
+        },
         "public.ReplaceSessionRequest": {
             "type": "object",
             "properties": {
@@ -9758,6 +9975,14 @@
                     },
                     "example": [
                         "recovery_code"
+                    ]
+                },
+                "recovery": {
+                    "description": "Recovery is the account recovery in progress, if any. The right\npassword cancels it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/userauth.Recovery"
+                        }
                     ]
                 },
                 "second_step_required": {
@@ -10671,6 +10896,14 @@
                     "type": "integer",
                     "example": 10
                 },
+                "recovery": {
+                    "description": "Recovery is the account recovery in progress, if any: someone\nproved the contacts of the account to replace its password. Proving\nthe password, as POST /user/step-up does, cancels it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/userauth.Recovery"
+                        }
+                    ]
+                },
                 "recovery_codes_left": {
                     "description": "RecoveryCodesLeft is how many unused recovery codes the user has.",
                     "type": "integer",
@@ -10741,6 +10974,62 @@
                         "system"
                     ],
                     "example": "dark"
+                }
+            }
+        },
+        "userauth.Recovery": {
+            "type": "object",
+            "properties": {
+                "contacts_proven": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "contacts_required": {
+                    "description": "ContactsRequired and ContactsProven count the verified email\naddresses and mobile numbers of the account, and those of them that\nthe recovery proved.",
+                    "type": "integer",
+                    "example": 2
+                },
+                "expires_at": {
+                    "description": "ExpiresAt is when the recovery stops being usable.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "identity_attempts_left": {
+                    "description": "IdentityAttemptsLeft is how many identity checks may still fail.",
+                    "type": "integer",
+                    "example": 3
+                },
+                "mode": {
+                    "description": "Mode is \"standard\" or \"strict\".",
+                    "type": "string",
+                    "example": "standard"
+                },
+                "ready_at": {
+                    "description": "ReadyAt is when the wait ends and the new password can be set.",
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is \"verifying\" while there is more to prove, and \"waiting\"\nonce everything is proved.",
+                    "type": "string",
+                    "example": "waiting"
+                },
+                "steps_remaining": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "steps_required": {
+                    "description": "StepsRequired are the identity steps; StepsRemaining those that\nhave not passed.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

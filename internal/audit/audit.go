@@ -88,6 +88,13 @@ const (
 	// generating new recovery codes (#307).
 	ActionUserPasswordReset         = "user.password_reset"
 	ActionUserRecoveryCodesGenerate = "user.recovery_codes_generate"
+	// The recovery of an account whose owner lost the second factor
+	// (#307): starting one, an identity check that failed, its cancel, and
+	// its completion with a new password. The target is the recovery.
+	ActionUserRecoveryStart    = "user.recovery_start"
+	ActionUserRecoveryIdentity = "user.recovery_identity"
+	ActionUserRecoveryCancel   = "user.recovery_cancel"
+	ActionUserRecoveryComplete = "user.recovery_complete"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"
@@ -169,6 +176,8 @@ const (
 	// TargetSignIn is a sign-in in progress, by the ID that a code request
 	// returns, which links the code request to the attempts to verify it.
 	TargetSignIn = "sign_in"
+	// TargetAccountRecovery is a recovery of an account (#307).
+	TargetAccountRecovery = "account_recovery"
 	// TargetDataKey is a data-protection key, as purpose/vN.
 	TargetDataKey = "data_key"
 	// TargetOutboxMessage is a message of the outbox, by its id.

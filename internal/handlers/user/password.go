@@ -38,6 +38,10 @@ type SecuritySettings struct {
 	RecoveryCodesLeft int `json:"recovery_codes_left" example:"10"`
 	// SecondFactor is where this session stands with the second factor.
 	SecondFactor userauth.State `json:"second_factor"`
+	// Recovery is the account recovery in progress, if any: someone
+	// proved the contacts of the account to replace its password. Proving
+	// the password, as POST /user/step-up does, cancels it.
+	Recovery *userauth.Recovery `json:"recovery,omitempty"`
 }
 
 // SetPasswordRequest sets the account password, or changes it.
@@ -95,6 +99,11 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 	settings.RecoveryCodesLeft, err = h.Passwords.RecoveryCodesLeft(ctx, h.PostgresDB.DB, claims.UUID)
 	if err != nil {
 		log.Printf("Failed to count the recovery codes of user %s: %v", claims.UUID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
+		return
+	}
+	if settings.Recovery, err = h.Passwords.OpenRecovery(ctx, claims.UUID); err != nil {
+		log.Printf("Failed to read the recovery of user %s: %v", claims.UUID, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
 		return
 	}

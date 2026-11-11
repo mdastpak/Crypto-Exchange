@@ -345,6 +345,20 @@ type Configuration struct {
 			// that it protects.
 			StepUpMinutes int `yaml:"step_up_minutes"`
 		} `yaml:"second_factor"`
+		// Recovery configures how a user who lost the second factor gets
+		// the account back (#307).
+		Recovery struct {
+			// Mode is "standard": every verified contact is proved with
+			// a code, then a wait. "strict" also has the owner prove
+			// their identity again, with Steps.
+			Mode string `yaml:"mode"`
+			// WaitHours is how long a proved recovery waits before it
+			// can set a new password. The owner can cancel it meanwhile.
+			WaitHours int `yaml:"wait_hours"`
+			// Steps are the identity checks of the strict mode:
+			// "national_id" and "mobile_ownership".
+			Steps []string `yaml:"steps"`
+		} `yaml:"recovery"`
 	} `yaml:"security"`
 
 	// Identity configures the checks of a user's identity with a KYC
@@ -1495,6 +1509,12 @@ func setDefaults() {
 	// Row seals refuse a changed row by default in release mode (#306);
 	// report, which records it and serves it anyway, is a setting of a
 	// rollout, which the server logs at every start.
+	if Config.Security.Recovery.Mode == "" {
+		Config.Security.Recovery.Mode = RecoveryStandard
+	}
+	if Config.Security.Recovery.Mode == RecoveryStrict && len(Config.Security.Recovery.Steps) == 0 {
+		Config.Security.Recovery.Steps = []string{RecoveryStepNationalID, RecoveryStepMobileOwnership}
+	}
 	if Config.Security.SecondFactor.Mode == "" {
 		Config.Security.SecondFactor.Mode = DefaultSecondFactorMode
 	}
@@ -1657,6 +1677,7 @@ func setDefaults() {
 		{&Config.Security.Password.MaxFailures, DefaultPasswordMaxFailures},
 		{&Config.Security.Password.LockMinutes, DefaultPasswordLockMinutes},
 		{&Config.Security.SecondFactor.StepUpMinutes, DefaultUserStepUpMinutes},
+		{&Config.Security.Recovery.WaitHours, DefaultRecoveryWaitHours},
 		{&Config.Identity.MobileOwnership.TimeoutSeconds, 10},
 		{&Config.Identity.MobileOwnership.RecheckDays, 30},
 		{&Config.Delisting.IntervalSeconds, DefaultDelistingIntervalSeconds},
@@ -2031,6 +2052,14 @@ const (
 	DefaultSecondFactorMode      = SecondFactorRequiredForFunds
 	DefaultUserStepUpMinutes     = 5
 	MaxUserStepUpMinutes         = 60
+	// The modes and identity steps of security.recovery (#307), and the
+	// bounds of its wait_hours.
+	RecoveryStandard            = "standard"
+	RecoveryStrict              = "strict"
+	RecoveryStepNationalID      = "national_id"
+	RecoveryStepMobileOwnership = "mobile_ownership"
+	DefaultRecoveryWaitHours    = 72
+	MaxRecoveryWaitHours        = 720
 
 	// DefaultMaxFavoritesPerUser and MaxFavoritesPerUser bound the
 	// favorites of a user, which are listed in one answer.
