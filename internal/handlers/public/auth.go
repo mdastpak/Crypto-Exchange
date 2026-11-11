@@ -289,6 +289,14 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 	attempt.ActorType, attempt.ActorID = audit.ActorUser, userHK.String()
 	// A user with a second step gets no token for the code alone (#307).
 	method, err := h.sessionMethod(ctx, userHK)
+	if errors.Is(err, rowseal.ErrUnverified) {
+		// The password of the account is gone while its sealed record says
+		// it exists (#337), or the account changed outside the backend: the
+		// code alone never signs in to it.
+		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+		return
+	}
 	if err != nil {
 		// Never a session without knowing whether a second step applies.
 		log.Printf("Failed to read the second step of a sign-in: %v", err)

@@ -77,6 +77,12 @@ func (h *UserHandler) RequireSecondFactor(funds bool) gin.HandlerFunc {
 			helpers.SendError(c, http.StatusForbidden, refusal.Code, i18n.M("STEP_UP_REQUIRED"), nil)
 			c.Abort()
 			return
+		case errors.Is(err, rowseal.ErrUnverified):
+			// The password of the account is gone while its sealed record
+			// says it exists (#337): nothing it protects runs.
+			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+			c.Abort()
+			return
 		case err != nil:
 			log.Printf("Failed to check the second factor of user %s: %v", claims.UUID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
@@ -193,6 +199,12 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 		h.noteSecurity(ctx, event, audit.Denied, codePasswordLocked)
 		c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(locked.Until).Seconds())+1)))
 		helpers.SendError(c, http.StatusTooManyRequests, codePasswordLocked, i18n.M("PASSWORD_LOCKED"), nil)
+		return
+	case byTOTP && errors.Is(err, rowseal.ErrUnverified):
+		// An authenticator turned on, or back on, outside the backend
+		// proves nothing (#337).
+		h.noteSecurity(ctx, event, audit.Failure, "totp_unverified")
+		helpers.SendError(c, http.StatusForbidden, codeTOTPInvalid, i18n.M("TOTP_INVALID"), nil)
 		return
 	case errors.Is(err, rowseal.ErrUnverified):
 		// A password changed outside the backend proves nothing (#139).

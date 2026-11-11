@@ -17,7 +17,7 @@ type Finding struct {
 	ID         int64      `json:"id"`
 	Table      string     `json:"table"`
 	RowKey     string     `json:"row_key"`
-	Check      string     `json:"check" enums:"missing,mismatch,unknown_key"`
+	Check      string     `json:"check" enums:"missing,mismatch,unknown_key,row_missing"`
 	DetectedBy string     `json:"detected_by" enums:"read,verifier"`
 	DetectedAt time.Time  `json:"detected_at"`
 	LastSeenAt time.Time  `json:"last_seen_at"`
@@ -151,16 +151,26 @@ func (s *Sealer) ReviewReseal(ctx context.Context, id int64, origin audit.Event,
 // rowOwner returns the account that the row of a finding belongs to, or ""
 // when the row is gone.
 func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string, error) {
-	column := map[string]string{Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id", UserPasswords.Name: "user_hk", UserPasskeys.Name: "user_hk"}[t.Name]
-	if column == "" {
+	// The hk of the user that a row belongs to, as an expression of its
+	// table; a step-up belongs to the user of its session.
+	owner := map[string]string{
+		Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id",
+		UserPasswords.Name: "user_hk", UserPasskeys.Name: "user_hk", UserTOTP.Name: "user_hk",
+		AccountRecoveries.Name: "user_hk",
+		SessionStepUps.Name:    "(SELECT s.user_id FROM sessions s WHERE s.id = session_step_ups.session_id)",
+	}[t.Name]
+	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)
 	}
-	var owner string
-	err := tx.QueryRowContext(ctx, `SELECT `+column+`::text FROM `+t.Name+` WHERE `+t.Key+` = $1::`+t.KeyType, rowKey).Scan(&owner)
+	var hk sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT (`+owner+`)::text FROM `+t.Name+` WHERE `+t.Key+` = $1::`+t.KeyType, rowKey).Scan(&hk)
+	if err == nil {
+		return hk.String, nil
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
-	return owner, err
+	return "", err
 }
 
 func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reason string, twoPerson bool) (Finding, bool, error) {
@@ -304,7 +314,68 @@ func (s *Sealer) VerifyAll(ctx context.Context) (Report, error) {
 			after = next
 		}
 	}
-	return report, nil
+	err := s.verifyRecords(ctx, &report)
+	return report, err
+}
+
+// maxMissingPerPass bounds the missing rows that one verifier pass records.
+const maxMissingPerPass = 1000
+
+// verifyRecords finds the rows that a sealed record says exist and that are
+// gone (#337): the password of an account whose users row records one. No
+// seal shows a deleted row. A missing row is recorded as a finding in both
+// modes; report mode cannot seal what is not there.
+func (s *Sealer) verifyRecords(ctx context.Context, report *Report) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked bool
+	if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, verifierLockID).Scan(&locked); err != nil {
+		return err
+	}
+	if !locked {
+		report.Skipped = true
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT u.hk::text FROM users u
+		WHERE u.password_set_at IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM user_passwords p WHERE p.user_hk = u.hk)
+		ORDER BY u.hk LIMIT $1`, maxMissingPerPass)
+	if err != nil {
+		return err
+	}
+	var missing []string
+	for rows.Next() {
+		var hk string
+		if err := rows.Scan(&hk); err != nil {
+			rows.Close()
+			return err
+		}
+		missing = append(missing, hk)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, hk := range missing {
+		report.Findings++
+		id, created, err := recordFinding(ctx, tx, UserPasswords, hk, CheckRowMissing, DetectedByVerifier)
+		if err != nil {
+			return err
+		}
+		if created {
+			s.logf("SECURITY: %s %s fails its integrity check (%s); finding %d, mode %s", UserPasswords.Name, hk, CheckRowMissing, id, s.mode)
+			e := audit.Of(audit.Event{}, audit.ActionIntegritySealMismatch, UserPasswords.Name, hk)
+			e.Outcome, e.Reason = audit.Failure, CheckRowMissing
+			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "detected_by": DetectedByVerifier, "mode": s.mode}}
+			if err := audit.Record(ctx, tx, e); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 // verifyBatch checks the rows of t after the key after, and returns the
@@ -368,7 +439,7 @@ func (s *Sealer) verifyBatch(ctx context.Context, t *Table, after string, report
 			return "", false, err
 		}
 		if created {
-			s.logf("SECURITY: %s %s does not match its seal (%s); finding %d, mode %s", t.Name, r.Key, v, id, s.mode)
+			s.logf("SECURITY: %s %s fails its integrity check (%s); finding %d, mode %s", t.Name, r.Key, v, id, s.mode)
 			e := audit.Of(audit.Event{}, audit.ActionIntegritySealMismatch, t.Name, r.Key)
 			e.Outcome, e.Reason = audit.Failure, string(v)
 			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "detected_by": DetectedByVerifier, "mode": s.mode}}

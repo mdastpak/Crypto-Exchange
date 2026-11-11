@@ -377,7 +377,7 @@ Response `200`, with the state:
 
 - `401 recovery_identity_mismatch`: an identity check failed; `info` has the state, with `identity_attempts_left`. The third failure ends the recovery with `403 recovery_failed`, and the account starts no other for 24 hours: `429 recovery_cooldown` with `Retry-After`.
 - `503 recovery_unavailable`: the identity provider, or the keys that open the national ID, cannot answer. Nothing is decided, and a strict recovery never falls back to the standard one.
-- `401 recovery_contact_invalid`: the contact of the challenge is no longer a verified contact of the account. `401 challenge_invalid`, `403 account_frozen` and `account_unavailable`: as for the second step.
+- `401 recovery_contact_invalid`: the contact of the challenge is no longer a verified contact of the account. `401 challenge_invalid`, `403 account_frozen` and `account_unavailable`: as for the second step. `account_unavailable` also answers a recovery that was [changed outside the backend](data-protection.md#row-seals), in `enforce` mode.
 - A recovery has 24 hours to prove everything. An account has one recovery at a time.
 
 `POST /public/auth/recovery/complete` sets the new password once the wait has ended:
@@ -869,7 +869,7 @@ The rows that did not match their [row seal](data-protection.md#row-seals) ([#13
 
 | Route | |
 | --- | --- |
-| `GET /admin/integrity/findings?all=&limit=` | The open findings, or every finding with `all=true`, newest first, [paginated](#pagination): `table`, `row_key`, `check` (`missing`, `mismatch`, `unknown_key`), `detected_by` (`read`, `verifier`), `seen_count`, and, once resolved, `resolution` (`resealed`, `report_mode`, `row_gone`), `resolved_by`, and `reason`. |
+| `GET /admin/integrity/findings?all=&limit=` | The open findings, or every finding with `all=true`, newest first, [paginated](#pagination): `table`, `row_key`, `check` (`missing`, `mismatch`, `unknown_key`, `row_missing`), `detected_by` (`read`, `verifier`), `seen_count`, and, once resolved, `resolution` (`resealed`, `report_mode`, `row_gone`), `resolved_by`, and `reason`. |
 | `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters. It needs two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): the first request records the reason and answers `202` with the finding and `reseal_requested_by`; the same request by another administrator within 24 hours seals the row as it now is, resolves the finding, and answers `200`. `403 second_approval_required` for the administrator who asked, and `403 own_row` for the administrator whose account the row belongs to, at either step. A request older than 24 hours is replaced by a new one. Audited as `integrity.reseal_request` and `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. Needs a [step-up](#post-adminstep-up). |
 
 ## Currency migrations
@@ -1269,7 +1269,7 @@ Once it is on:
 
 A code is accepted once: the time step of the last accepted code is stored, so a code that was seen cannot be replayed, on any instance. Wrong codes are counted in PostgreSQL with the limits of the password, `security.password.max_failures` and `lock_minutes`, but separately from it: `429 totp_locked` with `Retry-After` locks the authenticator, and the password still works. A wrong code answers `401 totp_invalid` at a sign-in and `403 totp_invalid` in a session.
 
-The secret is sealed with the [data-protection keys](data-protection.md), bound to the user, and is shown only at enrollment. Without the keys no authenticator is enrolled or checked. Turning the authenticator on or off is a change of the second factor, so it starts the [security hold](#security-hold); both are audited, as `user.totp_enable`, also when the first code is wrong, and `user.totp_disable`.
+The secret is sealed with the [data-protection keys](data-protection.md), bound to the user, and is shown only at enrollment. Without the keys no authenticator is enrolled or checked. Its row has a [row seal](data-protection.md#row-seals), so an authenticator turned on, or back on, in SQL proves nothing: in `enforce` mode a sign-in with it answers `403 account_unavailable`, and a step-up or a confirmation `403 totp_invalid`. Turning the authenticator on or off is a change of the second factor, so it starts the [security hold](#security-hold); both are audited, as `user.totp_enable`, also when the first code is wrong, and `user.totp_disable`.
 
 ### Passkeys
 
@@ -1304,7 +1304,7 @@ The account password is the second factor of a user ([#307](https://github.com/m
 - **Protected operations need a fresh proof.** A user who has a password must have proved it in the same session within `security.second_factor.step_up_minutes` (5 by default); otherwise the operation answers `403 step_up_required`. A sign-in with the password counts as the proof. Setting a password does not: a stolen session could set one.
 - `POST /user/step-up` with `{"password": "…"}` renews the proof and answers `200` with `elevated_until`. `403 password_invalid` and `429 password_locked` are as for a password change; `409 second_factor_not_set` answers a user without a password. Audited as `user.step_up`.
 - Today the protected operations are the [contact changes](#contacts). Deposits, withdrawals, and API keys call the same guard (`userauth.Guard.Check`, in the transaction of the change) when they are built.
-- The proof belongs to one session and is kept in PostgreSQL, so every instance sees it.
+- The proof belongs to one session and is kept in PostgreSQL, so every instance sees it. Its row has a [row seal](data-protection.md#row-seals): in `enforce` mode, a proof lengthened in SQL counts as none, and the operation answers `403 step_up_required` until the user proves the factor again.
 
 ### `GET /user/profile`
 

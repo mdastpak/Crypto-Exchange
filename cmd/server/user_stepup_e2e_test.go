@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/stretchr/testify/assert"
@@ -143,4 +144,33 @@ func TestSecondFactor_OptionalModeLeavesFundsOpenWithoutAPassword(t *testing.T) 
 	assert.Empty(t, refusalCode(t, guard.Check(ctx, env.db, user, session, true)))
 	env.setPassword(t, token, testPassword)
 	assert.Equal(t, userauth.CodeStepUpRequired, refusalCode(t, guard.Check(ctx, env.db, user, session, true)))
+}
+
+// TestSecondFactor_AStepUpLengthenedInSQLLetsNothingRun lengthens the
+// step-up of a session in SQL (#337). In enforce mode the session is no
+// longer elevated, the change is a finding, and proving the factor again
+// elevates it, with a new seal.
+func TestSecondFactor_AStepUpLengthenedInSQLLetsNothingRun(t *testing.T) {
+	env := newE2EEnv(t)
+	t.Cleanup(rowseal.Use(rowseal.New(env.db, env.handlers.DataKeys, rowseal.ModeEnforce)))
+	ctx := context.Background()
+	guard := env.handlers.User.Guard
+	token, _ := env.signedIn(t, "lengthened@example.com")
+	user, session := sessionOf(t, token)
+	env.setPassword(t, token, testPassword)
+	status, resp := env.post(t, stepUpRoute, map[string]string{"password": testPassword}, token)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	require.Empty(t, refusalCode(t, guard.Check(ctx, env.db, user, session, false)), "the step-up is sealed")
+
+	_, err := e2eOwnerDB(t).Exec(`UPDATE session_step_ups SET elevated_until = NOW() + INTERVAL '30 days' WHERE session_id = $1`, session)
+	require.NoError(t, err)
+	assert.Equal(t, userauth.CodeStepUpRequired, refusalCode(t, guard.Check(ctx, env.db, user, session, false)))
+	var findings int
+	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM integrity_findings
+		WHERE table_name = 'session_step_ups' AND row_key = $1 AND resolved_at IS NULL`, session).Scan(&findings))
+	assert.Equal(t, 1, findings)
+
+	status, resp = env.post(t, stepUpRoute, map[string]string{"password": testPassword}, token)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	assert.Empty(t, refusalCode(t, guard.Check(ctx, env.db, user, session, false)), "a new proof seals a new step-up")
 }

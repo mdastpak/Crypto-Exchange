@@ -183,7 +183,8 @@ func openRecovery(ctx context.Context, q recoveryQuerier, userHK string, forUpda
 			(SELECT COUNT(*) FROM user_contacts c WHERE c.user_hk = r.user_hk AND c.removed_at IS NULL AND c.verified_at IS NOT NULL
 				AND c.type IN ('email', 'mobile') AND c.id = ANY (r.proven_contacts)),
 			(SELECT COUNT(*) FROM user_contacts c WHERE c.user_hk = r.user_hk AND c.removed_at IS NULL AND c.verified_at IS NOT NULL
-				AND c.type = 'mobile')
+				AND c.type = 'mobile'),
+			` + rowseal.AccountRecoveries.Fields("r") + `
 		FROM account_recoveries r
 		WHERE r.user_hk = $1 AND r.status IN ('verifying', 'waiting') AND r.expires_at > NOW()`
 	if forUpdate {
@@ -193,13 +194,19 @@ func openRecovery(ctx context.Context, q recoveryQuerier, userHK string, forUpda
 	var required, passed string
 	var failures, mobiles int
 	var readyAt sql.NullTime
-	err := q.QueryRowContext(ctx, query, userHK).Scan(&r.ID, &r.Mode, &r.Status, &required, &passed, &failures,
-		&r.StartedAt, &readyAt, &r.ExpiresAt, &r.ContactsRequired, &r.ContactsProven, &mobiles)
+	row := rowseal.AccountRecoveries.NewRow()
+	err := q.QueryRowContext(ctx, query, userHK).Scan(append([]any{&r.ID, &r.Mode, &r.Status, &required, &passed, &failures,
+		&r.StartedAt, &readyAt, &r.ExpiresAt, &r.ContactsRequired, &r.ContactsProven, &mobiles}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read the recovery: %w", err)
+	}
+	// A recovery changed in SQL, such as one moved to waiting, or with
+	// contacts it did not prove, proves nothing (#337).
+	if err := rowseal.Check(ctx, rowseal.AccountRecoveries, row); err != nil {
+		return nil, err
 	}
 	if readyAt.Valid {
 		r.ReadyAt = &readyAt.Time
@@ -224,6 +231,12 @@ func (p *Passwords) OpenRecovery(ctx context.Context, userHK string) (*Recovery,
 	return openRecovery(ctx, p.DB, userHK, false)
 }
 
+// sealRecovery seals, in tx, the recovery that a write of tx just changed
+// (#337).
+func sealRecovery(ctx context.Context, tx *sql.Tx, id string) error {
+	return rowseal.Reseal(ctx, tx, rowseal.AccountRecoveries, "id = $1", id)
+}
+
 // endRecovery ends the open recovery of a user within tx, and records it.
 // It reports whether there was one.
 func endRecovery(ctx context.Context, tx *sql.Tx, userHK, status, reason string, event audit.Event) (bool, error) {
@@ -235,6 +248,9 @@ func endRecovery(ctx context.Context, tx *sql.Tx, userHK, status, reason string,
 	}
 	if err != nil {
 		return false, fmt.Errorf("end the recovery: %w", err)
+	}
+	if err := sealRecovery(ctx, tx, id); err != nil {
+		return false, err
 	}
 	event.Action, event.Outcome, event.Reason = audit.ActionUserRecoveryCancel, audit.Success, reason
 	if event.ActorType == "" {
@@ -287,11 +303,13 @@ func (p *Passwords) AdvanceRecovery(ctx context.Context, userHK string, proof Re
 	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM users WHERE hk = $1 FOR UPDATE`, userHK); err != nil {
 		return nil, fmt.Errorf("lock the user: %w", err)
 	}
-	var has bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_passwords WHERE user_hk = $1)`, userHK).Scan(&has); err != nil {
-		return nil, fmt.Errorf("read the password: %w", err)
+	// The record of the users row decides (#337): a password row deleted in
+	// SQL is a finding, not an account without a password.
+	hasPassword, err := has(ctx, tx, userHK)
+	if err != nil {
+		return nil, err
 	}
-	if !has {
+	if !hasPassword {
 		return nil, ErrNoPassword
 	}
 	var verified bool
@@ -303,9 +321,28 @@ func (p *Passwords) AdvanceRecovery(ctx context.Context, userHK string, proof Re
 		return nil, ErrRecoveryContact
 	}
 	// A recovery past its time makes room for a new one.
-	if _, err := tx.ExecContext(ctx, `UPDATE account_recoveries SET status = 'failed', ended_at = NOW(), end_reason = $2
-		WHERE user_hk = $1 AND status IN ('verifying', 'waiting') AND expires_at <= NOW()`, userHK, reasonRecoveryExpired); err != nil {
+	expired, err := tx.QueryContext(ctx, `UPDATE account_recoveries SET status = 'failed', ended_at = NOW(), end_reason = $2
+		WHERE user_hk = $1 AND status IN ('verifying', 'waiting') AND expires_at <= NOW() RETURNING id`, userHK, reasonRecoveryExpired)
+	if err != nil {
 		return nil, fmt.Errorf("end the expired recovery: %w", err)
+	}
+	var ended []string
+	for expired.Next() {
+		var id string
+		if err := expired.Scan(&id); err != nil {
+			expired.Close()
+			return nil, fmt.Errorf("end the expired recovery: %w", err)
+		}
+		ended = append(ended, id)
+	}
+	expired.Close()
+	if err := expired.Err(); err != nil {
+		return nil, fmt.Errorf("end the expired recovery: %w", err)
+	}
+	for _, id := range ended {
+		if err := sealRecovery(ctx, tx, id); err != nil {
+			return nil, err
+		}
 	}
 
 	event.ActorType, event.ActorID = audit.ActorUser, userHK
@@ -332,6 +369,9 @@ func (p *Passwords) AdvanceRecovery(ctx context.Context, userHK string, proof Re
 			id, userHK, mode, strings.Join(steps, ","), recoveryProofWindow.Seconds(), event.IP, event.UserAgent); err != nil {
 			return nil, fmt.Errorf("start the recovery: %w", err)
 		}
+		if err := sealRecovery(ctx, tx, id); err != nil {
+			return nil, err
+		}
 		start := event
 		start.Action, start.Outcome, start.TargetID, start.Reason = audit.ActionUserRecoveryStart, audit.Success, id, mode
 		if err := audit.Record(ctx, tx, start); err != nil {
@@ -349,6 +389,9 @@ func (p *Passwords) AdvanceRecovery(ctx context.Context, userHK string, proof Re
 		failure.Action, failure.Outcome, failure.Reason = audit.ActionUserRecoveryIdentity, audit.Failure, "identity_mismatch"
 		if _, err := tx.ExecContext(ctx, `UPDATE account_recoveries SET identity_failures = identity_failures + 1 WHERE id = $1`, current.ID); err != nil {
 			return nil, fmt.Errorf("count the identity failure: %w", err)
+		}
+		if err := sealRecovery(ctx, tx, current.ID); err != nil {
+			return nil, err
 		}
 		if err := audit.Record(ctx, tx, failure); err != nil {
 			return nil, fmt.Errorf("record the identity failure: %w", err)
@@ -374,6 +417,9 @@ func (p *Passwords) AdvanceRecovery(ctx context.Context, userHK string, proof Re
 			WHERE id = $1`, current.ID, proof.ContactID, strings.Join(proof.StepsPassed, ",")); err != nil {
 			return nil, fmt.Errorf("store the proof of the recovery: %w", err)
 		}
+		if err := sealRecovery(ctx, tx, current.ID); err != nil {
+			return nil, err
+		}
 		if current, err = openRecovery(ctx, tx, userHK, true); err != nil || current == nil {
 			return nil, fmt.Errorf("read the recovery: %w", errors.Join(err, sql.ErrNoRows))
 		}
@@ -383,6 +429,9 @@ func (p *Passwords) AdvanceRecovery(ctx context.Context, userHK string, proof Re
 					ready_at = NOW() + make_interval(secs => $2), expires_at = NOW() + make_interval(secs => $3)
 				WHERE id = $1`, current.ID, wait.Seconds(), (wait + recoveryCompleteWindow).Seconds()); err != nil {
 				return nil, fmt.Errorf("start the wait of the recovery: %w", err)
+			}
+			if err := sealRecovery(ctx, tx, current.ID); err != nil {
+				return nil, err
 			}
 			if current, err = openRecovery(ctx, tx, userHK, true); err != nil || current == nil {
 				return nil, fmt.Errorf("read the recovery: %w", errors.Join(err, sql.ErrNoRows))
@@ -472,6 +521,10 @@ func (p *Passwords) CompleteRecovery(ctx context.Context, userHK string, contact
 	if err := rowseal.Reseal(ctx, tx, rowseal.UserPasswords, "user_hk = $1", userHK); err != nil {
 		return SetResult{}, err
 	}
+	// StartSecurityHold, below, seals the record.
+	if err := recordPassword(ctx, tx, userHK); err != nil {
+		return SetResult{}, err
+	}
 	codes, err := replaceRecoveryCodes(ctx, tx, userHK)
 	if err != nil {
 		return SetResult{}, err
@@ -483,6 +536,9 @@ func (p *Passwords) CompleteRecovery(ctx context.Context, userHK string, contact
 	if _, err := tx.ExecContext(ctx, `UPDATE account_recoveries SET status = 'completed', ended_at = NOW(), end_reason = 'completed'
 		WHERE id = $1`, recovery.ID); err != nil {
 		return SetResult{}, fmt.Errorf("complete the recovery: %w", err)
+	}
+	if err := sealRecovery(ctx, tx, recovery.ID); err != nil {
+		return SetResult{}, err
 	}
 	event.Action, event.Outcome, event.Reason = audit.ActionUserRecoveryComplete, audit.Success, recovery.Mode
 	event.ActorType, event.ActorID = audit.ActorUser, userHK

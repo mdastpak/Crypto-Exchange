@@ -108,10 +108,79 @@ func (p *Passwords) Status(ctx context.Context, userHK string) (Status, error) {
 }
 
 // Has reports whether a user has a password, which their sign-in then
-// needs.
+// needs. The users row records the password (#337), under its seal: a
+// password row that is gone while the record says it exists is reported as
+// a row_missing finding, and in enforce mode Has returns ErrUnverified, so
+// that deleting the row in SQL does not drop the second step. In report
+// mode the account is served as one without a password, as report mode
+// serves every row that fails its check.
 func (p *Passwords) Has(ctx context.Context, userHK string) (bool, error) {
-	status, err := p.Status(ctx, userHK)
-	return status.Set, err
+	return has(ctx, p.DB, userHK)
+}
+
+// has is Has in q, a transaction or the database.
+func has(ctx context.Context, q Querier, userHK string) (bool, error) {
+	user := rowseal.Users.NewRow()
+	var stored bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_passwords p WHERE p.user_hk = u.hk), `+
+		rowseal.Users.Fields("u")+` FROM users u WHERE u.hk = $1`, userHK).Scan(append([]any{&stored}, user.Dest()...)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the password: %w", err)
+	}
+	if err := rowseal.Check(ctx, rowseal.Users, user); err != nil {
+		return false, err
+	}
+	recorded := user.Values[rowseal.Users.Index("password_set_at")].Valid
+	if recorded && !stored {
+		return false, rowseal.Missing(ctx, rowseal.UserPasswords, userHK)
+	}
+	return stored, nil
+}
+
+// recordPassword records, in the users row, that the user has a password
+// (#337). It does not seal the row: StartSecurityHold, which every change of
+// the password runs in the same transaction, seals it.
+func recordPassword(ctx context.Context, tx *sql.Tx, userHK string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_set_at = COALESCE(password_set_at, NOW()) WHERE hk = $1`, userHK); err != nil {
+		return fmt.Errorf("record the password: %w", err)
+	}
+	return nil
+}
+
+// adoptPasswordRecord records the password of a user whose users row does
+// not record it yet, as the users rows written before migration 12 do, once
+// the user has proved it. It seals the row it writes, after checking its
+// seal, so that it never seals a row that was changed outside the backend.
+func (p *Passwords) adoptPasswordRecord(ctx context.Context, userHK string) error {
+	tx, err := p.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("start the record of the password: %w", err)
+	}
+	defer tx.Rollback()
+	user := rowseal.Users.NewRow()
+	err = tx.QueryRowContext(ctx, `SELECT `+rowseal.Users.Fields("")+` FROM users WHERE hk = $1 FOR UPDATE`, userHK).Scan(user.Dest()...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the record of the password: %w", err)
+	}
+	if user.Values[rowseal.Users.Index("password_set_at")].Valid {
+		return nil
+	}
+	if err := rowseal.Check(ctx, rowseal.Users, user); err != nil {
+		return err
+	}
+	if err := recordPassword(ctx, tx, userHK); err != nil {
+		return err
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", userHK); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // attempt counts an attempt before the password is checked, so that
@@ -194,6 +263,11 @@ func (p *Passwords) Verify(ctx context.Context, userHK, password string) error {
 	// this password ends (#307). A password that cannot end it is not
 	// accepted, so that the recovery cannot outlive the sign-in.
 	if err := p.cancelRecovery(ctx, userHK); err != nil {
+		return err
+	}
+	// A users row written before migration 12 records the password once
+	// the user has proved it (#337).
+	if err := p.adoptPasswordRecord(ctx, userHK); err != nil {
 		return err
 	}
 	if outdated {
@@ -295,6 +369,9 @@ func (p *Passwords) Set(ctx context.Context, userHK, current, password string, e
 		return SetResult{Changed: has}, ErrCurrentRequired
 	}
 	if err := rowseal.Reseal(ctx, tx, rowseal.UserPasswords, "user_hk = $1", userHK); err != nil {
+		return SetResult{Changed: has}, err
+	}
+	if err := recordPassword(ctx, tx, userHK); err != nil {
 		return SetResult{Changed: has}, err
 	}
 	holdUntil, err := restrictions.StartSecurityHold(ctx, tx, userHK, holdDuration())
@@ -454,6 +531,9 @@ func (p *Passwords) storeReset(ctx context.Context, userHK, hash string, recover
 		return none, fmt.Errorf("store the password: %w", err)
 	}
 	if err := rowseal.Reseal(ctx, tx, rowseal.UserPasswords, "user_hk = $1", userHK); err != nil {
+		return none, err
+	}
+	if err := recordPassword(ctx, tx, userHK); err != nil {
 		return none, err
 	}
 	holdUntil, err := restrictions.StartSecurityHold(ctx, tx, userHK, holdDuration())

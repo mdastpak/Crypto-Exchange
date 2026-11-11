@@ -52,6 +52,10 @@ const (
 	CheckMissing    = "missing"
 	CheckMismatch   = "mismatch"
 	CheckUnknownKey = "unknown_key"
+	// CheckRowMissing is a row that a sealed record says exists, and that
+	// is gone, such as the password of an account whose users row records
+	// one (#337). A seal cannot show a row that was deleted.
+	CheckRowMissing = "row_missing"
 )
 
 // Who found it.
@@ -154,13 +158,22 @@ func mac(key keys.Key, t *Table, r *Row) ([]byte, error) {
 		buf = binary.BigEndian.AppendUint32(buf, uint32(len(b))) //nolint:gosec // G115: a column value is far below 4 GiB.
 		buf = append(buf, b...)
 	}
+	// An optional column that is NULL is left out, so that the seals made
+	// before it was added still match; once it has a value, the seal covers
+	// it, and a change back to NULL no longer matches.
+	var sealed []int
+	for i, c := range t.Columns {
+		if !c.Optional || r.Values[i].Valid {
+			sealed = append(sealed, i)
+		}
+	}
 	field([]byte(sealTag), false)
 	field([]byte(t.Name), false)
 	field([]byte(r.Key), false)
-	buf = binary.BigEndian.AppendUint64(buf, uint64(r.Version))      //nolint:gosec // G115: row_version is never negative.
-	buf = binary.BigEndian.AppendUint32(buf, uint32(len(t.Columns))) //nolint:gosec // G115: a handful of columns.
-	for i, c := range t.Columns {
-		field([]byte(c.Name), false)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(r.Version))   //nolint:gosec // G115: row_version is never negative.
+	buf = binary.BigEndian.AppendUint32(buf, uint32(len(sealed))) //nolint:gosec // G115: a handful of columns.
+	for _, i := range sealed {
+		field([]byte(t.Columns[i].Name), false)
 		field([]byte(r.Values[i].String), !r.Values[i].Valid)
 	}
 	h.Write(buf)
@@ -232,6 +245,25 @@ func (s *Sealer) Check(ctx context.Context, t *Table, r *Row) error {
 // Check checks r with the active sealer; see Sealer.Check.
 func Check(ctx context.Context, t *Table, r *Row) error { return Active().Check(ctx, t, r) }
 
+// Missing reports a row of t that a sealed record says exists and that a
+// read did not find (#337), such as the password of an account whose users
+// row records one. It records a row_missing finding, as Check records a
+// mismatch, and returns ErrUnverified in enforce mode and nil in report
+// mode. A nil sealer reports nothing.
+func (s *Sealer) Missing(ctx context.Context, t *Table, key string) error {
+	if s == nil {
+		return nil
+	}
+	s.report(ctx, t, key, CheckRowMissing, DetectedByRead)
+	if s.mode == ModeEnforce {
+		return fmt.Errorf("%w: %s %s: %s", ErrUnverified, t.Name, key, CheckRowMissing)
+	}
+	return nil
+}
+
+// Missing reports a missing row with the active sealer; see Sealer.Missing.
+func Missing(ctx context.Context, t *Table, key string) error { return Active().Missing(ctx, t, key) }
+
 // report records a finding, and its audit event when it is new. Failures
 // are logged: a finding that cannot be written must not hide the refusal.
 func (s *Sealer) report(ctx context.Context, t *Table, key string, v Verdict, by string) {
@@ -239,13 +271,13 @@ func (s *Sealer) report(ctx context.Context, t *Table, key string, v Verdict, by
 	defer cancel()
 	id, created, err := recordFinding(ctx, s.db, t, key, v, by)
 	if err != nil {
-		s.logf("SECURITY: %s %s does not match its seal (%s), and the finding could not be recorded: %v", t.Name, key, v, err)
+		s.logf("SECURITY: %s %s fails its integrity check (%s), and the finding could not be recorded: %v", t.Name, key, v, err)
 		return
 	}
 	if !created {
 		return
 	}
-	s.logf("SECURITY: %s %s does not match its seal (%s); finding %d, mode %s", t.Name, key, v, id, s.mode)
+	s.logf("SECURITY: %s %s fails its integrity check (%s); finding %d, mode %s", t.Name, key, v, id, s.mode)
 	e := audit.Of(audit.Event{}, audit.ActionIntegritySealMismatch, t.Name, key)
 	e.Outcome, e.Reason = audit.Failure, string(v)
 	e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "detected_by": by, "mode": s.mode}}

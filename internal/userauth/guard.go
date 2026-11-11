@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // The modes of security.second_factor.mode: when a user must have a second
@@ -79,17 +80,32 @@ type State struct {
 // State reads the state of a session of a user.
 func (g *Guard) State(ctx context.Context, q Querier, userHK, sessionID string) (State, error) {
 	s := State{Mode: mode()}
-	var until sql.NullTime
-	err := q.QueryRowContext(ctx, `
-		SELECT EXISTS (SELECT 1 FROM user_passwords WHERE user_hk = $1),
-			(SELECT elevated_until FROM session_step_ups WHERE session_id = $2 AND elevated_until > NOW())`,
-		userHK, sessionID).Scan(&s.Enrolled, &until)
+	// Whether the user has a second factor comes from the record of the
+	// sealed users row (#337), so deleting the password row in SQL does not
+	// open the operations that it protects: in enforce mode the read fails.
+	enrolled, err := has(ctx, q, userHK)
 	if err != nil {
 		return State{}, fmt.Errorf("read the second factor of the session: %w", err)
 	}
-	if until.Valid {
-		s.ElevatedUntil = &until.Time
+	s.Enrolled = enrolled
+	var until sql.NullTime
+	step := rowseal.SessionStepUps.NewRow()
+	err = q.QueryRowContext(ctx, `SELECT elevated_until, `+rowseal.SessionStepUps.Fields("")+`
+		FROM session_step_ups WHERE session_id = $1 AND elevated_until > NOW()`, sessionID).Scan(append([]any{&until}, step.Dest()...)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s, nil
 	}
+	if err != nil {
+		return State{}, fmt.Errorf("read the second factor of the session: %w", err)
+	}
+	// A step-up lengthened in SQL lets nothing run (#337): in enforce mode
+	// the session is not elevated, and the user proves the factor again.
+	if err := rowseal.Check(ctx, rowseal.SessionStepUps, step); errors.Is(err, rowseal.ErrUnverified) {
+		return s, nil
+	} else if err != nil {
+		return State{}, err
+	}
+	s.ElevatedUntil = &until.Time
 	return s, nil
 }
 
@@ -121,8 +137,13 @@ func (g *Guard) Check(ctx context.Context, q Querier, userHK, sessionID string, 
 // StepUpLifetime from now, after it proved the second factor, and returns
 // until when. It needs an active session of the user.
 func (g *Guard) Elevate(ctx context.Context, userHK, sessionID string) (time.Time, error) {
+	tx, err := g.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("elevate the session: %w", err)
+	}
+	defer tx.Rollback()
 	var until time.Time
-	err := g.DB.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO session_step_ups (session_id, elevated_until)
 		SELECT id, NOW() + make_interval(secs => $3) FROM sessions
 		WHERE id = $2 AND user_id = $1 AND status = 'ACTIVE' AND revoked_at IS NULL
@@ -132,6 +153,12 @@ func (g *Guard) Elevate(ctx context.Context, userHK, sessionID string) (time.Tim
 		return time.Time{}, errors.New("the session to elevate is not an active session of the user")
 	}
 	if err != nil {
+		return time.Time{}, fmt.Errorf("elevate the session: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.SessionStepUps, "session_id = $1", sessionID); err != nil {
+		return time.Time{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return time.Time{}, fmt.Errorf("elevate the session: %w", err)
 	}
 	return until, nil

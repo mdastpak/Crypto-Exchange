@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
@@ -110,7 +111,11 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		return
 	}
 	if h.TOTP != nil {
-		if settings.TOTPEnabled, err = h.TOTP.Enabled(ctx, claims.UUID); err != nil {
+		// An authenticator that fails its seal check is not shown as on
+		// (#337); the check recorded the finding.
+		if settings.TOTPEnabled, err = h.TOTP.Enabled(ctx, claims.UUID); errors.Is(err, rowseal.ErrUnverified) {
+			settings.TOTPEnabled = false
+		} else if err != nil {
 			log.Printf("Failed to read the authenticator of user %s: %v", claims.UUID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
 			return
@@ -216,6 +221,12 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 		h.notePassword(ctx, event, audit.Denied, codePasswordLocked)
 		c.Header("Retry-After", strconv.Itoa(max(1, int(time.Until(locked.Until).Seconds())+1)))
 		helpers.SendError(c, http.StatusTooManyRequests, codePasswordLocked, i18n.M("PASSWORD_LOCKED"), nil)
+		return
+	case errors.Is(err, rowseal.ErrUnverified):
+		// The password is gone, or changed, outside the backend (#337): a
+		// new one would hide it.
+		h.notePassword(ctx, event, audit.Failure, helpers.CodeAccountUnavailable)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
 		return
 	case err != nil:
 		log.Printf("Failed to set the password of user %s: %v", claims.UUID, err)

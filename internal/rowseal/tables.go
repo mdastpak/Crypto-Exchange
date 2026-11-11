@@ -28,6 +28,11 @@ type Column struct {
 	Expr string
 	// Secret columns are never shown, in the audit log or the admin view.
 	Secret bool
+	// Optional columns, which a table gains after its rows were first
+	// sealed, are left out of the seal while they are NULL, so that the
+	// seals made before them still match. A value, once sealed, cannot be
+	// set back to NULL unnoticed.
+	Optional bool
 }
 
 // The canonical text of each kind of column.
@@ -44,6 +49,24 @@ func timestamptz(name string) Column {
 	return Column{Name: name, Expr: `to_char(%[1]s` + name + ` AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')`}
 }
 
+// optional marks a column that the table gained after its rows were sealed.
+func optional(c Column) Column {
+	c.Optional = true
+	return c
+}
+
+// Index returns the position of the column name in t.Columns, and in the
+// Values of its rows. It panics for a column that t does not seal, which is
+// a mistake of the code.
+func (t *Table) Index(name string) int {
+	for i, c := range t.Columns {
+		if c.Name == name {
+			return i
+		}
+	}
+	panic(fmt.Sprintf("rowseal: %s seals no column %s", t.Name, name))
+}
+
 // The protected tables of the first step of #139: the accounts, their
 // contacts, which decide who signs in to which account, and the sessions,
 // which decide whose tokens still work.
@@ -51,11 +74,16 @@ var (
 	// Users covers what decides whether and how an account signs in, and
 	// what it may do: the role, the status, the deletion, the second
 	// factor, the security hold, the KYC level, and the names.
+	//
+	// password_set_at records that the account has a password (#337), so
+	// that deleting its user_passwords row, which no seal can show, does
+	// not drop the second step of its sign-in.
 	Users = &Table{Name: "users", Key: "hk", KeyType: "uuid", Columns: []Column{
 		text("status"), text("role"), timestamptz("deleted_at"),
 		secret("totp_secret"), text("totp_enabled"),
 		timestamptz("security_hold_until"), text("kyc_status"), text("kyc_tier"),
 		text("first_name"), text("last_name"), text("display_name"),
+		optional(timestamptz("password_set_at")),
 	}}
 	// UserContacts covers which account a contact signs in to, whether it
 	// is verified or removed, and when its ownership was last checked.
@@ -84,8 +112,33 @@ var (
 	}}
 )
 
+// The state of second factors and recoveries (#337), which decides whether
+// a factor proves the owner, whether a recovery may set a new password, and
+// whether a session may run the operations that a factor protects.
+var (
+	// UserTOTP covers the authenticator apps of users: the sealed secret,
+	// and whether it is confirmed or removed. The attempt counts and the
+	// last time step are outside it: each code writes them.
+	UserTOTP = &Table{Name: "user_totp", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		secret("secret_sealed"), timestamptz("confirmed_at"), timestamptz("removed_at"),
+	}}
+	// AccountRecoveries covers what a recovery proved and when it may set a
+	// new password: changing it in SQL would skip the proofs or the wait.
+	AccountRecoveries = &Table{Name: "account_recoveries", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("mode"), text("status"), text("proven_contacts"),
+		text("steps_required"), text("steps_passed"), text("identity_failures"),
+		timestamptz("started_at"), timestamptz("ready_at"), timestamptz("expires_at"),
+		timestamptz("ended_at"), text("end_reason"),
+	}}
+	// SessionStepUps covers until when a session may run the protected
+	// operations without proving the factor again.
+	SessionStepUps = &Table{Name: "session_step_ups", Key: "session_id", KeyType: "uuid", Columns: []Column{
+		timestamptz("elevated_until"),
+	}}
+)
+
 // Tables lists the protected tables.
-var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys}
+var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps}
 
 // AuditEvents covers every column of an audit event (#337), so that an
 // event changed after the append-only triggers were turned off is detected.
