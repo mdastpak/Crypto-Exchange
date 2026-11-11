@@ -11188,7 +11188,8 @@ const docTemplate = `{
                     "enum": [
                         "missing",
                         "mismatch",
-                        "unknown_key"
+                        "unknown_key",
+                        "row_missing"
                     ]
                 },
                 "detected_at": {

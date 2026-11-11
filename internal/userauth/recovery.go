@@ -472,6 +472,10 @@ func (p *Passwords) CompleteRecovery(ctx context.Context, userHK string, contact
 	if err := rowseal.Reseal(ctx, tx, rowseal.UserPasswords, "user_hk = $1", userHK); err != nil {
 		return SetResult{}, err
 	}
+	// StartSecurityHold, below, seals the record.
+	if err := recordPassword(ctx, tx, userHK); err != nil {
+		return SetResult{}, err
+	}
 	codes, err := replaceRecoveryCodes(ctx, tx, userHK)
 	if err != nil {
 		return SetResult{}, err

@@ -28,6 +28,11 @@ type Column struct {
 	Expr string
 	// Secret columns are never shown, in the audit log or the admin view.
 	Secret bool
+	// Optional columns, which a table gains after its rows were first
+	// sealed, are left out of the seal while they are NULL, so that the
+	// seals made before them still match. A value, once sealed, cannot be
+	// set back to NULL unnoticed.
+	Optional bool
 }
 
 // The canonical text of each kind of column.
@@ -44,6 +49,24 @@ func timestamptz(name string) Column {
 	return Column{Name: name, Expr: `to_char(%[1]s` + name + ` AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')`}
 }
 
+// optional marks a column that the table gained after its rows were sealed.
+func optional(c Column) Column {
+	c.Optional = true
+	return c
+}
+
+// Index returns the position of the column name in t.Columns, and in the
+// Values of its rows. It panics for a column that t does not seal, which is
+// a mistake of the code.
+func (t *Table) Index(name string) int {
+	for i, c := range t.Columns {
+		if c.Name == name {
+			return i
+		}
+	}
+	panic(fmt.Sprintf("rowseal: %s seals no column %s", t.Name, name))
+}
+
 // The protected tables of the first step of #139: the accounts, their
 // contacts, which decide who signs in to which account, and the sessions,
 // which decide whose tokens still work.
@@ -51,11 +74,16 @@ var (
 	// Users covers what decides whether and how an account signs in, and
 	// what it may do: the role, the status, the deletion, the second
 	// factor, the security hold, the KYC level, and the names.
+	//
+	// password_set_at records that the account has a password (#337), so
+	// that deleting its user_passwords row, which no seal can show, does
+	// not drop the second step of its sign-in.
 	Users = &Table{Name: "users", Key: "hk", KeyType: "uuid", Columns: []Column{
 		text("status"), text("role"), timestamptz("deleted_at"),
 		secret("totp_secret"), text("totp_enabled"),
 		timestamptz("security_hold_until"), text("kyc_status"), text("kyc_tier"),
 		text("first_name"), text("last_name"), text("display_name"),
+		optional(timestamptz("password_set_at")),
 	}}
 	// UserContacts covers which account a contact signs in to, whether it
 	// is verified or removed, and when its ownership was last checked.

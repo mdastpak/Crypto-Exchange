@@ -79,12 +79,18 @@ type State struct {
 // State reads the state of a session of a user.
 func (g *Guard) State(ctx context.Context, q Querier, userHK, sessionID string) (State, error) {
 	s := State{Mode: mode()}
-	var until sql.NullTime
-	err := q.QueryRowContext(ctx, `
-		SELECT EXISTS (SELECT 1 FROM user_passwords WHERE user_hk = $1),
-			(SELECT elevated_until FROM session_step_ups WHERE session_id = $2 AND elevated_until > NOW())`,
-		userHK, sessionID).Scan(&s.Enrolled, &until)
+	// Whether the user has a second factor comes from the record of the
+	// sealed users row (#337), so deleting the password row in SQL does not
+	// open the operations that it protects: in enforce mode the read fails.
+	enrolled, err := has(ctx, q, userHK)
 	if err != nil {
+		return State{}, fmt.Errorf("read the second factor of the session: %w", err)
+	}
+	s.Enrolled = enrolled
+	var until sql.NullTime
+	err = q.QueryRowContext(ctx, `SELECT elevated_until FROM session_step_ups WHERE session_id = $1 AND elevated_until > NOW()`,
+		sessionID).Scan(&until)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return State{}, fmt.Errorf("read the second factor of the session: %w", err)
 	}
 	if until.Valid {

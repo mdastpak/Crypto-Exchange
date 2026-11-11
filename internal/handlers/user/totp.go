@@ -12,6 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
@@ -73,7 +74,10 @@ func (h *UserHandler) BeginTOTP(c *gin.Context) {
 	defer cancel()
 	// The authenticator comes after the password: an account that has one
 	// always has a password and its recovery codes to fall back on.
-	if has, err := h.Passwords.Has(ctx, userHK); err != nil {
+	if has, err := h.Passwords.Has(ctx, userHK); errors.Is(err, rowseal.ErrUnverified) {
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+		return
+	} else if err != nil {
 		log.Printf("Failed to read the password of user %s: %v", userHK, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
 		return

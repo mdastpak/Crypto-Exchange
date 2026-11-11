@@ -77,6 +77,12 @@ func (h *UserHandler) RequireSecondFactor(funds bool) gin.HandlerFunc {
 			helpers.SendError(c, http.StatusForbidden, refusal.Code, i18n.M("STEP_UP_REQUIRED"), nil)
 			c.Abort()
 			return
+		case errors.Is(err, rowseal.ErrUnverified):
+			// The password of the account is gone while its sealed record
+			// says it exists (#337): nothing it protects runs.
+			helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+			c.Abort()
+			return
 		case err != nil:
 			log.Printf("Failed to check the second factor of user %s: %v", claims.UUID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
