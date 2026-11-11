@@ -315,13 +315,16 @@ func TestWorker_Broker_StartsWithoutTheBroker(t *testing.T) {
 
 	proxy.SetDown(false)
 	require.Eventually(t, late.IsHealthy, 20*time.Second, 50*time.Millisecond)
-	// The worker declares the queue once it consumes; until then the
-	// exchange drops what is published.
+	// The worker declares the queue, binds it, and then consumes; until
+	// the binding, the exchange drops what is published. A queue that
+	// exists may not be bound yet, so wait for the worker's consumer, which
+	// comes after the binding.
 	require.Eventually(t, func() bool {
+		var queue amqp.Queue
 		withBrokerChannel(t, func(ch *amqp.Channel) {
-			_, err = ch.QueueDeclarePassive(topology.opts.Queue, true, false, false, false, nil)
+			queue, err = ch.QueueDeclarePassive(topology.opts.Queue, true, false, false, false, nil)
 		})
-		return err == nil
+		return err == nil && queue.Consumers > 0
 	}, 30*time.Second, 100*time.Millisecond)
 	require.NoError(t, sender.SendOTP(context.Background(), testEmailMessage))
 	select {
