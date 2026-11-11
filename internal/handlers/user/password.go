@@ -34,6 +34,8 @@ type SecuritySettings struct {
 	// PasswordMinLength is the least length of a new password, in
 	// characters.
 	PasswordMinLength int `json:"password_min_length" example:"10"`
+	// RecoveryCodesLeft is how many unused recovery codes the user has.
+	RecoveryCodesLeft int `json:"recovery_codes_left" example:"10"`
 	// SecondFactor is where this session stands with the second factor.
 	SecondFactor userauth.State `json:"second_factor"`
 }
@@ -54,6 +56,10 @@ type PasswordChanged struct {
 	// SecurityHoldUntil is until when withdrawals are held after this
 	// change of the second factor.
 	SecurityHoldUntil time.Time `json:"security_hold_until"`
+	// RecoveryCodes come with the first password, once: ten single-use
+	// codes, one of which resets a forgotten password. They are not
+	// stored, so the user must keep them.
+	RecoveryCodes []string `json:"recovery_codes,omitempty"`
 }
 
 // GetSecurity returns the sign-in protections of the signed-in user.
@@ -86,6 +92,12 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		return
 	}
 	settings := SecuritySettings{Password: status, PasswordMinLength: h.Passwords.MinPasswordLength()}
+	settings.RecoveryCodesLeft, err = h.Passwords.RecoveryCodesLeft(ctx, h.PostgresDB.DB, claims.UUID)
+	if err != nil {
+		log.Printf("Failed to count the recovery codes of user %s: %v", claims.UUID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
+		return
+	}
 	if h.Guard != nil {
 		settings.SecondFactor, err = h.Guard.State(ctx, h.PostgresDB.DB, claims.UUID, claims.SessionID)
 		if err != nil {
@@ -147,7 +159,7 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 	event := audit.FromRequest(c)
 	event.ActorType, event.ActorID = audit.ActorUser, claims.UUID
 
-	changed, holdUntil, err := h.Passwords.Set(ctx, claims.UUID, req.CurrentPassword, req.NewPassword, event)
+	result, err := h.Passwords.Set(ctx, claims.UUID, req.CurrentPassword, req.NewPassword, event)
 	var locked *userauth.LockedError
 	switch {
 	case errors.Is(err, userauth.ErrPasswordTooShort):
@@ -196,10 +208,11 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 		status = userauth.Status{Set: true}
 	}
 	message := i18n.M("PASSWORD_SET")
-	if changed {
+	if result.Changed {
 		message = i18n.M("PASSWORD_CHANGED")
 	}
-	helpers.SendResponse(c, http.StatusOK, message, PasswordChanged{Password: status, SessionsEnded: ended, SecurityHoldUntil: holdUntil})
+	helpers.SendResponse(c, http.StatusOK, message, PasswordChanged{Password: status, SessionsEnded: ended,
+		SecurityHoldUntil: result.HoldUntil, RecoveryCodes: result.RecoveryCodes})
 }
 
 // notePassword records a refused change of the password. It is best
@@ -215,4 +228,49 @@ func (h *UserHandler) notePassword(ctx context.Context, event audit.Event, outco
 	if err := audit.Record(ctx, h.PostgresDB.DB, event); err != nil {
 		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)
 	}
+}
+
+// RecoveryCodes are new recovery codes of the signed-in user.
+type RecoveryCodes struct {
+	// RecoveryCodes are ten single-use codes. They are shown once.
+	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+// GenerateRecoveryCodes replaces the recovery codes of the signed-in user.
+//
+// @Summary Generate new recovery codes
+// @Description Replaces the ten recovery codes of the account, one of which resets a forgotten password. The codes that were not used stop working, and the new ones are shown once. It needs a fresh proof of the password (403 step_up_required), and a user without a password gets 409 second_factor_not_set.
+// @Tags user security
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse{info=RecoveryCodes}
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse "step_up_required"
+// @Failure 409 {object} models.APIResponse "second_factor_not_set"
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/user/recovery-codes [post]
+func (h *UserHandler) GenerateRecoveryCodes(c *gin.Context) {
+	claims, ok := sessionCaller(c)
+	if !ok {
+		return
+	}
+	if h.Passwords == nil {
+		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
+	defer cancel()
+	event := audit.FromRequest(c)
+	event.ActorType, event.ActorID = audit.ActorUser, claims.UUID
+	codes, err := h.Passwords.GenerateRecoveryCodes(ctx, claims.UUID, event)
+	if errors.Is(err, userauth.ErrNoPassword) {
+		helpers.SendError(c, http.StatusConflict, codeSecondFactorNotSet, i18n.M("SECOND_FACTOR_NOT_SET"), nil)
+		return
+	}
+	if err != nil {
+		log.Printf("Failed to generate the recovery codes of user %s: %v", claims.UUID, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_GENERATE_RECOVERY_CODES"), nil)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("RECOVERY_CODES_GENERATED"), RecoveryCodes{RecoveryCodes: codes})
 }
