@@ -1000,6 +1000,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.POST("/auth", rl.AuthRateLimit(middleware.AuthOTP), signIn, ih.Public.RequestOTP)
 		publicGroup.POST("/auth/:uuid", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.VerifyOTP)
 		publicGroup.POST("/auth/second-step", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStep)
+		publicGroup.POST("/auth/password-reset", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ResetPassword)
 		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ReplaceSession)
 		publicGroup.POST("/auth/refresh", service, ih.Public.RefreshToken)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
@@ -1095,6 +1096,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// limit of a sign-in on top of the lock of the password.
 		activeGroup.PUT("/password", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.SetPassword)
 		activeGroup.POST("/step-up", rl.AuthRateLimit(middleware.AuthLogin), ih.User.StepUp)
+		activeGroup.POST("/recovery-codes", profileChanges, ih.User.RequireSecondFactor(false), ih.User.GenerateRecoveryCodes)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)

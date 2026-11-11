@@ -1662,6 +1662,18 @@ definitions:
       username:
         type: string
     type: object
+  public.PasswordResetRequest:
+    properties:
+      challenge:
+        description: Challenge is the challenge that a correct code answered with.
+        type: string
+      new_password:
+        type: string
+      recovery_code:
+        description: RecoveryCode is one of the unused recovery codes of the account.
+        example: ABCD-EFGH-JKLM-NPQR
+        type: string
+    type: object
   public.ReplaceSessionRequest:
     properties:
       challenge:
@@ -1686,6 +1698,17 @@ definitions:
         description: Methods are the second steps that the account can use.
         example:
         - password
+        items:
+          type: string
+        type: array
+      password_reset:
+        description: |-
+          PasswordReset are the proofs with which this account can reset a
+          forgotten password at POST /public/auth/password-reset, besides the
+          code that was just checked. Empty: none is left, and the account
+          needs account recovery.
+        example:
+        - recovery_code
         items:
           type: string
         type: array
@@ -2272,6 +2295,14 @@ definitions:
     properties:
       password:
         $ref: '#/definitions/userauth.Status'
+      recovery_codes:
+        description: |-
+          RecoveryCodes come with the first password, once: ten single-use
+          codes, one of which resets a forgotten password. They are not
+          stored, so the user must keep them.
+        items:
+          type: string
+        type: array
       security_hold_until:
         description: |-
           SecurityHoldUntil is until when withdrawals are held after this
@@ -2322,6 +2353,14 @@ definitions:
       uuid:
         type: string
     type: object
+  user.RecoveryCodes:
+    properties:
+      recovery_codes:
+        description: RecoveryCodes are ten single-use codes. They are shown once.
+        items:
+          type: string
+        type: array
+    type: object
   user.RestrictionList:
     properties:
       items:
@@ -2352,6 +2391,11 @@ definitions:
         description: |-
           PasswordMinLength is the least length of a new password, in
           characters.
+        example: 10
+        type: integer
+      recovery_codes_left:
+        description: RecoveryCodesLeft is how many unused recovery codes the user
+          has.
         example: 10
         type: integer
       second_factor:
@@ -5784,6 +5828,64 @@ paths:
       summary: Sign out
       tags:
       - sign-in
+  /api/v1/public/auth/password-reset:
+    post:
+      consumes:
+      - application/json
+      description: 'A user who forgot the account password proves the account twice:
+        with the code sent to a contact, which answered 202 with a challenge, and
+        with one of the recovery codes. The new password follows the policy of PUT
+        /user/password. The recovery code is used up, every session of the user ends,
+        the security hold starts, and the answer signs in. A wrong recovery code answers
+        401 recovery_code_invalid, leaves the challenge usable, and counts toward
+        the lock of the password: 429 password_locked with Retry-After. An account
+        without unused recovery codes needs account recovery.'
+      parameters:
+      - description: The challenge, a recovery code, and the new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.PasswordResetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The access token. The refresh token is set as an HttpOnly cookie.
+          headers:
+            Set-Cookie:
+              description: The refresh token, HttpOnly
+              type: string
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.AccessTokenInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: challenge_invalid or recovery_code_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: password_locked, or a rate limit
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Reset a forgotten account password
+      tags:
+      - sign-in
   /api/v1/public/auth/refresh:
     post:
       description: Exchanges the refresh_token cookie for a new access token, and
@@ -6884,6 +6986,45 @@ paths:
       summary: Change the names and the preferences in the profile
       tags:
       - user
+  /api/v1/user/recovery-codes:
+    post:
+      description: Replaces the ten recovery codes of the account, one of which resets
+        a forgotten password. The codes that were not used stop working, and the new
+        ones are shown once. It needs a fresh proof of the password (403 step_up_required),
+        and a user without a password gets 409 second_factor_not_set.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.RecoveryCodes'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: second_factor_not_set
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate new recovery codes
+      tags:
+      - user security
   /api/v1/user/restrictions:
     get:
       description: 'The restrictions that apply now to the signed-in user: the operations

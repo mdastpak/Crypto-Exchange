@@ -79,6 +79,7 @@ An error response contains only a fixed message for each error. Internal details
 | `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
 | `second_factor_not_set` | `409` | A step-up of a user who has no password |
 | `password_invalid` | `401`, `403` | The account password is wrong: `401` at the second step of a sign-in, `403` when changing it |
+| `recovery_code_invalid` | `401` | The recovery code of a password reset is wrong, used, or replaced |
 | `password_locked` | `429` | Too many wrong passwords in a row; `Retry-After` says when the password is checked again |
 | `body_too_large` | `413` | The body is larger than `server.max_body_bytes` |
 | `rate_limited` | `429` | A rate limit is used up; `Retry-After` says when to try again |
@@ -310,6 +311,26 @@ Response `200`, with the access token and the refresh cookie as for a sign-in wi
 - `403 account_frozen` or `account_unavailable`: the account was frozen or disabled since the code, or its password row [was changed outside the backend](data-protection.md).
 - `409 session_limit_reached`: as for the code; see [Session limit](#session-limit).
 - The route has the per-IP limit of a code verification. Every refusal is in the [audit log](#audit-log) as a failed `user.sign_in`, with the reason and never the password.
+
+### `POST /public/auth/password-reset`
+
+Resets a forgotten [account password](#account-password) ([#307](https://github.com/mdastpak/Crypto-Exchange/issues/307)). The code of a contact alone never does: whoever took over a mobile number would reset the password with it. A reset needs two proofs:
+
+1. The code sent to a contact, as for a sign-in. Its `202` answer has the challenge, and `password_reset` lists the second proofs that the account has left: `["recovery_code"]`, or `[]`.
+2. One of the [recovery codes](#recovery-codes) of the account.
+
+```json
+{ "challenge": "<challenge>", "recovery_code": "ABCD-EFGH-JKLM-NPQR", "new_password": "a new and better password" }
+```
+
+Response `200`, with the access token and the refresh cookie: the reset signs in.
+
+- The recovery code is used up, **every** session of the user ends, and the [security hold](#security-hold) starts, all with the new password or not at all.
+- The new password follows the policy of `PUT /user/password`; `400 validation_failed` names the problem under `errors.new_password`, and uses no code.
+- `401 recovery_code_invalid`: the code is wrong, used, or replaced. The challenge stays usable. Each try counts toward the lock of the password, so the codes cannot be guessed: `429 password_locked` with `Retry-After`.
+- `401 challenge_invalid`, `403 account_frozen` and `account_unavailable`: as for the second step.
+- Audited as `user.password_reset`, also when it is refused. A code may be typed in lower case and with or without its dashes.
+- An account with no recovery code left cannot reset its password here. It needs account recovery.
 
 ### Sign-in limits
 
@@ -1155,7 +1176,14 @@ A user may set a password on the account ([#307](https://github.com/mdastpak/Cry
 - Setting or changing the password is a change of the second factor, so it starts the [security hold](#security-hold); the answer has `security_hold_until`. Someone who took over the contacts of an account and set its password cannot withdraw at once.
 - Audited as `user.password_set` and `user.password_change`, also when a change is refused. The route closes during a lockdown of profile changes.
 
-A password cannot be removed. Resetting a forgotten one and recovering an account are separate flows.
+A password cannot be removed. A forgotten one is reset with a recovery code at [`POST /public/auth/password-reset`](#post-publicauthpassword-reset).
+
+### Recovery codes
+
+The first password comes with ten recovery codes, in `recovery_codes` of the answer of `PUT /user/password`. Each one resets a forgotten password once. They are shown **only then**: the server keeps a SHA-256 hash of each, bound to the account, so the user must store them, away from the device that receives the sign-in codes.
+
+- `GET /user/security` has `recovery_codes_left`.
+- `POST /user/recovery-codes` replaces them: the unused codes stop working, and the answer has ten new ones. It needs a fresh proof of the password (`403 step_up_required`), so a stolen session cannot take new codes. `409 second_factor_not_set` answers a user without a password. Audited as `user.recovery_codes_generate`.
 
 ### Second factor and step-up
 

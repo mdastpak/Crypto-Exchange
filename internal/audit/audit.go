@@ -84,6 +84,10 @@ const (
 	// sign-in, or changing it with the current one (#307).
 	ActionUserPasswordSet    = "user.password_set"
 	ActionUserPasswordChange = "user.password_change"
+	// A user resetting a forgotten password with a recovery code, and
+	// generating new recovery codes (#307).
+	ActionUserPasswordReset         = "user.password_reset"
+	ActionUserRecoveryCodesGenerate = "user.recovery_codes_generate"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"

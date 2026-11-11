@@ -44,6 +44,9 @@ const (
 	methodCodePassword = "OTP+PASSWORD"
 	// factorPassword names the account password among the second steps.
 	factorPassword = "password"
+	// proofRecoveryCode names the recovery codes among the proofs of a
+	// password reset.
+	proofRecoveryCode = "recovery_code"
 
 	codeSecondStepRequired = "second_step_required"
 	codePasswordInvalid    = "password_invalid"
@@ -61,6 +64,11 @@ type SecondStepInfo struct {
 	ExpiresIn int `json:"expires_in" example:"300"`
 	// Methods are the second steps that the account can use.
 	Methods []string `json:"methods" example:"password"`
+	// PasswordReset are the proofs with which this account can reset a
+	// forgotten password at POST /public/auth/password-reset, besides the
+	// code that was just checked. Empty: none is left, and the account
+	// needs account recovery.
+	PasswordReset []string `json:"password_reset" example:"recovery_code"`
 }
 
 // SecondStepRequest finishes a sign-in with the account password.
@@ -107,12 +115,19 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
 	}
+	reset := []string{}
+	if left, err := h.Passwords.RecoveryCodesLeft(ctx, h.PostgresDB.DB, userHK.String()); err != nil {
+		log.Printf("Failed to count the recovery codes of a sign-in: %v", err)
+	} else if left > 0 {
+		reset = append(reset, proofRecoveryCode)
+	}
 	h.noteSignIn(ctx, attempt, audit.Success, codeSecondStepRequired)
 	helpers.SendResponse(c, http.StatusAccepted, i18n.M("SECOND_STEP_REQUIRED"), SecondStepInfo{
 		SecondStepRequired: true,
 		Challenge:          challenge,
 		ExpiresIn:          int(secondStepTTL.Seconds()),
 		Methods:            []string{factorPassword},
+		PasswordReset:      reset,
 	})
 }
 
@@ -130,6 +145,47 @@ func (h *PublicHandler) canSignIn(ctx context.Context, userHK uuid.UUID) (allowe
 		return false, false, err
 	}
 	return !deleted && role == auth.RoleUser && account.UserStatus(status).CanSignIn(), frozen, nil
+}
+
+// challengedUser returns the user of a second-step challenge, which stays
+// usable, with its Redis key and the audit event of a refusal. It answers,
+// and reports false, when the challenge is not valid or the account may no
+// longer sign in.
+func (h *PublicHandler) challengedUser(c *gin.Context, ctx context.Context, challenge string) (uuid.UUID, string, audit.Event, bool) {
+	key := secondStepKey(challenge)
+	value, err := h.RedisClient.Client.Get(ctx, key).Result()
+	userHK, parseErr := uuid.Parse(value)
+	if errors.Is(err, redis.Nil) || (err == nil && parseErr != nil) {
+		helpers.SendError(c, http.StatusUnauthorized, "challenge_invalid", i18n.M("CHALLENGE_INVALID_OR_EXPIRED"), nil)
+		return uuid.Nil, "", audit.Event{}, false
+	}
+	if err != nil {
+		log.Printf("Failed to read a second-step challenge: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return uuid.Nil, "", audit.Event{}, false
+	}
+
+	attempt := audit.FromRequest(c)
+	attempt.Action, attempt.ActorType, attempt.ActorID = audit.ActionUserSignIn, audit.ActorUser, userHK.String()
+	attempt.TargetType, attempt.TargetID = audit.TargetUser, userHK.String()
+
+	allowed, frozen, err := h.canSignIn(ctx, userHK)
+	switch {
+	case err != nil:
+		log.Printf("Failed to read the user of a second-step challenge: %v", err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+		return uuid.Nil, "", audit.Event{}, false
+	case frozen:
+		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
+		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
+		return uuid.Nil, "", audit.Event{}, false
+	case !allowed:
+		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
+		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
+		return uuid.Nil, "", audit.Event{}, false
+	}
+
+	return userHK, key, attempt, true
 }
 
 // @Summary Finish a sign-in with the account password
@@ -172,40 +228,12 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 		return
 	}
 
-	key := secondStepKey(req.Challenge)
-	value, err := h.RedisClient.Client.Get(ctx, key).Result()
-	userHK, parseErr := uuid.Parse(value)
-	if errors.Is(err, redis.Nil) || (err == nil && parseErr != nil) {
-		helpers.SendError(c, http.StatusUnauthorized, "challenge_invalid", i18n.M("CHALLENGE_INVALID_OR_EXPIRED"), nil)
-		return
-	}
-	if err != nil {
-		log.Printf("Failed to read a second-step challenge: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
+	userHK, key, attempt, ok := h.challengedUser(c, ctx, req.Challenge)
+	if !ok {
 		return
 	}
 
-	attempt := audit.FromRequest(c)
-	attempt.Action, attempt.ActorType, attempt.ActorID = audit.ActionUserSignIn, audit.ActorUser, userHK.String()
-	attempt.TargetType, attempt.TargetID = audit.TargetUser, userHK.String()
-
-	allowed, frozen, err := h.canSignIn(ctx, userHK)
-	switch {
-	case err != nil:
-		log.Printf("Failed to read the user of a second-step challenge: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
-		return
-	case frozen:
-		h.noteSignIn(ctx, attempt, audit.Denied, restrictions.CodeAccountFrozen)
-		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
-		return
-	case !allowed:
-		h.noteSignIn(ctx, attempt, audit.Failure, helpers.CodeAccountUnavailable)
-		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_CANNOT_SIGN_IN"), nil)
-		return
-	}
-
-	err = h.Passwords.Verify(ctx, userHK.String(), req.Password)
+	err := h.Passwords.Verify(ctx, userHK.String(), req.Password)
 	var locked *userauth.LockedError
 	switch {
 	case errors.As(err, &locked):
