@@ -11,6 +11,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 )
@@ -102,6 +103,8 @@ func sendControlError(c *gin.Context, err error, action string) {
 	case errors.Is(err, platform.ErrSameApprover):
 		helpers.SendError(c, http.StatusConflict, "second_approval_required",
 			i18n.M("SECOND_APPROVAL_REQUIRED"), nil)
+	case errors.Is(err, rowseal.ErrUnverified):
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 	default:
 		log.Printf("Failed to %s a platform control: %v", action, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, controlFailures[action], nil)
@@ -128,6 +131,10 @@ func (h *AdminHandler) GetPlatform(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	controls, err := platform.Open(ctx, h.PostgresDB.DB)
+	if errors.Is(err, rowseal.ErrUnverified) {
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
+		return
+	}
 	if err != nil {
 		log.Printf("Failed to read the platform controls: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_CONTROLS"), nil)
@@ -242,7 +249,7 @@ func (h *AdminHandler) UpdateControl(c *gin.Context) {
 }
 
 // @Summary Lift a platform control
-// @Description Ends a control now, or cancels one that has not started. An active lockdown of a feature in platform.lift_approval (withdrawals and trading by default) needs two administrators: the first call records the request and answers 202, and a call by another administrator lifts it; the same administrator gets 409 second_approval_required. With version, the lift is refused with 409 version_conflict when the control has changed since. An ended or lifted control answers 409 control_ended. Audited as platform.control_lift_request and platform.control_lift.
+// @Description Ends a control now, or cancels one that has not started. An active lockdown of a feature in platform.lift_approval (withdrawals and trading by default) needs two administrators: the first call records the request and answers 202, and a call by another administrator lifts it; the same administrator gets 409 second_approval_required. The approval needs the sealed audit event of the request; a request without it, such as one written in SQL, counts as none, and the call asks again with 202. A control changed outside the backend answers 409 row_unverified, in enforce mode. With version, the lift is refused with 409 version_conflict when the control has changed since. An ended or lifted control answers 409 control_ended. Audited as platform.control_lift_request and platform.control_lift.
 // @Tags admin platform
 // @Accept json
 // @Produce json

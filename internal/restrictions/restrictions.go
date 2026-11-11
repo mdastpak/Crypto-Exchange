@@ -23,6 +23,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -172,11 +173,6 @@ type Querier interface {
 // maxActive bounds the restrictions that a check reads.
 const maxActive = 1000
 
-// Active returns the restrictions of a user that apply now, newest first.
-func Active(ctx context.Context, q Querier, userHK string) ([]Restriction, error) {
-	return List(ctx, q, userHK, true, maxActive)
-}
-
 // ErrUserNotFound is a lock of a user that does not exist.
 var ErrUserNotFound = errors.New("user not found")
 
@@ -229,6 +225,11 @@ func Check(ctx context.Context, q Querier, userHK string, op Operation, currency
 		return fmt.Errorf("unknown operation %q", op)
 	}
 	active, err := Active(ctx, q, userHK)
+	if errors.Is(err, rowseal.ErrUnverified) {
+		// A restriction changed in SQL, such as a freeze lifted there, counts
+		// as a freeze until an administrator has looked (#337).
+		return &Refusal{Code: CodeAccountFrozen, Operation: op}
+	}
 	if err != nil {
 		return err
 	}

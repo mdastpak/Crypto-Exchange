@@ -469,13 +469,18 @@ func (p *Passwords) Reset(ctx context.Context, userHK, recoveryCode, password st
 	}
 	codeHash := hashRecoveryCode(userHK, code)
 	var id int64
-	err := p.DB.QueryRowContext(ctx, `SELECT id FROM user_recovery_codes
-		WHERE user_hk = $1 AND code_hash = $2 AND retired_at IS NULL`, userHK, codeHash).Scan(&id)
+	sealed := rowseal.UserRecoveryCodes.NewRow()
+	err := p.DB.QueryRowContext(ctx, `SELECT id, `+rowseal.UserRecoveryCodes.Fields("")+` FROM user_recovery_codes
+		WHERE user_hk = $1 AND code_hash = $2 AND retired_at IS NULL`, userHK, codeHash).Scan(append([]any{&id}, sealed.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return none, ErrWrongRecoveryCode
 	}
 	if err != nil {
 		return none, fmt.Errorf("read the recovery code: %w", err)
+	}
+	// A code inserted, or put back, in SQL resets nothing (#337).
+	if err := rowseal.Check(ctx, rowseal.UserRecoveryCodes, sealed); err != nil {
+		return none, err
 	}
 	hash, err := p.Hasher.Hash(ctx, password)
 	if err != nil {
@@ -524,6 +529,9 @@ func (p *Passwords) storeReset(ctx context.Context, userHK, hash string, recover
 		}
 		if n, err := used.RowsAffected(); err != nil || n != 1 {
 			return none, ErrWrongRecoveryCode
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.UserRecoveryCodes, "id = $1", recoveryCodeID); err != nil {
+			return none, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE user_passwords SET password_hash = $2, changed_at = NOW(),

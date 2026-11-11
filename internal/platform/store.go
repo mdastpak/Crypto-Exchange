@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/google/uuid"
 )
@@ -154,9 +156,65 @@ func query(ctx context.Context, q Querier, sqlText string, args ...any) ([]*Cont
 	return list, rows.Err()
 }
 
-// Open returns the controls that apply now or later, by start.
+// withSeal scans a row of columns, then the columns in extra: whether the
+// control is kept, and the sealed columns of rowseal.PlatformControls.
+type withSeal struct {
+	row   scanner
+	extra []any
+}
+
+func (w withSeal) Scan(dest ...any) error { return w.row.Scan(append(dest, w.extra...)...) }
+
+// checked reads every control, checks each against its seal (#337), and
+// returns those for which keep, a condition on the row c, holds, by start.
+// A control lifted, or ended early, in SQL no longer meets keep, so a query
+// of the kept ones alone would not see it. In enforce mode, a control that
+// fails its check returns rowseal.ErrUnverified: a watcher then keeps the
+// controls it read before, and closes its fail-closed features once they
+// are stale, and a check in the transaction of an operation refuses it.
+// The controls are few: an administrator creates each one.
+func checked(ctx context.Context, q Querier, keep string, args ...any) ([]*Control, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+columns+`, (`+keep+`), `+rowseal.PlatformControls.Fields("c")+`
+		FROM platform_controls c ORDER BY c.starts_at, c.hk`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the platform controls: %w", err)
+	}
+	type read struct {
+		control *Control
+		kept    bool
+		sealed  *rowseal.Row
+	}
+	var all []read
+	for rows.Next() {
+		r := read{sealed: rowseal.PlatformControls.NewRow()}
+		c, err := scan(withSeal{rows, append([]any{&r.kept}, r.sealed.Dest()...)})
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("failed to read the platform controls: %w", err)
+		}
+		r.control = c
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read the platform controls: %w", err)
+	}
+	list := []*Control{}
+	for _, r := range all {
+		if err := rowseal.Check(ctx, rowseal.PlatformControls, r.sealed); err != nil {
+			return nil, err
+		}
+		if r.kept {
+			list = append(list, r.control)
+		}
+	}
+	return list, nil
+}
+
+// Open returns the controls that apply now or later, by start. Every
+// control is checked against its seal (checked).
 func Open(ctx context.Context, q Querier) ([]*Control, error) {
-	return query(ctx, q, `SELECT `+columns+` FROM platform_controls c WHERE `+openSQL+` ORDER BY c.starts_at, c.hk`)
+	return checked(ctx, q, openSQL)
 }
 
 // List returns the controls, newest first, at most limit (and at most 200).
@@ -217,8 +275,7 @@ func Check(ctx context.Context, tx *sql.Tx, use Feature, subject Subject) error 
 	if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp() FROM platform_state FOR SHARE`).Scan(&now); err != nil {
 		return fmt.Errorf("failed to lock the platform state: %w", err)
 	}
-	controls, err := query(ctx, tx, `SELECT `+columns+` FROM platform_controls c
-		WHERE c.lifted_at IS NULL AND c.starts_at <= $1 AND (c.ends_at IS NULL OR c.ends_at > $1)`, now)
+	controls, err := checked(ctx, tx, `c.lifted_at IS NULL AND c.starts_at <= $1 AND (c.ends_at IS NULL OR c.ends_at > $1)`, now)
 	if err != nil {
 		return err
 	}
@@ -439,6 +496,9 @@ func Create(ctx context.Context, db *sql.DB, n New, origin audit.Event) (*Contro
 		if err != nil {
 			return false, fmt.Errorf("failed to record the platform control: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.PlatformControls, "hk = $1", c.HK); err != nil {
+			return false, err
+		}
 		after := summary(c)
 		after["reason"] = c.Reason
 		if len(c.AllowNetworks) > 0 {
@@ -466,12 +526,20 @@ func lockControl(ctx context.Context, tx *sql.Tx, hk string, expected *int64) (*
 	if _, err := uuid.Parse(hk); err != nil {
 		return nil, ErrNotFound
 	}
-	c, err := scan(tx.QueryRowContext(ctx, `SELECT `+columns+` FROM platform_controls c WHERE c.hk = $1 FOR UPDATE`, hk))
+	sealed := rowseal.PlatformControls.NewRow()
+	c, err := scan(withSeal{tx.QueryRowContext(ctx, `SELECT `+columns+`, `+rowseal.PlatformControls.Fields("c")+`
+		FROM platform_controls c WHERE c.hk = $1 FOR UPDATE`, hk), sealed.Dest()})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the platform control: %w", err)
+	}
+	// A control changed in SQL, such as a lift request written there in
+	// the name of another administrator, changes no further until its
+	// finding is resolved (#337).
+	if err := rowseal.Check(ctx, rowseal.PlatformControls, sealed); err != nil {
+		return nil, err
 	}
 	if expected != nil && *expected != c.Version {
 		return nil, &VersionConflict{Current: c.Version}
@@ -537,6 +605,9 @@ func Update(ctx context.Context, db *sql.DB, hk string, changes Changes, expecte
 		if err != nil {
 			return false, fmt.Errorf("failed to change the platform control: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.PlatformControls, "hk = $1", c.HK); err != nil {
+			return false, err
+		}
 		before, after := summary(c), summary(u)
 		if changes.Message != nil {
 			before["message"], after["message"] = c.Message, u.Message
@@ -596,12 +667,37 @@ func Lift(ctx context.Context, db *sql.DB, r LiftRequest, origin audit.Event) (L
 			return false, ErrEnded
 		}
 		needsApproval := r.By != "" && c.Kind == KindLockdown && c.activeAt(now) && slices.Contains(r.Approval, c.feature())
-		if needsApproval && c.LiftRequestedBy == nil {
+		requested := needsApproval && c.LiftRequestedBy != nil
+		if requested && *c.LiftRequestedBy == r.By {
+			return false, ErrSameApprover
+		}
+		if requested {
+			// The request counts only with its sealed audit event (#337), in
+			// every mode: report mode serves a row that fails its seal, and
+			// a request written in SQL in the name of another administrator
+			// would let one lift alone.
+			recorded, err := rowseal.EventRecorded(ctx, tx, rowseal.EventMatch{
+				Action: audit.ActionPlatformControlLiftRequest, TargetType: audit.TargetPlatformControl, TargetID: c.HK,
+				ActorID: *c.LiftRequestedBy, At: *c.LiftRequestedAt, After: map[string]string{"control": c.HK},
+			})
+			if err != nil {
+				return false, err
+			}
+			if !recorded {
+				log.Printf("SECURITY: the lift request of platform control %s, by %s, has no sealed audit event; it counts as none, and this call asks again",
+					c.HK, *c.LiftRequestedBy)
+				requested = false
+			}
+		}
+		if needsApproval && !requested {
 			u, err := scan(tx.QueryRowContext(ctx, `
 				UPDATE platform_controls AS c SET lift_requested_by = $2, lift_requested_at = NOW(), version = version + 1
 				WHERE c.hk = $1 RETURNING `+columns, c.HK, r.By))
 			if err != nil {
 				return false, fmt.Errorf("failed to record the lift request: %w", err)
+			}
+			if err := rowseal.Reseal(ctx, tx, rowseal.PlatformControls, "hk = $1", c.HK); err != nil {
+				return false, err
 			}
 			event := audit.Of(origin, audit.ActionPlatformControlLiftRequest, audit.TargetPlatformControl, c.HK)
 			event.Changes = &audit.Changes{After: map[string]interface{}{"control": c.HK, "note": r.Note}}
@@ -612,14 +708,14 @@ func Lift(ctx context.Context, db *sql.DB, r LiftRequest, origin audit.Event) (L
 			// Nothing changes for users yet.
 			return false, nil
 		}
-		if needsApproval && *c.LiftRequestedBy == r.By {
-			return false, ErrSameApprover
-		}
 		u, err := scan(tx.QueryRowContext(ctx, `
 			UPDATE platform_controls AS c SET lifted_at = NOW(), lifted_by = $2, lift_note = $3, version = version + 1
 			WHERE c.hk = $1 RETURNING `+columns, c.HK, nullable(r.By), r.Note))
 		if err != nil {
 			return false, fmt.Errorf("failed to lift the platform control: %w", err)
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.PlatformControls, "hk = $1", c.HK); err != nil {
+			return false, err
 		}
 		before, after := summary(c), summary(u)
 		before["lifted"], after["lifted"], after["note"] = false, true, r.Note

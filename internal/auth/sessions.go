@@ -301,6 +301,15 @@ func limitSessions(ctx context.Context, tx *sql.Tx, session Session, event audit
 	if frozen {
 		return ErrAccountFrozen
 	}
+	// The query above trusts the rows as they read. Every session starts
+	// here, so the restrictions of the user are also checked against their
+	// seals (#337): a freeze lifted in SQL still freezes. The sessions that
+	// the freeze ended stay ended, since their own seals cover that.
+	if _, err := restrictions.Active(ctx, tx, session.UserID); errors.Is(err, rowseal.ErrUnverified) {
+		return ErrAccountFrozen
+	} else if err != nil {
+		return err
+	}
 	if session.Replace != "" {
 		//nolint:gosec // G202: liveSession and cappedExpiry join constant fragments and a number of the configuration; every value is an argument.
 		res, err := tx.ExecContext(ctx, `

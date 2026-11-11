@@ -3940,7 +3940,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Ends a control now, or cancels one that has not started. An active lockdown of a feature in platform.lift_approval (withdrawals and trading by default) needs two administrators: the first call records the request and answers 202, and a call by another administrator lifts it; the same administrator gets 409 second_approval_required. With version, the lift is refused with 409 version_conflict when the control has changed since. An ended or lifted control answers 409 control_ended. Audited as platform.control_lift_request and platform.control_lift.",
+                "description": "Ends a control now, or cancels one that has not started. An active lockdown of a feature in platform.lift_approval (withdrawals and trading by default) needs two administrators: the first call records the request and answers 202, and a call by another administrator lifts it; the same administrator gets 409 second_approval_required. The approval needs the sealed audit event of the request; a request without it, such as one written in SQL, counts as none, and the call asks again with 202. A control changed outside the backend answers 409 row_unverified, in enforce mode. With version, the lift is refused with 409 version_conflict when the control has changed since. An ended or lifted control answers 409 control_ended. Audited as platform.control_lift_request and platform.control_lift.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4404,7 +4404,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Ends a restriction now. A lifted freeze lets the user sign in again; the sessions it ended stay ended. With version, the lift is refused with 409 version_conflict when the restriction has changed since. A lifted restriction answers 409 already_lifted. Audited as user.restriction_lift.",
+                "description": "Ends a restriction now. A lifted freeze lets the user sign in again; the sessions it ended stay ended. With version, the lift is refused with 409 version_conflict when the restriction has changed since. A lifted restriction answers 409 already_lifted, and one changed outside the backend 409 row_unverified, in enforce mode. Audited as user.restriction_lift.",
                 "consumes": [
                     "application/json"
                 ],

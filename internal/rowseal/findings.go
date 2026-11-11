@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -152,12 +153,15 @@ func (s *Sealer) ReviewReseal(ctx context.Context, id int64, origin audit.Event,
 // when the row is gone.
 func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string, error) {
 	// The hk of the user that a row belongs to, as an expression of its
-	// table; a step-up belongs to the user of its session.
+	// table; a step-up belongs to the user of its session. A platform
+	// control belongs to no account.
 	owner := map[string]string{
 		Users.Name: "hk", UserContacts.Name: "user_hk", Sessions.Name: "user_id",
 		UserPasswords.Name: "user_hk", UserPasskeys.Name: "user_hk", UserTOTP.Name: "user_hk",
 		AccountRecoveries.Name: "user_hk",
 		SessionStepUps.Name:    "(SELECT s.user_id FROM sessions s WHERE s.id = session_step_ups.session_id)",
+		AdminSessions.Name:     "admin_id", UserRestrictions.Name: "user_hk", UserRecoveryCodes.Name: "user_hk",
+		PlatformControls.Name: "NULL",
 	}[t.Name]
 	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)
@@ -173,64 +177,18 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 	return "", err
 }
 
-// requestRecorded reports whether the waiting re-seal request of finding id
-// has its audit event, under a seal that matches (#337): an
-// integrity.reseal_request of the administrator who asked, at the time of
-// the request, for this finding and row, with the same reason. The backend
-// writes the event in the transaction that writes the request, so both have
-// the same time. The request columns of integrity_findings have no seal, so
-// without the event, a request written in SQL in the name of another
-// administrator would let one approve a re-seal alone.
-func (s *Sealer) requestRecorded(ctx context.Context, tx *sql.Tx, id int64) (bool, error) {
-	fields := AuditEvents.ColumnFields("e")
-	rows, err := tx.QueryContext(ctx, `SELECT e.hk::text, e.row_seal, e.seal_key_version::bigint, `+strings.Join(fields, ", ")+`
-		FROM integrity_findings f
-		JOIN audit_events e ON e.target_type = f.table_name AND e.target_id = f.row_key
-			AND e.action = $2 AND e.actor_id = f.reseal_requested_by AND e.occurred_at = f.reseal_requested_at
-			AND e.changes->'after'->>'finding' = f.id::text AND e.changes->'after'->>'reason' = f.reseal_request_reason
-		WHERE f.id = $1
-		LIMIT 10`, id, audit.ActionIntegrityResealRequest)
-	if err != nil {
-		return false, fmt.Errorf("read the audit event of the re-seal request: %w", err)
-	}
-	type event struct {
-		hk         string
-		seal       []byte
-		keyVersion sql.NullInt64
-		values     []sql.NullString
-	}
-	var events []event
-	for rows.Next() {
-		e := event{values: make([]sql.NullString, len(fields))}
-		dest := []any{&e.hk, &e.seal, &e.keyVersion}
-		for i := range e.values {
-			dest = append(dest, &e.values[i])
-		}
-		if err := rows.Scan(dest...); err != nil {
-			rows.Close()
-			return false, fmt.Errorf("read the audit event of the re-seal request: %w", err)
-		}
-		events = append(events, e)
-	}
-	if err := rows.Close(); err != nil {
-		return false, err
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("read the audit event of the re-seal request: %w", err)
-	}
-	// Anyone who writes to the database can insert an event; only the
-	// backend can seal one.
-	for _, e := range events {
-		verdict, err := s.CheckEvent(ctx, e.hk, e.values, e.seal, e.keyVersion)
-		if err != nil {
-			return false, err
-		}
-		if verdict == "" {
-			return true, nil
-		}
-		s.logf("SECURITY: audit event %s, a re-seal request of finding %d, fails its seal check (%s)", e.hk, id, verdict)
-	}
-	return false, nil
+// requestRecorded reports whether the waiting re-seal request of f has its
+// sealed audit event (#337): an integrity.reseal_request of the
+// administrator who asked, at the time of the request, for this finding and
+// row, with the same reason. The request columns of integrity_findings have
+// no seal, so without the event, a request written in SQL in the name of
+// another administrator would let one approve a re-seal alone.
+func (s *Sealer) requestRecorded(ctx context.Context, tx *sql.Tx, f Finding) (bool, error) {
+	return s.EventRecorded(ctx, tx, EventMatch{
+		Action: audit.ActionIntegrityResealRequest, TargetType: f.Table, TargetID: f.RowKey,
+		ActorID: f.ResealRequestedBy, At: *f.ResealRequestedAt,
+		After: map[string]string{"finding": strconv.FormatInt(f.ID, 10), "reason": f.ResealRequestReason},
+	})
 }
 
 func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reason string, twoPerson bool) (Finding, bool, error) {
@@ -276,7 +234,7 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 		if waiting {
 			// The request columns have no seal; the request counts only with
 			// its sealed audit event (#337).
-			recorded, err := s.requestRecorded(ctx, tx, id)
+			recorded, err := s.requestRecorded(ctx, tx, f)
 			if err != nil {
 				return Finding{}, false, err
 			}
