@@ -93,3 +93,16 @@ func TestGetProfile_WithoutClaimsIsUnauthorized(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code, method)
 	}
 }
+
+func TestProfileChanges_MaskTheNames(t *testing.T) {
+	name := func(s string) *string { return &s }
+	locale := "fa"
+	changes := profileChanges(
+		Profile{FirstName: name("سارا"), Theme: "system"},
+		Profile{FirstName: name("Sara"), LastName: name("Ahmadi"), Locale: &locale, Theme: "dark"},
+	)
+	require.NotNil(t, changes)
+	assert.Equal(t, map[string]interface{}{"first_name": "س*****", "last_name": nil, "locale": nil, "theme": "system"}, changes.Before)
+	assert.Equal(t, map[string]interface{}{"first_name": "S*****", "last_name": "A*****", "locale": "fa", "theme": "dark"}, changes.After,
+		"the locale and the theme are not personal")
+}

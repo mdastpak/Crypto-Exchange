@@ -23,6 +23,7 @@
 //	admin [-config path] backup status [-rpo 5m]
 //	admin [-config path] [-migrations url] restore verify [-not-before t] [-not-after t] [-keys]
 //	admin [-config path] [-migrations url] migrate [up|status]
+//	admin [-config path] [-migrations url] fields [status|rekey|decrypt]
 //
 // create and reset-totp print the authenticator secret once. They seal it
 // as the server does, with a field-enc data key, so they need keys.provider;
@@ -40,7 +41,9 @@
 // database (#236); they only read, never migrate, and exit with 1 when a
 // check fails, for monitoring and restore drills. migrate applies the
 // migrations with the migration role and grants the runtime role (#180),
-// as the release step of postgres.migrations.mode "external".
+// as the release step of postgres.migrations.mode "external". The fields
+// commands encrypt the personal fields (#140) as the server's job does,
+// count what is left, and write the plaintext back before a down migration.
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -135,6 +138,12 @@ Row seals (see docs/data-protection.md#row-seals):
   row-seals reseal -id <n> -reason <text>  Seal the row of a finding again after a review, and close it.
   row-seals verify                         Check every protected row now, as the server's verifier does.
 
+Personal fields (see docs/data-protection.md#field-encryption):
+  fields status    Count the rows to encrypt, or to encrypt again with the current keys.
+  fields rekey     Encrypt them now, as the server's job does every hour.
+  fields decrypt   Write back the plaintext of the fields stored only encrypted, before the
+                   down migration of 16_encrypt_personal_fields.
+
 Backups and restores (read only; exit status 1 when a check fails; see docs/disaster-recovery.md):
   backup status [-rpo 5m]                  Check WAL archiving on the primary against the RPO.
   restore verify [-not-before t] [-not-after t] [-keys]
@@ -225,6 +234,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseMigrateArgs(cmd, global.Args()[1:], stderr)
 	case "row-seals":
 		return parseRowSealArgs(cmd, global.Args()[1:], stderr)
+	case "fields":
+		return parseFieldsArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -355,6 +366,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "row-seals ") {
 		return runRowSeals(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "fields ") {
+		return runFields(cmd, stdout, stderr)
 	}
 	if config.Config.Keys.Provider == "" {
 		fmt.Fprintln(stderr, "Error: authenticator secrets need the data keys: set keys.provider (KEYS_PROVIDER, see docs/data-protection.md)")
@@ -525,6 +539,15 @@ func executeKeys(ctx context.Context, store *keys.Store, cmd command, stdout io.
 		}
 		if table != "" {
 			return fmt.Errorf("data key %s/v%d still seals rows of %s; retire it once the row seal verifier has moved them to the current version", cmd.purpose, cmd.version, table)
+		}
+		// Values sealed with the version could no longer be read, and
+		// contacts indexed with it no longer found (#140).
+		column, err := db.KeyInUse(ctx, store.DB, cmd.purpose, cmd.version)
+		if err != nil {
+			return err
+		}
+		if column != "" {
+			return fmt.Errorf("data key %s/v%d is still used by %s; retire it once nothing does (see admin fields status)", cmd.purpose, cmd.version, column)
 		}
 		if err := store.Retire(ctx, cmd.purpose, cmd.version); err != nil {
 			return err

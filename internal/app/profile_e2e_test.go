@@ -139,7 +139,7 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 		assert.Equal(t, "Alice", *resp.Info.FirstName)
 	})
 
-	t.Run("each change is audited with what changed", func(t *testing.T) {
+	t.Run("each change is audited with what changed, the names masked", func(t *testing.T) {
 		// An update that changes nothing records nothing.
 		status, resp := env.profile(t, http.MethodPatch, map[string]string{"first_name": "Alice"}, aliceToken)
 		require.Equal(t, http.StatusOK, status, resp.Message)
@@ -158,8 +158,8 @@ func TestUserProfile_EndToEnd(t *testing.T) {
 			changes = append(changes, change)
 		}
 		assert.Equal(t, []string{
-			`{"after": {"first_name": "Alice", "display_name": "alice"}, "before": {"first_name": null, "display_name": null}}`,
-			`{"after": {"display_name": null}, "before": {"display_name": "alice"}}`,
+			`{"after": {"first_name": "A*****", "display_name": "a*****"}, "before": {"first_name": null, "display_name": null}}`,
+			`{"after": {"display_name": null}, "before": {"display_name": "a*****"}}`,
 		}, changes)
 	})
 

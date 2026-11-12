@@ -32,6 +32,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Audit log | Implemented | Append-only `audit_events`, written in the transaction of each change, for sign-ins, sessions, currency changes, contact changes, and the `cmd/admin` commands. Administrators query it at `GET /admin/audit`. |
 | Transactional outbox | Implemented | Events are written with their change and relayed to RabbitMQ by one instance at a time, with retries and dead letters that `cmd/admin outbox` lists, retries, or discards ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)). |
 | Data-protection keys | Implemented | Keys for row seals and field encryption, wrapped by a key-encryption key in Vault or OpenBao Transit, with rotation ([#138](https://github.com/mdastpak/Crypto-Exchange/issues/138)). Row seals, a keyed MAC over each row, protect `users`, `user_contacts`, and `sessions` ([PR #300](https://github.com/mdastpak/Crypto-Exchange/pull/300)). The field key encrypts national IDs, administrators' authenticator secrets, and API key secrets, and sign-in codes are hashed with their own key ([#146](https://github.com/mdastpak/Crypto-Exchange/issues/146)). See [docs/data-protection.md](docs/data-protection.md). |
+| Field encryption | Partial | Contacts and names are stored encrypted with the field key, next to their plaintext for now, and sign-in finds contacts by keyed blind indexes. The next release empties the plaintext ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)). See [docs/data-protection.md](docs/data-protection.md#field-encryption). |
 | WebSocket gateway | Partial | Ping and pong, token authentication with reauth, connections closed when their session ends, and currency events broadcast to every client. The channel protocol is tracked in [#66](https://github.com/mdastpak/Crypto-Exchange/issues/66). |
 | Maintenance and lockdowns | Implemented | Administrators put the whole service under maintenance, or lock single features (sign-up, sign-in, deposits, withdrawals, trading, the WebSocket, or every change), now or on a schedule, through `/admin/platform` or `cmd/admin platform`. Every instance applies a change within a second, and money features fail closed when an instance cannot read the controls ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). |
 | Backups and disaster recovery | Partial | The checks, the monthly restore drill, and the runbook are in the repository ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)); WAL archiving and base backups are set up per environment with the backup tool, as [docs/disaster-recovery.md](docs/disaster-recovery.md) describes. |
@@ -191,7 +192,7 @@ The image contains only the `server` and `admin` binaries and the migrations, an
 
 Configuration is loaded from a YAML file, missing values are filled with defaults, and selected environment variables override the result. [docs/configuration.md](docs/configuration.md) describes every section, the defaults, and the supported environment variables.
 
-The data-protection keys, which future row seals and field encryption build on, are wrapped by a key-encryption key in HashiCorp Vault or OpenBao (Transit). [docs/data-protection.md](docs/data-protection.md) describes the key hierarchy, the setup, and how to rotate the keys.
+The data-protection keys, which the row seals and the field encryption build on, are wrapped by a key-encryption key in HashiCorp Vault or OpenBao (Transit). [docs/data-protection.md](docs/data-protection.md) describes the key hierarchy, the setup, and how to rotate the keys.
 
 Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-availability.md](docs/redis-high-availability.md) describes the deployment and what a failover may lose. RabbitMQ runs as a cluster of three nodes with quorum queues, and the server keeps working without it, except for sending sign-in codes; see [docs/rabbitmq-high-availability.md](docs/rabbitmq-high-availability.md).
 
@@ -312,6 +313,7 @@ internal/config/        Configuration loading, environment variables, defaults, 
 internal/contact/       Normalizing and identifying the contacts and codes users type
 internal/contactclaim/  Moving a contact off an account that no longer owns it: claims and
                         recycled mobile numbers
+internal/crypto/        Field encryption of personal data, and blind indexes for lookups (field)
 internal/currencies/    The public currency catalog: Redis cache with a PostgreSQL fallback
 internal/db/            PostgreSQL and Redis clients, SQL migrations
 internal/dberr/         Busy-database refusals of a request, answered as 503 database_busy

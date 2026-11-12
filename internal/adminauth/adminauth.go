@@ -100,8 +100,9 @@ type Admin struct {
 }
 
 // ownsEmail matches the user that owns an email address, through the unique
-// index of user_contacts. Its arguments are "email" and the address.
-const ownsEmail = `hk = (SELECT c.user_hk FROM user_contacts c WHERE ` + db.ContactMatch + `)`
+// indexes of user_contacts. Its arguments are db.ContactArgs of "email" and
+// the address.
+var ownsEmail = `hk = (SELECT c.user_hk FROM user_contacts c WHERE ` + db.ContactMatch + `)`
 
 // emailContact is the contact type of an administrator's address.
 const emailContact = "email"
@@ -165,7 +166,7 @@ func (s *Service) ResetTOTP(ctx context.Context, email string) (Enrollment, erro
 	}
 	var adminID string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT hk FROM users WHERE role = 'admin' AND `+ownsEmail, emailContact, email,
+		`SELECT hk FROM users WHERE role = 'admin' AND `+ownsEmail, db.ContactArgs(emailContact, email)...,
 	).Scan(&adminID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Enrollment{}, ErrNotFound
@@ -228,7 +229,7 @@ func (s *Service) Disable(ctx context.Context, email string) error {
 			`UPDATE users u SET status = 'INACTIVE', updated_at = NOW()
 			 FROM (SELECT hk, status FROM users WHERE role = 'admin' AND `+ownsEmail+` FOR UPDATE) old
 			 WHERE u.hk = old.hk
-			 RETURNING u.hk, old.status`, emailContact, email,
+			 RETURNING u.hk, old.status`, db.ContactArgs(emailContact, email)...,
 		).Scan(&adminID, &before)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -262,7 +263,7 @@ func (s *Service) FindActive(ctx context.Context, email string) (Admin, error) {
 	err = s.db.QueryRowContext(ctx,
 		`SELECT hk FROM users
 		 WHERE role = 'admin' AND status = 'ACTIVE' AND totp_enabled AND deleted_at IS NULL AND `+ownsEmail,
-		emailContact, email,
+		db.ContactArgs(emailContact, email)...,
 	).Scan(&admin.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Admin{}, ErrNotFound

@@ -49,6 +49,13 @@ func timestamptz(name string) Column {
 	return Column{Name: name, Expr: `to_char(%[1]s` + name + ` AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')`}
 }
 
+// sealedBytes is a BYTEA column of ciphertext or of a blind index (#140),
+// in hex, which depends on no setting of the session, as bytea_output does.
+// It is secret: the admin view and the audit log never show it.
+func sealedBytes(name string) Column {
+	return Column{Name: name, Expr: "encode(%[1]s" + name + ", 'hex')", Secret: true}
+}
+
 // optional marks a column that the table gained after its rows were sealed.
 func optional(c Column) Column {
 	c.Optional = true
@@ -78,18 +85,27 @@ var (
 	// password_set_at records that the account has a password (#337), so
 	// that deleting its user_passwords row, which no seal can show, does
 	// not drop the second step of its sign-in.
+	//
+	// The names are sealed as their ciphertext too (#140); the plaintext
+	// columns stay sealed until the release that drops them.
 	Users = &Table{Name: "users", Key: "hk", KeyType: "uuid", Columns: []Column{
 		text("status"), text("role"), timestamptz("deleted_at"),
 		secret("totp_secret"), text("totp_enabled"),
 		timestamptz("security_hold_until"), text("kyc_status"), text("kyc_tier"),
 		text("first_name"), text("last_name"), text("display_name"),
 		optional(timestamptz("password_set_at")),
+		optional(sealedBytes("first_name_enc")), optional(sealedBytes("last_name_enc")),
+		optional(sealedBytes("display_name_enc")),
 	}}
 	// UserContacts covers which account a contact signs in to, whether it
-	// is verified or removed, and when its ownership was last checked.
+	// is verified or removed, and when its ownership was last checked. The
+	// blind index is sealed with the ciphertext (#140): a lookup finds the
+	// account by it, so an index copied from another row would sign in to
+	// the wrong account.
 	UserContacts = &Table{Name: "user_contacts", Key: "id", KeyType: "bigint", Columns: []Column{
 		text("user_hk"), text("type"), secret("value"), text("is_primary"),
 		timestamptz("verified_at"), timestamptz("removed_at"), timestamptz("ownership_checked_at"),
+		optional(sealedBytes("value_enc")), optional(sealedBytes("value_bidx")),
 	}}
 	// Sessions covers whose session it is, whether it is still active, and
 	// its tokens.

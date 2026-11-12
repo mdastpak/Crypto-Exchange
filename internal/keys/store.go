@@ -36,6 +36,14 @@ func (r *Keyring) Current(purpose Purpose) (Key, error) {
 			return versions[i], nil
 		}
 	}
+	// The key commands never leave a purpose without an active version, by
+	// the clock of the database: the first version is active from its
+	// creation, and a version is retired only once a newer one is active.
+	// So when none is active by this clock, this clock runs behind the
+	// database's, and the oldest loaded version is the one that writes.
+	if len(versions) > 0 {
+		return versions[0], nil
+	}
 	return Key{}, fmt.Errorf("%w: %s", ErrNoKey, purpose)
 }
 
@@ -148,19 +156,23 @@ func (s *Store) load(ctx context.Context, create bool) (*Keyring, error) {
 	}
 
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT purpose, version, kek_id, wrapped_key, active_from FROM data_keys WHERE retired_at IS NULL ORDER BY purpose, version`)
+		`SELECT purpose, version, kek_id, wrapped_key, active_from, active_from <= NOW() FROM data_keys WHERE retired_at IS NULL ORDER BY purpose, version`)
 	if err != nil {
 		return nil, fmt.Errorf("reading the data keys: %w", err)
 	}
 	defer rows.Close()
 	ring := &Keyring{keys: make(map[Purpose][]Key)}
+	// activeNow is whether a version of the purpose is active by the clock
+	// of the database, which the key commands compare with.
+	activeNow := make(map[Purpose]bool)
 	for rows.Next() {
 		var purpose Purpose
 		var version int
 		var kekID string
 		var wrapped []byte
 		var activeFrom time.Time
-		if err := rows.Scan(&purpose, &version, &kekID, &wrapped, &activeFrom); err != nil {
+		var active bool
+		if err := rows.Scan(&purpose, &version, &kekID, &wrapped, &activeFrom, &active); err != nil {
 			return nil, fmt.Errorf("reading the data keys: %w", err)
 		}
 		secret, err := s.unwrap(ctx, purpose, version, kekID, wrapped)
@@ -168,6 +180,7 @@ func (s *Store) load(ctx context.Context, create bool) (*Keyring, error) {
 			return nil, err
 		}
 		ring.keys[purpose] = append(ring.keys[purpose], Key{purpose: purpose, version: version, secret: secret, activeFrom: activeFrom})
+		activeNow[purpose] = activeNow[purpose] || active
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading the data keys: %w", err)
@@ -197,7 +210,7 @@ func (s *Store) load(ctx context.Context, create bool) (*Keyring, error) {
 		}
 		// Retire keeps an active version, and the first version is active
 		// at once, so one is always active unless the table was changed.
-		if _, err := ring.Current(purpose); err != nil {
+		if !activeNow[purpose] {
 			return nil, fmt.Errorf("no data key of purpose %s is active yet, which the key commands never leave; check the data_keys table", purpose)
 		}
 	}
@@ -511,4 +524,16 @@ func (s *Store) List(ctx context.Context) ([]Info, error) {
 		infos = append(infos, info)
 	}
 	return infos, rows.Err()
+}
+
+// Versions returns every loaded version of purpose, newest first, active or
+// not: what a lookup by a blind index compares with during a rotation, when
+// rows hold indexes of older versions (#140).
+func (r *Keyring) Versions(purpose Purpose) []Key {
+	versions := r.keys[purpose]
+	out := make([]Key, len(versions))
+	for i, k := range versions {
+		out[len(versions)-1-i] = k
+	}
+	return out
 }

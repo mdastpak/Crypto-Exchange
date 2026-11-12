@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"testing"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 
@@ -109,4 +110,34 @@ func TestSealAPIKeySecret_WithAKeyring(t *testing.T) {
 	require.NoError(t, err)
 	_, err = account.OpenAPIKeySecret(ring, other, sealed)
 	assert.ErrorIs(t, err, ErrSealedField, "a secret copied to another key's row does not open")
+}
+
+func TestKeyring_CurrentWithAClockBehindTheDatabase(t *testing.T) {
+	ring := testRing(t, 1, 2)
+	now := time.Now()
+	ring.keys[PurposeFieldEnc][0].activeFrom = now.Add(time.Second)
+	ring.keys[PurposeFieldEnc][1].activeFrom = now.Add(time.Hour)
+	ring.now = func() time.Time { return now }
+
+	key, err := ring.Current(PurposeFieldEnc)
+	require.NoError(t, err, "the key commands leave a version active by the clock of the database")
+	assert.Equal(t, 1, key.Version(), "the oldest loaded version writes")
+
+	ring.now = func() time.Time { return now.Add(2 * time.Second) }
+	key, err = ring.Current(PurposeFieldEnc)
+	require.NoError(t, err)
+	assert.Equal(t, 1, key.Version())
+
+	_, err = ring.Current(PurposeRowMAC)
+	require.ErrorIs(t, err, ErrNoKey, "a purpose without keys has none")
+}
+
+func TestKeyring_Versions(t *testing.T) {
+	ring := testRing(t, 1, 2, 3)
+	var versions []int
+	for _, key := range ring.Versions(PurposeFieldEnc) {
+		versions = append(versions, key.Version())
+	}
+	assert.Equal(t, []int{3, 2, 1}, versions, "newest first")
+	assert.Empty(t, ring.Versions(PurposeRowMAC))
 }
