@@ -72,15 +72,33 @@ func TestSchema_EnforcesTheBalanceInvariants(t *testing.T) {
 	_, err = conn.Exec(`INSERT INTO balances (user_id, currency_hk) VALUES ($1, $2)`, user, currency)
 	assert.Equal(t, "23505", pgCode(err), "a second balance of the currency without a sub-account: %v", err)
 
-	insertChange := func(amount, newAvailable string) error {
-		_, err := conn.Exec(`INSERT INTO balance_changes (balance_id, user_id, currency_hk, change_type, amount,
+	// A change is a posting of a ledger entry (#60), written with it in one
+	// transaction, which commits only when the entry balances.
+	version := 1
+	insertChange := func(changeType, amount, newAvailable, newLocked string) error {
+		version++
+		tx, err := conn.Begin()
+		require.NoError(t, err)
+		defer tx.Rollback()
+		var entry string
+		require.NoError(t, tx.QueryRow(`INSERT INTO ledger_entries (kind, idempotency_key, request_hash)
+			VALUES ('lock', gen_random_uuid()::text, sha256('x'::bytea)) RETURNING id`).Scan(&entry))
+		if _, err := tx.Exec(`INSERT INTO balance_changes (entry_id, version, balance_id, user_id, currency_hk, change_type, amount,
 			old_available, new_available, old_locked, new_locked, old_pending, new_pending)
-			VALUES ($1, $2, $3, 'LOCK', $4, 1, $5, 0, 1, 0, 0)`, balanceID, user, currency, amount, newAvailable)
-		return err
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, 0, $9, 0, 0)`,
+			entry, version, balanceID, user, currency, changeType, amount, newAvailable, newLocked); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
-	require.NoError(t, insertChange("1", "0"))
-	assert.Equal(t, "23514", pgCode(insertChange("0", "1")), "a change of nothing")
-	assert.Equal(t, "23514", pgCode(insertChange("2", "-1")), "a change that ends below zero")
+	require.NoError(t, insertChange("LOCK", "1", "0", "1"))
+	assert.Equal(t, "23514", pgCode(insertChange("LOCK", "0", "1", "0")), "a change of nothing")
+	assert.Equal(t, "23514", pgCode(insertChange("LOCK", "2", "-1", "2")), "a change that ends below zero")
+	assert.Equal(t, "23514", pgCode(insertChange("GIFT", "1", "0", "1")), "an unknown transition")
+	assert.Equal(t, "23514", pgCode(insertChange("WITHDRAWAL", "1", "0", "0")),
+		"an entry whose postings do not sum to zero: the funds left without a posting to custody")
+	_, err = conn.Exec(`UPDATE balance_changes SET amount = 2`)
+	assert.Equal(t, "42501", pgCode(err), "the changes are append-only: %v", err)
 
 	var onChain bool
 	require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'balances' AND column_name = 'on_chain')`).Scan(&onChain))

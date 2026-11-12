@@ -44,6 +44,7 @@ flowchart TB
 | `internal/passwordhash` | Argon2id hashes of account passwords, with a bound on the hashes in progress. Only the server wires it in, behind the checks of `internal/userauth`: a challenge that a correct code issued, and an attempt counted against the lock. |
 | `internal/assetregistry` | Loads and checks `config/assets.yaml`: one entry per asset with its networks, contract addresses validated by format and checksum (EIP-55 for Ethereum, Base58Check for TRON), and markets of known assets. `admin assets import` loads it into the currencies ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309)). |
 | `internal/keys` | Data-protection keys: a `Provider` interface for the key-encryption key, with Transit (Vault or OpenBao) and a local development provider, the wrapped keys in `data_keys`, and a keyring whose keys only offer the operation of their purpose (see [data-protection.md](data-protection.md)) |
+| `internal/ledger` | The books in double entry ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)): deposits, locks, transfers, OTC trade settlement, and withdrawals, each one entry with an idempotency key, and the reconciliation that replays every balance (see [the ledger](#the-ledger)) |
 | `internal/crypto/field` | Field encryption of personal data ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)): values sealed with the `field-enc` key under their place (table, column, row), and blind indexes of the `blind-index` key for equality lookups across key versions (see [data-protection.md](data-protection.md#field-encryption)) |
 | `internal/config` | YAML loading, defaults, environment overrides, validation (see [configuration.md](configuration.md)). The YAML files are in `config/`, whose only Go code embeds `config.example.yaml` as the fallback. |
 | `internal/auth` | RS256 JWT issuing and verification with separate keys per role, `kid`-based key selection and retired keys for rotation, Redis-backed token blacklist, admin and user middleware |
@@ -126,10 +127,40 @@ A balance (`internal/domain/balance`) is a state machine of one asset in one acc
 | `TRADE_DEBIT` | | -a | | -a | An asset is given in a trade |
 | `FEE` | | -a | | -a | A fee is charged, from the funds locked with the order |
 | `WITHDRAWAL` | | -a | | -a | A withdrawal is completed |
+| `TRANSFER_OUT` | | -a | | -a | Funds are sent to another account, through the lock |
+| `TRANSFER_IN` | +a | | | +a | Funds are received from another account |
 
-Funds enter the total only through a credited deposit or a trade credit, and leave it only from locked funds. A property test applies random sequences of transitions and checks that the total changes by exactly the funds that entered or left. Each transition returns a change event with the components before and after and the version, which a repository uses for optimistic locking (`UPDATE ... WHERE version = $n`). The database enforces the same invariants (migration 17). Where funds are held on chain is tracked per wallet by custody, not in the user's balance.
+Funds enter the total only through a credited deposit, a trade credit, or a transfer in, and leave it only from locked funds. A property test applies random sequences of transitions and checks that the total changes by exactly the funds that entered or left. Each transition returns a change event with the components before and after and the version, which a repository uses for optimistic locking (`UPDATE ... WHERE version = $n`). The database enforces the same invariants. The [ledger](#the-ledger) applies the transitions. Where funds are held on chain is tracked per wallet by custody, not in the user's balance.
 
 Every asset of the exchange is a row of `currencies`, and how it moves on each network a row of `currency_networks`: balances, markets, orders, trades, custody, restrictions, favorites, and delistings all reference a currency by its `hk`. See [the asset registry](#the-asset-registry).
+
+#### The ledger
+
+`internal/ledger` keeps the books in double entry ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)). Its operations are the only writes of balances, and nothing outside the services of the exchange calls them: there is no public write API.
+
+| Operation | Balance of the user | Accounts of the exchange |
+| --- | --- | --- |
+| `DetectDeposit` | `PENDING_DEPOSIT` | `deposits_pending` -a |
+| `CreditDeposit` | `DEPOSIT` | `deposits_pending` +a, `custody` -a |
+| `FailDeposit` | `DEPOSIT_FAILED` | `deposits_pending` +a |
+| `Lock`, `Release` | `LOCK`, `UNLOCK` | none |
+| `Transfer` | `LOCK` and `TRANSFER_OUT` of the sender, `TRANSFER_IN` of the receiver | none |
+| `SettleTrade` (OTC, against the exchange) | `TRADE_DEBIT` of what the user gives, `TRADE_CREDIT` of what it receives, `FEE` | `inventory` +given and -received, `fees` +fee |
+| `Withdraw` | `WITHDRAWAL` and `FEE`, from the funds locked at the request | `custody` +a, `fees` +fee |
+
+- **One entry per operation.** Each operation is one row of `ledger_entries`, written in one transaction with its postings:
+  - the changes of the balances of users in `balance_changes`, each with the components before and after and the version it made;
+  - the postings to the exchange's own accounts in `ledger_postings`.
+- **Double entry.** A user's position in a currency is available + locked + pending. In each entry and currency, the changes of the positions and the postings sum to zero; a constraint trigger refuses an entry that does not, at commit, from whatever code writes it. So the books always say what custody must hold: the users' positions, plus the fees, the inventory, and the deposits pending, make the opposite of the `custody` account.
+- **Idempotency.** An operation takes an idempotency key, such as `deposit:tron:<transaction>:<output>`, unique in `ledger_entries`. A retry with the same request returns the first entry, even when two run at once. Amounts are compared by value, so `1.50` and `1.5` are the same request. A key used with another request is refused.
+- **Concurrency.** The balances of an entry are created if needed and locked (`SELECT ... FOR UPDATE`) in a fixed order. Two transfers in opposite directions therefore wait for each other instead of deadlocking. Each change raises the version of its balance, unique per balance, so a change is never applied twice or lost. The state machine refuses a change that would drive a component below zero, and the database checks the same.
+- **Append-only.** Entries, postings, balance changes, and snapshots cannot be changed or deleted: triggers refuse it to every role, and the runtime role may only read and insert them.
+- **Reconciliation.** `Ledger.Reconcile` reads the books and reports any difference:
+  - it replays every balance from zero through its changes, each of which must start where the one before ended, carry the next version, and be the transition that its type and amount describe;
+  - it checks that every currency sums to zero;
+  - it compares what custody must hold with what custody reports holding, where a source of holdings is given.
+
+  A balance changed in SQL, or a change written outside the code, appears in the report.
 
 #### The shared currency list
 
@@ -289,7 +320,7 @@ transport (HTTP, WebSocket)  ->  services (business logic)  ->  repositories and
 | --- | --- |
 | Monetary values | Exact decimals, never floating point: every amount, price, rate, and ratio of the exchange is an `exact_decimal` column, and `shared.Decimal` in Go. See [Amounts, prices, and ratios](#amounts-prices-and-ratios) ([#314](https://github.com/mdastpak/Crypto-Exchange/issues/314)). |
 | Identifiers | UUIDs, with timestamp-ordered UUIDv7 planned for orders and trades |
-| Balance safety | Database transactions with row locks or optimistic versioning, plus an immutable change log ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)) |
+| Balance safety | A double-entry [ledger](#the-ledger): each operation one transaction with its balances locked in a fixed order and their versions raised, an idempotency key, append-only changes, and postings that PostgreSQL checks sum to zero ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)) |
 | Event delivery | A transactional outbox for every event: written in the transaction of its change and relayed with publisher confirms, retries, and dead letters ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#171](https://github.com/mdastpak/Crypto-Exchange/issues/171), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)) |
 | WebSocket scaling | Per-instance consumers and channel-based subscriptions ([#66](https://github.com/mdastpak/Crypto-Exchange/issues/66)) |
 | Authentication | JWT for interactive users. HMAC and Ed25519 API keys for programmatic access ([#64](https://github.com/mdastpak/Crypto-Exchange/issues/64)). |

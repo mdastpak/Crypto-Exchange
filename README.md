@@ -1,6 +1,6 @@
 # Crypto Exchange
 
-A backend for a cryptocurrency exchange, written in Go. It provides OTP-based sign-in, JWT sessions, administrative currency management with a Redis cache, RabbitMQ events, and a WebSocket gateway. A domain model and database schema for assets, markets, orders, trades, balances, accounts, KYC/AML, and custody are also included and will back the roadmap features.
+A backend for a cryptocurrency exchange, written in Go. It provides OTP-based sign-in, JWT sessions, administrative currency management with a Redis cache, RabbitMQ events, and a WebSocket gateway, and keeps balances in a double-entry ledger. A domain model and database schema for markets, orders, trades, accounts, KYC/AML, and custody are also included and will back the roadmap features.
 
 > [!WARNING]
 > **Pre-alpha: not production-ready.** The hardening work is tracked in the [M1 foundation and hardening epic](https://github.com/mdastpak/Crypto-Exchange/issues/84) and in the [open security issues](https://github.com/mdastpak/Crypto-Exchange/issues?q=is%3Aopen+label%3A%22type%3A+security%22). Do not deploy this code with real funds or real personal data.
@@ -41,8 +41,9 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL or Redis is unavailable, and `200` with the status `degraded` while RabbitMQ is ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33), [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). |
 | Observability | Implemented | Structured `log/slog` records with secrets, tokens, and contacts redacted; Prometheus metrics of requests, the database pool, Redis, RabbitMQ, WebSocket connections, publishes, rate limits, and integrity findings, on a port of their own; OpenTelemetry traces across requests, PostgreSQL, Redis, and publishing, carried through the outbox ([PR #351](https://github.com/mdastpak/Crypto-Exchange/pull/351)). See [docs/observability.md](docs/observability.md). |
-| Exchange domain model and schema | Models and migrations only | No services use them yet. |
-| Price engine, OTC trading, ledger, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
+| Exchange domain model and schema | Partial | The ledger uses the balance model; the order, trade, custody, and KYC models have no service yet ([Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85)). |
+| Ledger | Partial | Balances in double entry ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)): deposits, locks, transfers, OTC trade settlement, and withdrawals, each one entry with an idempotency key, its balances locked in a fixed order, and postings to the exchange's custody, fees, inventory, and pending-deposit accounts that PostgreSQL checks sum to zero. The changes are append-only, and a reconciliation replays every balance from them. No public write API. See [docs/architecture.md](docs/architecture.md#the-ledger). |
+| Price engine, OTC trading, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
 
 ## Architecture
@@ -328,6 +329,7 @@ internal/i18n/          Locales, text direction, negotiation, and translated mes
 internal/identity/      Identity checks with a KYC provider: mobile ownership against the
                         national ID (Jibit client and a stub), sealed national IDs
 internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit
+internal/ledger/        The books: balance operations in double entry, idempotency, reconciliation
 internal/logging/       Structured logs: slog records with redaction, and the request log
 internal/marketdata/    Global market data catalog: unverified assets, venues, pairs, tickers
 internal/metrics/       Prometheus metrics, served on a port of their own

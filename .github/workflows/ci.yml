@@ -86,7 +86,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -127,10 +127,13 @@ jobs:
           check-latest: true
 
       # Each package has databases of its own, so packages run in parallel.
+      # internal/app runs the server end to end and takes about eight
+      # minutes with the race detector, near go test's default limit of ten
+      # per package; the limit is twenty.
       - name: Test with the race detector
         run: |
           set -o pipefail
-          go test -race -count=1 -v -covermode=atomic -coverprofile=coverage.out ./... 2>&1 | tee test.log
+          go test -race -timeout 20m -count=1 -v -covermode=atomic -coverprofile=coverage.out ./... 2>&1 | tee test.log
 
       # Tests skip themselves when a service is unreachable, which would turn
       # a broken service container into a green check.
