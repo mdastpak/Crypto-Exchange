@@ -16,11 +16,11 @@ type Settings struct {
 	Approval []Feature
 }
 
-// SettingsFromConfig reads the platform section of the configuration,
+// SettingsOf reads the platform section of c,
 // which config.ValidateServer has bounded. It reports every unknown
 // feature at once.
-func SettingsFromConfig() (Settings, error) {
-	cfg := config.Config.Platform
+func SettingsOf(c *config.Configuration) (Settings, error) {
+	cfg := c.Platform
 	failClosed, err1 := parseFeatures("platform.fail_closed", cfg.FailClosed, DefaultFailClosed)
 	approval, err2 := parseFeatures("platform.lift_approval", cfg.LiftApproval, DefaultApproval)
 	if err := errors.Join(err1, err2); err != nil {

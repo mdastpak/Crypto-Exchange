@@ -130,7 +130,7 @@ func adminOrigin(c *gin.Context) (audit.Event, string, bool) {
 func (h *AdminHandler) GetPlatform(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	controls, err := platform.Open(ctx, h.PostgresDB.DB)
+	controls, err := h.Controls.Open(ctx)
 	if errors.Is(err, rowseal.ErrUnverified) {
 		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 		return
@@ -157,7 +157,7 @@ func (h *AdminHandler) GetPlatform(c *gin.Context) {
 func (h *AdminHandler) ListControls(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	controls, err := platform.List(ctx, h.PostgresDB.DB, 0)
+	controls, err := h.Controls.List(ctx, 0)
 	if err != nil {
 		log.Printf("Failed to list the platform controls: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CONTROLS"), nil)
@@ -191,7 +191,7 @@ func (h *AdminHandler) CreateControl(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	created, err := platform.Create(ctx, h.PostgresDB.DB, platform.New{
+	created, err := h.Controls.Create(ctx, platform.New{
 		Kind: req.Kind, Feature: req.Feature, StartsAt: req.StartsAt, EndsAt: req.EndsAt, AnnounceAt: req.AnnounceAt,
 		Message: req.Message, Reason: req.Reason, AllowNetworks: req.AllowNetworks, AllowUsers: req.AllowUsers,
 		CreatedBy: adminHK,
@@ -238,7 +238,7 @@ func (h *AdminHandler) UpdateControl(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	updated, err := platform.Update(ctx, h.PostgresDB.DB, c.Param("id"),
+	updated, err := h.Controls.Update(ctx, c.Param("id"),
 		platform.Changes{EndsAt: req.EndsAt, Message: req.Message}, expected, origin)
 	if err != nil {
 		sendControlError(c, err, "change")
@@ -283,7 +283,7 @@ func (h *AdminHandler) LiftControl(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	result, err := platform.Lift(ctx, h.PostgresDB.DB, platform.LiftRequest{
+	result, err := h.Controls.Lift(ctx, platform.LiftRequest{
 		HK: c.Param("id"), Note: req.Note, By: adminHK, Expected: expected, Approval: h.LiftApproval,
 	}, origin)
 	if err != nil {

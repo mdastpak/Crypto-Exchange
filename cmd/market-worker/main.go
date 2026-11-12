@@ -76,7 +76,7 @@ func run() error {
 	db.ApplicationName = applicationName()
 	// The migrations run here too, under the same lock as the server's,
 	// unless postgres.migrations.mode is external.
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
@@ -178,7 +178,7 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 			continue
 		}
 		settings, _ := exchange.Settings(name)
-		client, err := source.ClientFromConfig(conn, name, settings)
+		client, err := source.ClientFromConfig(&config.Config, conn, name, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -301,13 +301,13 @@ func candleJobs(store *marketdata.Store, src source.VenueSource) ([]jobs.Spec, e
 func catalogSource(conn *sql.DB, name string) (source.CatalogSource, []string, error) {
 	switch name {
 	case coingecko.Name:
-		client, err := source.ClientFromConfig(conn, name, coingecko.Settings(config.Config.MarketData.Sources[name].BaseURL))
+		client, err := source.ClientFromConfig(&config.Config, conn, name, coingecko.Settings(config.Config.MarketData.Sources[name].BaseURL))
 		if err != nil {
 			return nil, nil, err
 		}
 		return coingecko.New(client), coingecko.DevelopmentIDs, nil
 	case coinmarketcap.Name:
-		client, err := source.ClientFromConfig(conn, name, coinmarketcap.Settings)
+		client, err := source.ClientFromConfig(&config.Config, conn, name, coinmarketcap.Settings)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -320,7 +320,7 @@ func catalogSource(conn *sql.DB, name string) (source.CatalogSource, []string, e
 // pauses the jobs on every worker, and the runner of the jobs. It returns
 // the function that stops both.
 func startJobs(conn *sql.DB, node string, specs, streams []jobs.Spec) (func(ctx context.Context) error, error) {
-	settings, err := platform.SettingsFromConfig()
+	settings, err := platform.SettingsOf(&config.Config)
 	if err != nil {
 		return nil, fmt.Errorf("invalid platform configuration: %w", err)
 	}
@@ -391,4 +391,10 @@ func applicationName() string {
 func configFlagSet() (set bool) {
 	flag.Visit(func(f *flag.Flag) { set = set || f.Name == "config" })
 	return set
+}
+
+// dbOptions are the options of the db package: the configuration of this
+// process, and its migrations.
+func dbOptions() db.Options {
+	return db.Options{Config: &config.Config, MigrationsPath: config.MigrationsPath()}
 }

@@ -35,7 +35,7 @@ func TestPostgresConfig_HostsTimeoutsAndName(t *testing.T) {
 	ApplicationName = "crypto-exchange-test"
 	t.Cleanup(func() { ApplicationName = saved })
 
-	cfg, err := PostgresConfig()
+	cfg, err := PostgresConfig(configured())
 	require.NoError(t, err)
 	assert.Equal(t, "pg-1.internal", cfg.Host)
 	assert.Equal(t, uint16(5432), cfg.Port)
@@ -52,7 +52,7 @@ func TestPostgresConfig_HostsTimeoutsAndName(t *testing.T) {
 
 	useAvailability(t, nil, "any", 0, 0, 0)
 	config.Config.Postgres.Host, config.Config.Postgres.Port = "db", "5432"
-	cfg, err = PostgresConfig()
+	cfg, err = PostgresConfig(configured())
 	require.NoError(t, err)
 	assert.Nil(t, cfg.ValidateConnect)
 	assert.NotContains(t, cfg.RuntimeParams, "statement_timeout", "0 leaves the server's setting")
@@ -64,7 +64,7 @@ func TestPostgresConfig_HostsTimeoutsAndName(t *testing.T) {
 func TestConnectPostgres_SkipsAStoppedFirstHost(t *testing.T) {
 	usePostgres(t, "", "", testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
 	useAvailability(t, []string{"127.0.0.1:1", testPGHost + ":" + testPGPort}, "read-write", 30000, 5000, 60000)
-	svc, err := ConnectPostgres()
+	svc, err := ConnectPostgres(configured())
 	require.NoError(t, err)
 	defer svc.Close()
 
@@ -87,7 +87,7 @@ func TestConnectPostgres_RecoversAfterTheFirstHostStops(t *testing.T) {
 
 	usePostgres(t, "", "", testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
 	useAvailability(t, []string{first.Host() + ":" + first.Port(), second.Host() + ":" + second.Port()}, "read-write", 0, 0, 0)
-	svc, err := ConnectPostgres()
+	svc, err := ConnectPostgres(configured())
 	require.NoError(t, err)
 	defer svc.Close()
 	require.NoError(t, svc.DB.Ping())
@@ -110,7 +110,7 @@ func TestConnectPostgres_RecoversAfterTheFirstHostStops(t *testing.T) {
 func TestPool_DiscardsAConnectionThatOnlyReads(t *testing.T) {
 	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
 	useAvailability(t, nil, "read-write", 0, 0, 0)
-	svc, err := ConnectPostgres()
+	svc, err := ConnectPostgres(configured())
 	require.NoError(t, err)
 	defer svc.Close()
 	svc.DB.SetMaxOpenConns(1)
@@ -145,7 +145,7 @@ func TestPool_DiscardsAConnectionThatOnlyReads(t *testing.T) {
 func TestLockTimeout_IsNotedOnTheRequest(t *testing.T) {
 	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
 	useAvailability(t, nil, "read-write", 0, 200, 0)
-	svc, err := ConnectPostgres()
+	svc, err := ConnectPostgres(configured())
 	require.NoError(t, err)
 	defer svc.Close()
 	ctx := context.Background()
@@ -185,7 +185,7 @@ func TestWithMigrationLock_StopsAndNamesTheHolder(t *testing.T) {
 	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, "postgres", testPGSSLMode)
 	saved := ApplicationName
 	ApplicationName = "other-database"
-	otherPool, err := ConnectPostgres()
+	otherPool, err := ConnectPostgres(configured())
 	ApplicationName = saved
 	require.NoError(t, err)
 	defer otherPool.Close()
@@ -197,7 +197,7 @@ func TestWithMigrationLock_StopsAndNamesTheHolder(t *testing.T) {
 
 	usePostgres(t, testPGHost, testPGPort, testPGUser, testPGPassword, testPGDBName, testPGSSLMode)
 	ApplicationName = "lock-holder-test"
-	holderPool, err := ConnectPostgres()
+	holderPool, err := ConnectPostgres(configured())
 	ApplicationName = saved
 	require.NoError(t, err)
 	defer holderPool.Close()

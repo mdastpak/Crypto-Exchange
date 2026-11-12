@@ -25,7 +25,7 @@ func TestNewRedisService_Success(t *testing.T) {
 	config.Config.Redis.ConnectRetries = 1
 	config.Config.Redis.ConnectRetryDelayMs = 10
 
-	svc, err := NewRedisService()
+	svc, err := NewRedisService(&config.Config)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	defer svc.Close()
@@ -42,7 +42,7 @@ func TestNewRedisService_UsesTheConfiguredTimeouts(t *testing.T) {
 	connect := func() *redis.Options {
 		config.Config.Redis.Host, config.Config.Redis.Port, config.Config.Redis.DB = "localhost", "6379", redistest.DB
 		config.Config.Redis.ConnectRetries, config.Config.Redis.ConnectRetryDelayMs = 1, 10
-		svc, err := NewRedisService()
+		svc, err := NewRedisService(&config.Config)
 		require.NoError(t, err)
 		t.Cleanup(func() { svc.Close() })
 		return svc.Client.(*redis.Client).Options()
@@ -78,7 +78,7 @@ func TestNewRedisService_FailsWithBadHost(t *testing.T) {
 	config.Config.Redis.ConnectRetries = 2
 	config.Config.Redis.ConnectRetryDelayMs = 10
 
-	svc, err := NewRedisService()
+	svc, err := NewRedisService(&config.Config)
 	assert.Error(t, err)
 	assert.Nil(t, svc)
 }
@@ -145,7 +145,7 @@ func TestServices_CloseIsIdempotent(t *testing.T) {
 	config.Config.Redis.Host, config.Config.Redis.Port, config.Config.Redis.DB = "localhost", "6379", redistest.DB
 	config.Config.Redis.ConnectRetries, config.Config.Redis.ConnectRetryDelayMs = 1, 10
 
-	redisService, err := NewRedisService()
+	redisService, err := NewRedisService(&config.Config)
 	require.NoError(t, err)
 	assert.NoError(t, redisService.Close())
 	assert.NoError(t, redisService.Close(), "a second Close must not fail")
@@ -180,7 +180,7 @@ func TestNewRedisClient_BuildsTheClientOfEachMode(t *testing.T) {
 
 	c := base(config.RedisModeStandalone)
 	c.Redis.Host, c.Redis.Port = "redis.internal", "6380"
-	client, err := NewRedisClient()
+	client, err := NewRedisClient(&config.Config)
 	require.NoError(t, err)
 	standalone, ok := client.(*redis.Client)
 	require.True(t, ok, "%T", client)
@@ -192,7 +192,7 @@ func TestNewRedisClient_BuildsTheClientOfEachMode(t *testing.T) {
 	c.Redis.Sentinel.MasterName = "crypto-exchange"
 	c.Redis.Sentinel.Addresses = []string{"s-1:26379", " s-2:26379 "}
 	c.Redis.Sentinel.Username, c.Redis.Sentinel.Password = "watcher", "sentinel-secret"
-	client, err = NewRedisClient()
+	client, err = NewRedisClient(&config.Config)
 	require.NoError(t, err)
 	failover, ok := client.(*redis.Client)
 	require.True(t, ok, "a sentinel client is a *redis.Client that follows the primary: %T", client)
@@ -207,7 +207,7 @@ func TestNewRedisClient_BuildsTheClientOfEachMode(t *testing.T) {
 
 	c = base(config.RedisModeCluster)
 	c.Redis.Cluster.Addresses = []string{"r-1:6379", "r-2:6379 "}
-	client, err = NewRedisClient()
+	client, err = NewRedisClient(&config.Config)
 	require.NoError(t, err)
 	cluster, ok := client.(*redis.ClusterClient)
 	require.True(t, ok, "%T", client)

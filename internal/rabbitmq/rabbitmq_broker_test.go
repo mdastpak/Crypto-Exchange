@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
+
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
@@ -33,7 +35,7 @@ func newBrokerTestService(t *testing.T) (*RabbitMQService, string) {
 	t.Cleanup(withRabbitMQConfig("localhost", "5672", "guest", "guest"))
 
 	exchange := "test_publish_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	svc, err := NewRabbitMQService(exchange)
+	svc, err := NewRabbitMQService(&config.Config, exchange)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		svc.Close()

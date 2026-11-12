@@ -1967,9 +1967,14 @@ func validateConfig() {
 	}
 }
 
-func GetRabbitMQURL() string {
-	return RabbitMQURL(Config.RabbitMQ.Username, Config.RabbitMQ.Password,
-		Config.RabbitMQ.Host, Config.RabbitMQ.Port, Config.RabbitMQ.VHost, Config.RabbitMQ.TLS.Enabled)
+// GetRabbitMQURL is BrokerURL of the global configuration.
+func GetRabbitMQURL() string { return Config.BrokerURL() }
+
+// BrokerURL returns the AMQP URI of rabbitmq.host and rabbitmq.port of c.
+// It holds the password, so it must never be logged.
+func (c *Configuration) BrokerURL() string {
+	return RabbitMQURL(c.RabbitMQ.Username, c.RabbitMQ.Password,
+		c.RabbitMQ.Host, c.RabbitMQ.Port, c.RabbitMQ.VHost, c.RabbitMQ.TLS.Enabled)
 }
 
 // RabbitMQNode is one node that the RabbitMQ service may dial: its host,
@@ -1983,10 +1988,13 @@ type RabbitMQNode struct {
 
 // RabbitMQNodes returns the nodes of rabbitmq.hosts, or the one node of
 // rabbitmq.host and rabbitmq.port when hosts is empty (#232).
-func RabbitMQNodes() []RabbitMQNode {
-	r := Config.RabbitMQ
+func RabbitMQNodes() []RabbitMQNode { return Config.RabbitMQNodes() }
+
+// RabbitMQNodes returns the nodes of rabbitmq.hosts of c, or its one node.
+func (c *Configuration) RabbitMQNodes() []RabbitMQNode {
+	r := c.RabbitMQ
 	if len(r.Hosts) == 0 {
-		return []RabbitMQNode{{Host: r.Host, Address: net.JoinHostPort(r.Host, r.Port), URL: GetRabbitMQURL()}}
+		return []RabbitMQNode{{Host: r.Host, Address: net.JoinHostPort(r.Host, r.Port), URL: c.BrokerURL()}}
 	}
 	nodes := make([]RabbitMQNode, 0, len(r.Hosts))
 	for _, hostPort := range r.Hosts {

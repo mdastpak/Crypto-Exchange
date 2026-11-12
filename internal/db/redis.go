@@ -24,18 +24,18 @@ type RedisService struct {
 	closeErr  error
 }
 
-func NewRedisService() (*RedisService, error) {
-	client, err := NewRedisClient()
+func NewRedisService(cfg *config.Configuration) (*RedisService, error) {
+	client, err := NewRedisClient(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := redisPingWithRetry(client, config.Config.Redis.ConnectRetries, time.Duration(config.Config.Redis.ConnectRetryDelayMs)*time.Millisecond); err != nil {
+	if err := redisPingWithRetry(client, cfg.Redis.ConnectRetries, time.Duration(cfg.Redis.ConnectRetryDelayMs)*time.Millisecond); err != nil {
 		client.Close()
 		return nil, fmt.Errorf("error connecting to Redis: %w", err)
 	}
 
-	log.Printf("Redis connected successfully (%s mode).", config.Config.Redis.Mode)
+	log.Printf("Redis connected successfully (%s mode).", cfg.Redis.Mode)
 
 	return &RedisService{
 		Client: client,
@@ -47,8 +47,8 @@ func NewRedisService() (*RedisService, error) {
 // sentinel mode, and redis.NewClusterClient for the cluster mode. The
 // credentials, the TLS settings, the pool, and the timeouts apply in every
 // mode, to every node.
-func NewRedisClient() (redis.UniversalClient, error) {
-	client, err := newRedisClient()
+func NewRedisClient(cfg *config.Configuration) (redis.UniversalClient, error) {
+	client, err := newRedisClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +59,8 @@ func NewRedisClient() (redis.UniversalClient, error) {
 }
 
 // newRedisClient builds the client of the mode.
-func newRedisClient() (redis.UniversalClient, error) {
-	cfg := config.Config.Redis
+func newRedisClient(c *config.Configuration) (redis.UniversalClient, error) {
+	cfg := c.Redis
 	maxRetries := cfg.MaxRetries
 	if maxRetries == 0 {
 		maxRetries = config.DefaultRedisMaxRetries

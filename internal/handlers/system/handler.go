@@ -1,30 +1,49 @@
 package system
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/internal/db"
-	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/models"
-	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
-	"github.com/mdastpak/crypto-exchange/internal/redisutil"
 )
 
-// SystemHandler struct for system-related endpoints
+// Pinger is a dependency whose health a ping checks: *db.PostgresService
+// and *db.RedisService.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+// Broker reports the health of the message broker: *rabbitmq.RabbitMQService.
+type Broker interface {
+	IsHealthy() bool
+}
+
+// GeoIPCheck reports the health of the country database: *geoip.Resolver.
+type GeoIPCheck interface {
+	Check(now time.Time) error
+}
+
+// EvictionCheck reports keys that Redis evicted: *redisutil.EvictionWatch.
+type EvictionCheck interface {
+	Check(ctx context.Context) error
+}
+
+// SystemHandler answers the health probes. It depends on interfaces only
+// (#48); a nil dependency is not checked, or is reported as down.
 type SystemHandler struct {
-	Postgres        *db.PostgresService
-	Redis           *db.RedisService
-	RabbitMQService *rabbitmq.RabbitMQService
+	Postgres        Pinger
+	Redis           Pinger
+	RabbitMQService Broker
 	// GeoIP is checked when it is set (#284): a database that is missing,
 	// failed to reload, or is stale makes the instance degraded, never
 	// unready, since it only makes the suggested site worse.
-	GeoIP *geoip.Resolver
+	GeoIP GeoIPCheck
 	// Eviction is checked when it is set (#305): keys that Redis evicted
 	// since the instance started make it degraded. Evicted keys may have
 	// been logged-out tokens or attempt counters, which an operator must
 	// look into, but the instance can still serve.
-	Eviction *redisutil.EvictionWatch
+	Eviction EvictionCheck
 
 	// checks replaces the dependency checks in tests.
 	checks []dependency
@@ -42,10 +61,19 @@ func (h *SystemHandler) StartDraining() {
 }
 
 // NewHandler creates a new system handler with injected dependencies
+
+// NewHandler returns the handler of the services in is. A service that is
+// not there stays nil, never a typed nil, so that the checks see it.
 func NewHandler(is *models.InfraServices) *SystemHandler {
-	return &SystemHandler{
-		Postgres:        is.Postgres,
-		Redis:           is.Redis,
-		RabbitMQService: is.RabbitMQ,
+	h := &SystemHandler{}
+	if is.Postgres != nil {
+		h.Postgres = is.Postgres
 	}
+	if is.Redis != nil {
+		h.Redis = is.Redis
+	}
+	if is.RabbitMQ != nil {
+		h.RabbitMQService = is.RabbitMQ
+	}
+	return h
 }

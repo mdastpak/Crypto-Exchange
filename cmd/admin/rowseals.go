@@ -69,7 +69,7 @@ func parseRowSealArgs(cmd command, args []string, stderr io.Writer) (command, er
 // runRowSeals runs a row-seals command with the row-mac keys that the
 // server created.
 func runRowSeals(cmd command, stdout, stderr io.Writer) int {
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1

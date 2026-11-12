@@ -8,7 +8,7 @@ The service is a single Go binary (`cmd/server`) that serves REST and WebSocket 
 
 ```mermaid
 flowchart TB
-    subgraph Server["cmd/server"]
+    subgraph Server["cmd/server (internal/app)"]
         mw["Middleware: recovery, request ID, logging,<br/>security headers, CORS, rate limiting, JWT"]
         public["handlers/public<br/>OTP sign-in, currency reads"]
         admin["handlers/admin<br/>currency management"]
@@ -32,7 +32,8 @@ flowchart TB
 
 | Package | Responsibility |
 | --- | --- |
-| `cmd/server` | Startup, route registration, graceful shutdown |
+| `cmd/server` | The entry point of the server, which calls `internal/app` |
+| `internal/app` | The composition root of the server ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)): it reads the configuration, connects to the infrastructure, builds the stores, handlers, and workers, registers the routes, and owns the start and the graceful shutdown. It is the only package, with `internal/config`, that reads the global configuration; it passes it to the others. The end-to-end tests of the server live here. |
 | `cmd/market-worker` | The worker of the global market data catalog ([#262](https://github.com/mdastpak/Crypto-Exchange/issues/262)): runs apart from the server, on the nodes that reach the sources, and answers its own health probes. See [market-data.md](market-data.md). |
 | `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them; list, rotate, retire, and re-wrap the data-protection keys; handle outbox dead letters; manage platform controls; and check backups and restored databases |
 | `internal/adminauth` | Administrator accounts: creation, TOTP enrollment with encrypted secrets, authenticator checks with replay protection |
@@ -50,7 +51,7 @@ flowchart TB
 | `internal/rabbitmq` | Connection and publishing with confirms. One supervisor goroutine owns the connection and the publishing channel: it reconnects after a broker restart, to another node of a cluster when its node is gone, and restores the channel after a channel-level error, while publishes wait up to five seconds for it. The service starts without the broker and connects in the background. |
 | `internal/notify` | Sign-in code delivery: the queue sender used by OTP sign-in, the worker that consumes the queue with retries and a dead-letter queue, and the SMTP and Kavenegar SMS channels |
 | `internal/otp` | Sign-in codes: unbiased generation, Redis sessions with hashed codes and encrypted contacts, atomic attempt limits per code and per contact |
-| `internal/handlers/*` | HTTP and WebSocket handlers. They currently contain the business logic and SQL directly ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). |
+| `internal/handlers/*` | HTTP and WebSocket handlers ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). The admin, system, and WebSocket handlers depend only on interfaces of their stores and services, declared where they are used (the admin ones in `internal/handlers/admin/deps.go`), so that their tests can use fakes; the stores hold the SQL. The public and user handlers still run some SQL themselves, and move to the same form next. |
 | `internal/middleware` | Security headers, CORS, Redis rate limiters, validation and recovery helpers |
 | `internal/domain/*` | Exchange domain model (asset, market, order, trade, balance, account, kyc, custody, shared). It is not used by handlers yet. |
 | `internal/recovery` | Backup and restore checks ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)): the age of the newest archived WAL against the RPO, and the verification of a restored database. See [disaster-recovery.md](disaster-recovery.md). |

@@ -82,7 +82,7 @@ func TestSettings_Validate(t *testing.T) {
 	}
 }
 
-func TestSettingsFromConfig(t *testing.T) {
+func TestSettingsOf(t *testing.T) {
 	saved := config.Config
 	t.Cleanup(func() { config.Config = saved })
 	config.Config.OTP.Auth.Length = 8
@@ -97,5 +97,5 @@ func TestSettingsFromConfig(t *testing.T) {
 		AttemptsPerCode:        4,
 		ContactRequestsPerHour: 6,
 		ContactAttemptsPerHour: 12,
-	}, SettingsFromConfig())
+	}, SettingsOf(&config.Config))
 }

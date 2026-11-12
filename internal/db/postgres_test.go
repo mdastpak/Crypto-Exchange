@@ -102,7 +102,7 @@ func TestNewPostgresService_UsesConfigAndAppliesPoolSettings(t *testing.T) {
 	resetMigrationsTestSchema(t)
 	t.Cleanup(func() { resetMigrationsTestSchema(t) })
 
-	svc, err := NewPostgresService()
+	svc, err := NewPostgresService(configured())
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	defer svc.Close()
@@ -229,7 +229,7 @@ func TestNewPostgresService_FailsFastWithBadHost(t *testing.T) {
 	config.Config.Postgres.ConnectRetries = 1
 	config.Config.Postgres.ConnectRetryDelayMs = 10
 
-	svc, err := NewPostgresService()
+	svc, err := NewPostgresService(configured())
 	assert.Error(t, err)
 	assert.Nil(t, svc)
 }
@@ -290,4 +290,10 @@ func TestSchema_OnlyNonEmptyContractsAreUnique(t *testing.T) {
 	require.ErrorAs(t, err, &pgErr, "a contract must stay unique")
 	assert.Equal(t, "23505", pgErr.Code)
 	assert.Equal(t, "currencies_info_contract_unique", pgErr.ConstraintName)
+}
+
+// configured returns the options of the configuration that the test set,
+// as the composition root passes them.
+func configured() Options {
+	return Options{Config: &config.Config, MigrationsPath: config.MigrationsPath()}
 }

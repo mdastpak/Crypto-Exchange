@@ -146,7 +146,7 @@ func parseMarketArgs(cmd command, args []string, stderr io.Writer) (command, err
 
 // runMarket runs a market-data command.
 func runMarket(cmd command, stdout, stderr io.Writer) int {
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1

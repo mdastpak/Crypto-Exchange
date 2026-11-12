@@ -33,8 +33,8 @@ type FavoriteChange struct {
 	Changed bool `json:"changed"`
 }
 
-func maxFavorites() int {
-	if n := config.Config.Favorites.MaxPerUser; n > 0 {
+func maxFavorites(cfg *config.Configuration) int {
+	if n := cfg.Favorites.MaxPerUser; n > 0 {
 		return n
 	}
 	return config.DefaultMaxFavoritesPerUser
@@ -94,7 +94,7 @@ func (h *UserHandler) changeFavorite(c *gin.Context, kind favorites.Kind, add bo
 	var changed bool
 	var err error
 	if add {
-		changed, err = favorites.Add(ctx, h.PostgresDB.DB, userID.String(), kind, target, maxFavorites())
+		changed, err = favorites.Add(ctx, h.PostgresDB.DB, userID.String(), kind, target, maxFavorites(h.settings()))
 	} else {
 		changed, err = favorites.Remove(ctx, h.PostgresDB.DB, userID.String(), kind, target)
 	}
@@ -103,7 +103,7 @@ func (h *UserHandler) changeFavorite(c *gin.Context, kind favorites.Kind, add bo
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M(i18n.Key("FAVORITE_NOT_LISTED_"+strings.ToUpper(string(kind)))), nil)
 	case errors.Is(err, favorites.ErrLimit):
 		helpers.SendError(c, http.StatusConflict, "favorites_limit_reached", i18n.M("FAVORITES_LIMIT_REACHED"),
-			gin.H{"max_favorites": maxFavorites()})
+			gin.H{"max_favorites": maxFavorites(h.settings())})
 	case errors.Is(err, favorites.ErrUserNotFound):
 		helpers.SendError(c, http.StatusForbidden, helpers.CodeAccountUnavailable, i18n.M("ACCOUNT_NOT_AVAILABLE_CONTACT_SUPPORT"), nil)
 	case err != nil:

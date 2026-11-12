@@ -180,7 +180,7 @@ func (h *AdminHandler) CreateRestriction(c *gin.Context) {
 		return
 	}
 
-	created, err := restrictions.Create(ctx, h.PostgresDB.DB, restrictions.New{
+	created, err := h.Restrictions.Create(ctx, restrictions.New{
 		UserHK: userHK, Scope: req.Scope, Operations: req.Operations, CurrencyHK: req.CurrencyHK,
 		Reason: req.Reason, CaseRef: req.CaseRef, Note: req.Note, EndsAt: req.EndsAt, CreatedBy: adminHK,
 	}, origin)
@@ -230,7 +230,7 @@ func (h *AdminHandler) ListRestrictions(c *gin.Context) {
 		}
 		activeOnly = v
 	}
-	list, err := restrictions.List(ctx, h.PostgresDB.DB, userHK, activeOnly, maxRestrictionList)
+	list, err := h.Restrictions.List(ctx, userHK, activeOnly, maxRestrictionList)
 	if err != nil {
 		log.Printf("Failed to list the restrictions of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_USER_RESTRICTIONS"), nil)
@@ -290,7 +290,7 @@ func (h *AdminHandler) LiftRestriction(c *gin.Context) {
 		return
 	}
 
-	r, err := restrictions.Lift(ctx, h.PostgresDB.DB, userHK, id, adminHK, req.Note, expected, origin)
+	r, err := h.Restrictions.Lift(ctx, userHK, id, adminHK, req.Note, expected, origin)
 	var conflict *restrictions.VersionConflict
 	switch {
 	case errors.Is(err, restrictions.ErrUserNotFound), errors.Is(err, restrictions.ErrNotFound):

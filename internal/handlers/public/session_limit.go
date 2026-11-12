@@ -70,8 +70,8 @@ type ReplaceSessionRequest struct {
 }
 
 // maxSessionsPerUser returns jwt.sessions.max_per_user, or its default.
-func maxSessionsPerUser() int {
-	if n := config.Config.JWT.Sessions.MaxPerUser; n > 0 {
+func maxSessionsPerUser(cfg *config.Configuration) int {
+	if n := cfg.JWT.Sessions.MaxPerUser; n > 0 {
 		return n
 	}
 	return config.DefaultMaxSessionsPerUser
@@ -115,7 +115,7 @@ func (h *PublicHandler) startSession(c *gin.Context, ctx context.Context, userHK
 		UserAgent:        c.Request.UserAgent(),
 		IP:               c.ClientIP(),
 		ExpiresAt:        time.Now().Add(auth.RefreshTokenLifetime()),
-		MaxActive:        maxSessionsPerUser(),
+		MaxActive:        maxSessionsPerUser(h.settings()),
 		Replace:          replace,
 	}, auth.SessionEvent(c, audit.ActionUserSignIn, userHK.String(), sessionID))
 	switch {
@@ -181,7 +181,7 @@ func (h *PublicHandler) refuseAtLimit(c *gin.Context, ctx context.Context, userH
 		SessionLimitInfo{
 			Challenge:   challenge,
 			ExpiresIn:   int(sessionLimitChallengeTTL.Seconds()),
-			MaxSessions: maxSessionsPerUser(),
+			MaxSessions: maxSessionsPerUser(h.settings()),
 			Sessions:    page.Items,
 		})
 }

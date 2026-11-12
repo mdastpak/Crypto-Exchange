@@ -62,7 +62,7 @@ func (h *AdminHandler) ListAuditEvents(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	result, err := audit.List(ctx, h.PostgresDB.DB, filter, page)
+	result, err := h.Audit.List(ctx, filter, page)
 	if errors.Is(err, pagination.ErrInvalidCursor) {
 		sendValidationErrors(c, fieldErrors{"cursor": "is not a cursor of this list"})
 		return

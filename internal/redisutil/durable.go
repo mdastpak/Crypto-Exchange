@@ -99,8 +99,8 @@ func primaryFor(ctx context.Context, client redis.UniversalClient, key string) (
 	}
 }
 
-// DurabilityFromConfig returns the durability of redis.durable_writes.
-func DurabilityFromConfig() Durability {
-	cfg := config.Config.Redis.DurableWrites
+// DurabilityOf returns the durability of redis.durable_writes of cfg.
+func DurabilityOf(c *config.Configuration) Durability {
+	cfg := c.Redis.DurableWrites
 	return Durability{Replicas: cfg.Replicas, Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond}
 }

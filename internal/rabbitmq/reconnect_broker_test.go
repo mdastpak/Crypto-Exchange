@@ -34,7 +34,7 @@ func newProxiedService(t *testing.T) (*RabbitMQService, string, *tcpproxy.Proxy)
 	t.Cleanup(withRabbitMQConfig(proxy.Host(), proxy.Port(), "guest", "guest"))
 
 	exchange := "test_reconnect_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	svc, err := NewRabbitMQService(exchange)
+	svc, err := NewRabbitMQService(&config.Config, exchange)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		svc.Close()
@@ -230,7 +230,7 @@ func TestStartup_Broker_ConnectsWhenTheBrokerComesBack(t *testing.T) {
 	proxy.SetDown(true)
 
 	exchange := "test_late_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	svc, err := NewRabbitMQService(exchange)
+	svc, err := NewRabbitMQService(&config.Config, exchange)
 	require.NoError(t, err, "the service starts without the broker")
 	t.Cleanup(func() {
 		svc.Close()
@@ -268,14 +268,14 @@ func TestHosts_Broker_SkipsANodeThatIsDown(t *testing.T) {
 	config.Config.RabbitMQ.Hosts = []string{"127.0.0.2:1", proxy.Host() + ":" + proxy.Port()}
 
 	for range 3 {
-		svc, err := NewRabbitMQService()
+		svc, err := NewRabbitMQService(&config.Config)
 		require.NoError(t, err)
 		assert.True(t, svc.IsHealthy())
 		assert.Equal(t, net.JoinHostPort(proxy.Host(), proxy.Port()), svc.ConnectedTo())
 		require.NoError(t, svc.Close())
 	}
 
-	svc, err := NewRabbitMQService()
+	svc, err := NewRabbitMQService(&config.Config)
 	require.NoError(t, err)
 	t.Cleanup(func() { svc.Close() })
 	proxy.Cut()

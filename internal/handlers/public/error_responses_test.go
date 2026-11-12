@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -48,7 +49,7 @@ func TestOTPEndpoints_RedisFailuresRevealNoDetails(t *testing.T) {
 	// Nothing listens on port 1, so every Redis command fails.
 	unreachable := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
 	t.Cleanup(func() { unreachable.Close() })
-	handler := NewHandler(&models.InfraServices{Redis: &db.RedisService{Client: unreachable}})
+	handler := NewHandler(&models.InfraServices{Config: &config.Config, Redis: &db.RedisService{Client: unreachable}})
 	router := gin.New()
 	router.POST("/public/auth", handler.RequestOTP)
 	router.POST("/public/auth/:uuid", handler.VerifyOTP)
@@ -94,7 +95,7 @@ func TestVerifyOTP_RealSchema_DatabaseFailuresRevealNoDetails(t *testing.T) {
 // server gives to internal/userauth through an interface, so this tree
 // still imports none. It runs only for a challenge that a correct code
 // issued, after an attempt was counted against the lock of the password,
-// and a bounded number at once: cmd/server
+// and a bounded number at once: internal/app
 // TestUserPassword_NothingIsHashedWithoutAChallenge holds that.
 func TestUnauthenticatedPathsUseNoPasswordHashing(t *testing.T) {
 	goTool, err := exec.LookPath("go")

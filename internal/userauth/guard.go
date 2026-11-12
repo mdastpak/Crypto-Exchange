@@ -49,7 +49,7 @@ type Guard struct {
 
 // mode returns security.second_factor.mode, or its default.
 func mode() string {
-	if m := config.Config.Security.SecondFactor.Mode; m != "" {
+	if m := settings().Security.SecondFactor.Mode; m != "" {
 		return m
 	}
 	return config.DefaultSecondFactorMode
@@ -58,7 +58,7 @@ func mode() string {
 // StepUpLifetime returns security.second_factor.step_up_minutes, or its
 // default, as a duration.
 func StepUpLifetime() time.Duration {
-	minutes := config.Config.Security.SecondFactor.StepUpMinutes
+	minutes := settings().Security.SecondFactor.StepUpMinutes
 	if minutes == 0 {
 		minutes = config.DefaultUserStepUpMinutes
 	}

@@ -2,66 +2,88 @@ package admin
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/internal/adminauth"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
-	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
-	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
+	"github.com/mdastpak/crypto-exchange/internal/rebrand"
+	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// AdminHandler serves the admin routes. Every dependency is an interface
+// (deps.go, #48); a nil one makes its routes unavailable.
 type AdminHandler struct {
-	PostgresDB      *db.PostgresService
-	RedisClient     *db.RedisService
-	RabbitMQService *rabbitmq.RabbitMQService
+	// Config is the configuration of the process (#48). NewHandler sets it;
+	// nil reads as the zero configuration.
+	Config *config.Configuration
+	// The stores of the routes.
+	CurrencyStore CurrencyStore
+	Restrictions  RestrictionStore
+	Controls      ControlStore
+	Delistings    DelistingStore
+	Rebrands      RebrandStore
+	Audit         AuditLog
+	Findings      FindingStore
 	// Outbox is the relay that publishes the currency events, which changes
 	// write to the outbox. Without it, they wait there for the relay of
 	// another instance.
 	Outbox nudger
 	// Currencies holds the list of public currencies, which changes drop.
-	Currencies *currencies.Catalog
+	Currencies CatalogCache
 
 	// Admin sign-in. Accounts is nil, and sign-in unavailable, without the
 	// data keys.
-	Accounts *adminauth.Service
+	Accounts Accounts
 	// OTP issues the emailed sign-in codes, in its own namespace.
-	OTP *otp.Store
+	OTP CodeStore
 	// OTPSender delivers the emailed codes.
 	OTPSender notify.OTPSender
 
 	// Platform is this instance's copy of the platform controls (#235),
 	// which a change refreshes at once. LiftApproval are the features whose
 	// active lockdown needs a second administrator to lift.
-	Platform     *platform.Watcher
+	Platform     ControlRefresher
 	LiftApproval []platform.Feature
 }
 
+// NewHandler returns the handler with the stores of the services in is. A
+// service that is not there leaves its dependencies nil, never a typed nil.
 func NewHandler(is *models.InfraServices) *AdminHandler {
 	h := &AdminHandler{
-		PostgresDB:      is.Postgres,
-		RedisClient:     is.Redis,
-		RabbitMQService: is.RabbitMQ,
-		OTPSender:       notify.DiscardSender{},
-		Currencies:      currencies.ForServices(is),
+		Config:    is.Settings(),
+		OTPSender: notify.DiscardSender{},
+	}
+	if is.Postgres != nil {
+		db := is.Postgres.DB
+		h.CurrencyStore = currencies.Store{DB: db}
+		h.Restrictions = restrictions.Store{DB: db}
+		h.Controls = platform.Store{DB: db}
+		h.Delistings = delisting.Store{DB: db}
+		h.Rebrands = rebrand.Store{DB: db}
+		h.Audit = audit.Log{DB: db}
+		h.Findings = rowseal.Findings{DB: db}
+	}
+	if catalog := currencies.ForServices(is); catalog != nil {
+		h.Currencies = catalog
 	}
 	if is.Redis != nil {
-		settings := otp.SettingsFromConfig()
+		settings := otp.SettingsOf(is.Settings())
 		settings.Namespace = otpNamespace
 		h.OTP = otp.NewStore(is.Redis.Client, settings)
 	}
@@ -72,12 +94,6 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 // implements it.
 type nudger interface {
 	Nudge()
-}
-
-// enqueuePublicEvent writes the event of a change, if it has one, to the
-// outbox in tx; see currencies.EnqueueEvent.
-func enqueuePublicEvent(ctx context.Context, tx *sql.Tx, wasPublic bool, currency models.Currency) (bool, error) {
-	return currencies.EnqueueEvent(ctx, tx, wasPublic, currency)
 }
 
 // syncTimeout bounds the steps that follow a committed currency change.
@@ -138,48 +154,16 @@ func (h *AdminHandler) CreateCurrency(c *gin.Context) {
 		return
 	}
 
-	infoJSON, err := json.Marshal(info)
-	if err != nil {
-		log.Printf("Error marshalling CurrencyInfo to JSON: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_INFO_INTERNAL_ERROR"), nil)
-		return
-	}
-
-	// The currency and its event are written together.
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		log.Printf("Error starting a currency create: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_CREATE_FAILED"), nil)
-		return
-	}
-	defer tx.Rollback()
-
-	var generatedHK string
-	var version int64
-	err = tx.QueryRowContext(ctx,
-		"INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb) RETURNING hk, version",
-		status, infoJSON,
-	).Scan(&generatedHK, &version)
-	var public bool
-	if err == nil {
-		public, err = enqueuePublicEvent(ctx, tx, false, models.Currency{HK: generatedHK, Status: status, Info: info})
-	}
-	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyCreate, generatedHK,
-		&audit.Changes{After: currencyFields(status, info)})) {
-		return
-	}
-	if err == nil {
-		err = tx.Commit()
-	}
+	// The currency, its event, and its record are written together.
+	w, err := h.CurrencyStore.Create(ctx, status, info, h.currencyOrigin(c))
 	if err != nil {
 		sendCurrencyWriteError(c, err, "create")
 		return
 	}
-	if public {
-		h.afterPublicChange(ctx, generatedHK)
+	if w.Public {
+		h.afterPublicChange(ctx, w.HK)
 	}
-
-	helpers.SendResponse(c, http.StatusCreated, i18n.M("CURRENCY_CREATED_SUCCESSFULLY"), gin.H{"hk": generatedHK, "status": status, "version": version})
+	helpers.SendResponse(c, http.StatusCreated, i18n.M("CURRENCY_CREATED_SUCCESSFULLY"), gin.H{"hk": w.HK, "status": status, "version": w.Version})
 }
 
 // @Summary Update a currency
@@ -222,89 +206,39 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 		return
 	}
 
-	// The row is locked from the read to the write, so that concurrent
-	// partial updates of one currency are applied one after the other
-	// instead of overwriting each other's fields. An update that sends the
-	// version it is based on is refused if another one came first.
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		log.Printf("Error starting a currency update: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_UPDATE_FAILED"), nil)
-		return
-	}
-	defer tx.Rollback()
-
-	var currentStatus string
-	var infoData []byte
-	var currentVersion int64
-	err = tx.QueryRowContext(ctx,
-		"SELECT status, info, version FROM currencies WHERE hk = $1 AND deleted_at IS NULL FOR UPDATE", hk,
-	).Scan(&currentStatus, &infoData, &currentVersion)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
-			return
-		}
-		log.Printf("Error retrieving currency data: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RETRIEVE_CURRENCY_DATA"), nil)
-		return
-	}
-
-	if req.Version != nil && *req.Version != currentVersion {
-		sendVersionConflict(c, currentVersion)
-		return
-	}
-
-	var currentInfo models.CurrencyInfo
-	if err := json.Unmarshal(infoData, &currentInfo); err != nil {
-		log.Printf("Error unmarshalling CurrencyInfo: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_PROCESS_CURRENCY_INFO"), nil)
-		return
-	}
-
-	wasPublic := currentStatus == models.CurrencyStatusApproved
-
 	// Only the fields in the request change. The result is validated as a
-	// whole, so an update cannot leave a currency invalid.
-	before := currencyFields(currentStatus, currentInfo)
-	currentStatus, currentInfo = req.apply(currentStatus, currentInfo)
-	if errs := validateCurrency(currentStatus, currentInfo); errs != nil {
-		sendValidationErrors(c, errs)
+	// whole, so an update cannot leave a currency invalid. The store locks
+	// the row from the read to the write, so that concurrent partial updates
+	// are applied one after the other, and refuses an update based on a
+	// version that another one replaced.
+	edit := func(status string, info models.CurrencyInfo) (string, models.CurrencyInfo, error) {
+		status, info = req.apply(status, info)
+		if errs := validateCurrency(status, info); errs != nil {
+			return status, info, errs
+		}
+		return status, info, nil
+	}
+	w, err := h.CurrencyStore.Update(ctx, hk, req.Version, edit, h.currencyOrigin(c))
+	var invalid fieldErrors
+	var conflict *currencies.VersionConflict
+	switch {
+	case errors.As(err, &invalid):
+		sendValidationErrors(c, invalid)
 		return
-	}
-
-	infoJSON, err := json.Marshal(currentInfo)
-	if err != nil {
-		log.Printf("Error marshalling CurrencyInfo to JSON: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_INFO_INTERNAL_ERROR"), nil)
+	case errors.Is(err, currencies.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 		return
-	}
-
-	var newVersion int64
-	err = tx.QueryRowContext(ctx,
-		"UPDATE currencies SET status=$1, info=$2::jsonb, version=version+1, updated_at=NOW() WHERE hk=$3 AND deleted_at IS NULL RETURNING version",
-		currentStatus, infoJSON, hk,
-	).Scan(&newVersion)
-	var public bool
-	if err == nil {
-		public, err = enqueuePublicEvent(ctx, tx, wasPublic, models.Currency{HK: hk, Status: currentStatus, Info: currentInfo})
-	}
-	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyUpdate, hk,
-		changedFields(before, currencyFields(currentStatus, currentInfo)))) {
+	case errors.As(err, &conflict):
+		sendVersionConflict(c, conflict.Current)
 		return
-	}
-	if err == nil {
-		err = tx.Commit()
-	}
-	if err != nil {
+	case err != nil:
 		sendCurrencyWriteError(c, err, "update")
 		return
 	}
-	if public {
+	if w.Public {
 		h.afterPublicChange(ctx, hk)
 	}
-
-	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_UPDATED_SUCCESSFULLY"), gin.H{"version": newVersion})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_UPDATED_SUCCESSFULLY"), gin.H{"version": w.Version})
 }
 
 // @Summary Delete a currency
@@ -337,70 +271,26 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		return
 	}
 
-	// The row is locked from the read to the write, so that the previous
-	// status, which decides the event, is the one this delete replaces, and
-	// concurrent deletes of one currency succeed only once.
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		log.Printf("Error starting a currency delete: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_DELETE_FAILED"), nil)
+	w, err := h.CurrencyStore.Delete(ctx, hk, expected, h.currencyOrigin(c))
+	var conflict *currencies.VersionConflict
+	switch {
+	case errors.Is(err, currencies.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 		return
-	}
-	defer tx.Rollback()
-
-	var isDeleted bool
-	var previousStatus string
-	var currentVersion int64
-	err = tx.QueryRowContext(ctx,
-		"SELECT (deleted_at IS NOT NULL), status, version FROM currencies WHERE hk = $1 FOR UPDATE", hk,
-	).Scan(&isDeleted, &previousStatus, &currentVersion)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
-		} else {
-			log.Printf("Error checking currency in database: %v", err)
-			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_DELETE_FAILED"), nil)
-		}
-		return
-	}
-
-	if isDeleted {
+	case errors.Is(err, currencies.ErrAlreadyDeleted):
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND_OR_ALREADY_DELETED"), nil)
 		return
-	}
-	if expected != nil && *expected != currentVersion {
-		sendVersionConflict(c, currentVersion)
+	case errors.As(err, &conflict):
+		sendVersionConflict(c, conflict.Current)
+		return
+	case err != nil:
+		sendUnrecordedOr(c, err, "delete", i18n.M("CURRENCY_DELETE_FAILED"))
 		return
 	}
-
-	var newVersion int64
-	err = tx.QueryRowContext(ctx,
-		"UPDATE currencies SET deleted_at=NOW(), status='deleted', version=version+1 WHERE hk=$1 RETURNING version", hk,
-	).Scan(&newVersion)
-	var public bool
-	if err == nil {
-		public, err = enqueuePublicEvent(ctx, tx, previousStatus == models.CurrencyStatusApproved,
-			models.Currency{HK: hk, Status: models.CurrencyStatusDeleted})
-	}
-	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyDelete, hk, &audit.Changes{
-		Before: map[string]interface{}{"status": previousStatus},
-		After:  map[string]interface{}{"status": models.CurrencyStatusDeleted},
-	})) {
-		return
-	}
-	if err == nil {
-		err = tx.Commit()
-	}
-	if err != nil {
-		log.Printf("Error deleting currency in database: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_DELETE_FAILED"), nil)
-		return
-	}
-	if public {
+	if w.Public {
 		h.afterPublicChange(ctx, hk)
 	}
-
-	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_DELETED_SUCCESSFULLY"), gin.H{"version": newVersion})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_DELETED_SUCCESSFULLY"), gin.H{"version": w.Version})
 }
 
 // @Summary Restore a deleted currency
@@ -433,62 +323,25 @@ func (h *AdminHandler) RestoreCurrency(c *gin.Context) {
 		return
 	}
 
-	// As in a delete, the row is locked from the read to the write, so that
-	// concurrent restores, on any instance, succeed only once.
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		log.Printf("Error starting a currency restore: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_RESTORE_FAILED"), nil)
-		return
-	}
-	defer tx.Rollback()
-
-	var isDeleted bool
-	var currentVersion int64
-	err = tx.QueryRowContext(ctx,
-		"SELECT (deleted_at IS NOT NULL), version FROM currencies WHERE hk = $1 FOR UPDATE", hk,
-	).Scan(&isDeleted, &currentVersion)
-	if errors.Is(err, sql.ErrNoRows) {
-		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
-		return
-	}
-	if err != nil {
-		log.Printf("Error checking currency in database: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_RESTORE_FAILED"), nil)
-		return
-	}
-	if expected != nil && *expected != currentVersion {
-		sendVersionConflict(c, currentVersion)
-		return
-	}
-	if !isDeleted {
-		helpers.SendError(c, http.StatusConflict, "not_deleted", i18n.M("CURRENCY_NOT_DELETED"), gin.H{"code": "not_deleted"})
-		return
-	}
-
 	// A pending currency is not public, so the restore publishes no event and
 	// leaves the cached public list as it is.
-	var newVersion int64
-	err = tx.QueryRowContext(ctx,
-		"UPDATE currencies SET deleted_at=NULL, status=$1, version=version+1, updated_at=NOW() WHERE hk=$2 RETURNING version",
-		models.CurrencyStatusPending, hk,
-	).Scan(&newVersion)
-	if err == nil && !h.recordChange(ctx, c, tx, h.currencyEvent(c, audit.ActionCurrencyRestore, hk, &audit.Changes{
-		Before: map[string]interface{}{"status": models.CurrencyStatusDeleted},
-		After:  map[string]interface{}{"status": models.CurrencyStatusPending},
-	})) {
+	w, err := h.CurrencyStore.Restore(ctx, hk, expected, h.currencyOrigin(c))
+	var conflict *currencies.VersionConflict
+	switch {
+	case errors.Is(err, currencies.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
+		return
+	case errors.As(err, &conflict):
+		sendVersionConflict(c, conflict.Current)
+		return
+	case errors.Is(err, currencies.ErrNotDeleted):
+		helpers.SendError(c, http.StatusConflict, "not_deleted", i18n.M("CURRENCY_NOT_DELETED"), gin.H{"code": "not_deleted"})
+		return
+	case err != nil:
+		sendUnrecordedOr(c, err, "restore", i18n.M("CURRENCY_RESTORE_FAILED"))
 		return
 	}
-	if err == nil {
-		err = tx.Commit()
-	}
-	if err != nil {
-		log.Printf("Error restoring currency in database: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("CURRENCY_RESTORE_FAILED"), nil)
-		return
-	}
-
-	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_RESTORED_SUCCESSFULLY"), gin.H{"version": newVersion})
+	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_RESTORED_SUCCESSFULLY"), gin.H{"version": w.Version})
 }
 
 // GetCurrency returns one currency, whatever its status, with its version:
@@ -517,89 +370,54 @@ func (h *AdminHandler) GetCurrency(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	var currency models.Currency
-	var info []byte
-	var created, updated, deleted sql.NullTime
-	var lifecycle currencies.DetailScan
-	err = h.PostgresDB.DB.QueryRowContext(ctx,
-		"SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, "+currencies.DetailColumns+" FROM currencies c WHERE c.hk = $1", id.String(),
-	).Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &currency.Version, &created, &updated, &deleted}, lifecycle.Dest()...)...)
-	if errors.Is(err, sql.ErrNoRows) {
+	currency, err := h.CurrencyStore.Get(ctx, id.String())
+	if errors.Is(err, currencies.ErrNotFound) {
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
 		return
-	}
-	if err == nil {
-		err = json.Unmarshal(info, &currency.Info)
-	}
-	if err == nil {
-		err = lifecycle.Apply(&currency)
 	}
 	if err != nil {
 		log.Printf("Error reading currency %s: %v", id, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RETRIEVE_CURRENCY_DATA"), nil)
 		return
 	}
-	currency.CreatedAt, currency.UpdatedAt = timestamp(created), timestamp(updated)
-	if deleted.Valid {
-		at := timestamp(deleted)
-		currency.DeletedAt = &at
-	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_RETRIEVED_SUCCESSFULLY"), currency)
 }
 
-// timestamp formats a database time in RFC 3339, in UTC, or as "" when it is
-// NULL.
-func timestamp(t sql.NullTime) string {
-	if !t.Valid {
-		return ""
-	}
-	return t.Time.UTC().Format(time.RFC3339)
-}
-
-// recordChange writes the audit event of a change in its transaction, and
-// reports whether it did. When it cannot, it answers 500, and the caller
-// returns, so that the transaction rolls back: no change without its event.
-// The failure is the server's, never a problem of the request, whatever
-// constraint the event broke.
-func (h *AdminHandler) recordChange(ctx context.Context, c *gin.Context, tx *sql.Tx, e audit.Event) bool {
-	if err := audit.Record(ctx, tx, e); err != nil {
-		log.Printf("Refused the change %s of %s, which could not be recorded: %v", e.Action, e.TargetID, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RECORD_THE_CHANGE"), nil)
-		return false
-	}
-	return true
-}
-
-// currencyEvent is the audit event of a change to a currency by the
-// administrator of the request. Without an administrator, the event, and so
-// the change, is refused.
-func (h *AdminHandler) currencyEvent(c *gin.Context, action, hk string, changes *audit.Changes) audit.Event {
+// currencyOrigin is the origin of the audit event of a change to a currency
+// by the administrator of the request. Without an administrator, the event,
+// and so the change, is refused.
+func (h *AdminHandler) currencyOrigin(c *gin.Context) audit.Event {
 	e := audit.FromRequest(c)
-	e.ActorType, e.Action, e.Outcome = audit.ActorAdmin, action, audit.Success
+	e.ActorType = audit.ActorAdmin
 	if claims, ok := auth.GetClaims(c); ok {
 		e.ActorID = claims.UUID
 	}
-	e.TargetType, e.TargetID = audit.TargetCurrency, hk
-	e.Changes = changes
 	return e
 }
 
-// currencyFields are the fields of a currency as the audit log records them.
-func currencyFields(status string, info models.CurrencyInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"status": status, "en_name": info.EnName, "fa_name": info.FaName, "symbol": info.Symbol,
-		"if_fiat": info.IfFiat, "is_token": info.IsToken, "contract": info.Contract, "logo_url": info.LogoURL,
+// sendUnrecordedOr answers a change that failed: 500 with
+// FAILED_TO_RECORD_THE_CHANGE when its audit event could not be written,
+// which rolled it back (no change without its record), and otherwise 500
+// with failure. The failure is the server's, never a problem of the
+// request.
+func sendUnrecordedOr(c *gin.Context, err error, action string, failure i18n.Message) {
+	if errors.Is(err, currencies.ErrUnrecorded) {
+		log.Printf("Refused the currency %s, which could not be recorded: %v", action, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RECORD_THE_CHANGE"), nil)
+		return
 	}
+	log.Printf("Failed to %s a currency: %v", action, err)
+	helpers.SendResponse(c, http.StatusInternalServerError, failure, nil)
 }
 
-// changedFields keeps the fields whose values differ between before and
-// after.
-func changedFields(before, after map[string]interface{}) *audit.Changes {
-	changes := &audit.Changes{Before: map[string]interface{}{}, After: map[string]interface{}{}}
-	for name, value := range after {
-		if before[name] != value {
-			changes.Before[name], changes.After[name] = before[name], value
-		}
+// zeroConfig is the configuration of a handler without one.
+var zeroConfig config.Configuration
+
+// settings returns the configuration of the handler, or the zero
+// configuration without one.
+func (h *AdminHandler) settings() *config.Configuration {
+	if h.Config == nil {
+		return &zeroConfig
 	}
-	return changes
+	return h.Config
 }

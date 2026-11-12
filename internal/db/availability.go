@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"os"
 
-	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
 
 	"github.com/jackc/pgx/v5"
@@ -42,8 +41,8 @@ const readOnlyMark = "crypto-exchange.read-only"
 // (#230): after a failover with a floating address, the pool would
 // otherwise keep connections to the demoted primary until their lifetime
 // ends.
-func openPool(cfg *pgx.ConnConfig) *sql.DB {
-	wantsWrites := map[string]bool{"read-write": true, "primary": true}[config.Config.Postgres.TargetSessionAttrs]
+func openPool(cfg *pgx.ConnConfig, targetSessionAttrs string) *sql.DB {
+	wantsWrites := map[string]bool{"read-write": true, "primary": true}[targetSessionAttrs]
 	return stdlib.OpenDB(*cfg, stdlib.OptionResetSession(func(_ context.Context, conn *pgx.Conn) error {
 		if !wantsWrites {
 			return nil

@@ -38,7 +38,7 @@ func TestNewRabbitMQService_StartsWithoutTheBroker(t *testing.T) {
 			restore := withRabbitMQConfig(hostPort[0], hostPort[1], "guest", "guest")
 			defer restore()
 
-			svc, err := NewRabbitMQService()
+			svc, err := NewRabbitMQService(&config.Config)
 			require.NoError(t, err)
 			require.NotNil(t, svc)
 			assert.False(t, svc.IsHealthy())
@@ -68,7 +68,7 @@ func TestNewRabbitMQService_RefusesSettingsThatCannotWork(t *testing.T) {
 	restore := withRabbitMQConfig("127.0.0.1", "1", "guest", "guest")
 	defer restore()
 	config.Config.RabbitMQ.TLS = config.ClientTLS{Enabled: true, CAFile: "/does/not/exist.pem"}
-	_, err := NewRabbitMQService()
+	_, err := NewRabbitMQService(&config.Config)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rabbitmq.tls")
 }

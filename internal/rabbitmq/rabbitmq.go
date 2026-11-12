@@ -154,7 +154,7 @@ func (t *confirmTracker) forget(tag uint64) {
 	t.mu.Unlock()
 }
 
-// NewRabbitMQService connects to RabbitMQ and declares the exchanges. When
+// NewRabbitMQService connects to the RabbitMQ of cfg and declares the exchanges. When
 // no node can be reached, it does not fail (#232): it logs the error and
 // keeps connecting in the background, so that a server started during a
 // broker outage serves every route that does not need the broker, and a
@@ -162,10 +162,10 @@ func (t *confirmTracker) forget(tag uint64) {
 // IsHealthy is false, publishes fail after a short wait, and OpenChannel
 // fails; the consumers retry on their own. It fails only on settings that
 // cannot work, such as a TLS file that does not load.
-func NewRabbitMQService(exchanges ...string) (*RabbitMQService, error) {
+func NewRabbitMQService(cfg *config.Configuration, exchanges ...string) (*RabbitMQService, error) {
 	var nodes []node
-	for _, n := range config.RabbitMQNodes() {
-		tlsConfig, err := config.Config.RabbitMQ.TLS.TLSConfig(n.Host)
+	for _, n := range cfg.RabbitMQNodes() {
+		tlsConfig, err := cfg.RabbitMQ.TLS.TLSConfig(n.Host)
 		if err != nil {
 			return nil, fmt.Errorf("rabbitmq.tls: %w", err)
 		}

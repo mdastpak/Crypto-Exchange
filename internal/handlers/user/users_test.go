@@ -16,7 +16,7 @@ func init() {
 }
 
 // The database-backed profile tests, including authorization, run end to end
-// in cmd/server with real sign-ins.
+// in internal/app with real sign-ins.
 
 func TestMaskContact(t *testing.T) {
 	cases := []struct{ contactType, value, want string }{

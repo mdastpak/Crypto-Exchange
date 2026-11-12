@@ -61,20 +61,20 @@ func runMigrate(cmd command, stdout, stderr io.Writer) int {
 	db.ApplicationName = "crypto-exchange-admin"
 
 	if cmd.name == "migrate up" {
-		if err := db.Migrate(ctx); err != nil {
+		if err := db.Migrate(ctx, dbOptions()); err != nil {
 			fmt.Fprintln(stderr, "Error: migrate:", err)
 			return 1
 		}
 	}
 
 	// The status, and the result of up, as the runtime role sees them.
-	postgres, err := db.ConnectPostgres()
+	postgres, err := db.ConnectPostgres(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1
 	}
 	defer postgres.Close()
-	state, err := db.ReadSchemaState(ctx, postgres.DB)
+	state, err := db.ReadSchemaState(ctx, postgres.DB, config.MigrationsPath())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1

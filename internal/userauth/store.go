@@ -56,9 +56,9 @@ type Passwords struct {
 // read at each use; a setting that is not set takes its default.
 func NewPasswords(db *sql.DB, hasher Hasher) *Passwords { return &Passwords{DB: db, Hasher: hasher} }
 
-// settings returns the limits in force.
-func (p *Passwords) settings() (minLength, maxFailures int, lock time.Duration) {
-	cfg := config.Config.Security.Password
+// limits returns the limits in force.
+func (p *Passwords) limits() (minLength, maxFailures int, lock time.Duration) {
+	cfg := settings().Security.Password
 	minLength, maxFailures, lock = p.MinLength, p.MaxFailures, p.Lock
 	if minLength == 0 {
 		if minLength = cfg.MinLength; minLength == 0 {
@@ -82,7 +82,7 @@ func (p *Passwords) settings() (minLength, maxFailures int, lock time.Duration) 
 
 // MinPasswordLength is the least length of a new password, in characters.
 func (p *Passwords) MinPasswordLength() int {
-	minLength, _, _ := p.settings()
+	minLength, _, _ := p.limits()
 	return minLength
 }
 
@@ -219,7 +219,7 @@ func (p *Passwords) attempt(ctx context.Context, userHK string) (string, error) 
 		failures, lockedUntil = 0, sql.NullTime{}
 	}
 	failures++
-	_, maxFailures, lock := p.settings()
+	_, maxFailures, lock := p.limits()
 	if failures >= maxFailures {
 		lockedUntil = sql.NullTime{Time: now.Add(lock), Valid: true}
 	}
@@ -404,7 +404,7 @@ func (p *Passwords) Set(ctx context.Context, userHK, current, password string, e
 func HoldDuration() time.Duration { return holdDuration() }
 
 func holdDuration() time.Duration {
-	hours := config.Config.Security.ChangeHoldHours
+	hours := settings().Security.ChangeHoldHours
 	if hours == 0 {
 		hours = config.DefaultSecurityChangeHoldHours
 	}

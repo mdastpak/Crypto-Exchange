@@ -43,6 +43,9 @@ import (
 )
 
 type PublicHandler struct {
+	// Config is the configuration of the process (#48). NewHandler sets it;
+	// nil reads as the zero configuration.
+	Config          *config.Configuration
 	PostgresDB      *db.PostgresService
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
@@ -81,6 +84,7 @@ type PublicHandler struct {
 
 func NewHandler(is *models.InfraServices) *PublicHandler {
 	h := &PublicHandler{
+		Config:          is.Settings(),
 		PostgresDB:      is.Postgres,
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
@@ -91,7 +95,7 @@ func NewHandler(is *models.InfraServices) *PublicHandler {
 		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
 	}
 	if is.Redis != nil {
-		h.OTP = otp.NewStore(is.Redis.Client, otp.SettingsFromConfig())
+		h.OTP = otp.NewStore(is.Redis.Client, otp.SettingsOf(is.Settings()))
 	}
 	return h
 }
@@ -147,7 +151,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 
 	// The per-contact limits count by the client that asks, so that a
 	// stranger cannot use up the budget of the contact's owner (#187).
-	issued, err := h.OTP.Issue(ctx, req.Username, clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength))
+	issued, err := h.OTP.Issue(ctx, req.Username, clientip.Key(c.ClientIP(), h.settings().RateLimits.IPv6PrefixLength))
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
 		h.noteSignIn(ctx, event, audit.Denied, reasonRateLimited)
@@ -492,11 +496,11 @@ func (h *PublicHandler) recheckOwnership(ctx context.Context, origin audit.Event
 	if err != nil || !found || owner.UserHK != ownerHK {
 		return false, err
 	}
-	recheck := config.Config.Identity.MobileOwnership.Recheck()
+	recheck := h.settings().Identity.MobileOwnership.Recheck()
 	if owner.OwnershipCheckedAt != nil && time.Since(*owner.OwnershipCheckedAt) < recheck {
 		return false, nil
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
+	checkCtx, cancel := context.WithTimeout(ctx, h.settings().Identity.MobileOwnership.Timeout())
 	defer cancel()
 	verdict, ref, err := contactclaim.Check(checkCtx, h.Ownership, h.Sealer, h.PostgresDB.DB, ownerHK, mobile)
 	if errors.Is(err, identity.ErrUnavailable) {
@@ -527,7 +531,7 @@ func (h *PublicHandler) recheckOwnership(ctx context.Context, origin audit.Event
 	detachOrigin := origin
 	detachOrigin.ActorType, detachOrigin.ActorID = audit.ActorSystem, ""
 	_, detached, err := contactclaim.Detach(ctx, tx, ownerHK, string(account.ContactMobile), mobile, contactclaim.ReasonOwnershipMismatch,
-		detachOrigin, time.Duration(config.Config.Security.ChangeHoldHours)*time.Hour)
+		detachOrigin, time.Duration(h.settings().Security.ChangeHoldHours)*time.Hour)
 	if err != nil {
 		return false, err
 	}
@@ -788,4 +792,16 @@ func (h *PublicHandler) GetCurrencyByHK(c *gin.Context) {
 		return
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCY_RETRIEVED_SUCCESSFULLY"), currency)
+}
+
+// zeroConfig is the configuration of a handler without one.
+var zeroConfig config.Configuration
+
+// settings returns the configuration of the handler, or the zero
+// configuration without one.
+func (h *PublicHandler) settings() *config.Configuration {
+	if h.Config == nil {
+		return &zeroConfig
+	}
+	return h.Config
 }

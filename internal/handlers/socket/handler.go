@@ -14,15 +14,23 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
-	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// Channels opens channels of the message broker, which the consumer of the
+// currency events reads: *rabbitmq.RabbitMQService (#48).
+type Channels interface {
+	OpenChannel() (*amqp.Channel, error)
+}
+
 type WebSocketHandler struct {
-	RabbitMQService *rabbitmq.RabbitMQService
+	// Config is the configuration of the process (#48). NewWebSocketHandler
+	// sets it; nil reads as the zero configuration.
+	Config          *config.Configuration
+	RabbitMQService Channels
 	Clients         map[*Client]bool
 	Mu              sync.RWMutex
 	Upgrader        websocket.Upgrader
@@ -92,17 +100,17 @@ type Client struct {
 	limiter  *tokenBucket
 }
 
-var (
-	// Default upgrader with secure origin check
-	defaultUpgrader = websocket.Upgrader{
+// newUpgrader returns the upgrader of the handshakes, which accepts the
+// origins of websocket.allowed_origins of cfg, read at each handshake, and
+// the pages of every site (#285); without allowed origins, the same origin
+// too.
+func newUpgrader(cfg *config.Configuration) websocket.Upgrader {
+	return websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			// In production, configure allowed origins from config
 			origin := r.Header.Get("Origin")
-			allowed := config.Config.WebSocket.AllowedOrigins
-			// The pages of every site may connect too (#285).
-			sites := config.Config.SiteOrigins()
+			allowed := cfg.WebSocket.AllowedOrigins
+			sites := cfg.SiteOrigins()
 			if len(allowed) == 0 {
-				// Default: allow same origin only, and the sites.
 				if origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host {
 					return true
 				}
@@ -121,18 +129,35 @@ var (
 		Subprotocols: []string{accessTokenProtocol},
 		Error:        handshakeError,
 	}
-)
+}
+
+// zeroConfig is the configuration of a handler without one.
+var zeroConfig config.Configuration
+
+// settings returns the configuration of the handler, or the zero
+// configuration without one.
+func (h *WebSocketHandler) settings() *config.Configuration {
+	if h.Config == nil {
+		return &zeroConfig
+	}
+	return h.Config
+}
 
 func NewWebSocketHandler(is *models.InfraServices) *WebSocketHandler {
+	cfg := is.Settings()
 	h := &WebSocketHandler{
-		RabbitMQService: is.RabbitMQ,
-		Clients:         make(map[*Client]bool),
-		Upgrader:        defaultUpgrader,
-		ShutdownCh:      make(chan struct{}),
-		limits:          limitsFromConfig(),
-		openPerIP:       make(map[string]int),
-		openPerUser:     make(map[string]int),
-		instanceID:      uuid.NewString(),
+		Config:      cfg,
+		Clients:     make(map[*Client]bool),
+		Upgrader:    newUpgrader(cfg),
+		ShutdownCh:  make(chan struct{}),
+		limits:      limitsOf(cfg),
+		openPerIP:   make(map[string]int),
+		openPerUser: make(map[string]int),
+		instanceID:  uuid.NewString(),
+	}
+	// Never a typed nil: StartConsumer checks for no broker.
+	if is.RabbitMQ != nil {
+		h.RabbitMQService = is.RabbitMQ
 	}
 	return h
 }
@@ -369,7 +394,7 @@ func (h *WebSocketHandler) StartConsumer(ctx context.Context) error {
 	if h.RabbitMQService == nil {
 		return errors.New("the WebSocket consumer needs RabbitMQ")
 	}
-	exchange := config.Config.RabbitMQ.Exchanges.PriceUpdates
+	exchange := h.settings().RabbitMQ.Exchanges.PriceUpdates
 	sub, err := h.subscribe(exchange)
 	if err != nil {
 		log.Printf("WebSocket consumer: subscribe to %s: %v; subscribing in the background", exchange, err)

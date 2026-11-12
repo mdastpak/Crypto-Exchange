@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/redis/go-redis/v9"
@@ -133,7 +132,7 @@ func ForServices(is *models.InfraServices) *Catalog {
 	if is.Postgres == nil || is.Redis == nil {
 		return nil
 	}
-	return New(is.Postgres.DB, is.Redis.Client, time.Duration(config.Config.Redis.CurrencyCacheTTL)*time.Second)
+	return New(is.Postgres.DB, is.Redis.Client, time.Duration(is.Settings().Redis.CurrencyCacheTTL)*time.Second)
 }
 
 // List returns the public currencies, oldest first. The slice may be shared

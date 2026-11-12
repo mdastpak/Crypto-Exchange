@@ -69,7 +69,7 @@ func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Clien
 		redisClient.Close()
 	})
 
-	handler := NewHandler(&models.InfraServices{
+	handler := NewHandler(&models.InfraServices{Config: &config.Config,
 		Postgres: postgresService,
 		Redis:    &db.RedisService{Client: redisClient},
 	})
@@ -110,7 +110,7 @@ func migrateRealSchema(t *testing.T) *db.PostgresService {
 		resetRealSchema(t)
 	})
 
-	postgresService, err := db.NewPostgresService()
+	postgresService, err := db.NewPostgresService(db.Options{Config: &config.Config, MigrationsPath: config.MigrationsPath()})
 	unlock()
 	require.NoError(t, err, "the repository migrations must apply to an empty database")
 	t.Cleanup(func() { postgresService.Close() })

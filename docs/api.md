@@ -575,7 +575,7 @@ The sensitive routes:
 | `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` | Capability overrides |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
 
-Every admin route that changes something is classified in one table, `adminRoutes` of `cmd/server/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
+Every admin route that changes something is classified in one table, `adminRoutes` of `internal/app/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
 
 ### Checks on admin routes
 

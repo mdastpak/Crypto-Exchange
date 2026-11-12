@@ -157,7 +157,7 @@ func TestHA_DeliversWhileANodeIsDown(t *testing.T) {
 		Delivered:          &memoryLog{},
 		Logger:             log.New(logs, "", 0),
 	}
-	svc, err := rabbitmq.NewRabbitMQService(opts.Exchange)
+	svc, err := rabbitmq.NewRabbitMQService(&config.Config, opts.Exchange)
 	require.NoError(t, err)
 	t.Cleanup(func() { svc.Close() })
 	require.True(t, svc.IsHealthy(), "connected to the cluster: %v", svc.LastError())

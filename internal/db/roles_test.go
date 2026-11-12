@@ -99,7 +99,7 @@ func requireDenied(t *testing.T, conn *sql.DB, statement string) {
 // changes the schema or the audit log.
 func TestRuntimeRole_CannotChangeTheSchema(t *testing.T) {
 	withRoles(t, config.MigrationsModeExternal)
-	require.NoError(t, Migrate(context.Background()))
+	require.NoError(t, Migrate(context.Background(), configured()))
 	runtime := openAs(t, rolesTestRole, rolesTestPassword)
 
 	_, err := runtime.Exec(`INSERT INTO audit_events (hk, actor_type, action, outcome) VALUES ($1, 'system', 'test.roles', 'success')`, uuid.New())
@@ -161,7 +161,7 @@ func TestRuntimeRole_CannotChangeTheSchema(t *testing.T) {
 func TestRoleProblems_NamesWhatTheRoleCouldChange(t *testing.T) {
 	withRoles(t, config.MigrationsModeExternal)
 	ctx := context.Background()
-	require.NoError(t, Migrate(ctx))
+	require.NoError(t, Migrate(ctx, configured()))
 
 	owner := openAs(t, testPGUser, testPGPassword)
 	problems, err := RoleProblems(ctx, owner)
@@ -190,7 +190,7 @@ func TestRoleProblems_NamesWhatTheRoleCouldChange(t *testing.T) {
 		"the role " + rolesTestRole + ": it can DELETE rows of tables other than outbox_events and user_favorites, such as user_contacts, users",
 	}, problems)
 
-	require.NoError(t, Migrate(ctx), "migrating again, with nothing to apply, grants again")
+	require.NoError(t, Migrate(ctx, configured()), "migrating again, with nothing to apply, grants again")
 	problems, err = RoleProblems(ctx, runtime)
 	require.NoError(t, err)
 	assert.Empty(t, problems, "the grants take back what was granted by hand")
@@ -205,14 +205,14 @@ func TestNewPostgresService_ReleaseRefusesARoleThatOwnsTheSchema(t *testing.T) {
 	config.Config.Postgres.User, config.Config.Postgres.Password = testPGUser, testPGPassword
 	config.Config.Postgres.Migrations.User, config.Config.Postgres.Migrations.Password = "", ""
 
-	_, err := NewPostgresService()
+	_, err := NewPostgresService(configured())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "release mode needs a runtime role that cannot change the schema")
 	assert.Contains(t, err.Error(), "the role postgres: it has the SUPERUSER attribute")
 
 	config.Config.Postgres.User, config.Config.Postgres.Password = rolesTestRole, rolesTestPassword
 	config.Config.Postgres.Migrations.User, config.Config.Postgres.Migrations.Password = testPGUser, testPGPassword
-	svc, err := NewPostgresService()
+	svc, err := NewPostgresService(configured())
 	require.NoError(t, err, "the startup mode migrates with the migration role and grants the runtime role")
 	defer svc.Close()
 	var user string
@@ -228,7 +228,7 @@ func TestNewPostgresService_ExternalModeNeedsAMigratedDatabase(t *testing.T) {
 	withRoles(t, config.MigrationsModeExternal)
 	ctx := context.Background()
 
-	_, err := NewPostgresService()
+	_, err := NewPostgresService(configured())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "the database schema is at version 0, but this build needs")
 	assert.Contains(t, err.Error(), `run "admin migrate" first`)
@@ -237,21 +237,21 @@ func TestNewPostgresService_ExternalModeNeedsAMigratedDatabase(t *testing.T) {
 	require.NoError(t, owner.QueryRow(`SELECT count(*) FROM pg_tables WHERE schemaname = 'public'`).Scan(&tables))
 	assert.Zero(t, tables, "the server never migrates in the external mode")
 
-	require.NoError(t, Migrate(ctx))
-	svc, err := NewPostgresService()
+	require.NoError(t, Migrate(ctx, configured()))
+	svc, err := NewPostgresService(configured())
 	require.NoError(t, err)
 	svc.Close()
 
 	latest := latestFileMigration(t)
 	_, err = owner.Exec(`UPDATE schema_migrations SET version = $1`, latest+1)
 	require.NoError(t, err)
-	svc, err = NewPostgresService()
+	svc, err = NewPostgresService(configured())
 	require.NoError(t, err, "a database ahead of the build is accepted")
 	svc.Close()
 
 	_, err = owner.Exec(`UPDATE schema_migrations SET version = $1, dirty = true`, latest)
 	require.NoError(t, err)
-	_, err = NewPostgresService()
+	_, err = NewPostgresService(configured())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "which failed half-way (dirty)")
 }
@@ -304,7 +304,7 @@ func TestGrantRuntimeRole_RefusesAnEmptyRole(t *testing.T) {
 // cannot drop or create any table itself.
 func TestRuntimeRole_ManagesOnlyTheCandlePartitions(t *testing.T) {
 	withRoles(t, config.MigrationsModeExternal)
-	require.NoError(t, Migrate(context.Background()))
+	require.NoError(t, Migrate(context.Background(), configured()))
 	runtime := openAs(t, rolesTestRole, rolesTestPassword)
 
 	var name string

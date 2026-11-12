@@ -39,7 +39,7 @@ func TestPostgresConfig_KeepsEveryValueAsItIs(t *testing.T) {
 	for _, value := range trickyValues {
 		t.Run(value, func(t *testing.T) {
 			usePostgres(t, "db.internal", "6432", value, value, value, "require")
-			cfg, err := PostgresConfig()
+			cfg, err := PostgresConfig(configured())
 			require.NoError(t, err)
 			assert.Equal(t, value, cfg.User)
 			assert.Equal(t, value, cfg.Password)
@@ -64,7 +64,7 @@ func TestPostgresConfig_KeepsEveryValueAsItIs(t *testing.T) {
 func TestPostgresConfig_SSLModeCannotBeInjected(t *testing.T) {
 	injected := "x sslmode=disable target_session_attrs=any"
 	usePostgres(t, "db.internal", "5432", injected, injected, injected, "verify-full")
-	cfg, err := PostgresConfig()
+	cfg, err := PostgresConfig(configured())
 	require.NoError(t, err)
 	require.NotNil(t, cfg.TLSConfig)
 	assert.False(t, cfg.TLSConfig.InsecureSkipVerify, "verify-full checks the certificate")
@@ -77,13 +77,13 @@ func TestPostgresConfig_SSLModeCannotBeInjected(t *testing.T) {
 func TestPostgresConfig_ErrorsNeverShowThePassword(t *testing.T) {
 	const password = "s3cr3t p@ss=word"
 	usePostgres(t, "localhost", "not-a-port", "u", password, "d", "disable")
-	_, err := PostgresConfig()
+	_, err := PostgresConfig(configured())
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), password)
 	assert.NotContains(t, err.Error(), "s3cr3t")
 
 	usePostgres(t, "127.0.0.1", "1", "u", password, "d", "disable")
-	svc, err := ConnectPostgres()
+	svc, err := ConnectPostgres(configured())
 	require.Error(t, err)
 	assert.Nil(t, svc)
 	assert.NotContains(t, err.Error(), "s3cr3t")
@@ -116,7 +116,7 @@ func TestConnectPostgres_SignsInWithTrickyCredentials(t *testing.T) {
 	require.NoError(t, err)
 
 	usePostgres(t, testPGHost, testPGPort, role, password, database, testPGSSLMode)
-	svc, err := ConnectPostgres()
+	svc, err := ConnectPostgres(configured())
 	require.NoError(t, err, "the password that reached the server equals the configured one")
 	defer svc.Close()
 	var user, db string
@@ -125,7 +125,7 @@ func TestConnectPostgres_SignsInWithTrickyCredentials(t *testing.T) {
 	assert.Equal(t, database, db)
 
 	usePostgres(t, testPGHost, testPGPort, role, password+"x", database, testPGSSLMode)
-	_, err = ConnectPostgres()
+	_, err = ConnectPostgres(configured())
 	require.Error(t, err, "a wrong password is refused, so the check above is meaningful")
 	assert.NotContains(t, err.Error(), password)
 }

@@ -72,7 +72,7 @@ func GenerateRefreshToken(userID, role, sessionID string) (string, error) {
 // refreshReuseGrace is how long the previous refresh token of a session is
 // accepted after a rotation (#194).
 func refreshReuseGrace() time.Duration {
-	seconds := config.Config.JWT.RefreshToken.ReuseGraceSeconds
+	seconds := settings().JWT.RefreshToken.ReuseGraceSeconds
 	if seconds <= 0 {
 		seconds = config.DefaultRefreshReuseGraceSeconds
 	}
@@ -83,13 +83,13 @@ func refreshReuseGrace() time.Duration {
 func AccessTokenLifetime() time.Duration { return accessTokenLifetime() }
 
 func accessTokenLifetime() time.Duration {
-	return time.Duration(config.Config.JWT.AccessToken.Expiration) * time.Minute
+	return time.Duration(settings().JWT.AccessToken.Expiration) * time.Minute
 }
 
 // RefreshTokenLifetime is how long a refresh token, and the session it
 // belongs to, stays valid without being rotated.
 func RefreshTokenLifetime() time.Duration {
-	return time.Duration(config.Config.JWT.RefreshToken.Expiration) * time.Minute
+	return time.Duration(settings().JWT.RefreshToken.Expiration) * time.Minute
 }
 
 // generateToken signs a token with the key of role. The "kid" header names
@@ -111,7 +111,7 @@ func generateToken(userID, role, sessionID, tokenType string, lifetime time.Dura
 			// which refresh token rotation relies on.
 			ID:        uuid.NewString(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
-			Issuer:    config.Config.JWT.Issuer,
+			Issuer:    settings().JWT.Issuer,
 			Audience:  jwt.ClaimStrings{audienceFor(role)},
 			IssuedAt:  jwt.NewNumericDate(now),
 		},
@@ -141,7 +141,7 @@ func ParseToken(tokenString, role, tokenType string) (*Claims, error) {
 
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{signingMethod.Alg()}),
-		jwt.WithIssuer(config.Config.JWT.Issuer),
+		jwt.WithIssuer(settings().JWT.Issuer),
 		jwt.WithAudience(audienceFor(role)),
 		jwt.WithExpirationRequired(),
 	)

@@ -34,17 +34,17 @@ func TestClientFromConfig_TakesTheRouteKeyAndAddressOfTheNode(t *testing.T) {
 	}
 	config.Config.MarketData.Egress.ProxyURL = "socks5://gw.example:1080"
 
-	c, err := ClientFromConfig(nil, "coingecko", Settings{DefaultBaseURL: "https://api.coingecko.com/api/v3", KeyHeader: "x-cg-demo-api-key"})
+	c, err := ClientFromConfig(&config.Config, nil, "coingecko", Settings{DefaultBaseURL: "https://api.coingecko.com/api/v3", KeyHeader: "x-cg-demo-api-key"})
 	require.NoError(t, err)
 	assert.Equal(t, 5*time.Second, c.http.Timeout)
 	_, err = c.Get(context.Background(), "ping", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "demo-key", gotKey, "the key travels in its header")
 
-	_, err = ClientFromConfig(nil, "nobitex", Settings{DefaultBaseURL: "https://api.nobitex.ir"})
+	_, err = ClientFromConfig(&config.Config, nil, "nobitex", Settings{DefaultBaseURL: "https://api.nobitex.ir"})
 	assert.ErrorContains(t, err, "does not call it", "the node's default route is none")
 
-	proxied, err := ClientFromConfig(nil, "binance", Settings{DefaultBaseURL: "https://api.binance.com"})
+	proxied, err := ClientFromConfig(&config.Config, nil, "binance", Settings{DefaultBaseURL: "https://api.binance.com"})
 	require.NoError(t, err)
 	proxyURL, err := proxied.http.Transport.(*http.Transport).Proxy(httptest.NewRequest(http.MethodGet, "https://api.binance.com", nil))
 	require.NoError(t, err)

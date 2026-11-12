@@ -24,16 +24,22 @@ import (
 )
 
 type RateLimiter struct {
+	// cfg is the configuration of the process (#48), whose rate_limits
+	// section the limiters read when they are built.
+	cfg   *config.Configuration
 	redis *db.RedisService
 	// timeout bounds each call to Redis, so that a Redis outage delays a
 	// request by at most this long before on_error decides.
 	timeout time.Duration
 }
 
-func NewRateLimiter(redis *db.RedisService) *RateLimiter {
+// NewRateLimiter returns the limiters of the rate_limits section of cfg,
+// counted in redis.
+func NewRateLimiter(cfg *config.Configuration, redis *db.RedisService) *RateLimiter {
 	return &RateLimiter{
+		cfg:     cfg,
 		redis:   redis,
-		timeout: config.Milliseconds(config.Config.RateLimits.TimeoutMs, config.DefaultRateLimitTimeoutMs),
+		timeout: config.Milliseconds(cfg.RateLimits.TimeoutMs, config.DefaultRateLimitTimeoutMs),
 	}
 }
 
@@ -47,7 +53,7 @@ func denies(onError string) bool {
 // are counted in the memory of this instance instead of in Redis, so that the
 // health probes answer at once while Redis is down.
 func (rl *RateLimiter) RESTRateLimit(probes ...string) gin.HandlerFunc {
-	cfg := config.Config.RateLimits.REST
+	cfg := rl.cfg.RateLimits.REST
 	shared := rl.tokenBucketMiddleware("rest", cfg.RequestsPerSecond, cfg.Burst, denies(cfg.OnError), rl.getClientIP)
 	if len(probes) == 0 {
 		return shared
@@ -67,14 +73,14 @@ func (rl *RateLimiter) RESTRateLimit(probes ...string) gin.HandlerFunc {
 }
 
 func (rl *RateLimiter) WSRateLimit() gin.HandlerFunc {
-	cfg := config.Config.RateLimits.WS
+	cfg := rl.cfg.RateLimits.WS
 	return rl.tokenBucketMiddleware("ws", cfg.MessagesPerSecond, cfg.Burst, denies(cfg.OnError), rl.getClientIP)
 }
 
 // TradingRateLimit limits the requests of each signed-in user or
 // administrator. It must run after the authentication middleware.
 func (rl *RateLimiter) TradingRateLimit() gin.HandlerFunc {
-	cfg := config.Config.RateLimits.Trading
+	cfg := rl.cfg.RateLimits.Trading
 	return rl.tokenBucketMiddleware("trading", cfg.OrdersPerSecond, cfg.Burst, denies(cfg.OnError), rl.getUserID)
 }
 
@@ -88,8 +94,8 @@ const (
 
 // authLimit returns the configured limit of an authentication action and the
 // window it is counted in.
-func authLimit(action string) (int, time.Duration) {
-	cfg := config.Config.RateLimits.Auth
+func (rl *RateLimiter) authLimit(action string) (int, time.Duration) {
+	cfg := rl.cfg.RateLimits.Auth
 	switch action {
 	case AuthLogin:
 		return cfg.LoginAttemptsPerMinute, time.Minute
@@ -103,8 +109,8 @@ func authLimit(action string) (int, time.Duration) {
 // of the action. Each route counts separately, so that, for example, user
 // sign-in traffic cannot use up the budget of admin sign-in.
 func (rl *RateLimiter) AuthRateLimit(action string) gin.HandlerFunc {
-	limit, window := authLimit(action)
-	return rl.fixedWindowMiddleware("auth:"+action, limit, window, denies(config.Config.RateLimits.Auth.OnError), func(c *gin.Context) string {
+	limit, window := rl.authLimit(action)
+	return rl.fixedWindowMiddleware("auth:"+action, limit, window, denies(rl.cfg.RateLimits.Auth.OnError), func(c *gin.Context) string {
 		return c.FullPath() + ":" + rl.getClientIP(c)
 	})
 }
@@ -312,7 +318,7 @@ func (rl *RateLimiter) incrementCounter(ctx context.Context, key string, window 
 // The address is then grouped as clientip.Key does, so that an IPv6 client
 // cannot get a fresh budget from each address of its /64 (#188).
 func (rl *RateLimiter) getClientIP(c *gin.Context) string {
-	return clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength)
+	return clientip.Key(c.ClientIP(), rl.cfg.RateLimits.IPv6PrefixLength)
 }
 
 // getUserID identifies the signed-in user or administrator by the subject

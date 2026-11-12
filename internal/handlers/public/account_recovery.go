@@ -97,7 +97,7 @@ func (h *PublicHandler) recoveryIdentity(c *gin.Context, ctx context.Context, ch
 		helpers.SendError(c, http.StatusServiceUnavailable, codeRecoveryUnavailable, i18n.M("RECOVERY_UNAVAILABLE"), nil)
 		return proof, false
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
+	checkCtx, cancel := context.WithTimeout(ctx, h.settings().Identity.MobileOwnership.Timeout())
 	defer cancel()
 	match, err := h.Ownership.Match(checkCtx, nationalID, value)
 	if err != nil {
@@ -160,7 +160,7 @@ func (h *PublicHandler) Recover(c *gin.Context) {
 	// The identity of the owner, for a strict recovery. A national ID
 	// that cannot be read never turns a strict recovery into a standard
 	// one.
-	strict := config.Config.Security.Recovery.Mode == config.RecoveryStrict
+	strict := h.settings().Security.Recovery.Mode == config.RecoveryStrict
 	var nationalID string
 	var hasNationalID bool
 	if strict {
