@@ -3,8 +3,11 @@
 package usertest
 
 import (
+	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/mdastpak/crypto-exchange/internal/db"
 
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +27,7 @@ type User struct {
 }
 
 // Insert creates u and returns its hk.
-func Insert(t testing.TB, db *sql.DB, u User) string {
+func Insert(t testing.TB, conn *sql.DB, u User) string {
 	t.Helper()
 	if u.Status == "" {
 		u.Status = "ACTIVE"
@@ -32,7 +35,7 @@ func Insert(t testing.TB, db *sql.DB, u User) string {
 	if u.Role == "" {
 		u.Role = "user"
 	}
-	tx, err := db.Begin()
+	tx, err := conn.Begin()
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -45,12 +48,14 @@ func Insert(t testing.TB, db *sql.DB, u User) string {
 		if c.value == "" {
 			continue
 		}
-		_, err := tx.Exec(
+		var id int64
+		require.NoError(t, tx.QueryRow(
 			`INSERT INTO user_contacts (user_hk, type, value, verified_at)
-			 VALUES ($1, $2::contact_type, $3, CASE WHEN $2 <> 'username' THEN NOW() END)`,
+			 VALUES ($1, $2::contact_type, $3, CASE WHEN $2 <> 'username' THEN NOW() END) RETURNING id`,
 			hk, c.kind, c.value,
-		)
-		require.NoError(t, err)
+		).Scan(&id))
+		// Encrypted as the server writes it, when the test has data keys.
+		require.NoError(t, db.EncryptContact(context.Background(), tx, id, c.kind, c.value))
 	}
 	require.NoError(t, tx.Commit())
 	return hk

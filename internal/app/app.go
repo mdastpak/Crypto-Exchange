@@ -276,6 +276,7 @@ func run() error {
 		workers = append(workers, worker{"data key reloader", handlers.DataKeys.Stop})
 		verifier := useRowSeals(services, handlers.DataKeys)
 		workers = append(workers, worker{"row seal verifier", verifier.Stop})
+		workers = append(workers, useFieldEncryption(services.Postgres.DB, handlers.DataKeys))
 	}
 	// Stops the workers and the WebSocket event consumer, which start below,
 	// before the services close when startup fails after them. Otherwise

@@ -13,6 +13,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/crypto/field"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -111,6 +112,9 @@ func rowSealer(ctx context.Context, conn *sql.DB, cmd command) (*rowseal.Sealer,
 func useRing(conn *sql.DB, ring *keys.Keyring) *rowseal.Sealer {
 	sealer := rowseal.New(conn, rowseal.KeyringKeys{Ring: ring}, config.Config.Keys.RowSeals.Mode)
 	rowseal.Use(sealer)
+	// The personal fields that the commands write, such as the address of
+	// a new administrator, are encrypted as the server encrypts them (#140).
+	field.Use(field.New(ring))
 	if _, err := ring.Current(keys.PurposeAuditMAC); err == nil {
 		audit.UseSealer(sealer)
 	}

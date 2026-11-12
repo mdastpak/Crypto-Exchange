@@ -188,17 +188,20 @@ func profileChanges(before, after Profile) *audit.Changes {
 	for _, field := range []struct {
 		name          string
 		before, after *string
+		// A name is masked: the audit log keeps its events for good, in
+		// plaintext, and the names are encrypted everywhere else (#140).
+		isName bool
 	}{
-		{"first_name", before.FirstName, after.FirstName},
-		{"last_name", before.LastName, after.LastName},
-		{"display_name", before.DisplayName, after.DisplayName},
-		{"locale", before.Locale, after.Locale},
-		{"theme", &before.Theme, &after.Theme},
+		{"first_name", before.FirstName, after.FirstName, true},
+		{"last_name", before.LastName, after.LastName, true},
+		{"display_name", before.DisplayName, after.DisplayName, true},
+		{"locale", before.Locale, after.Locale, false},
+		{"theme", &before.Theme, &after.Theme, false},
 	} {
 		if equalName(field.before, field.after) {
 			continue
 		}
-		c.Before[field.name], c.After[field.name] = nameValue(field.before), nameValue(field.after)
+		c.Before[field.name], c.After[field.name] = auditValue(field.before, field.isName), auditValue(field.after, field.isName)
 	}
 	if len(c.After) == 0 {
 		return nil
@@ -210,10 +213,24 @@ func equalName(a, b *string) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
-// nameValue is a name for the audit log, nil when it is not set.
-func nameValue(s *string) interface{} {
+// auditValue is a field of the profile for the audit log, nil when it is
+// not set. A name is masked to its first letter, as contacts are masked:
+// the event shows that it changed, not what it is.
+func auditValue(s *string, isName bool) interface{} {
 	if s == nil {
 		return nil
 	}
+	if isName {
+		return maskName(*s)
+	}
 	return *s
+}
+
+// maskName is the first letter of a name and asterisks.
+func maskName(name string) string {
+	first, size := utf8.DecodeRuneInString(name)
+	if size == 0 {
+		return ""
+	}
+	return string(first) + "*****"
 }

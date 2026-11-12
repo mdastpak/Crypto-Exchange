@@ -27,7 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -69,7 +68,7 @@ func FindOwner(ctx context.Context, q Querier, contactType, value string) (Owner
 	var o Owner
 	var checked sql.NullTime
 	err := q.QueryRowContext(ctx, `SELECT c.user_hk, c.ownership_checked_at FROM user_contacts c WHERE `+db.ContactMatch,
-		contactType, value).Scan(&o.UserHK, &checked)
+		db.ContactArgs(contactType, value)...).Scan(&o.UserHK, &checked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Owner{}, false, nil
 	}
@@ -132,21 +131,22 @@ func RecordCheck(ctx context.Context, conn *sql.DB, ownerHK, mobile, provider, r
 		return fmt.Errorf("failed to record the ownership check: %w", err)
 	}
 	defer tx.Rollback()
-	//nolint:gosec // G202: db.ContactMatch is a constant fragment; every value is an argument.
-	_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $3, ownership_ref = NULLIF($4, '')
-		WHERE c.user_hk = $5 AND `+db.ContactMatch, string(contactMobile), mobile, provider, ref, ownerHK)
+	var id int64
+	err = tx.QueryRowContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $1, ownership_ref = NULLIF($2, '')
+		WHERE c.user_hk = $3 AND `+db.ContactMatchAt(4)+` RETURNING c.id`,
+		append([]any{provider, ref, ownerHK}, db.ContactArgs(contactMobile, mobile)...)...).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The account no longer holds the number: nothing to record.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("failed to record the ownership check: %w", err)
 	}
-	if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, `user_hk = $3 AND `+contactMatchUnqualified, string(contactMobile), mobile, ownerHK); err != nil {
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, "id = $1", id); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-
-// contactMatchUnqualified is db.ContactMatch without the alias, for a
-// statement on user_contacts itself.
-var contactMatchUnqualified = strings.ReplaceAll(db.ContactMatch, "c.", "")
 
 const contactMobile = "mobile"
 
@@ -171,9 +171,9 @@ func LockUsers(ctx context.Context, tx *sql.Tx, userHKs ...string) error {
 // records it all with origin. It returns how many sessions it ended, and
 // false when the account no longer holds the contact.
 func Detach(ctx context.Context, tx *sql.Tx, ownerHK, contactType, value, reason string, origin audit.Event, hold time.Duration) (int, bool, error) {
-	//nolint:gosec // db.ContactMatch is a constant; the values are parameters.
+	//nolint:gosec // db.ContactMatchAt is a constant; the values are parameters.
 	res, err := tx.ExecContext(ctx, `UPDATE user_contacts c SET removed_at = NOW(), updated_at = NOW()
-		WHERE c.user_hk = $3 AND `+db.ContactMatch, contactType, value, ownerHK)
+		WHERE c.user_hk = $1 AND `+db.ContactMatchAt(2), append([]any{ownerHK}, db.ContactArgs(contactType, value)...)...)
 	if err != nil {
 		return 0, false, fmt.Errorf("failed to take the contact off its account: %w", err)
 	}

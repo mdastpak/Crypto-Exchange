@@ -76,9 +76,10 @@ func (a *Accounts) settings() *config.Configuration {
 }
 
 // userByContactQuery finds the user that owns a contact, through the unique
-// index of user_contacts, with the sealed columns of both rows (#139).
+// indexes of user_contacts, with the sealed columns of both rows (#139),
+// and the plaintext and the ciphertext of the contact (#140).
 var userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL, ` + restrictions.FrozenSQL("u.hk") + `,
-	` + rowseal.UserContacts.Fields("c") + `, ` + rowseal.Users.Fields("u") + `
+	` + rowseal.UserContacts.Fields("c") + `, ` + rowseal.Users.Fields("u") + `, c.id, c.value, c.value_enc
 	FROM user_contacts c JOIN users u ON u.hk = c.user_hk WHERE ` + db.ContactMatch
 
 // contactOwnerRow is a row of userByContactQuery.
@@ -87,23 +88,46 @@ type contactOwnerRow struct {
 	status, role    string
 	deleted, frozen bool
 	contact, user   *rowseal.Row
+	// The contact that was looked up, and the row that holds it.
+	typed     string
+	contactID int64
+	plain     *string
+	sealed    []byte
 }
 
 // find reads the account that owns a contact.
 func (o *contactOwnerRow) find(ctx context.Context, q *sql.DB, contactType, contact string) error {
-	o.contact, o.user = rowseal.UserContacts.NewRow(), rowseal.Users.NewRow()
+	o.contact, o.user, o.typed = rowseal.UserContacts.NewRow(), rowseal.Users.NewRow(), contact
 	dest := append([]any{&o.hk, &o.status, &o.role, &o.deleted, &o.frozen}, o.contact.Dest()...)
-	return q.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(append(dest, o.user.Dest()...)...)
+	dest = append(append(dest, o.user.Dest()...), &o.contactID, &o.plain, &o.sealed)
+	return q.QueryRowContext(ctx, userByContactQuery, db.ContactArgs(contactType, contact)...).Scan(dest...)
 }
+
+// errContactMismatch reports a contact row that its blind index found, but
+// that holds another contact.
+var errContactMismatch = errors.New("the contact found by its blind index holds another contact")
 
 // verified checks the seals of the contact and its account (#139): a
 // contact moved to another account, or an account changed, outside the
-// backend is refused in enforce mode.
+// backend is refused in enforce mode. The contact that the row holds must
+// also be the one looked up (#140): its ciphertext is bound to the row, so
+// a blind index copied from another row signs in to no account, even with
+// the seals off.
 func (o *contactOwnerRow) verified(ctx context.Context) error {
 	if err := rowseal.Check(ctx, rowseal.UserContacts, o.contact); err != nil {
 		return err
 	}
-	return rowseal.Check(ctx, rowseal.Users, o.user)
+	if err := rowseal.Check(ctx, rowseal.Users, o.user); err != nil {
+		return err
+	}
+	value, err := db.OpenContact(o.contactID, o.plain, o.sealed)
+	if err != nil {
+		return err
+	}
+	if db.FoldContact(value) != db.FoldContact(o.typed) {
+		return fmt.Errorf("%w: user_contacts %d", errContactMismatch, o.contactID)
+	}
+	return nil
 }
 
 // Owner returns the actor type and hk of the account that owns a contact,
@@ -320,7 +344,8 @@ func (a *Accounts) CanSignIn(ctx context.Context, userHK uuid.UUID) (allowed, fr
 func (a *Accounts) ContactID(ctx context.Context, userHK uuid.UUID, contactType, contact string) (int64, error) {
 	var id int64
 	err := a.DB.QueryRowContext(ctx, `SELECT c.id FROM user_contacts c
-		WHERE c.user_hk = $3 AND c.verified_at IS NOT NULL AND `+db.ContactMatch, contactType, contact, userHK).Scan(&id)
+		WHERE c.user_hk = $1 AND c.verified_at IS NOT NULL AND `+db.ContactMatchAt(2),
+		append([]any{userHK}, db.ContactArgs(contactType, contact)...)...).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -330,8 +355,14 @@ func (a *Accounts) ContactID(ctx context.Context, userHK uuid.UUID, contactType,
 // Contact returns the type and value of a contact of userHK that is not
 // removed, or sql.ErrNoRows.
 func (a *Accounts) Contact(ctx context.Context, userHK string, contactID int64) (contactType, value string, err error) {
-	err = a.DB.QueryRowContext(ctx, `SELECT type, value FROM user_contacts
-		WHERE id = $1 AND user_hk = $2 AND removed_at IS NULL`, contactID, userHK).Scan(&contactType, &value)
+	var plain *string
+	var sealed []byte
+	err = a.DB.QueryRowContext(ctx, `SELECT type, value, value_enc FROM user_contacts
+		WHERE id = $1 AND user_hk = $2 AND removed_at IS NULL`, contactID, userHK).Scan(&contactType, &plain, &sealed)
+	if err != nil {
+		return "", "", err
+	}
+	value, err = db.OpenContact(contactID, plain, sealed)
 	return contactType, value, err
 }
 

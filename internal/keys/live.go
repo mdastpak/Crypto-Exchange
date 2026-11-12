@@ -191,6 +191,9 @@ func (l *Live) currentVersions() string {
 // Current returns the key of purpose that writes now; see Keyring.Current.
 func (l *Live) Current(purpose Purpose) (Key, error) { return l.Keyring().Current(purpose) }
 
+// Versions is the Versions of the loaded keyring.
+func (l *Live) Versions(purpose Purpose) []Key { return l.Keyring().Versions(purpose) }
+
 // Version returns one version of purpose. A version it does not hold makes
 // it reload at once, at most every few seconds, and look again: another
 // instance may have written with a version that this instance has not

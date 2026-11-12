@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/google/uuid"
@@ -294,7 +295,7 @@ func (s *Service) EndSessions(ctx context.Context, email string) (int64, error) 
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		var adminID string
 		err := tx.QueryRowContext(ctx, `SELECT hk FROM users WHERE role = 'admin' AND `+ownsEmail+` FOR UPDATE`,
-			emailContact, email).Scan(&adminID)
+			db.ContactArgs(emailContact, email)...).Scan(&adminID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}

@@ -3,11 +3,13 @@ package user
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -90,10 +92,17 @@ func (s *DBStore) ClaimCheck(ctx context.Context, ownerHK, mobile string) (conta
 // AccountName returns a contact of a user, under which an authenticator or
 // a passkey shows the account, or "account".
 func (s *DBStore) AccountName(ctx context.Context, userHK string) string {
-	var name string
-	if err := s.DB.QueryRowContext(ctx, `SELECT value FROM user_contacts
+	var id int64
+	var plain *string
+	var sealed []byte
+	if err := s.DB.QueryRowContext(ctx, `SELECT id, value, value_enc FROM user_contacts
 		WHERE user_hk = $1 AND removed_at IS NULL AND type IN ('email', 'mobile')
-		ORDER BY is_primary DESC, id LIMIT 1`, userHK).Scan(&name); err != nil {
+		ORDER BY is_primary DESC, id LIMIT 1`, userHK).Scan(&id, &plain, &sealed); err != nil {
+		return "account"
+	}
+	name, err := db.OpenContact(id, plain, sealed)
+	if err != nil {
+		log.Printf("Failed to open contact %d for the name of an account: %v", id, err)
 		return "account"
 	}
 	return name
@@ -121,9 +130,18 @@ func (s *DBStore) UpdateProfile(ctx context.Context, userID uuid.UUID, edit func
 	}
 	before := profile
 	edit(&profile)
+	// The names are written in plaintext and sealed (#140); the release
+	// after this one writes them sealed only.
+	sealed, err := db.SealNames(userID.String(), db.Names{First: profile.FirstName, Last: profile.LastName, Display: profile.DisplayName})
+	if err != nil {
+		return Profile{}, err
+	}
 	if _, err := tx.ExecContext(ctx,
-		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, locale = $4, theme = $5, updated_at = NOW() WHERE hk = $6",
+		`UPDATE users SET first_name = $1, last_name = $2, display_name = $3, locale = $4, theme = $5, updated_at = NOW(),
+			first_name_enc = $7, last_name_enc = $8, display_name_enc = $9
+		WHERE hk = $6`,
 		profile.FirstName, profile.LastName, profile.DisplayName, profile.Locale, profile.Theme, userID,
+		sealed.First, sealed.Last, sealed.Display,
 	); err != nil {
 		return Profile{}, err
 	}
@@ -234,9 +252,19 @@ func (s *DBStore) ApplyChange(ctx context.Context, event audit.Event, ch pending
 		e.Changes = &audit.Changes{After: map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)}}
 	case contactReplace:
 		// A new number has not been checked, unless it was just now.
-		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET value = $3, verified_at = NOW(), updated_at = NOW(),
+		var id int64
+		err = tx.QueryRowContext(ctx, `UPDATE user_contacts c SET value = $3, verified_at = NOW(), updated_at = NOW(),
 				ownership_checked_at = CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() END, ownership_provider = $4, ownership_ref = $5
-			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, plan.value, checkedProvider, checkedRef)
+			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL
+			RETURNING id`, ch.UserID, plan.typ, plan.value, checkedProvider, checkedRef).Scan(&id)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// The plan read the contact under the lock of the account, so
+			// this does not happen; it changes nothing, as before.
+			err = nil
+		case err == nil:
+			err = db.EncryptContact(ctx, tx, id, plan.typ, plan.value)
+		}
 		e.Changes = &audit.Changes{
 			Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)},
 			After:  map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)},
@@ -297,7 +325,7 @@ func (s *DBStore) ApplyChange(ctx context.Context, event audit.Event, ch pending
 func verifiedContacts(ctx context.Context, q interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 }, userHK string) ([]storedContact, time.Time, error) {
-	rows, err := q.QueryContext(ctx, `SELECT type::text, value, verified_at, NOW() FROM user_contacts c
+	rows, err := q.QueryContext(ctx, `SELECT id, type::text, value, value_enc, verified_at, NOW() FROM user_contacts c
 		WHERE user_hk = $1 AND is_primary AND verified_at IS NOT NULL AND type IN ('email', 'mobile') AND c.removed_at IS NULL
 		ORDER BY type`, userHK)
 	if err != nil {
@@ -308,7 +336,13 @@ func verifiedContacts(ctx context.Context, q interface {
 	var now time.Time
 	for rows.Next() {
 		var ct storedContact
-		if err := rows.Scan(&ct.typ, &ct.value, &ct.verifiedAt, &now); err != nil {
+		var id int64
+		var plain *string
+		var sealed []byte
+		if err := rows.Scan(&id, &ct.typ, &plain, &sealed, &ct.verifiedAt, &now); err != nil {
+			return nil, time.Time{}, err
+		}
+		if ct.value, err = db.OpenContact(id, plain, sealed); err != nil {
 			return nil, time.Time{}, err
 		}
 		out = append(out, ct)
@@ -322,10 +356,12 @@ type queryRower interface {
 }
 
 // profileQuery reads a profile.
-// The contacts come as one JSON object of the primary contact of each type.
+// The contacts come as one JSON object of the primary contact of each
+// type: its id, its plaintext, and its ciphertext in hex (#140).
 const profileQuery = `SELECT hk, status, role,
-	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary AND c.removed_at IS NULL), '{}'),
-	first_name, last_name, display_name, locale, theme, kyc_status, kyc_tier,
+	COALESCE((SELECT jsonb_object_agg(c.type, jsonb_build_array(c.id::text, c.value, encode(c.value_enc, 'hex')))
+		FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary AND c.removed_at IS NULL), '{}'),
+	first_name, last_name, display_name, first_name_enc, last_name_enc, display_name_enc, locale, theme, kyc_status, kyc_tier,
 	created_at
 	FROM users WHERE hk = $1 AND deleted_at IS NULL`
 
@@ -333,7 +369,7 @@ const profileQuery = `SELECT hk, status, role,
 // a missing or deleted user, and errAccountUnavailable for an account that
 // cannot sign in or is not a user account, so that a token issued before
 // such a change no longer reaches the profile.
-func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool) (Profile, error) {
+func loadProfile(ctx context.Context, q queryRower, userID uuid.UUID, lock bool) (Profile, error) {
 	query := profileQuery
 	if lock {
 		query += " FOR UPDATE"
@@ -341,8 +377,11 @@ func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool
 	var p Profile
 	var role string
 	var contact []byte
-	err := db.QueryRowContext(ctx, query, userID).Scan(&p.UUID, &p.Status, &role, &contact,
-		&p.FirstName, &p.LastName, &p.DisplayName, &p.Locale, &p.Theme, &p.KYCStatus, &p.KYCTier, &p.CreatedAt)
+	var plain db.Names
+	var sealed db.SealedNames
+	err := q.QueryRowContext(ctx, query, userID).Scan(&p.UUID, &p.Status, &role, &contact,
+		&plain.First, &plain.Last, &plain.Display, &sealed.First, &sealed.Last, &sealed.Display,
+		&p.Locale, &p.Theme, &p.KYCStatus, &p.KYCTier, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, errProfileNotFound
 	}
@@ -352,20 +391,50 @@ func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool
 	if !account.UserStatus(p.Status).CanSignIn() || role != auth.RoleUser {
 		return p, errAccountUnavailable
 	}
+	names, err := db.OpenNames(p.UUID, plain, sealed)
+	if err != nil {
+		return p, err
+	}
+	p.FirstName, p.LastName, p.DisplayName = names.First, names.Last, names.Display
 
-	var contacts map[string]string
+	var contacts map[string][]*string
 	if err := json.Unmarshal(contact, &contacts); err != nil {
 		return p, fmt.Errorf("decoding the contacts: %w", err)
 	}
 	p.Contact = make(map[string]string)
 	for _, contactType := range []string{"email", "mobile"} {
-		if value, ok := contacts[contactType]; ok {
-			p.Contact[contactType] = maskContact(contactType, value)
+		stored, ok := contacts[contactType]
+		if !ok {
+			continue
 		}
+		value, err := openStoredContact(stored)
+		if err != nil {
+			return p, err
+		}
+		p.Contact[contactType] = maskContact(contactType, value)
 	}
 	if p.CreatedAt != nil {
 		created := p.CreatedAt.UTC()
 		p.CreatedAt = &created
 	}
 	return p, nil
+}
+
+// openStoredContact returns the value of a contact of profileQuery: the
+// array of its id, its plaintext, and its ciphertext in hex.
+func openStoredContact(stored []*string) (string, error) {
+	if len(stored) != 3 || stored[0] == nil {
+		return "", errors.New("decoding the contacts: a contact is not [id, value, value_enc]")
+	}
+	id, err := strconv.ParseInt(*stored[0], 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("decoding the contacts: %w", err)
+	}
+	var sealed []byte
+	if stored[2] != nil {
+		if sealed, err = hex.DecodeString(*stored[2]); err != nil {
+			return "", fmt.Errorf("decoding contact %d: %w", id, err)
+		}
+	}
+	return db.OpenContact(id, stored[1], sealed)
 }
