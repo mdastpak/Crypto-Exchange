@@ -159,7 +159,7 @@ func (h *PublicHandler) refuseAtLimit(c *gin.Context, ctx context.Context, userH
 	lister, ok := h.Sessions.(interface {
 		List(ctx context.Context, userID string, page pagination.Request) (auth.SessionPage, error)
 	})
-	if !ok || h.RedisClient == nil {
+	if !ok || h.Redis == nil {
 		helpers.SendError(c, http.StatusConflict, codeSessionLimit,
 			i18n.M("SESSION_LIMIT_REACHED_SIGN_IN_AGAIN"), nil)
 		return
@@ -199,12 +199,12 @@ func (h *PublicHandler) issueChallenge(ctx context.Context, userHK uuid.UUID) (s
 	challenge := base64.RawURLEncoding.EncodeToString(raw)
 	expires := time.Now().Add(sessionLimitChallengeTTL).Unix()
 	value := userHK.String() + "|" + strconv.FormatInt(expires, 10)
-	return challenge, h.RedisClient.Client.Set(ctx, challengeKey(challenge), value, sessionLimitChallengeTTL).Err()
+	return challenge, h.Redis.Set(ctx, challengeKey(challenge), value, sessionLimitChallengeTTL).Err()
 }
 
 // takeChallenge takes a challenge, once, and returns its user and expiry.
 func (h *PublicHandler) takeChallenge(ctx context.Context, challenge string) (uuid.UUID, time.Time, bool, error) {
-	value, err := h.RedisClient.Client.GetDel(ctx, challengeKey(challenge)).Result()
+	value, err := h.Redis.GetDel(ctx, challengeKey(challenge)).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return uuid.Nil, time.Time{}, false, nil
@@ -229,7 +229,7 @@ func (h *PublicHandler) putBack(ctx context.Context, challenge string, userHK uu
 		return
 	}
 	value := userHK.String() + "|" + strconv.FormatInt(expires.Unix(), 10)
-	if err := h.RedisClient.Client.Set(ctx, challengeKey(challenge), value, ttl).Err(); err != nil {
+	if err := h.Redis.Set(ctx, challengeKey(challenge), value, ttl).Err(); err != nil {
 		log.Printf("Failed to restore a session limit challenge: %v", err)
 	}
 }
@@ -269,7 +269,7 @@ func (h *PublicHandler) ReplaceSession(c *gin.Context) {
 		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
-	if h.RedisClient == nil || h.PostgresDB == nil {
+	if h.Redis == nil || h.Accounts == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}

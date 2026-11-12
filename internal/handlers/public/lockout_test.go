@@ -35,7 +35,7 @@ func postFrom(t *testing.T, router *gin.Engine, remote, path string, body interf
 // for it and fails them, and the user can still sign in from elsewhere.
 func TestVerifyOTP_RealSchema_StrangerCannotLockOutTheOwner(t *testing.T) {
 	handler, router, sender := newOTPLimitRouter(t)
-	handler.OTP = otp.NewStore(handler.RedisClient.Client, otp.Settings{AttemptsPerCode: 3, ContactAttemptsPerHour: 3})
+	handler.OTP = otp.NewStore(handler.Redis, otp.Settings{AttemptsPerCode: 3, ContactAttemptsPerHour: 3})
 	const victim = "victim@example.com"
 	const stranger, owner = "198.51.100.66:4000", "203.0.113.7:5000"
 

@@ -20,8 +20,8 @@ import (
 // @Router /api/v1/public/status [get]
 func (h *PublicHandler) PlatformStatus(c *gin.Context) {
 	status := platform.StatusOf(nil, time.Now())
-	if h.Platform != nil && h.Platform.Watcher != nil {
-		status = h.Platform.Watcher.Status()
+	if h.Platform != nil {
+		status = h.Platform.Status()
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("STATUS_RETRIEVED_SUCCESSFULLY"), status)
 }

@@ -98,7 +98,7 @@ func (h *PublicHandler) ResetPassword(c *gin.Context) {
 		invalid()
 		return
 	}
-	if h.RedisClient == nil || h.PostgresDB == nil || h.Passwords == nil {
+	if h.Redis == nil || h.Accounts == nil || h.Passwords == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
@@ -169,7 +169,7 @@ func (h *PublicHandler) ResetPassword(c *gin.Context) {
 	// The password is reset. The challenge is spent, and whoever held a
 	// session of the account signed in with the old password, or without
 	// one.
-	if err := h.RedisClient.Client.Del(ctx, key).Err(); err != nil {
+	if err := h.Redis.Del(ctx, key).Err(); err != nil {
 		log.Printf("Failed to remove a second-step challenge after a reset: %v", err)
 	}
 	if ender, ok := h.Sessions.(sessionEnder); ok {

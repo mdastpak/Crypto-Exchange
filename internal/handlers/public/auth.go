@@ -2,9 +2,7 @@ package public
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"slices"
@@ -17,12 +15,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
-	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
-	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
-	"github.com/mdastpak/crypto-exchange/internal/domain/account"
-	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
@@ -30,71 +24,81 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
-	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
-	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
-	"github.com/mdastpak/crypto-exchange/internal/userauth"
+	"github.com/mdastpak/crypto-exchange/internal/signin"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// PublicHandler serves the public routes: sign-in, its second step, the
+// password reset, the account recovery, and the public currencies. Every
+// dependency is an interface (deps.go, #48); a nil one makes its routes
+// unavailable.
 type PublicHandler struct {
 	// Config is the configuration of the process (#48). NewHandler sets it;
 	// nil reads as the zero configuration.
-	Config          *config.Configuration
-	PostgresDB      *db.PostgresService
-	RedisClient     *db.RedisService
-	RabbitMQService *rabbitmq.RabbitMQService
-	Sessions        auth.SessionStore
+	Config *config.Configuration
+	// Accounts finds and creates the accounts of the sign-ins. Without it,
+	// sign-in is unavailable.
+	Accounts Accounts
+	// Audit records the events of the sign-ins.
+	Audit AuditLog
+	// Redis holds the challenges of the second step and of the session
+	// limit, which any instance finishes.
+	Redis    redis.UniversalClient
+	Sessions auth.SessionStore
+	// AuthenticateToken checks the optional token of the favorites filter:
+	// its signature, the blacklist, and its session.
+	AuthenticateToken func(ctx context.Context, token string) (*auth.Claims, error)
 	// OTP issues and verifies sign-in codes.
-	OTP *otp.Store
+	OTP CodeStore
 	// OTPSender delivers sign-in codes. It discards them unless the server
 	// replaces it with the configured delivery.
 	OTPSender notify.OTPSender
 	// Currencies lists the public currencies.
-	Currencies *currencies.Catalog
-	// Blacklist holds the revoked access tokens, for the optional token of
-	// the favorites filter.
-	Blacklist *auth.TokenBlacklist
+	Currencies CurrencyCatalog
 	// Platform serves the status of the platform controls (#235). Without
 	// it, the status is open.
-	Platform *platform.Gate
-	// Ownership and Sealer recheck, at sign-in, that a mobile number still
-	// belongs to the national ID of its account (#252, #253).
+	Platform StatusSource
+	// Ownership checks, for a strict account recovery, that a mobile
+	// number belongs to the national ID of its account (#252, #253).
 	Ownership identity.MobileOwnership
-	Sealer    identity.Sealer
 	// Passwords checks the account passwords, the second step of a sign-in
 	// (#307). The server sets it, with the slow hash that this package
 	// must not import. Without it, a code alone signs in.
-	Passwords *userauth.Passwords
+	Passwords PasswordStore
 	// TOTP checks the authenticator apps, a second step that a user can
 	// prove instead of the password.
-	TOTP *userauth.TOTP
+	TOTP AuthenticatorStore
 	// Passkeys checks the passkeys, another second step that a user can
 	// prove instead of the password.
-	Passkeys *passkey.Service
+	Passkeys PasskeyVerifier
 	// Guard elevates the session of a sign-in that proved the second
 	// factor, for the operations that it protects.
-	Guard *userauth.Guard
+	Guard Elevator
 }
 
+// NewHandler returns the handler with the stores of the services in is. A
+// service that is not there leaves its dependencies nil, never a typed nil.
 func NewHandler(is *models.InfraServices) *PublicHandler {
 	h := &PublicHandler{
-		Config:          is.Settings(),
-		PostgresDB:      is.Postgres,
-		RedisClient:     is.Redis,
-		RabbitMQService: is.RabbitMQ,
-		OTPSender:       notify.DiscardSender{},
-		Currencies:      currencies.ForServices(is),
+		Config:    is.Settings(),
+		OTPSender: notify.DiscardSender{},
 	}
 	if is.Postgres != nil {
+		h.Accounts = &signin.Accounts{DB: is.Postgres.DB, Config: is.Settings()}
+		h.Audit = audit.Log{DB: is.Postgres.DB}
 		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
 	}
+	if catalog := currencies.ForServices(is); catalog != nil {
+		h.Currencies = catalog
+	}
 	if is.Redis != nil {
+		h.Redis = is.Redis.Client
 		h.OTP = otp.NewStore(is.Redis.Client, otp.SettingsOf(is.Settings()))
 	}
 	return h
@@ -322,277 +326,46 @@ const reasonRateLimited = "rate_limited"
 // audit log cannot keep users from signing in. A client that disconnects
 // does not cancel the record of its attempt.
 func (h *PublicHandler) noteSignIn(ctx context.Context, event audit.Event, outcome, reason string) {
-	if h.PostgresDB == nil {
+	if h.Audit == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	event.Outcome, event.Reason = outcome, reason
-	if err := audit.Record(ctx, h.PostgresDB.DB, event); err != nil {
+	if err := h.Audit.Record(ctx, event); err != nil {
 		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)
 	}
 }
 
 // contactOwner returns the actor type and hk of the account that owns a
-// contact. Without one, or when it cannot be looked up, the actor is
-// anonymous: the event is recorded either way, and never with the contact.
+// contact, for the audit event of a sign-in; see signin.Accounts.Owner.
 func (h *PublicHandler) contactOwner(ctx context.Context, contactType, contact string) (string, string) {
-	if h.PostgresDB == nil || !signInContactTypes[contactType] {
+	if h.Accounts == nil {
 		return audit.ActorAnonymous, ""
 	}
-	var o contactOwnerRow
-	err := o.find(ctx, h.PostgresDB.DB, contactType, contact)
-	hk, role := o.hk, o.role
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			log.Printf("Failed to look up the account of a sign-in for the audit log: %v", err)
-		}
-		return audit.ActorAnonymous, ""
-	}
-	if role == auth.RoleAdmin {
-		return audit.ActorAdmin, hk.String()
-	}
-	return audit.ActorUser, hk.String()
+	return h.Accounts.Owner(ctx, contactType, contact)
 }
 
-// userByContactQuery finds the user that owns a contact, through the unique
-// index of user_contacts, with the sealed columns of both rows (#139).
-var userByContactQuery = `SELECT u.hk, u.status, u.role, u.deleted_at IS NOT NULL, ` + restrictions.FrozenSQL("u.hk") + `,
-	` + rowseal.UserContacts.Fields("c") + `, ` + rowseal.Users.Fields("u") + `
-	FROM user_contacts c JOIN users u ON u.hk = c.user_hk WHERE ` + db.ContactMatch
+// The refusals of a sign-in, from signin.
+var (
+	errAccountUnavailable  = signin.ErrAccountUnavailable
+	errAccountFrozen       = signin.ErrAccountFrozen
+	errIdentityUnavailable = signin.ErrIdentityUnavailable
+	errAdminAccount        = signin.ErrAdminAccount
+)
 
-// contactOwnerRow is a row of userByContactQuery.
-type contactOwnerRow struct {
-	hk              uuid.UUID
-	status, role    string
-	deleted, frozen bool
-	contact, user   *rowseal.Row
-}
-
-// find reads the account that owns a contact.
-func (o *contactOwnerRow) find(ctx context.Context, q *sql.DB, contactType, contact string) error {
-	o.contact, o.user = rowseal.UserContacts.NewRow(), rowseal.Users.NewRow()
-	dest := append([]any{&o.hk, &o.status, &o.role, &o.deleted, &o.frozen}, o.contact.Dest()...)
-	return q.QueryRowContext(ctx, userByContactQuery, contactType, contact).Scan(append(dest, o.user.Dest()...)...)
-}
-
-// verified checks the seals of the contact and its account (#139): a
-// contact moved to another account, or an account changed, outside the
-// backend is refused in enforce mode.
-func (o *contactOwnerRow) verified(ctx context.Context) error {
-	if err := rowseal.Check(ctx, rowseal.UserContacts, o.contact); err != nil {
-		return err
-	}
-	return rowseal.Check(ctx, rowseal.Users, o.user)
-}
-
-// signInContactTypes are the contacts that a user can sign in with.
-var signInContactTypes = map[string]bool{string(account.ContactEmail): true, string(account.ContactMobile): true}
-
-// errUserAlreadyExists reports that another request created a user with the
-// same contact between the lookup and the insert.
-var errUserAlreadyExists = errors.New("user with this contact already exists")
-
-// errAccountUnavailable reports an account that is deleted, or whose status
-// does not allow signing in.
-var errAccountUnavailable = errors.New("account cannot sign in")
-
-// errAccountFrozen reports an account that a restriction froze (#220).
-var errAccountFrozen = fmt.Errorf("%w: frozen", errAccountUnavailable)
-
-// errIdentityUnavailable reports a mobile number whose ownership is due for
-// a recheck that the provider cannot answer now (#252).
-var errIdentityUnavailable = errors.New("the mobile ownership cannot be checked now")
-
-// codeIdentityUnavailable is the code of that refusal.
+// codeIdentityUnavailable is the code of the refusal of a mobile number
+// whose ownership cannot be checked now (#252).
 const codeIdentityUnavailable = "identity_unavailable"
 
-// errAdminAccount reports an administrator account at user sign-in.
-var errAdminAccount = errors.New("administrators cannot use user sign-in")
-
-const uniqueViolationCode = "23505"
-
 // checkOrCreateUser returns the user that owns a contact, and creates one
-// when none does. origin holds the request's fields for the audit event of a
-// new user.
+// when none does; see signin.Accounts.FindOrCreate. origin holds the
+// request's fields for the audit event of a new user.
 func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
-	return h.signInUser(ctx, origin, contactType, contact, true)
-}
-
-// signInUser is checkOrCreateUser. recheck says whether the ownership of a
-// mobile number may still be checked: once the number was taken off an
-// account that no longer owns it, the sign-in continues without it.
-func (h *PublicHandler) signInUser(ctx context.Context, origin audit.Event, contactType, contact string, recheck bool) (uuid.UUID, error) {
-	log.Println("Checking if user exists or creating a new user")
-
-	if !signInContactTypes[contactType] {
-		return uuid.Nil, fmt.Errorf("unsupported contact type: %s", contactType)
+	if h.Accounts == nil {
+		return uuid.Nil, errors.New("sign-in is not available")
 	}
-	var o contactOwnerRow
-	find := func() error { return o.find(ctx, h.PostgresDB.DB, contactType, contact) }
-
-	err := find()
-	if err == sql.ErrNoRows {
-		log.Println("User does not exist, creating new user")
-		userHK, createErr := h.createUser(ctx, origin, contactType, contact)
-		if !errors.Is(createErr, errUserAlreadyExists) {
-			return userHK, createErr
-		}
-		// A concurrent sign-in for the same contact won the insert; continue
-		// with that user so its status checks still apply.
-		log.Println("User was created by a concurrent request, loading it")
-		err = find()
-	}
-	if err != nil {
-		log.Printf("Database error: %v", err)
-		return uuid.Nil, fmt.Errorf("database error. please try again")
-	}
-	userHK, status, role, deleted, frozen := o.hk, o.status, o.role, o.deleted, o.frozen
-	if err := o.verified(ctx); err != nil {
-		return uuid.Nil, fmt.Errorf("%w: %w", errAccountUnavailable, err)
-	}
-
-	if deleted || !account.UserStatus(status).CanSignIn() {
-		return uuid.Nil, fmt.Errorf("%w: status %s, deleted %t", errAccountUnavailable, status, deleted)
-	}
-	if frozen {
-		return uuid.Nil, errAccountFrozen
-	}
-	if role == auth.RoleAdmin {
-		// Administrators sign in at /admin/auth with a second factor; a
-		// user token for their account is never issued.
-		return uuid.Nil, errAdminAccount
-	}
-
-	if recheck && contactType == string(account.ContactMobile) {
-		moved, err := h.recheckOwnership(ctx, origin, userHK.String(), contact)
-		if err != nil {
-			return uuid.Nil, err
-		}
-		if moved {
-			// The number no longer reaches that account: whoever holds it
-			// now signs in as for an unknown number, to a new account.
-			return h.signInUser(ctx, origin, contactType, contact, false)
-		}
-	}
-
-	log.Printf("User already exists with ID: %s", userHK.String())
-	return userHK, nil
-}
-
-// recheckOwnership checks, at most once every
-// identity.mobile_ownership.recheck_days, that a mobile number still
-// belongs to the national ID of the account ownerHK that holds it (#252).
-// A number that no longer does is taken off the account, which keeps its
-// data, and recheckOwnership reports true. An account without a national
-// ID is at level 0 and holds no funds, so it is not checked. When the
-// provider cannot answer a check that is due, the sign-in is refused
-// rather than risk showing the account to a new subscriber of the number.
-func (h *PublicHandler) recheckOwnership(ctx context.Context, origin audit.Event, ownerHK, mobile string) (bool, error) {
-	if h.PostgresDB == nil {
-		return false, nil
-	}
-	owner, found, err := contactclaim.FindOwner(ctx, h.PostgresDB.DB, string(account.ContactMobile), mobile)
-	if err != nil || !found || owner.UserHK != ownerHK {
-		return false, err
-	}
-	recheck := h.settings().Identity.MobileOwnership.Recheck()
-	if owner.OwnershipCheckedAt != nil && time.Since(*owner.OwnershipCheckedAt) < recheck {
-		return false, nil
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, h.settings().Identity.MobileOwnership.Timeout())
-	defer cancel()
-	verdict, ref, err := contactclaim.Check(checkCtx, h.Ownership, h.Sealer, h.PostgresDB.DB, ownerHK, mobile)
-	if errors.Is(err, identity.ErrUnavailable) {
-		log.Printf("A due ownership check of a mobile number at sign-in failed: %v", err)
-		return false, errIdentityUnavailable
-	}
-	if err != nil {
-		return false, err
-	}
-	switch verdict {
-	case contactclaim.NoNationalID:
-		return false, nil
-	case contactclaim.Owned:
-		if err := contactclaim.RecordCheck(ctx, h.PostgresDB.DB, ownerHK, mobile, h.Ownership.Provider(), ref); err != nil {
-			log.Printf("Failed to record an ownership check: %v", err)
-		}
-		return false, nil
-	}
-
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	if err := contactclaim.LockUsers(ctx, tx, ownerHK); err != nil {
-		return false, err
-	}
-	detachOrigin := origin
-	detachOrigin.ActorType, detachOrigin.ActorID = audit.ActorSystem, ""
-	_, detached, err := contactclaim.Detach(ctx, tx, ownerHK, string(account.ContactMobile), mobile, contactclaim.ReasonOwnershipMismatch,
-		detachOrigin, time.Duration(h.settings().Security.ChangeHoldHours)*time.Hour)
-	if err != nil {
-		return false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-	// A concurrent sign-in may have taken it off first; either way, the
-	// account no longer holds it.
-	if !detached {
-		log.Printf("A mobile number was already taken off its account by a concurrent sign-in")
-	}
-	return true, nil
-}
-
-// createUser creates an active user with its first contact, and records its
-// creation, in one transaction. The contact is verified: users are created
-// after a correct sign-in code, which proves control of it.
-func (h *PublicHandler) createUser(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("start the transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// A lockdown of sign-up refuses new accounts (#235). It is checked in
-	// the transaction, so that a sign-up in flight when the lockdown is
-	// created either commits before it or is refused.
-	if err := platform.Check(ctx, tx, platform.FeatureSignUp, platform.Subject{IP: origin.IP}); err != nil {
-		return uuid.Nil, err
-	}
-
-	var userHK uuid.UUID
-	if err := tx.QueryRowContext(ctx, `INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk`).Scan(&userHK); err != nil {
-		log.Printf("Failed to insert new user: %v", err)
-		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
-	}
-	if err := rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", userHK); err != nil {
-		log.Printf("Failed to seal a new user: %v", err)
-		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
-	}
-	if err := db.InsertContact(ctx, tx, userHK.String(), contactType, contact, true); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode {
-			return uuid.Nil, errUserAlreadyExists
-		}
-		log.Printf("Failed to insert the contact of a new user: %v", err)
-		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
-	}
-	created := origin
-	created.Action, created.Outcome = audit.ActionUserCreate, audit.Success
-	created.ActorType, created.ActorID = audit.ActorUser, userHK.String()
-	created.TargetType, created.TargetID = audit.TargetUser, userHK.String()
-	if err := audit.Record(ctx, tx, created); err != nil {
-		log.Printf("Failed to record the creation of a user: %v", err)
-		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
-	}
-	if err := tx.Commit(); err != nil {
-		log.Printf("Failed to commit a new user: %v", err)
-		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
-	}
-	return userHK, nil
+	return h.Accounts.FindOrCreate(ctx, origin, contactType, contact)
 }
 
 // @Summary Refresh the access token
@@ -728,7 +501,7 @@ func (h *PublicHandler) favoritesOf(c *gin.Context, ctx context.Context, q *curr
 		helpers.SendError(c, http.StatusUnauthorized, "token_missing", i18n.M("FAVORITES_FILTER_NEEDS_TOKEN"), nil)
 		return false
 	}
-	claims, err := auth.AuthenticateUserToken(ctx, token, h.Blacklist, h.Sessions)
+	claims, err := h.AuthenticateToken(ctx, token)
 	switch {
 	case errors.Is(err, auth.ErrAccountUnavailable):
 		code, message := auth.AccountError(err)
@@ -746,7 +519,7 @@ func (h *PublicHandler) favoritesOf(c *gin.Context, ctx context.Context, q *curr
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
 		return false
 	}
-	hks, err := favorites.CurrencyHKs(ctx, h.PostgresDB.DB, claims.UUID)
+	hks, err := h.Accounts.FavoriteCurrencies(ctx, claims.UUID)
 	if err != nil {
 		log.Printf("Failed to read the favorites of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)

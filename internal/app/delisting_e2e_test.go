@@ -98,7 +98,7 @@ func TestCurrencyDelisting_EndToEnd(t *testing.T) {
 		t.Helper()
 		_, err := delisting.Advance(ctx, env.db, start.Add(time.Duration(hours)*time.Hour), 100)
 		require.NoError(t, err)
-		require.NoError(t, env.handlers.Public.Currencies.Invalidate(ctx))
+		require.NoError(t, env.handlers.Catalog.Invalidate(ctx))
 	}
 	advance(2)
 	l = publicCurrency().Lifecycle
@@ -162,7 +162,7 @@ func TestCurrencyDelisting_CancelRestoresTheCurrency(t *testing.T) {
 	assert.Contains(t, string(raw), "version_conflict")
 	status, raw = env.call(t, http.MethodPost, cancel, map[string]int64{"version": d.Info.Version}, admin)
 	require.Equal(t, http.StatusOK, status, string(raw))
-	require.NoError(t, env.handlers.Public.Currencies.Invalidate(ctx))
+	require.NoError(t, env.handlers.Catalog.Invalidate(ctx))
 	w := httptest.NewRecorder()
 	env.router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/public/currencies?lifecycle=active", nil))
 	assert.Equal(t, []string{"BACK"}, listedSymbols(t, w))

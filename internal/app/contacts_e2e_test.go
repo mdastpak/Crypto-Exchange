@@ -442,7 +442,7 @@ func (e *e2eEnv) withNationalID(t *testing.T, userID, nationalID string) *identi
 		stub = &identity.Stub{}
 	}
 	e.handlers.User.Sealer, e.handlers.User.Ownership = sealer, stub
-	e.handlers.Public.Sealer, e.handlers.Public.Ownership = sealer, stub
+	e.handlers.SignIn.Sealer, e.handlers.SignIn.Ownership, e.handlers.Public.Ownership = sealer, stub, stub
 	require.NoError(t, identity.SaveNationalID(context.Background(), e.db, sealer, userID, nationalID, "stub", "", time.Now()))
 	return stub
 }
