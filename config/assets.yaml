@@ -5,7 +5,10 @@
 # TRON and an Ethereum network. internal/assetregistry loads this file and
 # refuses it when a symbol or an (asset, network) pair repeats, when a
 # contract address does not pass its network's format and checksum, or when
-# a market names an unknown asset. Nothing loads it at runtime yet (#57).
+# a market names an unknown asset. `admin assets import` loads it into the
+# currencies, their networks, and the markets, through those checks (#309):
+# an asset is a currency, named in English (name) and in Persian (fa_name).
+# A currency that exists keeps its fields; the admin API changes them.
 #
 # Contract addresses come from the issuers and must be checked there before
 # they are changed, since a wrong address sends funds to an arbitrary
@@ -23,11 +26,11 @@ assets:
   # Fiat currencies
   - symbol: "USD"
     name: "US Dollar"
+    fa_name: "دلار آمریکا"
     type: "FIAT"
     status: "ACTIVE"
     decimals: 2
     description: "United States Dollar"
-    logo_url: "https://assets.example.com/fiat/usd.png"
     networks:
       - network: "internal"
         min_withdrawal: "10.00"
@@ -39,11 +42,11 @@ assets:
 
   - symbol: "EUR"
     name: "Euro"
+    fa_name: "یورو"
     type: "FIAT"
     status: "ACTIVE"
     decimals: 2
     description: "Euro"
-    logo_url: "https://assets.example.com/fiat/eur.png"
     networks:
       - network: "internal"
         min_withdrawal: "10.00"
@@ -55,11 +58,11 @@ assets:
 
   - symbol: "IRR"
     name: "Iranian Rial"
+    fa_name: "ریال ایران"
     type: "FIAT"
     status: "ACTIVE"
     decimals: 0
     description: "Iranian Rial (a toman is 10 rials)"
-    logo_url: "https://assets.example.com/fiat/irr.png"
     networks:
       - network: "internal"
         min_withdrawal: "500000"
@@ -72,11 +75,11 @@ assets:
   # Coins
   - symbol: "BTC"
     name: "Bitcoin"
+    fa_name: "بیت‌کوین"
     type: "COIN"
     status: "ACTIVE"
     decimals: 8
     description: "Bitcoin"
-    logo_url: "https://assets.example.com/crypto/btc.png"
     website: "https://bitcoin.org"
     networks:
       - network: "bitcoin"
@@ -91,11 +94,11 @@ assets:
 
   - symbol: "ETH"
     name: "Ethereum"
+    fa_name: "اتریوم"
     type: "COIN"
     status: "ACTIVE"
     decimals: 18
     description: "Ether, the native asset of Ethereum"
-    logo_url: "https://assets.example.com/crypto/eth.png"
     website: "https://ethereum.org"
     networks:
       - network: "ethereum"
@@ -110,11 +113,11 @@ assets:
 
   - symbol: "TRX"
     name: "TRON"
+    fa_name: "ترون"
     type: "COIN"
     status: "ACTIVE"
     decimals: 6
     description: "TRX, the native asset of TRON"
-    logo_url: "https://assets.example.com/crypto/trx.png"
     website: "https://tron.network"
     networks:
       - network: "tron"
@@ -130,11 +133,11 @@ assets:
   # Stablecoins
   - symbol: "USDT"
     name: "Tether USD"
+    fa_name: "تتر"
     type: "STABLE"
     status: "ACTIVE"
     decimals: 6
     description: "Tether USD"
-    logo_url: "https://assets.example.com/crypto/usdt.png"
     website: "https://tether.to"
     networks:
       - network: "tron"
@@ -160,11 +163,11 @@ assets:
 
   - symbol: "USDC"
     name: "USD Coin"
+    fa_name: "یو اس دی کوین"
     type: "STABLE"
     status: "INACTIVE"
     decimals: 6
     description: "USD Coin"
-    logo_url: "https://assets.example.com/crypto/usdc.png"
     website: "https://www.circle.com/usdc"
     networks:
       - network: "ethereum"
@@ -181,11 +184,11 @@ assets:
   # Wrapped assets
   - symbol: "WBTC"
     name: "Wrapped Bitcoin"
+    fa_name: "بیت‌کوین رپدشده"
     type: "WRAPPED"
     status: "INACTIVE"
     decimals: 8
     description: "Wrapped Bitcoin on Ethereum"
-    logo_url: "https://assets.example.com/crypto/wbtc.png"
     networks:
       - network: "ethereum"
         contract_address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"

@@ -9,6 +9,10 @@
 // network, a contract address that fails its network's format or checksum,
 // limits that contradict each other, or a market that names an unknown
 // asset. A wrong contract address would send funds to an arbitrary contract.
+//
+// The file is the import format of the currencies (#309): an asset is a
+// currency, and currencies.Store.Import, which `admin assets import` runs,
+// loads the file into the currencies, their networks, and the markets.
 package assetregistry
 
 import (
@@ -33,8 +37,11 @@ type Registry struct {
 
 // Asset is one asset, with the networks it moves on.
 type Asset struct {
-	Symbol      string             `yaml:"symbol"`
+	Symbol string `yaml:"symbol"`
+	// Name is the English name, and FaName the Persian one, of the
+	// currency that the asset is in the exchange (#309).
 	Name        string             `yaml:"name"`
+	FaName      string             `yaml:"fa_name"`
 	Type        shared.AssetType   `yaml:"type"`
 	Status      shared.AssetStatus `yaml:"status"`
 	Decimals    int                `yaml:"decimals"`
@@ -50,7 +57,10 @@ type Network struct {
 	ContractAddress string `yaml:"contract_address"`
 	// FeeAsset is the asset that pays the network fee, such as TRX for a
 	// TRC20 token.
-	FeeAsset          string                `yaml:"fee_asset"`
+	FeeAsset string `yaml:"fee_asset"`
+	// MinDeposit is the smallest deposit that is credited, "0" when left
+	// out.
+	MinDeposit        string                `yaml:"min_deposit"`
 	MinWithdrawal     string                `yaml:"min_withdrawal"`
 	MaxWithdrawal     string                `yaml:"max_withdrawal"`
 	WithdrawalFee     string                `yaml:"withdrawal_fee"`
@@ -152,6 +162,9 @@ func (r *Registry) Validate() error {
 		if a.Name == "" {
 			add("%s: name is required", where)
 		}
+		if a.FaName == "" {
+			add("%s: fa_name is required", where)
+		}
 		if !contains(assetTypes, a.Type) {
 			add("%s: unknown type %q", where, a.Type)
 		}
@@ -201,6 +214,9 @@ func (r *Registry) Validate() error {
 				add("%s: fee_asset is %q; network fees on %s are paid in %s", at, n.FeeAsset, n.Network, info.native)
 			}
 			problems = append(problems, limitProblems(at, "withdrawal", n.MinWithdrawal, n.MaxWithdrawal, n.WithdrawalFee)...)
+			if d, err := shared.NewDecimalFromString(n.MinDepositOrZero()); err != nil || d.IsNegative() {
+				add("%s: min_deposit %q must be a decimal of at least 0", at, n.MinDeposit)
+			}
 		}
 	}
 
@@ -272,4 +288,12 @@ func contains[T comparable](list []T, value T) bool {
 		}
 	}
 	return false
+}
+
+// MinDepositOrZero is MinDeposit, or "0" when it is left out.
+func (n Network) MinDepositOrZero() string {
+	if n.MinDeposit == "" {
+		return "0"
+	}
+	return n.MinDeposit
 }

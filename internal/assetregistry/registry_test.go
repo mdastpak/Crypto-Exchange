@@ -83,6 +83,7 @@ const validRegistry = `
 assets:
   - symbol: "USD"
     name: "US Dollar"
+    fa_name: "دلار آمریکا"
     type: "FIAT"
     status: "ACTIVE"
     decimals: 2
@@ -94,6 +95,7 @@ assets:
         custody_mode: "OFF_CHAIN"
   - symbol: "TRX"
     name: "TRON"
+    fa_name: "ترون"
     type: "COIN"
     status: "ACTIVE"
     decimals: 6
@@ -106,6 +108,7 @@ assets:
         custody_mode: "ON_CHAIN"
   - symbol: "USDT"
     name: "Tether USD"
+    fa_name: "تتر"
     type: "STABLE"
     status: "ACTIVE"
     decimals: 6
@@ -153,6 +156,7 @@ func TestParse_RefusesBrokenRegistries(t *testing.T) {
 		"a native asset with contract": {"      - network: \"tron\"\n        fee_asset: \"TRX\"\n        min_withdrawal: \"1\"\n        max_withdrawal: \"100\"",
 			"      - network: \"tron\"\n        contract_address: \"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t\"\n        fee_asset: \"TRX\"\n        min_withdrawal: \"1\"\n        max_withdrawal: \"100\"", "the native asset of a network"},
 		"an unknown network": {`network: "internal"`, `network: "swift"`, `unknown network "swift"`},
+		"no Persian name":    {`fa_name: "تتر"`, `fa_name: ""`, "fa_name is required"},
 		"fiat on a chain":    {`type: "FIAT"`, `type: "COIN"`, "fiat assets, and only they, use the internal network"},
 		"an unknown type":    {`type: "STABLE"`, `type: "MEME"`, `unknown type "MEME"`},
 		"an unknown status": {`status: "ACTIVE"
