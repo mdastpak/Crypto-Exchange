@@ -8,7 +8,9 @@
 # a market names an unknown asset. `admin assets import` loads it into the
 # currencies, their networks, and the markets, through those checks (#309):
 # an asset is a currency, named in English (name) and in Persian (fa_name).
-# A currency that exists keeps its fields; the admin API changes them.
+# A currency that exists keeps its fields; the admin API changes them. The
+# Persian names are those that Iranian exchanges show (Wallex, Bitpin, and
+# Ramzinex, 2026-11-12), so that users find a coin by the name they know.
 #
 # Contract addresses come from the issuers and must be checked there before
 # they are changed, since a wrong address sends funds to an arbitrary
@@ -75,7 +77,7 @@ assets:
   # Coins
   - symbol: "BTC"
     name: "Bitcoin"
-    fa_name: "بیت‌کوین"
+    fa_name: "بیت کوین"
     type: "COIN"
     status: "ACTIVE"
     decimals: 8
@@ -184,7 +186,7 @@ assets:
   # Wrapped assets
   - symbol: "WBTC"
     name: "Wrapped Bitcoin"
-    fa_name: "بیت‌کوین رپدشده"
+    fa_name: "رپد بیت کوین"
     type: "WRAPPED"
     status: "INACTIVE"
     decimals: 8
