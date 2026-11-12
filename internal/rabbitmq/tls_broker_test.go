@@ -31,7 +31,7 @@ func rabbitMQThroughTLS(t *testing.T) *tlsproxy.Proxy {
 func TestNewRabbitMQService_TLS(t *testing.T) {
 	rabbitMQThroughTLS(t)
 	exchange := "test_tls_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	svc, err := NewRabbitMQService(exchange)
+	svc, err := NewRabbitMQService(&config.Config, exchange)
 	require.NoError(t, err)
 	defer func() {
 		svc.Close()
@@ -47,7 +47,7 @@ func TestNewRabbitMQService_TLS(t *testing.T) {
 func TestNewRabbitMQService_TLS_RefusesAnUntrustedCertificate(t *testing.T) {
 	rabbitMQThroughTLS(t)
 	config.Config.RabbitMQ.TLS.CAFile = ""
-	svc, err := NewRabbitMQService()
+	svc, err := NewRabbitMQService(&config.Config)
 	require.NoError(t, err)
 	defer svc.Close()
 	assert.False(t, svc.IsHealthy())

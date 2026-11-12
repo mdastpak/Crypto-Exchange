@@ -484,7 +484,7 @@ type worker struct {
 // admin API. The WebSocket tells its clients of every change, and closes
 // those that a control closes.
 func startPlatform(services *models.InfraServices, handlers *InfraHandlers) (*platform.Watcher, error) {
-	settings, err := platform.SettingsFromConfig()
+	settings, err := platform.SettingsOf(&config.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +578,7 @@ func validateConfiguration() (keys.Provider, error) {
 	provider, keyErr := dataKeyProvider(release)
 	err := errors.Join(
 		config.ValidateServer(),
-		otp.SettingsFromConfig().Validate(),
+		otp.SettingsOf(&config.Config).Validate(),
 		notify.CheckDevLogCodes(config.Config.OTP.Auth.DevLogCodes, release),
 		keyErr,
 		platformSettingsErr(),
@@ -594,7 +594,7 @@ func validateConfiguration() (keys.Provider, error) {
 // platformSettingsErr reports the unknown features of the platform
 // settings, with the other problems of the configuration.
 func platformSettingsErr() error {
-	_, err := platform.SettingsFromConfig()
+	_, err := platform.SettingsOf(&config.Config)
 	return err
 }
 
@@ -702,7 +702,7 @@ func configureAdminSignIn(h *InfraHandlers, services *models.InfraServices, send
 // store applies when otp.auth.ttl_seconds is not set, so that queued jobs and
 // email templates agree with the store.
 func otpTTL() time.Duration {
-	return otp.SettingsFromConfig().WithDefaults().TTL
+	return otp.SettingsOf(&config.Config).WithDefaults().TTL
 }
 
 // newOTPDelivery selects how sign-in codes are delivered: to the log in
@@ -845,13 +845,22 @@ func checkRedisEviction(client redis.UniversalClient, release, assumeNoEviction 
 	return watch, nil
 }
 
+// configurePackages installs the configuration of the process in the
+// packages whose functions read it without an object to carry it: the
+// tokens and sessions of auth, and the security settings of userauth (#48).
+func configurePackages(cfg *config.Configuration) {
+	auth.Configure(cfg)
+	userauth.Configure(cfg)
+}
+
 func initializeServices() (*models.InfraServices, func(), error) {
-	postgresService, err := db.NewPostgresService()
+	configurePackages(&config.Config)
+	postgresService, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		return nil, nil, err
 	}
 
-	redisService, err := db.NewRedisService()
+	redisService, err := db.NewRedisService(&config.Config)
 	if err != nil {
 		postgresService.Close()
 		return nil, nil, err
@@ -862,7 +871,7 @@ func initializeServices() (*models.InfraServices, func(), error) {
 		config.Config.RabbitMQ.Exchanges.TradeEvents,
 		config.Config.RabbitMQ.Exchanges.Notifications,
 	}
-	rabbitMQService, err := rabbitmq.NewRabbitMQService(exchanges...)
+	rabbitMQService, err := rabbitmq.NewRabbitMQService(&config.Config, exchanges...)
 	if err != nil {
 		postgresService.Close()
 		redisService.Close()
@@ -873,6 +882,7 @@ func initializeServices() (*models.InfraServices, func(), error) {
 		Postgres: postgresService,
 		Redis:    redisService,
 		RabbitMQ: rabbitMQService,
+		Config:   &config.Config,
 	}
 
 	cleanup := func() {
@@ -1155,7 +1165,7 @@ var probeRoutes = []string{"/system/live", "/system/ready"}
 // applies middleware only to the routes registered after it, so no route may
 // be registered before this function runs.
 func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
-	rl := middleware.NewRateLimiter(ih.Redis)
+	rl := middleware.NewRateLimiter(&config.Config, ih.Redis)
 	// The pages of every site call the API (#285).
 	origins := append(append([]string(nil), config.Config.Server.CORS.AllowedOrigins...), config.Config.SiteOrigins()...)
 	cors, err := middleware.NewCORSMiddleware(origins)
@@ -1256,4 +1266,10 @@ func passkeyConfig() passkey.Config {
 		name = config.Config.Exchange.Name
 	}
 	return passkey.Config{RPID: cfg.RPID, RPName: name, Origins: cfg.Origins}
+}
+
+// dbOptions are the options of the db package: the configuration of this
+// process, and its migrations.
+func dbOptions() db.Options {
+	return db.Options{Config: &config.Config, MigrationsPath: config.MigrationsPath()}
 }

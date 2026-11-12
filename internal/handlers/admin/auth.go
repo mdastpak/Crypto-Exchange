@@ -138,7 +138,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	// wait comes before the answer is written, since a written answer may
 	// already be on its way.
 	start := time.Now()
-	minimum := time.Duration(config.Config.Admin.SignInMinResponseMS) * time.Millisecond
+	minimum := time.Duration(h.settings().Admin.SignInMinResponseMS) * time.Millisecond
 	respond := func(status int, message i18n.Message, info interface{}) {
 		padResponse(ctx, start, minimum)
 		helpers.SendResponse(c, status, message, info)
@@ -161,7 +161,7 @@ func (h *AdminHandler) RequestSignIn(c *gin.Context) {
 	// unknown address gets a code too, which is never sent and expires, so
 	// that it reaches the limits after as many requests as an
 	// administrator's address, and its session leads nowhere.
-	issued, err := h.OTP.Issue(ctx, email, clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength))
+	issued, err := h.OTP.Issue(ctx, email, clientip.Key(c.ClientIP(), h.settings().RateLimits.IPv6PrefixLength))
 	switch {
 	case errors.Is(err, otp.ErrTooManyRequests):
 		h.noteSignIn(ctx, c, audit.ActionAdminSignInCode, adminID, audit.Denied, "rate_limited")
@@ -292,9 +292,9 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 		IP:        c.ClientIP(),
 		UserAgent: c.Request.UserAgent(),
 		ExpiresAt: time.Now().Add(auth.AccessTokenLifetime()),
-		Max:       maxSessionsPerAdmin(),
+		Max:       maxSessionsPerAdmin(h.settings()),
 		// The sign-in checked an authenticator code just now.
-		ElevatedFor: stepUpLifetime(),
+		ElevatedFor: stepUpLifetime(h.settings()),
 	}
 	accessToken, err := auth.GenerateAccessToken(admin.ID, auth.RoleAdmin, session.ID)
 	if err != nil {
@@ -315,8 +315,8 @@ func (h *AdminHandler) VerifySignIn(c *gin.Context) {
 
 // maxSessionsPerAdmin is admin.sessions.max_per_admin, or its default where
 // the configuration was not loaded from a file.
-func maxSessionsPerAdmin() int {
-	if limit := config.Config.Admin.Sessions.MaxPerAdmin; limit > 0 {
+func maxSessionsPerAdmin(cfg *config.Configuration) int {
+	if limit := cfg.Admin.Sessions.MaxPerAdmin; limit > 0 {
 		return limit
 	}
 	return config.DefaultMaxSessionsPerAdmin

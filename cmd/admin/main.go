@@ -354,7 +354,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1
@@ -450,7 +450,7 @@ func runKeys(cmd command, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1
@@ -537,7 +537,7 @@ func executeKeys(ctx context.Context, store *keys.Store, cmd command, stdout io.
 
 // runOutbox runs an outbox command.
 func runOutbox(cmd command, stdout, stderr io.Writer) int {
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1
@@ -623,4 +623,10 @@ func printEnrollment(stdout io.Writer, enrollment adminauth.Enrollment) {
 	fmt.Fprintln(stdout, "  "+enrollment.URI)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Manual entry key:", enrollment.Secret)
+}
+
+// dbOptions are the options of the db package: the configuration of this
+// process, and its migrations.
+func dbOptions() db.Options {
+	return db.Options{Config: &config.Config, MigrationsPath: config.MigrationsPath()}
 }

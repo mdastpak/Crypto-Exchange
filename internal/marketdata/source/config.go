@@ -21,11 +21,11 @@ type Settings struct {
 }
 
 // ClientFromConfig returns the client of the named source with the settings
-// of this node: its route (direct, or through market_data.egress.proxy_url),
+// of c for this node: its route (direct, or through market_data.egress.proxy_url),
 // its address, its key, its timeout, and the limits of its plan counted in
 // db across every worker. It refuses a source that this node does not call.
-func ClientFromConfig(db *sql.DB, name string, s Settings) (*Client, error) {
-	cfg := config.Config.MarketData
+func ClientFromConfig(c *config.Configuration, db *sql.DB, name string, s Settings) (*Client, error) {
+	cfg := c.MarketData
 	route := cfg.Route(name)
 	if route == config.EgressNone {
 		return nil, fmt.Errorf("source %s: this node does not call it (market_data.sources.%s)", name, name)

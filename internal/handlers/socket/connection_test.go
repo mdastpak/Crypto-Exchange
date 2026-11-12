@@ -77,7 +77,7 @@ func TestLimitsFromConfig(t *testing.T) {
 	config.Config.WebSocket.WriteTimeout, config.Config.WebSocket.ClientMessagesPerSecond = 0, 0
 	config.Config.WebSocket.ClientMessageBurst, config.Config.WebSocket.MaxConnections, config.Config.WebSocket.MaxConnectionsPerIP = 0, 0, 0
 	config.Config.WebSocket.SessionCheckSeconds, config.Config.WebSocket.MaxConnectionsPerUser = 0, 0
-	l := limitsFromConfig()
+	l := limitsOf(&config.Config)
 	assert.Equal(t, int64(4096), l.maxMessageBytes, "the defaults apply to settings that are not set")
 	assert.Equal(t, 30*time.Second, l.pingInterval)
 	assert.Equal(t, 60*time.Second, l.pongWait, "two ping intervals")
@@ -93,7 +93,7 @@ func TestLimitsFromConfig(t *testing.T) {
 	config.Config.WebSocket.WriteTimeout, config.Config.WebSocket.ClientMessagesPerSecond = 3, 2
 	config.Config.WebSocket.ClientMessageBurst, config.Config.WebSocket.MaxConnections, config.Config.WebSocket.MaxConnectionsPerIP = 4, 100, 7
 	config.Config.WebSocket.SessionCheckSeconds, config.Config.WebSocket.MaxConnectionsPerUser = 15, 3
-	l = limitsFromConfig()
+	l = limitsOf(&config.Config)
 	assert.Equal(t, limits{maxMessageBytes: 1024, pingInterval: 5 * time.Second, pongWait: 10 * time.Second, writeTimeout: 3 * time.Second,
 		messagesPerSecond: 2, messageBurst: 4, maxConnections: 100, maxPerIP: 7, maxPerUser: 3, sessionCheck: 15 * time.Second,
 		ipv6Prefix: config.Config.RateLimits.IPv6PrefixLength}, l)

@@ -36,7 +36,7 @@ func newAuthLimitEngine(t *testing.T) (*gin.Engine, *RateLimiter, *redis.Client)
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
-	return engine, NewRateLimiter(&db.RedisService{Client: client}), client
+	return engine, NewRateLimiter(&config.Config, &db.RedisService{Client: client}), client
 }
 
 func ok(c *gin.Context) { c.Status(http.StatusOK) }
@@ -102,7 +102,7 @@ func TestAuthRateLimit_EachRouteAndClientCountsSeparately(t *testing.T) {
 }
 
 func TestAuthRateLimit_UnknownActionPanics(t *testing.T) {
-	assert.Panics(t, func() { NewRateLimiter(nil).AuthRateLimit("signup") })
+	assert.Panics(t, func() { NewRateLimiter(&config.Config, nil).AuthRateLimit("signup") })
 }
 
 // TestFixedWindow_EndsOnTimeWhileTheClientRetries keeps a blocked client

@@ -120,38 +120,39 @@ func migrationLockHolder(ctx context.Context, conn *sql.Conn) string {
 // only checks that the release step migrated the database. It then checks
 // the runtime role, which release mode refuses when the role could change
 // the schema.
-func NewPostgresService() (*PostgresService, error) {
+func NewPostgresService(o Options) (*PostgresService, error) {
 	ctx := context.Background()
-	if config.Config.Postgres.Migrations.Mode != config.MigrationsModeExternal {
+	pg := o.Config.Postgres
+	if pg.Migrations.Mode != config.MigrationsModeExternal {
 		// Migrations run on connections of their own, without the timeouts
 		// of the pool, which would stop a long migration, and with their
 		// own application_name. The lock serializes the replicas of this
 		// service that start at the same time.
-		if err := Migrate(ctx); err != nil {
+		if err := Migrate(ctx, o); err != nil {
 			return nil, fmt.Errorf("error running migrations: %w", err)
 		}
 	}
 
-	service, err := ConnectPostgres()
+	service, err := ConnectPostgres(o)
 	if err != nil {
 		return nil, err
 	}
 	db := service.DB
-	if config.Config.Postgres.Migrations.Mode == config.MigrationsModeExternal {
-		if err := checkSchema(ctx, db); err != nil {
+	if pg.Migrations.Mode == config.MigrationsModeExternal {
+		if err := checkSchema(ctx, db, o.MigrationsPath); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
-	if err := checkRole(ctx, db); err != nil {
+	if err := checkRole(ctx, db, o.release()); err != nil {
 		db.Close()
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(config.Config.Postgres.MaxOpenConns)
-	db.SetMaxIdleConns(config.Config.Postgres.MaxIdleConns)
-	db.SetConnMaxLifetime(time.Duration(config.Config.Postgres.ConnMaxLifetime) * time.Minute)
-	db.SetConnMaxIdleTime(time.Duration(config.Config.Postgres.ConnMaxIdleTime) * time.Minute)
+	db.SetMaxOpenConns(pg.MaxOpenConns)
+	db.SetMaxIdleConns(pg.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(pg.ConnMaxLifetime) * time.Minute)
+	db.SetConnMaxIdleTime(time.Duration(pg.ConnMaxIdleTime) * time.Minute)
 
 	log.Println("PostgreSQL connected and the schema is current.")
 
@@ -162,14 +163,14 @@ func NewPostgresService() (*PostgresService, error) {
 // retries, and does not migrate it. A restore drill (#236) checks a restored
 // database as it is: migrating it first would hide a backup taken at an
 // older schema.
-func ConnectPostgres() (*PostgresService, error) {
-	cfg, err := PostgresConfig()
+func ConnectPostgres(o Options) (*PostgresService, error) {
+	cfg, err := PostgresConfig(o)
 	if err != nil {
 		return nil, err
 	}
-	db := openPool(cfg)
+	db := openPool(cfg, o.Config.Postgres.TargetSessionAttrs)
 
-	if err := pingWithRetry(db, config.Config.Postgres.ConnectRetries, time.Duration(config.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
+	if err := pingWithRetry(db, o.Config.Postgres.ConnectRetries, time.Duration(o.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("error connecting to PostgreSQL database: %w", err)
 	}
@@ -188,15 +189,15 @@ func ConnectPostgres() (*PostgresService, error) {
 // The configuration names every host of postgres.hosts, or host and port,
 // with target_session_attrs, and sets the server-side timeouts and the
 // application_name of ApplicationName as run-time parameters.
-func PostgresConfig() (*pgx.ConnConfig, error) {
-	pg := config.Config.Postgres
-	return connConfig(pg.User, pg.Password, pg.StatementTimeoutMs, pg.LockTimeoutMs, pg.IdleInTransactionTimeoutMs, ApplicationName)
+func PostgresConfig(o Options) (*pgx.ConnConfig, error) {
+	pg := o.Config.Postgres
+	return connConfig(o, pg.User, pg.Password, pg.StatementTimeoutMs, pg.LockTimeoutMs, pg.IdleInTransactionTimeoutMs, ApplicationName)
 }
 
 // connConfig builds the configuration of the role user, with the given
 // timeouts and name.
-func connConfig(user, password string, statementMs, lockMs, idleMs int, name string) (*pgx.ConnConfig, error) {
-	pg := config.Config.Postgres
+func connConfig(o Options, user, password string, statementMs, lockMs, idleMs int, name string) (*pgx.ConnConfig, error) {
+	pg := o.Config.Postgres
 	hosts := net.JoinHostPort(pg.Host, pg.Port)
 	if len(pg.Hosts) > 0 {
 		trimmed := make([]string, len(pg.Hosts))
@@ -246,14 +247,14 @@ func connConfig(user, password string, statementMs, lockMs, idleMs int, name str
 // migration role (#180), without statement or lock timeouts, named
 // crypto-exchange-migrate. The advisory lock holds one connection, and
 // golang-migrate takes others, so the pool is small but not one.
-func openMigrations() (*sql.DB, error) {
-	pg := config.Config.Postgres
-	user, password := migrationRole()
-	cfg, err := connConfig(user, password, -1, -1, pg.IdleInTransactionTimeoutMs, migrationApplicationName())
+func openMigrations(o Options) (*sql.DB, error) {
+	pg := o.Config.Postgres
+	user, password := migrationRole(o)
+	cfg, err := connConfig(o, user, password, -1, -1, pg.IdleInTransactionTimeoutMs, migrationApplicationName())
 	if err != nil {
 		return nil, err
 	}
-	db := openPool(cfg)
+	db := openPool(cfg, o.Config.Postgres.TargetSessionAttrs)
 	db.SetMaxOpenConns(4)
 	return db, nil
 }
@@ -282,7 +283,7 @@ func (p *PostgresService) Stats() sql.DBStats {
 	return p.DB.Stats()
 }
 
-func runMigrations(db *sql.DB) error {
+func runMigrations(db *sql.DB, migrationsPath string) error {
 	// The pgx driver keeps the schema_migrations table and the advisory
 	// lock of the lib/pq driver used before, so existing databases carry on.
 	driver, err := migratepgx.WithInstance(db, &migratepgx.Config{})
@@ -291,7 +292,7 @@ func runMigrations(db *sql.DB) error {
 	}
 
 	m, err := migrate.NewWithDatabaseInstance(
-		config.MigrationsPath(),
+		migrationsPath,
 		"pgx5", driver)
 	if err != nil {
 		return fmt.Errorf("migration instance creation failed: %w", err)
@@ -332,3 +333,17 @@ func pingWithRetry(db *sql.DB, maxAttempts int, delay time.Duration) error {
 	}
 	return lastErr
 }
+
+// Options are what the package reads of the configuration of its process,
+// which the composition root passes (#48): the package reads no global
+// configuration.
+type Options struct {
+	// Config is the configuration of the process.
+	Config *config.Configuration
+	// MigrationsPath is the source URL of the migrations, such as
+	// file://internal/db/migrations.
+	MigrationsPath string
+}
+
+// release reports whether the process runs in release mode.
+func (o Options) release() bool { return o.Config.Server.Mode == "release" }

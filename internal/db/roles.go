@@ -60,8 +60,8 @@ var RuntimeFunctions = []string{
 // migrationRole returns the user and password that the migrations connect
 // with: postgres.migrations.user and password, or, when no migration role is
 // configured, postgres.user and password.
-func migrationRole() (user, password string) {
-	pg := config.Config.Postgres
+func migrationRole(o Options) (user, password string) {
+	pg := o.Config.Postgres
 	if pg.Migrations.User == "" {
 		return pg.User, pg.Password
 	}
@@ -70,9 +70,9 @@ func migrationRole() (user, password string) {
 
 // separateRoles reports whether the migrations and the server use different
 // roles, so that the migrations must grant the runtime role its privileges.
-func separateRoles() bool {
-	user, _ := migrationRole()
-	return user != config.Config.Postgres.User
+func separateRoles(o Options) bool {
+	user, _ := migrationRole(o)
+	return user != o.Config.Postgres.User
 }
 
 // Migrate applies every pending migration with the migration role, while
@@ -81,30 +81,30 @@ func separateRoles() bool {
 // release start; in the "startup" mode, every instance runs it when it
 // starts. Several callers may run it at once: the lock lets one migrate,
 // and the others find nothing left to do.
-func Migrate(ctx context.Context) error {
-	migrations, err := openMigrations()
+func Migrate(ctx context.Context, o Options) error {
+	migrations, err := openMigrations(o)
 	if err != nil {
 		return err
 	}
 	defer migrations.Close()
-	if err := pingWithRetry(migrations, config.Config.Postgres.ConnectRetries, time.Duration(config.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
+	if err := pingWithRetry(migrations, o.Config.Postgres.ConnectRetries, time.Duration(o.Config.Postgres.ConnectRetryDelayMs)*time.Millisecond); err != nil {
 		return fmt.Errorf("error connecting to PostgreSQL with the migration role: %w", err)
 	}
 
-	wait := time.Duration(config.Config.Postgres.MigrationLockTimeoutSeconds) * time.Second
+	wait := time.Duration(o.Config.Postgres.MigrationLockTimeoutSeconds) * time.Second
 	if wait <= 0 {
 		wait = time.Duration(config.DefaultPostgresMigrationLockTimeoutSeconds) * time.Second
 	}
 	return withMigrationLock(ctx, migrations, wait, func() error {
-		if err := runMigrations(migrations); err != nil {
+		if err := runMigrations(migrations, o.MigrationsPath); err != nil {
 			return err
 		}
-		if !separateRoles() {
+		if !separateRoles(o) {
 			return nil
 		}
 		// Under the lock too: two GRANTs on the same table at once can fail
 		// with "tuple concurrently updated".
-		return grantRuntimeRole(ctx, migrations, config.Config.Postgres.User)
+		return grantRuntimeRole(ctx, migrations, o.Config.Postgres.User)
 	})
 }
 
@@ -321,7 +321,7 @@ func names(ctx context.Context, conn *sql.DB, query string, args ...any) ([]stri
 // checkRole runs RoleProblems on the server's pool. In release mode, a
 // problem stops the start; otherwise, as in development, where one role
 // usually owns everything, it is logged once.
-func checkRole(ctx context.Context, conn *sql.DB) error {
+func checkRole(ctx context.Context, conn *sql.DB, release bool) error {
 	problems, err := RoleProblems(ctx, conn)
 	if err != nil {
 		return err
@@ -329,7 +329,7 @@ func checkRole(ctx context.Context, conn *sql.DB) error {
 	if len(problems) == 0 {
 		return nil
 	}
-	if config.Config.Server.Mode == "release" {
+	if release {
 		return fmt.Errorf("release mode needs a runtime role that cannot change the schema (postgres.user, see docs/configuration.md#database-roles):\n  %s",
 			strings.Join(problems, "\n  "))
 	}
@@ -359,10 +359,10 @@ func (s SchemaState) Behind() bool { return s.Version < s.Latest }
 func (s SchemaState) Ahead() bool { return s.Version > s.Latest }
 
 // ReadSchemaState reads the version of the database and the newest
-// migration of config.MigrationsPath.
-func ReadSchemaState(ctx context.Context, conn *sql.DB) (SchemaState, error) {
+// migration of migrationsPath.
+func ReadSchemaState(ctx context.Context, conn *sql.DB, migrationsPath string) (SchemaState, error) {
 	var state SchemaState
-	latest, err := latestMigration(config.MigrationsPath())
+	latest, err := latestMigration(migrationsPath)
 	if err != nil {
 		return state, err
 	}
@@ -423,8 +423,8 @@ func latestMigration(url string) (uint, error) {
 // still start, or restart, while a release rolls out; migrations must
 // therefore keep working for the release before them (expand, then
 // contract).
-func checkSchema(ctx context.Context, conn *sql.DB) error {
-	state, err := ReadSchemaState(ctx, conn)
+func checkSchema(ctx context.Context, conn *sql.DB, migrationsPath string) error {
+	state, err := ReadSchemaState(ctx, conn, migrationsPath)
 	if err != nil {
 		return err
 	}

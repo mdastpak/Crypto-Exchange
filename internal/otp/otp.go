@@ -49,18 +49,18 @@ type Settings struct {
 	Durability redisutil.Durability
 }
 
-// SettingsFromConfig returns the settings in config.Config.OTP.Auth.
-func SettingsFromConfig() Settings {
-	cfg := config.Config.OTP.Auth
+// SettingsOf returns the settings in the otp.auth section of cfg.
+func SettingsOf(cfg *config.Configuration) Settings {
+	auth := cfg.OTP.Auth
 	return Settings{
-		CodeLength:             cfg.Length,
-		TTL:                    time.Duration(cfg.TTL) * time.Second,
-		AttemptsPerCode:        cfg.RetryLimit,
-		ContactRequestsPerHour: cfg.ContactRequestsPerHour,
-		ContactAttemptsPerHour: cfg.ContactAttemptsPerHour,
+		CodeLength:             auth.Length,
+		TTL:                    time.Duration(auth.TTL) * time.Second,
+		AttemptsPerCode:        auth.RetryLimit,
+		ContactRequestsPerHour: auth.ContactRequestsPerHour,
+		ContactAttemptsPerHour: auth.ContactAttemptsPerHour,
 
-		ContactRequestsTotalPerHour: cfg.ContactRequestsTotalPerHour,
-		Durability:                  redisutil.DurabilityFromConfig(),
+		ContactRequestsTotalPerHour: auth.ContactRequestsTotalPerHour,
+		Durability:                  redisutil.DurabilityOf(cfg),
 	}
 }
 

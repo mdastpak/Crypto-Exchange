@@ -100,7 +100,7 @@ func unreachableLimiter(t *testing.T) *RateLimiter {
 	t.Helper()
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 200 * time.Millisecond, MaxRetries: -1})
 	t.Cleanup(func() { client.Close() })
-	return NewRateLimiter(&db.RedisService{Client: client})
+	return NewRateLimiter(&config.Config, &db.RedisService{Client: client})
 }
 
 func TestRateLimiters_FollowTheirFailurePolicy(t *testing.T) {

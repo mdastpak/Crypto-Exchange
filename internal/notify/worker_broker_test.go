@@ -76,7 +76,7 @@ func newBrokerTopology(t *testing.T, logs *syncBuffer) *brokerTopology {
 		MaxAttempts:        3,
 		Logger:             log.New(logs, "", 0),
 	}
-	svc, err := rabbitmq.NewRabbitMQService(opts.Exchange)
+	svc, err := rabbitmq.NewRabbitMQService(&config.Config, opts.Exchange)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		svc.Close()
@@ -220,7 +220,7 @@ func TestWorker_Broker_AnotherInstanceTakesOverAtStop(t *testing.T) {
 		t.Fatal("the first instance did not try to deliver the code")
 	}
 
-	otherService, err := rabbitmq.NewRabbitMQService(topology.opts.Exchange)
+	otherService, err := rabbitmq.NewRabbitMQService(&config.Config, topology.opts.Exchange)
 	require.NoError(t, err)
 	defer otherService.Close()
 	delivered := make(chan OTPMessage, 1)
@@ -294,7 +294,7 @@ func TestWorker_Broker_StartsWithoutTheBroker(t *testing.T) {
 	t.Cleanup(func() { config.Config.RabbitMQ = saved })
 	config.Config.RabbitMQ.Host, config.Config.RabbitMQ.Port = proxy.Host(), proxy.Port()
 	proxy.SetDown(true)
-	late, err := rabbitmq.NewRabbitMQService(topology.opts.Exchange)
+	late, err := rabbitmq.NewRabbitMQService(&config.Config, topology.opts.Exchange)
 	require.NoError(t, err)
 	t.Cleanup(func() { late.Close() })
 

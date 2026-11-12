@@ -213,9 +213,9 @@ func (t *TOTP) check(ctx context.Context, userHK, code string, confirmed bool, t
 
 func (t *TOTP) limits() (int, int, time.Duration) {
 	if t.Passwords != nil {
-		return t.Passwords.settings()
+		return t.Passwords.limits()
 	}
-	return (&Passwords{}).settings()
+	return (&Passwords{}).limits()
 }
 
 // Confirm turns the authenticator on with the first code of its secret. It

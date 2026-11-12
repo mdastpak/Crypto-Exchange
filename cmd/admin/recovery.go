@@ -109,7 +109,7 @@ func runRecovery(cmd command, stdout, stderr io.Writer) int {
 		keyStore = &keys.Store{Provider: provider}
 	}
 
-	postgres, err := db.ConnectPostgres()
+	postgres, err := db.ConnectPostgres(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1

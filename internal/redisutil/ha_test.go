@@ -54,7 +54,7 @@ func haService(t *testing.T, mode string) *db.RedisService {
 		}
 		r.Cluster.Addresses = strings.Split(addresses, ",")
 	}
-	svc, err := db.NewRedisService()
+	svc, err := db.NewRedisService(&config.Config)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 	return svc

@@ -11,7 +11,6 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
-	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/db"
@@ -234,7 +233,7 @@ func (e *errChange) Error() string { return e.message.String() }
 // the database read them at now. It runs when the change starts, and again
 // under the row lock when it is applied, since the contacts may have
 // changed in between.
-func planChange(req ContactChangeRequest, contacts []storedContact, now time.Time) (contactChange, error) {
+func planChange(cooldown time.Duration, req ContactChangeRequest, contacts []storedContact, now time.Time) (contactChange, error) {
 	ch := contactChange{action: req.Action, typ: req.Type, value: req.Value}
 	current, has := findContact(contacts, ch.typ)
 	switch ch.action {
@@ -270,7 +269,7 @@ func planChange(req ContactChangeRequest, contacts []storedContact, now time.Tim
 	if !ok {
 		return ch, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: i18n.M("VERIFYING_CONTACT_NOT_YOURS")}
 	}
-	if err := checkCooldown(ch, account, current, now); err != nil {
+	if err := checkCooldown(cooldown, ch, account, current, now); err != nil {
 		return ch, err
 	}
 	ch.account = account
@@ -286,11 +285,10 @@ func planChange(req ContactChangeRequest, contacts []storedContact, now time.Tim
 // so that the owner can undo an unwanted new contact at once, and a
 // contact can always be changed with its own code. Adding is never
 // refused: it takes nothing away.
-func checkCooldown(ch contactChange, account, target storedContact, now time.Time) error {
+func checkCooldown(cooldown time.Duration, ch contactChange, account, target storedContact, now time.Time) error {
 	if ch.action == contactAdd || account.typ == ch.typ || !account.verifiedAt.After(target.verifiedAt) {
 		return nil
 	}
-	cooldown := time.Duration(config.Config.Contacts.NewContactCooldownHours) * time.Hour
 	if cooldown <= 0 {
 		return nil
 	}
@@ -397,7 +395,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_START_THE_CHANGE"), nil)
 		return
 	}
-	plan, err := planChange(req, contacts, now)
+	plan, err := planChange(cooldownOf(h.settings()), req, contacts, now)
 	if sendRefusal(c, err) {
 		return
 	}
@@ -429,7 +427,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	// A contact that belongs to another user is not refused here, so that
 	// the answer does not tell whether it is taken; the code proves control
 	// of it first, and only then may the refusal say so.
-	client := clientip.Key(c.ClientIP(), config.Config.RateLimits.IPv6PrefixLength)
+	client := clientip.Key(c.ClientIP(), h.settings().RateLimits.IPv6PrefixLength)
 	change := pendingChange{UserID: userID.String(), Action: plan.action, Type: plan.typ, Value: plan.value, AccountContact: plan.account.value}
 	accountIssued, err := h.issue(ctx, plan.account.value, plan.account.typ, client)
 	if sendIssueError(c, err) {
@@ -751,7 +749,7 @@ func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pen
 		log.Printf("A mobile change of a user with a national ID cannot be checked: identity.mobile_ownership.provider is none")
 		return nil, errIdentityUnavailable
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
+	checkCtx, cancel := context.WithTimeout(ctx, h.settings().Identity.MobileOwnership.Timeout())
 	defer cancel()
 	match, err := h.Ownership.Match(checkCtx, nationalID, ch.Value)
 	if err != nil {
@@ -798,7 +796,7 @@ func (h *UserHandler) claimable(ctx context.Context, ch pendingChange) (string, 
 	if ch.Type != notify.ContactMobile {
 		return owner.UserHK, nil
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, config.Config.Identity.MobileOwnership.Timeout())
+	checkCtx, cancel := context.WithTimeout(ctx, h.settings().Identity.MobileOwnership.Timeout())
 	defer cancel()
 	verdict, _, err := contactclaim.Check(checkCtx, h.Ownership, h.Sealer, h.PostgresDB.DB, owner.UserHK, ch.Value)
 	if errors.Is(err, identity.ErrUnavailable) {
@@ -868,7 +866,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	}
 	// The contact that proved the account is checked by value, not by
 	// type, in case it was replaced in between.
-	plan, err := planChange(ContactChangeRequest{Action: ch.Action, Type: ch.Type, Value: ch.Value, VerifyWith: accountType(contacts, ch.AccountContact)}, contacts, now)
+	plan, err := planChange(cooldownOf(h.settings()), ContactChangeRequest{Action: ch.Action, Type: ch.Type, Value: ch.Value, VerifyWith: accountType(contacts, ch.AccountContact)}, contacts, now)
 	if err != nil {
 		return nil, err
 	}
@@ -915,7 +913,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 			origin := audit.FromRequest(c)
 			origin.ActorType, origin.ActorID = audit.ActorUser, ch.UserID
 			if _, claimed, err = contactclaim.Detach(ctx, tx, claimFrom, plan.typ, plan.value, contactclaim.ReasonClaimed, origin,
-				time.Duration(config.Config.Security.ChangeHoldHours)*time.Hour); err != nil {
+				time.Duration(h.settings().Security.ChangeHoldHours)*time.Hour); err != nil {
 				return nil, err
 			}
 		}
@@ -962,7 +960,7 @@ func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendin
 	// A change of a contact is a security change: it holds withdrawals
 	// and the other operations that a second factor protects (#251), in
 	// this transaction, so that the hold exists as soon as the change does.
-	until, err := restrictions.StartSecurityHold(ctx, tx, ch.UserID, time.Duration(config.Config.Security.ChangeHoldHours)*time.Hour)
+	until, err := restrictions.StartSecurityHold(ctx, tx, ch.UserID, time.Duration(h.settings().Security.ChangeHoldHours)*time.Hour)
 	if err != nil {
 		return nil, err
 	}

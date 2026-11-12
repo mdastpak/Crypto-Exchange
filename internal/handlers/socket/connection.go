@@ -42,11 +42,11 @@ type limits struct {
 	sessionCheck time.Duration
 }
 
-// limitsFromConfig reads the websocket settings, with the defaults of the
+// limitsOf reads the websocket settings of cfg, with the defaults of the
 // configuration for settings that are not set, as in a configuration that
 // Load did not fill in.
-func limitsFromConfig() limits {
-	ws := config.Config.WebSocket
+func limitsOf(cfg *config.Configuration) limits {
+	ws := cfg.WebSocket
 	or := func(value, fallback int) int {
 		if value > 0 {
 			return value
@@ -65,7 +65,7 @@ func limitsFromConfig() limits {
 		maxConnections:    or(ws.MaxConnections, config.DefaultWSMaxConnections),
 		maxPerIP:          or(ws.MaxConnectionsPerIP, config.DefaultWSMaxConnectionsPerIP),
 		maxPerUser:        or(ws.MaxConnectionsPerUser, config.DefaultWSMaxConnectionsPerUser),
-		ipv6Prefix:        config.Config.RateLimits.IPv6PrefixLength,
+		ipv6Prefix:        cfg.RateLimits.IPv6PrefixLength,
 		sessionCheck:      time.Duration(or(ws.SessionCheckSeconds, config.DefaultWSSessionCheckSeconds)) * time.Second,
 	}
 }

@@ -101,9 +101,9 @@ func TestDurability_RefusesAnotherClient(t *testing.T) {
 	assert.Contains(t, err.Error(), "*redis.Ring")
 }
 
-func TestDurabilityFromConfig(t *testing.T) {
+func TestDurabilityOf(t *testing.T) {
 	saved := config.Config.Redis.DurableWrites
 	t.Cleanup(func() { config.Config.Redis.DurableWrites = saved })
 	config.Config.Redis.DurableWrites.Replicas, config.Config.Redis.DurableWrites.TimeoutMs = 2, 300
-	assert.Equal(t, Durability{Replicas: 2, Timeout: 300 * time.Millisecond}, DurabilityFromConfig())
+	assert.Equal(t, Durability{Replicas: 2, Timeout: 300 * time.Millisecond}, DurabilityOf(&config.Config))
 }

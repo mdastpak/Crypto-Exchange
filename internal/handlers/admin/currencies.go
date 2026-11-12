@@ -12,6 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -27,6 +28,9 @@ import (
 )
 
 type AdminHandler struct {
+	// Config is the configuration of the process (#48). NewHandler sets it;
+	// nil reads as the zero configuration.
+	Config          *config.Configuration
 	PostgresDB      *db.PostgresService
 	RedisClient     *db.RedisService
 	RabbitMQService *rabbitmq.RabbitMQService
@@ -54,6 +58,7 @@ type AdminHandler struct {
 
 func NewHandler(is *models.InfraServices) *AdminHandler {
 	h := &AdminHandler{
+		Config:          is.Settings(),
 		PostgresDB:      is.Postgres,
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
@@ -61,7 +66,7 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 		Currencies:      currencies.ForServices(is),
 	}
 	if is.Redis != nil {
-		settings := otp.SettingsFromConfig()
+		settings := otp.SettingsOf(is.Settings())
 		settings.Namespace = otpNamespace
 		h.OTP = otp.NewStore(is.Redis.Client, settings)
 	}
@@ -602,4 +607,16 @@ func changedFields(before, after map[string]interface{}) *audit.Changes {
 		}
 	}
 	return changes
+}
+
+// zeroConfig is the configuration of a handler without one.
+var zeroConfig config.Configuration
+
+// settings returns the configuration of the handler, or the zero
+// configuration without one.
+func (h *AdminHandler) settings() *config.Configuration {
+	if h.Config == nil {
+		return &zeroConfig
+	}
+	return h.Config
 }

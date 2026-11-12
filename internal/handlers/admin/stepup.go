@@ -41,8 +41,8 @@ const CodeStepUpRequired = "step_up_required"
 
 // stepUpLifetime is admin.step_up_minutes, or its default where the
 // configuration was not loaded from a file.
-func stepUpLifetime() time.Duration {
-	minutes := config.Config.Admin.StepUpMinutes
+func stepUpLifetime(cfg *config.Configuration) time.Duration {
+	minutes := cfg.Admin.StepUpMinutes
 	if minutes < 1 {
 		minutes = config.DefaultAdminStepUpMinutes
 	}
@@ -136,7 +136,7 @@ func (h *AdminHandler) StepUp(c *gin.Context) {
 	defer cancel()
 	event := h.signInEvent(c, audit.ActionAdminStepUp, claims.UUID, audit.Success, "")
 	event.TargetType, event.TargetID = audit.TargetAdminSession, claims.SessionID
-	until, err := h.Accounts.StepUp(ctx, claims.SessionID, claims.UUID, req.TOTP, stepUpLifetime(), event)
+	until, err := h.Accounts.StepUp(ctx, claims.SessionID, claims.UUID, req.TOTP, stepUpLifetime(h.settings()), event)
 	switch {
 	case errors.Is(err, adminauth.ErrInvalidCode), errors.Is(err, adminauth.ErrNotFound):
 		helpers.SendError(c, http.StatusUnauthorized, "code_invalid", i18n.M("INVALID_OR_EXPIRED_CODE"), nil)

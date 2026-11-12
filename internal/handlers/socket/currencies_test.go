@@ -188,7 +188,7 @@ const brokerTestURL = "amqp://guest:guest@localhost:5672/"
 // broker, like one server instance, and a registered client.
 func newBrokerHandler(t *testing.T) (*WebSocketHandler, *Client) {
 	t.Helper()
-	svc, err := rabbitmq.NewRabbitMQService(config.Config.RabbitMQ.Exchanges.PriceUpdates)
+	svc, err := rabbitmq.NewRabbitMQService(&config.Config, config.Config.RabbitMQ.Exchanges.PriceUpdates)
 	require.NoError(t, err)
 	t.Cleanup(func() { svc.Close() })
 
@@ -280,7 +280,7 @@ func TestConsumer_Broker_EveryInstanceReceivesEveryEvent(t *testing.T) {
 
 func TestConsumer_Broker_ShutdownStopsTheConsumer(t *testing.T) {
 	withTestBroker(t)
-	svc, err := rabbitmq.NewRabbitMQService(config.Config.RabbitMQ.Exchanges.PriceUpdates)
+	svc, err := rabbitmq.NewRabbitMQService(&config.Config, config.Config.RabbitMQ.Exchanges.PriceUpdates)
 	require.NoError(t, err)
 	defer svc.Close()
 	h := NewWebSocketHandler(&models.InfraServices{RabbitMQ: svc})

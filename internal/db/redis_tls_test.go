@@ -29,7 +29,7 @@ func redisThroughTLS(t *testing.T) *tlsproxy.Proxy {
 
 func TestNewRedisService_TLS(t *testing.T) {
 	redisThroughTLS(t)
-	svc, err := NewRedisService()
+	svc, err := NewRedisService(&config.Config)
 	require.NoError(t, err)
 	defer svc.Close()
 	assert.NoError(t, svc.Ping(context.Background()))
@@ -39,7 +39,7 @@ func TestNewRedisService_TLS(t *testing.T) {
 func TestNewRedisService_TLS_RefusesAnUntrustedCertificate(t *testing.T) {
 	redisThroughTLS(t)
 	config.Config.Redis.TLS.CAFile = "" // the system authorities do not know the test CA
-	_, err := NewRedisService()
+	_, err := NewRedisService(&config.Config)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "certificate")
 }
@@ -47,13 +47,13 @@ func TestNewRedisService_TLS_RefusesAnUntrustedCertificate(t *testing.T) {
 func TestNewRedisService_TLS_RefusesTheWrongName(t *testing.T) {
 	redisThroughTLS(t)
 	config.Config.Redis.TLS.ServerName = "" // the certificate does not hold 127.0.0.1
-	_, err := NewRedisService()
+	_, err := NewRedisService(&config.Config)
 	require.Error(t, err)
 }
 
 func TestNewRedisService_TLS_ReportsAnUnusableCAFile(t *testing.T) {
 	redisThroughTLS(t)
 	config.Config.Redis.TLS.CAFile = "/does/not/exist.pem"
-	_, err := NewRedisService()
+	_, err := NewRedisService(&config.Config)
 	require.ErrorContains(t, err, "redis.tls")
 }

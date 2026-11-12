@@ -1,7 +1,10 @@
 package user
 
 import (
+	"time"
+
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
@@ -15,6 +18,9 @@ import (
 
 // UserHandler struct to hold dependencies for User routes
 type UserHandler struct {
+	// Config is the configuration of the process (#48). NewHandler sets it;
+	// nil reads as the zero configuration.
+	Config *config.Configuration
 	// Locales are the supported locales, which a user may save in their
 	// profile (#286). Without them, no locale can be saved.
 	Locales         *i18n.Registry
@@ -54,14 +60,32 @@ type UserHandler struct {
 // NewHandler function to initialize CurrenciesUserHandler with dependencies
 func NewHandler(is *models.InfraServices) *UserHandler {
 	h := &UserHandler{
+		Config:          is.Settings(),
 		PostgresDB:      is.Postgres,
 		RedisClient:     is.Redis,
 		RabbitMQService: is.RabbitMQ,
 	}
 	if is.Redis != nil {
-		settings := otp.SettingsFromConfig()
+		settings := otp.SettingsOf(is.Settings())
 		settings.Namespace = ContactOTPNamespace
 		h.ContactOTP = otp.NewStore(is.Redis.Client, settings)
 	}
 	return h
+}
+
+// zeroConfig is the configuration of a handler without one.
+var zeroConfig config.Configuration
+
+// settings returns the configuration of the handler, or the zero
+// configuration without one.
+func (h *UserHandler) settings() *config.Configuration {
+	if h.Config == nil {
+		return &zeroConfig
+	}
+	return h.Config
+}
+
+// cooldownOf is contacts.new_contact_cooldown_hours of cfg (#250).
+func cooldownOf(cfg *config.Configuration) time.Duration {
+	return time.Duration(cfg.Contacts.NewContactCooldownHours) * time.Hour
 }

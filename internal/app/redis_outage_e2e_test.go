@@ -37,7 +37,7 @@ func TestRedisOutage_RequestsAnswerWithinTheirDeadlines(t *testing.T) {
 	c.RateLimits.REST.OnError = config.RateLimitAllow
 	c.RateLimits.Auth.OTPRequestsPerHour = 100
 	c.RateLimits.Auth.OnError = config.RateLimitDeny
-	proxied, err := db.NewRedisService()
+	proxied, err := db.NewRedisService(&config.Config)
 	require.NoError(t, err)
 	t.Cleanup(func() { proxied.Close() })
 	savedRedis, savedSystemRedis := env.handlers.Redis, env.handlers.System.Redis

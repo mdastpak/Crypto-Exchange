@@ -29,7 +29,7 @@ func NewTokenBlacklist(client redis.UniversalClient) *TokenBlacklist {
 	return &TokenBlacklist{
 		RedisClient: client,
 		Prefix:      "blacklist:token:",
-		Durability:  redisutil.DurabilityFromConfig(),
+		Durability:  redisutil.DurabilityOf(settings()),
 	}
 }
 

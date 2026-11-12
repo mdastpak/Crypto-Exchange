@@ -33,7 +33,7 @@ flowchart TB
 | Package | Responsibility |
 | --- | --- |
 | `cmd/server` | The entry point of the server, which calls `internal/app` |
-| `internal/app` | The composition root of the server ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)): it reads the configuration, connects to the infrastructure, builds the stores, handlers, and workers, registers the routes, and owns the start and the graceful shutdown. The end-to-end tests of the server live here. |
+| `internal/app` | The composition root of the server ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)): it reads the configuration, connects to the infrastructure, builds the stores, handlers, and workers, registers the routes, and owns the start and the graceful shutdown. It is the only package, with `internal/config`, that reads the global configuration; it passes it to the others. The end-to-end tests of the server live here. |
 | `cmd/market-worker` | The worker of the global market data catalog ([#262](https://github.com/mdastpak/Crypto-Exchange/issues/262)): runs apart from the server, on the nodes that reach the sources, and answers its own health probes. See [market-data.md](market-data.md). |
 | `cmd/admin` | Command for operators: create administrators, replace their authenticator, disable them; list, rotate, retire, and re-wrap the data-protection keys; handle outbox dead letters; manage platform controls; and check backups and restored databases |
 | `internal/adminauth` | Administrator accounts: creation, TOTP enrollment with encrypted secrets, authenticator checks with replay protection |

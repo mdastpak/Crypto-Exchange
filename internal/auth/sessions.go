@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
-	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -160,7 +159,7 @@ func HashToken(token string) string {
 // jwt.sessions.max_lifetime_minutes; 0, when it is not configured, as in
 // tests that set no configuration, sets no limit.
 func SessionMaxLifetime() time.Duration {
-	return time.Duration(config.Config.JWT.Sessions.MaxLifetimeMinutes) * time.Minute
+	return time.Duration(settings().JWT.Sessions.MaxLifetimeMinutes) * time.Minute
 }
 
 // liveSession is the SQL condition of a session whose tokens may still be
@@ -176,7 +175,7 @@ func liveSession(alias string) string {
 		p = alias + "."
 	}
 	condition := p + "status = 'ACTIVE' AND " + p + "expires_at > NOW()"
-	if minutes := config.Config.JWT.Sessions.MaxLifetimeMinutes; minutes > 0 {
+	if minutes := settings().JWT.Sessions.MaxLifetimeMinutes; minutes > 0 {
 		// A number from the configuration, never a value of a request.
 		condition += " AND " + p + "created_at > NOW() - make_interval(mins => " + strconv.Itoa(minutes) + ")"
 	}
@@ -187,7 +186,7 @@ func liveSession(alias string) string {
 // param, which rotate never sets past the creation of the session plus
 // SessionMaxLifetime.
 func cappedExpiry(param string) string {
-	minutes := config.Config.JWT.Sessions.MaxLifetimeMinutes
+	minutes := settings().JWT.Sessions.MaxLifetimeMinutes
 	if minutes <= 0 {
 		return param
 	}

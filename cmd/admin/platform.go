@@ -111,7 +111,7 @@ func featureNames() string {
 
 // runPlatform runs a platform command.
 func runPlatform(cmd command, stdout, stderr io.Writer) int {
-	postgres, err := db.NewPostgresService()
+	postgres, err := db.NewPostgresService(dbOptions())
 	if err != nil {
 		fmt.Fprintln(stderr, "Error: connect to PostgreSQL:", err)
 		return 1

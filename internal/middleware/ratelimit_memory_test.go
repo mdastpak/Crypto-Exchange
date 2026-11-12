@@ -112,7 +112,7 @@ func TestRateLimiters_GiveUpOnRedisAtTheirDeadline(t *testing.T) {
 	const deadline = 100 * time.Millisecond
 	config.Config.RateLimits.TimeoutMs = int(deadline / time.Millisecond)
 	config.Config.RateLimits.Auth.LoginAttemptsPerMinute = 5
-	rl := NewRateLimiter(stalledRedis(t))
+	rl := NewRateLimiter(&config.Config, stalledRedis(t))
 	require.Equal(t, deadline, rl.timeout, "rate_limits.timeout_ms")
 
 	cases := map[string]struct {
@@ -140,7 +140,7 @@ func TestRateLimiters_OfOneRouteWaitForRedisOnce(t *testing.T) {
 	t.Cleanup(func() { config.Config.RateLimits = saved })
 	const deadline = 200 * time.Millisecond
 	config.Config.RateLimits.TimeoutMs = int(deadline / time.Millisecond)
-	rl := NewRateLimiter(stalledRedis(t))
+	rl := NewRateLimiter(&config.Config, stalledRedis(t))
 
 	engine := gin.New()
 	engine.GET("/",
@@ -158,7 +158,7 @@ func TestNewRateLimiter_DefaultDeadline(t *testing.T) {
 	saved := config.Config.RateLimits
 	t.Cleanup(func() { config.Config.RateLimits = saved })
 	config.Config.RateLimits.TimeoutMs = 0
-	assert.Equal(t, config.DefaultRateLimitTimeoutMs*time.Millisecond, NewRateLimiter(nil).timeout,
+	assert.Equal(t, config.DefaultRateLimitTimeoutMs*time.Millisecond, NewRateLimiter(&config.Config, nil).timeout,
 		"a configuration that Load did not fill in gets the default, not an unbounded wait")
 }
 
@@ -174,7 +174,7 @@ func TestRESTRateLimit_CountsProbesInMemory(t *testing.T) {
 		limits.REST.OnError = onError
 		engine := gin.New()
 		require.NoError(t, engine.SetTrustedProxies(nil))
-		engine.Use(NewRateLimiter(stalledRedis(t)).RESTRateLimit("/system/live"))
+		engine.Use(NewRateLimiter(&config.Config, stalledRedis(t)).RESTRateLimit("/system/live"))
 		engine.GET("/system/live", ok)
 		engine.GET("/system/other", ok)
 

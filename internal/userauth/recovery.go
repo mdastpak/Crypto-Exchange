@@ -139,7 +139,7 @@ type RecoveryProof struct {
 // starts now. An account without a verified national ID has no identity to
 // check again, and recovers in the standard mode.
 func RecoveryPlan(hasNationalID bool) (string, []string) {
-	cfg := config.Config.Security.Recovery
+	cfg := settings().Security.Recovery
 	if cfg.Mode != RecoveryStrict || !hasNationalID {
 		return RecoveryStandard, nil
 	}
@@ -155,7 +155,7 @@ func (p *Passwords) recoveryWait() time.Duration {
 	if p.RecoveryWait > 0 {
 		return p.RecoveryWait
 	}
-	hours := config.Config.Security.Recovery.WaitHours
+	hours := settings().Security.Recovery.WaitHours
 	if hours == 0 {
 		hours = config.DefaultRecoveryWaitHours
 	}

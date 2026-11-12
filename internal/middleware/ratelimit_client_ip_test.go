@@ -25,7 +25,7 @@ func clientIPSeenBy(t *testing.T, trustedProxies []string, remoteAddr string, he
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(trustedProxies))
 
-	rl := NewRateLimiter(nil)
+	rl := NewRateLimiter(&config.Config, nil)
 	var seen string
 	engine.GET("/", func(c *gin.Context) { seen = rl.getClientIP(c) })
 
@@ -80,7 +80,7 @@ func TestAuthRateLimit_SpoofedForwardedForDoesNotBypassTheLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
-	rl := NewRateLimiter(&db.RedisService{Client: client})
+	rl := NewRateLimiter(&config.Config, &db.RedisService{Client: client})
 	engine.POST("/public/auth", rl.AuthRateLimit(AuthLogin), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	codes := make([]int, 0, 6)
@@ -133,7 +133,7 @@ func TestAuthRateLimit_RotatingIPv6AddressesDoNotBypassTheLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
-	rl := NewRateLimiter(&db.RedisService{Client: client})
+	rl := NewRateLimiter(&config.Config, &db.RedisService{Client: client})
 	engine.POST("/public/auth/:uuid", rl.AuthRateLimit(AuthLogin), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	send := func(addr string) int {

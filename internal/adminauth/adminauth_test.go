@@ -68,7 +68,7 @@ func migratedTestDB(t *testing.T) *sql.DB {
 	reset.Close()
 	require.NoError(t, err)
 
-	service, err := db.NewPostgresService()
+	service, err := db.NewPostgresService(db.Options{Config: &config.Config, MigrationsPath: config.MigrationsPath()})
 	unlock()
 	require.NoError(t, err)
 	t.Cleanup(func() { service.Close() })
