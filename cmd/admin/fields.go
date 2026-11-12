@@ -75,7 +75,7 @@ func executeFields(ctx context.Context, database *sql.DB, cmd command, stdout io
 			return err
 		}
 		fmt.Fprintf(stdout, "Current keys: field-enc/v%d, blind-index/v%d.\n", sealing, indexing)
-		fmt.Fprintf(stdout, "To encrypt, or to encrypt again with the current keys: %d contacts, %d users.\n",
+		fmt.Fprintf(stdout, "Still in plaintext, or encrypted with an older key: %d contacts, %d users.\n",
 			status.ContactsToRekey, status.UsersToRekey)
 		fmt.Fprintf(stdout, "Stored encrypted only, without plaintext: %d contacts, %d users.\n",
 			status.ContactsEncryptedOnly, status.UsersEncryptedOnly)
@@ -84,7 +84,7 @@ func executeFields(ctx context.Context, database *sql.DB, cmd command, stdout io
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "Encrypted %d contacts and %d users with the current keys; %d rows skipped.\n",
+		fmt.Fprintf(stdout, "Encrypted %d contacts and %d users with the current keys, without plaintext; %d rows skipped.\n",
 			report.Contacts, report.Users, report.Skipped)
 		printSkipped(stdout, report.Skipped)
 	case "fields decrypt":

@@ -130,9 +130,8 @@ func (s *DBStore) UpdateProfile(ctx context.Context, userID uuid.UUID, edit func
 	}
 	before := profile
 	edit(&profile)
-	// The names are written in plaintext and sealed (#140); the release
-	// after this one writes them sealed only.
-	sealed, err := db.SealNames(userID.String(), db.Names{First: profile.FirstName, Last: profile.LastName, Display: profile.DisplayName})
+	// The names are stored encrypted only, with data keys (#140).
+	plain, sealed, err := db.StoredNames(userID.String(), db.Names{First: profile.FirstName, Last: profile.LastName, Display: profile.DisplayName})
 	if err != nil {
 		return Profile{}, err
 	}
@@ -140,7 +139,7 @@ func (s *DBStore) UpdateProfile(ctx context.Context, userID uuid.UUID, edit func
 		`UPDATE users SET first_name = $1, last_name = $2, display_name = $3, locale = $4, theme = $5, updated_at = NOW(),
 			first_name_enc = $7, last_name_enc = $8, display_name_enc = $9
 		WHERE hk = $6`,
-		profile.FirstName, profile.LastName, profile.DisplayName, profile.Locale, profile.Theme, userID,
+		plain.First, plain.Last, plain.Display, profile.Locale, profile.Theme, userID,
 		sealed.First, sealed.Last, sealed.Display,
 	); err != nil {
 		return Profile{}, err

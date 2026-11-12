@@ -130,8 +130,7 @@ func TestContacts_EncryptedAndFoundByTheirBlindIndex(t *testing.T) {
 	require.NoError(t, addContact(t, conn, owner, "email", "Someone@Example.com"))
 
 	r := readContact(t, conn, owner)
-	require.NotNil(t, r.plain, "this release writes the plaintext too")
-	assert.Equal(t, "Someone@Example.com", *r.plain)
+	assert.Nil(t, r.plain, "with data keys, no plaintext is stored")
 	assert.False(t, bytes.Contains(bytes.ToLower(r.sealed), []byte("someone")), "the ciphertext holds no plaintext")
 	opened, err := OpenContact(r.id, nil, r.sealed)
 	require.NoError(t, err)
@@ -144,19 +143,23 @@ func TestContacts_EncryptedAndFoundByTheirBlindIndex(t *testing.T) {
 	assert.Equal(t, r.id, lookUp(t, conn, "email", "SOMEONE@example.COM"))
 	assert.Zero(t, lookUp(t, conn, "username", "someone@example.com"), "a type has indexes of its own")
 
-	t.Run("without the plaintext", func(t *testing.T) {
-		resealed, err := field.Active().Seal(ContactPlace(r.id), "Someone@Example.com")
-		require.NoError(t, err)
-		_, err = conn.Exec(`UPDATE user_contacts SET value = NULL, value_enc = $2 WHERE id = $1`, r.id, resealed)
-		require.NoError(t, err)
-		assert.Equal(t, r.id, lookUp(t, conn, "email", "someone@example.com"), "the blind index alone finds it")
-
-		// The blind index keeps contacts unique.
-		err = addContact(t, conn, newUser(t, conn), "email", "someone@EXAMPLE.com")
+	t.Run("the blind index keeps contacts unique", func(t *testing.T) {
+		err := addContact(t, conn, newUser(t, conn), "email", "someone@EXAMPLE.com")
 		var pgErr *pgconn.PgError
 		require.ErrorAs(t, err, &pgErr)
 		assert.Equal(t, "23505", pgErr.Code)
 		assert.Equal(t, "user_contacts_value_bidx_unique", pgErr.ConstraintName)
+	})
+
+	t.Run("against a contact still in plaintext", func(t *testing.T) {
+		// Written without keys, as before the job reached it.
+		restore := field.Use(nil)
+		require.NoError(t, addContact(t, conn, newUser(t, conn), "mobile", "09121112233"))
+		restore()
+		err := addContact(t, conn, newUser(t, conn), "mobile", "09121112233")
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		assert.Equal(t, "user_contacts_value_unique", pgErr.ConstraintName, "the plaintext is written first, then emptied")
 	})
 
 	t.Run("a removed contact matches nothing", func(t *testing.T) {
@@ -190,8 +193,8 @@ func TestRekeyFields_EncryptsOldRowsAndMovesThemToNewKeys(t *testing.T) {
 	ctx := context.Background()
 	conn := pgtest.Migrated(t, fieldsTestDBName)
 
-	// Rows written without keys, as development and the previous release
-	// write them.
+	// Rows written without keys, as development and the releases before
+	// #140 write them.
 	restore := field.Use(nil)
 	owner := newUser(t, conn)
 	require.NoError(t, addContact(t, conn, owner, "email", "old@example.com"))
@@ -200,19 +203,36 @@ func TestRekeyFields_EncryptsOldRowsAndMovesThemToNewKeys(t *testing.T) {
 	restore()
 
 	store, live := fieldKeys(t, conn, rowseal.ModeReport)
+	// A row as the first release of #140 wrote it: in plaintext and
+	// encrypted.
+	both := newUser(t, conn)
+	require.NoError(t, addContact(t, conn, both, "email", "both@example.com"))
+	bothID := readContact(t, conn, both).id
+	resealed, err := field.Active().Seal(ContactPlace(bothID), "both@example.com")
+	require.NoError(t, err)
+	_, err = conn.Exec(`UPDATE user_contacts SET value = 'both@example.com', value_enc = $2 WHERE id = $1`, bothID, resealed)
+	require.NoError(t, err)
+
 	status, err := ReadFieldsStatus(ctx, conn)
 	require.NoError(t, err)
-	assert.Equal(t, FieldsStatus{ContactsToRekey: 1, UsersToRekey: 1}, status)
+	assert.Equal(t, FieldsStatus{ContactsToRekey: 2, UsersToRekey: 1}, status)
 	column, err := KeyInUse(ctx, conn, keys.PurposeFieldEnc, 1)
 	require.NoError(t, err)
-	assert.Empty(t, column, "nothing is encrypted yet")
+	assert.Equal(t, "user_contacts.value_enc", column)
 
 	report, err := RekeyFields(ctx, conn)
 	require.NoError(t, err)
-	assert.Equal(t, FieldsReport{Contacts: 1, Users: 1}, report)
+	assert.Equal(t, FieldsReport{Contacts: 2, Users: 1}, report)
 	r := readContact(t, conn, owner)
 	require.NotNil(t, r.sealed)
+	assert.Nil(t, r.plain, "the plaintext is emptied")
+	assert.Nil(t, readContact(t, conn, both).plain, "also next to a ciphertext")
 	assert.Equal(t, r.id, lookUp(t, conn, "email", "old@example.com"))
+	assert.Equal(t, bothID, lookUp(t, conn, "email", "both@example.com"))
+	var plainNames int
+	require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM users WHERE first_name IS NOT NULL OR last_name IS NOT NULL OR display_name IS NOT NULL`).
+		Scan(&plainNames))
+	assert.Zero(t, plainNames)
 	names := readNames(t, conn, owner)
 	require.NotNil(t, names.First)
 	assert.Equal(t, "Sara", *names.First)
@@ -222,14 +242,11 @@ func TestRekeyFields_EncryptsOldRowsAndMovesThemToNewKeys(t *testing.T) {
 	assert.True(t, sealMatches(t, conn, live, rowseal.Users, owner))
 	status, err = ReadFieldsStatus(ctx, conn)
 	require.NoError(t, err)
-	assert.Zero(t, status)
+	assert.Equal(t, FieldsStatus{ContactsEncryptedOnly: 2, UsersEncryptedOnly: 1}, status)
 	report, err = RekeyFields(ctx, conn)
 	require.NoError(t, err)
 	assert.Zero(t, report, "a second run has nothing to do")
 
-	column, err = KeyInUse(ctx, conn, keys.PurposeFieldEnc, 1)
-	require.NoError(t, err)
-	assert.Equal(t, "user_contacts.value_enc", column)
 	column, err = KeyInUse(ctx, conn, keys.PurposeBlindIndex, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "user_contacts.value_bidx", column)
@@ -239,11 +256,11 @@ func TestRekeyFields_EncryptsOldRowsAndMovesThemToNewKeys(t *testing.T) {
 		assert.Equal(t, r.id, lookUp(t, conn, "email", "old@example.com"), "the older index still finds it")
 		status, err := ReadFieldsStatus(ctx, conn)
 		require.NoError(t, err)
-		assert.Equal(t, FieldsStatus{ContactsToRekey: 1, UsersToRekey: 1}, status)
+		assert.Equal(t, FieldsStatus{ContactsToRekey: 2, UsersToRekey: 1, ContactsEncryptedOnly: 2, UsersEncryptedOnly: 1}, status)
 
 		report, err := RekeyFields(ctx, conn)
 		require.NoError(t, err)
-		assert.Equal(t, FieldsReport{Contacts: 1, Users: 1}, report)
+		assert.Equal(t, FieldsReport{Contacts: 2, Users: 1}, report)
 		after := readContact(t, conn, owner)
 		for name, b := range map[string][]byte{"ciphertext": after.sealed, "index": after.index} {
 			version, ok := field.Version(b)
@@ -304,7 +321,7 @@ func TestPlaintextWrittenAlone_DropsItsCiphertext(t *testing.T) {
 		owner, sealed.First, sealed.Last)
 	require.NoError(t, err)
 
-	// An instance of the previous release writes the plaintext alone.
+	// An instance of a release before #140 writes the plaintext alone.
 	_, err = conn.Exec(`UPDATE user_contacts SET value = 'after@example.com' WHERE user_hk = $1`, owner)
 	require.NoError(t, err)
 	_, err = conn.Exec(`UPDATE users SET first_name = 'Reza' WHERE hk = $1`, owner)

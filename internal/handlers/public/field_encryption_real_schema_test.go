@@ -22,11 +22,14 @@ func (e *sessionTestEnv) encryptWith(t *testing.T, live *keys.Live) {
 	t.Cleanup(field.Use(field.New(live)))
 }
 
-// storedContact reads the row of user_contacts of an email address.
+// storedContact reads the row of user_contacts of an email address, found
+// by its blind index, and checks that it holds no plaintext.
 func (e *sessionTestEnv) storedContact(t *testing.T, email string) (id int64, userHK string, sealed, index []byte) {
 	t.Helper()
-	require.NoError(t, e.conn.QueryRow(`SELECT id, user_hk, value_enc, value_bidx FROM user_contacts WHERE value = $1`, email).
-		Scan(&id, &userHK, &sealed, &index))
+	var plain *string
+	require.NoError(t, e.conn.QueryRow(`SELECT c.id, c.user_hk, c.value, c.value_enc, c.value_bidx FROM user_contacts c WHERE `+db.ContactMatch,
+		db.ContactArgs("email", email)...).Scan(&id, &userHK, &plain, &sealed, &index))
+	assert.Nil(t, plain, "with data keys, no plaintext is stored")
 	return id, userHK, sealed, index
 }
 
@@ -49,13 +52,7 @@ func TestFieldEncryption_RealSchema_SignInFindsTheEncryptedContact(t *testing.T)
 	assert.Equal(t, want, index)
 
 	// Signing in again, in other letters, finds the same account by the
-	// blind index, also once the plaintext is gone, as the next release
-	// leaves it.
-	resealed, err := field.Active().Seal(db.ContactPlace(id), email)
-	require.NoError(t, err)
-	_, err = env.conn.Exec(`UPDATE user_contacts SET value = NULL, value_enc = $2 WHERE id = $1`, id, resealed)
-	require.NoError(t, err)
-	require.NoError(t, rowseal.Reseal(context.Background(), env.conn, rowseal.UserContacts, "id = $1", id))
+	// blind index.
 	env.signIn(t, "Encrypted@Example.com")
 	var accounts int
 	require.NoError(t, env.conn.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'user'`).Scan(&accounts))
