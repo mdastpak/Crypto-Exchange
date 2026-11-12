@@ -127,9 +127,18 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	require.NoError(s.T(), s.redisClient.Ping(ctx).Err())
 
 	// CASCADE empties the tables that reference the currencies too (#309):
-	// markets, balances, custody, and the networks of the currencies.
-	_, err := s.postgresSvc.DB.Exec("TRUNCATE TABLE currencies, outbox_events, user_restrictions, user_favorites, currency_capability_overrides, currency_delistings, currency_delisting_steps, currency_symbols, currency_migrations, currency_migration_sources, currency_migration_phases RESTART IDENTITY CASCADE")
+	// markets, balances, custody, and the networks of the currencies. It
+	// reaches the books of the ledger (#60), whose triggers refuse a
+	// truncation to every role; the reset of a test turns the triggers off
+	// for its own transaction, as only a superuser can.
+	tx, err := s.postgresSvc.DB.Begin()
 	require.NoError(s.T(), err)
+	defer tx.Rollback()
+	_, err = tx.Exec("SET LOCAL session_replication_role = replica")
+	require.NoError(s.T(), err)
+	_, err = tx.Exec("TRUNCATE TABLE currencies, outbox_events, user_restrictions, user_favorites, currency_capability_overrides, currency_delistings, currency_delisting_steps, currency_symbols, currency_migrations, currency_migration_sources, currency_migration_phases RESTART IDENTITY CASCADE")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), tx.Commit())
 
 	services := &models.InfraServices{Config: &config.Config,
 		Postgres: s.postgresSvc,
