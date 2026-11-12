@@ -263,6 +263,7 @@
   "RESTRICTION_VERSION_CONFLICT": "The restriction has changed since that version; read it again and retry.",
   "ROW_RESEALED_SUCCESSFULLY": "The row was sealed again, and the finding is closed.",
   "ROW_SEALS_NOT_CONFIGURED": "Row seals need data-protection keys, which are not configured.",
+  "ROW_UNVERIFIED": "The row was changed outside the backend. Review its integrity finding first.",
   "SECOND_APPROVAL_REQUIRED": "You asked to lift this control; another administrator must approve the lift.",
   "SECOND_FACTOR_NOT_SET": "This account has no password yet.",
   "SECOND_FACTOR_REQUIRED": "Set an account password before this operation.",

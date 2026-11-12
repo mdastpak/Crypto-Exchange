@@ -17,6 +17,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -32,6 +33,10 @@ const (
 	// maxRestrictionList bounds a list of the restrictions of one user.
 	maxRestrictionList = 200
 )
+
+// codeRowUnverified refuses a change of a row that fails its seal check
+// (#337): an administrator reviews its integrity finding first.
+const codeRowUnverified = "row_unverified"
 
 // CreateRestrictionRequest is a restriction to create.
 type CreateRestrictionRequest struct {
@@ -235,7 +240,7 @@ func (h *AdminHandler) ListRestrictions(c *gin.Context) {
 }
 
 // @Summary Lift a restriction of a user
-// @Description Ends a restriction now. A lifted freeze lets the user sign in again; the sessions it ended stay ended. With version, the lift is refused with 409 version_conflict when the restriction has changed since. A lifted restriction answers 409 already_lifted. Audited as user.restriction_lift.
+// @Description Ends a restriction now. A lifted freeze lets the user sign in again; the sessions it ended stay ended. With version, the lift is refused with 409 version_conflict when the restriction has changed since. A lifted restriction answers 409 already_lifted, and one changed outside the backend 409 row_unverified, in enforce mode. Audited as user.restriction_lift.
 // @Tags admin users
 // @Accept json
 // @Produce json
@@ -295,6 +300,10 @@ func (h *AdminHandler) LiftRestriction(c *gin.Context) {
 			gin.H{"code": "version_conflict", "version": conflict.Current})
 	case errors.Is(err, restrictions.ErrAlreadyLifted):
 		helpers.SendError(c, http.StatusConflict, "already_lifted", i18n.M("RESTRICTION_ALREADY_LIFTED"), nil)
+	case errors.Is(err, rowseal.ErrUnverified):
+		// A restriction changed in SQL is lifted only after its finding is
+		// resolved (#337).
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 	case err != nil:
 		log.Printf("Failed to lift a restriction: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIFT_RESTRICTION"), nil)

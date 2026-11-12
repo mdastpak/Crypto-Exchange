@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,6 +47,11 @@ func (h *UserHandler) ListRestrictions(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	active, err := restrictions.Active(ctx, h.PostgresDB.DB, userID.String())
+	if errors.Is(err, rowseal.ErrUnverified) {
+		// A restriction changed in SQL counts as a freeze (#337).
+		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
+		return
+	}
 	if err != nil {
 		log.Printf("Failed to list the restrictions of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_RESTRICTIONS"), nil)

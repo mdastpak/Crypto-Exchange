@@ -125,6 +125,9 @@ func Create(ctx context.Context, db *sql.DB, n New, origin audit.Event) (Created
 	if err != nil {
 		return Created{}, fmt.Errorf("failed to record the restriction: %w", err)
 	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserRestrictions, "hk = $1", hk); err != nil {
+		return Created{}, err
+	}
 	if r.Operations == nil {
 		r.Operations = []Operation{}
 	}
@@ -199,13 +202,19 @@ func Lift(ctx context.Context, db *sql.DB, userHK, hk, liftedBy, note string, ex
 	if err := lockUser(ctx, tx, userHK); err != nil && !errors.Is(err, ErrNotUser) {
 		return Restriction{}, err
 	}
-	r, err := Scan(tx.QueryRowContext(ctx, `SELECT `+Columns+` FROM user_restrictions r
-		WHERE r.hk = $1 AND r.user_hk = $2 FOR UPDATE`, hk, userHK))
+	sealed := rowseal.UserRestrictions.NewRow()
+	r, err := Scan(withSeal{tx.QueryRowContext(ctx, `SELECT `+Columns+`, `+rowseal.UserRestrictions.Fields("r")+`
+		FROM user_restrictions r WHERE r.hk = $1 AND r.user_hk = $2 FOR UPDATE`, hk, userHK), sealed.Dest()})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Restriction{}, ErrNotFound
 	}
 	if err != nil {
 		return Restriction{}, fmt.Errorf("failed to read the restriction: %w", err)
+	}
+	// A restriction changed in SQL is lifted only after its finding is
+	// resolved (#337): its values are not the ones an administrator set.
+	if err := rowseal.Check(ctx, rowseal.UserRestrictions, sealed); err != nil {
+		return Restriction{}, err
 	}
 	if expected != nil && *expected != r.Version {
 		return Restriction{}, &VersionConflict{Current: r.Version}
@@ -219,6 +228,9 @@ func Lift(ctx context.Context, db *sql.DB, userHK, hk, liftedBy, note string, ex
 		WHERE r.hk = $1 RETURNING `+Columns, hk, liftedBy, note))
 	if err != nil {
 		return Restriction{}, fmt.Errorf("failed to lift the restriction: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserRestrictions, "hk = $1", hk); err != nil {
+		return Restriction{}, err
 	}
 	event := audit.Of(origin, audit.ActionUserRestrictionLift, audit.TargetUser, userHK)
 	event.Reason = string(r.Reason)
@@ -235,8 +247,57 @@ func Lift(ctx context.Context, db *sql.DB, userHK, hk, liftedBy, note string, ex
 	return r, nil
 }
 
+// withSeal scans a row of Columns followed by the sealed columns of
+// rowseal.UserRestrictions into seal.
+type withSeal struct {
+	row  scanner
+	seal []any
+}
+
+func (w withSeal) Scan(dest ...any) error { return w.row.Scan(append(dest, w.seal...)...) }
+
+// Active returns the restrictions of a user that apply now, newest first.
+// It reads every restriction of the user, also the lifted and the ended
+// ones, and checks each against its seal (#337): a freeze lifted, or ended
+// early, in SQL no longer looks active, so a read of the active ones alone
+// would not see it. In enforce mode, a restriction that fails its check
+// returns rowseal.ErrUnverified, which refuses what the restrictions guard.
+func Active(ctx context.Context, q Querier, userHK string) ([]Restriction, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+Columns+`, `+rowseal.UserRestrictions.Fields("r")+`
+		FROM user_restrictions r WHERE r.user_hk = $1 ORDER BY r.created_at DESC, r.hk DESC LIMIT $2`, userHK, maxActive)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the restrictions: %w", err)
+	}
+	var all []Restriction
+	var seals []*rowseal.Row
+	for rows.Next() {
+		sealed := rowseal.UserRestrictions.NewRow()
+		r, err := Scan(withSeal{rows, sealed.Dest()})
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("failed to read the restrictions: %w", err)
+		}
+		all, seals = append(all, r), append(seals, sealed)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read the restrictions: %w", err)
+	}
+	active := []Restriction{}
+	for i, r := range all {
+		if err := rowseal.Check(ctx, rowseal.UserRestrictions, seals[i]); err != nil {
+			return nil, err
+		}
+		if r.Active {
+			active = append(active, r)
+		}
+	}
+	return active, nil
+}
+
 // List returns the restrictions of a user, newest first: every one, or only
-// those that apply now. It returns at most limit.
+// those that apply now. It returns at most limit. It is the view of an
+// administrator, and checks no seal; the verifier checks every row.
 func List(ctx context.Context, q Querier, userHK string, activeOnly bool, limit int) ([]Restriction, error) {
 	query := `SELECT ` + Columns + ` FROM user_restrictions r WHERE r.user_hk = $1`
 	if activeOnly {

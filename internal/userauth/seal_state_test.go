@@ -146,3 +146,61 @@ func TestRecovery_ChangedInSQLProvesNothing(t *testing.T) {
 	assert.ErrorIs(t, err, rowseal.ErrUnverified, "the wait was not skipped")
 	assert.NoError(t, p.Verify(ctx, hk, recordTestPassword), "the password is the owner's")
 }
+
+// TestRecoveryCodes_TheBackendSealsThem resets a password with recovery
+// codes in enforce mode (#337): the codes of the first password and the use
+// of each are sealed, so each check passes, and a used code stays used.
+func TestRecoveryCodes_TheBackendSealsThem(t *testing.T) {
+	p, db, _ := newRecordEnv(t, rowseal.ModeEnforce)
+	ctx := context.Background()
+	hk := newSealedUser(t, db)
+	event := audit.Event{ActorType: audit.ActorUser, ActorID: hk}
+	set, err := p.Set(ctx, hk, "", recordTestPassword, event)
+	require.NoError(t, err)
+	require.NotEmpty(t, set.RecoveryCodes)
+
+	_, err = p.Reset(ctx, hk, set.RecoveryCodes[0], "a new strong password", event)
+	require.NoError(t, err)
+	_, err = p.Reset(ctx, hk, set.RecoveryCodes[0], "another strong password", event)
+	assert.ErrorIs(t, err, ErrWrongRecoveryCode, "a code resets once")
+	_, err = p.Reset(ctx, hk, set.RecoveryCodes[1], "another strong password", event)
+	require.NoError(t, err, "the other codes still work")
+
+	var findings int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM integrity_findings WHERE table_name = 'user_recovery_codes'`).Scan(&findings))
+	assert.Zero(t, findings)
+}
+
+// TestRecoveryCodes_WrittenInSQLResetNothing gives an account a recovery
+// code in SQL, and puts a used one back (#337). The hash has no key, so
+// anyone who writes to the database can store one; in enforce mode neither
+// resets the password.
+func TestRecoveryCodes_WrittenInSQLResetNothing(t *testing.T) {
+	p, db, _ := newRecordEnv(t, rowseal.ModeEnforce)
+	ctx := context.Background()
+	hk := newSealedUser(t, db)
+	event := audit.Event{ActorType: audit.ActorUser, ActorID: hk}
+	set, err := p.Set(ctx, hk, "", recordTestPassword, event)
+	require.NoError(t, err)
+
+	const planted = "ABCD-EFGH-JKLM-NPQR"
+	code, ok := normalizeRecoveryCode(planted)
+	require.True(t, ok)
+	_, err = db.Exec(`INSERT INTO user_recovery_codes (user_hk, code_hash) VALUES ($1, $2)`, hk, hashRecoveryCode(hk, code))
+	require.NoError(t, err)
+	_, err = p.Reset(ctx, hk, planted, "the attacker's password", event)
+	assert.ErrorIs(t, err, rowseal.ErrUnverified, "a code planted in SQL")
+
+	// The owner uses a code, which someone who saw it then puts back.
+	used := set.RecoveryCodes[0]
+	const ownersPassword = "the owner's new password"
+	_, err = p.Reset(ctx, hk, used, ownersPassword, event)
+	require.NoError(t, err)
+	normalized, _ := normalizeRecoveryCode(used)
+	_, err = db.Exec(`UPDATE user_recovery_codes SET retired_at = NULL, retired_reason = NULL
+		WHERE user_hk = $1 AND code_hash = $2`, hk, hashRecoveryCode(hk, normalized))
+	require.NoError(t, err)
+	_, err = p.Reset(ctx, hk, used, "the attacker's password", event)
+	assert.ErrorIs(t, err, rowseal.ErrUnverified, "a code put back in SQL")
+	assert.NoError(t, p.Verify(ctx, hk, ownersPassword), "the password is the owner's")
+}

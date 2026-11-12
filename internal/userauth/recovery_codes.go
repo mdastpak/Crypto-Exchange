@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // Recovery codes (#307). A user who forgot the account password proves the
@@ -68,16 +69,17 @@ func normalizeRecoveryCode(input string) (string, bool) {
 }
 
 // hashRecoveryCode returns the stored form of a normalized code. The user
-// is part of it, so a hash copied to another account matches nothing.
+// is part of it, so a hash copied to another account matches nothing. It has
+// no key, so anyone who writes to the database could store the hash of a
+// code of their own: the row seal of user_recovery_codes (#337) refuses such
+// a row.
 func hashRecoveryCode(userHK, code string) string {
 	sum := sha256.Sum256([]byte("crypto-exchange/recovery-code/1\x00" + strings.ToLower(userHK) + "\x00" + code))
 	return hex.EncodeToString(sum[:])
 }
 
 // execer runs statements: the transaction of a change.
-type execer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
+type execer = rowseal.Querier
 
 // replaceRecoveryCodes retires the unused codes of a user and stores new
 // ones, in the transaction of the change that calls for them. It returns
@@ -97,6 +99,12 @@ func replaceRecoveryCodes(ctx context.Context, tx execer, userHK string) ([]stri
 	if _, err := tx.ExecContext(ctx, `INSERT INTO user_recovery_codes (user_hk, code_hash)
 		SELECT $1, h FROM unnest($2::text[]) AS h`, userHK, hashes); err != nil {
 		return nil, fmt.Errorf("store the recovery codes: %w", err)
+	}
+	// The rows this transaction wrote: the retired ones, at its time, and
+	// the new ones, which are the only unused codes left.
+	if err := rowseal.Reseal(ctx, tx, rowseal.UserRecoveryCodes,
+		"user_hk = $1 AND (retired_at IS NULL OR retired_at = NOW())", userHK); err != nil {
+		return nil, err
 	}
 	return codes, nil
 }

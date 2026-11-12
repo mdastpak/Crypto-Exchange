@@ -85,6 +85,10 @@ A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protecte
 | `user_totp` | `secret_sealed`, `confirmed_at`, `removed_at` ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)) | every check of a code, and whether the authenticator is on; an authenticator turned on, or back on, in SQL proves nothing |
 | `account_recoveries` | `user_hk`, `mode`, `status`, the proved contacts and identity steps, `identity_failures`, and the times ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)) | every read of the open recovery, which advancing and completing it start with; a recovery moved forward in SQL is refused |
 | `session_step_ups` | `elevated_until` ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)) | every check of the [guard](api.md#second-factor-and-step-up); in `enforce` mode a step-up lengthened in SQL counts as none, and the user proves the factor again |
+| `user_recovery_codes` | `user_hk`, `code_hash`, `retired_at`, `retired_reason` (#337) | every password reset with a recovery code. The hash has no key, so anyone who writes to the database could store a code of their own; such a code, or a used one put back, resets nothing |
+| `admin_sessions` | `admin_id`, `created_at`, `expires_at`, `revoked_at`, `revoked_reason`, `elevated_until` (#337) | every admin request, and every check of its step-up; a revoked session set back to active, or one made to last, answers `401` |
+| `user_restrictions` | `user_hk`, `scope`, `operations`, `currency_hk`, `reason`, `ends_at`, `created_by`, `created_at`, `lifted_at`, `lifted_by` (#337) | every new session of the user, every [restriction check](api.md#restrictions) of an operation, and a lift ([below](#reads-of-every-row)) |
+| `platform_controls` | everything but the notes and `version`, with the lift request (#337) | every read of the controls by an instance, the check of a sign-up, and every change ([below](#reads-of-every-row)) |
 
 Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Each of the tables has three columns for it: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
 
@@ -100,6 +104,16 @@ A seal shows a row that was changed, never one that was deleted. Where deleting 
 - **The rows written before migration 12** have no record, and their seals still match. The record is written the next time the password is proved, at a sign-in or a step-up, or changed. A migration cannot write it: a value written outside the backend would not match the seal.
 
 The authenticator and the passkeys are alternatives to the password, which stays required, so deleting their rows takes nothing away from the second step. Deleting a recovery or a step-up only ends it: the user starts the recovery again, or proves the factor again.
+
+### Reads of every row
+
+A seal check sees only the rows that a query returns. A query of the restrictions that apply now, or of the controls that are open, does not return a freeze or a lockdown that was lifted, or ended early, in SQL. So where they decide something, the backend reads every row ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)):
+
+- **Restrictions.** Every restriction of the user, lifted and ended ones too, at most 1000, newest first. In `enforce` mode a restriction that fails its check counts as a freeze: a new session answers `403 account_frozen`, and so does an operation that checks the restrictions. The sessions that a freeze ended stay ended, since their own seals cover that.
+- **Platform controls.** Every control. An instance that cannot read them, because a control fails its check in `enforce` mode, keeps the controls it read before, and once they are older than its stale time closes its fail-closed features (deposits, withdrawals, and trading by default), as when it cannot reach the database. The check of a sign-up refuses. The controls are few: an administrator creates each one.
+- **Changes by an administrator.** The lift of a restriction, and every change or lift of a control, checks the row first. In `enforce` mode a row that fails answers `409 row_unverified` until its finding is resolved.
+
+The lift of a lockdown that needs two administrators also needs the sealed `platform.control_lift_request` event of its request, in every mode, as the [re-seal of a finding](#integrity-findings) does. `report` mode serves a row that fails its check, so without the event a request written in SQL in the name of another administrator would let one lift alone; the call asks again in its own name instead.
 
 ### Audit events
 
@@ -131,7 +145,10 @@ Rows are sealed only when the server has data keys (`keys.provider` set). To rol
 2. The verifier (below) seals every row that has no valid seal yet, and resolves its finding as `report_mode`. Wait until every instance runs the release and one verifier pass has finished after that: `admin row-seals findings` shows no open finding.
 3. Set `enforce` and roll it out.
 
-A release that seals another table needs the same steps. Migration 13 seals `user_totp`, `account_recoveries`, and `session_step_ups` from then on, and leaves their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys that release: otherwise every authenticator turned on before it stops proving codes, and every open recovery is refused, until the rows are sealed.
+A release that seals another table needs the same steps. Migrations 13 and 14 seal more tables from then on, and leave their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys them, until the verifier has sealed those rows. Otherwise, in `enforce` mode:
+
+- migration 13: every authenticator turned on before it stops proving codes, and every open recovery is refused;
+- migration 14: every admin session of before answers `401`, every user with a restriction counts as frozen, a recovery code resets nothing, and every instance closes its fail-closed features once its controls are stale.
 
 Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns.
 
@@ -147,6 +164,7 @@ An administrator checks the row, for example against the audit log and backups, 
 
 - `admin row-seals findings [-all] [-limit n]`, or `GET /api/v1/admin/integrity/findings`, lists the findings, newest first.
 - `POST /api/v1/admin/integrity/findings/{id}/reseal` with `{"reason": "…"}` seals the row as it now is and resolves the finding as `resealed`, or as `row_gone` if the row no longer exists. It takes two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): one asks, with the reason, and another approves with the same request within 24 hours. The one who asked cannot approve, and the administrator whose account the row belongs to can do neither, so nobody accepts a change of their own alone. It records `integrity.reseal_request`, and `integrity.reseal` with both reasons, who asked, and the sealed values, secret columns shown as `[secret]`.
+- The request is in columns of `integrity_findings`, which have no seal, so the approval also looks for the [sealed](#audit-events) `integrity.reseal_request` event of the request: by the administrator who asked, at the time of the request, for the finding, with its reason ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)). A request without that event, such as one written in SQL in the name of another administrator so that one could approve alone, counts as none: the call asks again in its own name, and the server logs a `SECURITY` line.
 - `admin row-seals reseal -id N -reason TEXT` does it in one step, for the operator, who holds the data keys and the database anyway, and for an installation with one administrator.
 
 Re-sealing makes a row valid as it is, so re-seal only a row that is right. A row that someone changed must be fixed first, through the backend or in SQL followed by a re-seal.
@@ -154,7 +172,8 @@ Re-sealing makes a row valid as it is, so re-seal only a row that is right. A ro
 ### Limits of row seals
 
 - **Replay.** Someone with write access to the database can put back an older version of a row with its seal, such as a session from before its revocation, and the seal matches. A later step of #139 detects that, with a hash-chained log of the seals.
-- **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it, except for the rows that a [record](#records-of-rows) names: the account password. Removing the seal of an audit event makes it look `unsealed`, and deleting the event leaves nothing to check.
+- **Deleting rows.** Deleting a row leaves no seal to check. The verifier does not see it, except for the rows that a [record](#records-of-rows) names: the account password. So deleting a restriction or a platform control in SQL ends it unseen, as does deleting an admin session's revocation along with the session. Its audit events stay. Removing the seal of an audit event makes it look `unsealed`, and deleting the event leaves nothing to check.
+- **Reads in SQL alone.** The checks of a signed-in request read the freeze of the account in SQL, without its seal. That is enough because a freeze ends every session of the account, and every new session checks the seals of the restrictions.
 - **Other tables.** KYC records, balances, and the ledger are not sealed yet; they follow in later steps of #139.
 - **The operator.** A re-seal through the API needs two administrators, but `cmd/admin` needs one operator: whoever holds the data keys and a database role that writes can seal any row.
 

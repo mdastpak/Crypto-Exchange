@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/google/uuid"
 )
@@ -89,13 +90,15 @@ func (s *Service) StartSession(ctx context.Context, session NewSession, event au
 			session.AdminID).Scan(&locked); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
+		written, err := sessionIDs(tx.QueryContext(ctx, `
 			UPDATE admin_sessions SET revoked_at = NOW(), revoked_reason = $3
 			WHERE id IN (
 				SELECT id FROM admin_sessions
 				WHERE admin_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
-				ORDER BY created_at DESC, id DESC OFFSET $2)`,
-			session.AdminID, session.Max-1, SessionReplaced); err != nil {
+				ORDER BY created_at DESC, id DESC OFFSET $2)
+			RETURNING id::text`,
+			session.AdminID, session.Max-1, SessionReplaced))
+		if err != nil {
 			return err
 		}
 		var ip interface{}
@@ -109,10 +112,70 @@ func (s *Service) StartSession(ctx context.Context, session NewSession, event au
 			session.ElevatedFor.Seconds()); err != nil {
 			return err
 		}
+		if err := sealSessions(ctx, tx, append(written, session.ID)); err != nil {
+			return err
+		}
 		return audit.Record(ctx, tx, event)
 	})
 	if err != nil {
 		return fmt.Errorf("start the administrator session: %w", err)
+	}
+	return nil
+}
+
+// sessionIDs returns the IDs that a statement with RETURNING id::text
+// returned: the sessions it wrote.
+func sessionIDs(rows *sql.Rows, err error) ([]string, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// sealSessions seals the sessions with ids, which the transaction tx just
+// wrote (#337): only the backend can then revoke, extend, or elevate a
+// session unnoticed.
+func sealSessions(ctx context.Context, tx *sql.Tx, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return rowseal.Reseal(ctx, tx, rowseal.AdminSessions, "id = ANY($1::uuid[])", ids)
+}
+
+// readSession reads the sealed columns of an active session of adminID and
+// checks them (#337). It returns ErrSessionEnded for a session that is not
+// active, and, in enforce mode, for one that fails its check: a revoked
+// session set back to active in SQL, or one extended there. extra are read
+// first, into dest.
+func (s *Service) readSession(ctx context.Context, sessionID, adminID, extra string, dest []any, args ...any) error {
+	row := rowseal.AdminSessions.NewRow()
+	query := `SELECT ` + rowseal.AdminSessions.Fields("")
+	if extra != "" {
+		query = `SELECT ` + extra + `, ` + rowseal.AdminSessions.Fields("")
+	}
+	err := s.db.QueryRowContext(ctx, query+`
+		FROM admin_sessions
+		WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()`,
+		append([]any{sessionID, adminID}, args...)...).Scan(append(dest, row.Dest()...)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSessionEnded
+	}
+	if err != nil {
+		return fmt.Errorf("check the administrator session: %w", err)
+	}
+	if err := rowseal.Check(ctx, rowseal.AdminSessions, row); errors.Is(err, rowseal.ErrUnverified) {
+		return ErrSessionEnded
+	} else if err != nil {
+		return err
 	}
 	return nil
 }
@@ -135,16 +198,9 @@ func (s *Service) VerifySession(ctx context.Context, sessionID, adminID string) 
 		return ErrSessionEnded
 	}
 	var stale bool
-	err := s.db.QueryRowContext(ctx, `
-		SELECT last_used_at IS NULL OR last_used_at < NOW() - make_interval(secs => $3)
-		FROM admin_sessions
-		WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()`,
-		sessionID, adminID, lastUsedResolution.Seconds()).Scan(&stale)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrSessionEnded
-	}
-	if err != nil {
-		return fmt.Errorf("check the administrator session: %w", err)
+	if err := s.readSession(ctx, sessionID, adminID, `last_used_at IS NULL OR last_used_at < NOW() - make_interval(secs => $3)`,
+		[]any{&stale}, lastUsedResolution.Seconds()); err != nil {
+		return err
 	}
 	if stale {
 		// The session is valid without the note; a failure to write it
@@ -193,15 +249,19 @@ func (s *Service) EndSession(ctx context.Context, sessionID, adminID, reason str
 		return ErrSessionEnded
 	}
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `
+		ended, err := sessionIDs(tx.QueryContext(ctx, `
 			UPDATE admin_sessions SET revoked_at = NOW(), revoked_reason = $3
-			WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()`,
-			sessionID, adminID, reason)
+			WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()
+			RETURNING id::text`,
+			sessionID, adminID, reason))
 		if err != nil {
 			return fmt.Errorf("end the administrator session: %w", err)
 		}
-		if n, err := result.RowsAffected(); err != nil || n == 0 {
+		if len(ended) == 0 {
 			return ErrSessionEnded
+		}
+		if err := sealSessions(ctx, tx, ended); err != nil {
+			return err
 		}
 		if err := audit.Record(ctx, tx, event); err != nil {
 			return fmt.Errorf("end the administrator session: %w", err)
@@ -213,13 +273,14 @@ func (s *Service) EndSession(ctx context.Context, sessionID, adminID, reason str
 // endSessions ends every active session of an administrator, in the
 // transaction of the change that takes their access away.
 func endSessions(ctx context.Context, tx *sql.Tx, adminID, reason string) (int64, error) {
-	result, err := tx.ExecContext(ctx, `
+	ended, err := sessionIDs(tx.QueryContext(ctx, `
 		UPDATE admin_sessions SET revoked_at = NOW(), revoked_reason = $2
-		WHERE admin_id = $1 AND revoked_at IS NULL`, adminID, reason)
+		WHERE admin_id = $1 AND revoked_at IS NULL
+		RETURNING id::text`, adminID, reason))
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	return int64(len(ended)), sealSessions(ctx, tx, ended)
 }
 
 // EndSessions ends every active session of the administrator with email, for
@@ -256,12 +317,11 @@ func (s *Service) Elevated(ctx context.Context, sessionID, adminID string) (bool
 	if _, err := uuid.Parse(sessionID); err != nil {
 		return false, nil
 	}
+	// A step-up lengthened in SQL fails the check of the session (#337),
+	// and counts as none.
 	var elevated bool
-	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(elevated_until > NOW(), FALSE) FROM admin_sessions
-		WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > NOW()`,
-		sessionID, adminID).Scan(&elevated)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.readSession(ctx, sessionID, adminID, `COALESCE(elevated_until > NOW(), FALSE)`, []any{&elevated})
+	if errors.Is(err, ErrSessionEnded) {
 		return false, nil
 	}
 	if err != nil {
@@ -298,6 +358,9 @@ func (s *Service) StepUp(ctx context.Context, sessionID, adminID, code string, l
 		if err != nil {
 			return fmt.Errorf("step up the session: %w", err)
 		}
+		if err := sealSessions(ctx, tx, []string{sessionID}); err != nil {
+			return err
+		}
 		event.Outcome, event.Reason = audit.Success, ""
 		if err := audit.Record(ctx, tx, event); err != nil {
 			return fmt.Errorf("step up the session: %w", err)
@@ -329,6 +392,9 @@ func (s *Service) failStepUp(ctx context.Context, sessionID, adminID string, eve
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE admin_sessions SET revoked_at = NOW(), revoked_reason = $2 WHERE id = $1`,
 				sessionID, SessionStepUpFailed); err != nil {
+				return err
+			}
+			if err := sealSessions(ctx, tx, []string{sessionID}); err != nil {
 				return err
 			}
 			event.Reason = "too_many_wrong_codes"

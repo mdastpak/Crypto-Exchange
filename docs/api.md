@@ -74,6 +74,7 @@ An error response contains only a fixed message for each error. Internal details
 | `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
 | `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
 | `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
+| `row_unverified` | `409` | The [restriction](#restrictions) or [control](#maintenance-and-lockdowns) to change was changed outside the backend, in `enforce` mode; an administrator reviews its [integrity finding](#integrity-findings) first |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
 | `second_factor_required` | `403` | The operation moves funds, and the user has not set an [account password](#second-factor-and-step-up) yet |
 | `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
@@ -342,6 +343,7 @@ Resets a forgotten [account password](#account-password) ([#307](https://github.
 Response `200`, with the access token and the refresh cookie: the reset signs in.
 
 - The recovery code is used up, **every** session of the user ends, and the [security hold](#security-hold) starts, all with the new password or not at all.
+- Each recovery code has a [row seal](data-protection.md#row-seals) (#337). Its hash has no key, so a code stored, or a used one put back, in SQL could otherwise reset the password: in `enforce` mode such a code answers `403 account_unavailable`.
 - The new password follows the policy of `PUT /user/password`; `400 validation_failed` names the problem under `errors.new_password`, and uses no code.
 - `401 recovery_code_invalid`: the code is wrong, used, or replaced. The challenge stays usable. Each try counts toward the lock of the password, so the codes cannot be guessed: `429 password_locked` with `Retry-After`.
 - `401 challenge_invalid`, `403 account_frozen` and `account_unavailable`: as for the second step.
@@ -530,7 +532,7 @@ Errors:
 - `429`: the attempts of the emailed code are used up
 - `503`: admin sign-in is not configured
 
-Each sign-in starts a session, stored in PostgreSQL, which the token belongs to ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). An administrator has at most `admin.sessions.max_per_admin` sessions (2 by default): a sign-in past it ends the oldest. A session lasts as long as its token.
+Each sign-in starts a session, stored in PostgreSQL, which the token belongs to ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)). An administrator has at most `admin.sessions.max_per_admin` sessions (2 by default): a sign-in past it ends the oldest. A session lasts as long as its token. The session has a [row seal](data-protection.md#row-seals) (#337): in `enforce` mode a revoked session set back to active in SQL, one made to last, or a step-up lengthened there answers `401`.
 
 ### `POST /admin/logout`
 
@@ -870,7 +872,7 @@ The rows that did not match their [row seal](data-protection.md#row-seals) ([#13
 | Route | |
 | --- | --- |
 | `GET /admin/integrity/findings?all=&limit=` | The open findings, or every finding with `all=true`, newest first, [paginated](#pagination): `table`, `row_key`, `check` (`missing`, `mismatch`, `unknown_key`, `row_missing`), `detected_by` (`read`, `verifier`), `seen_count`, and, once resolved, `resolution` (`resealed`, `report_mode`, `row_gone`), `resolved_by`, and `reason`. |
-| `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters. It needs two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): the first request records the reason and answers `202` with the finding and `reseal_requested_by`; the same request by another administrator within 24 hours seals the row as it now is, resolves the finding, and answers `200`. `403 second_approval_required` for the administrator who asked, and `403 own_row` for the administrator whose account the row belongs to, at either step. A request older than 24 hours is replaced by a new one. Audited as `integrity.reseal_request` and `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. Needs a [step-up](#post-adminstep-up). |
+| `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters. It needs two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): the first request records the reason and answers `202` with the finding and `reseal_requested_by`; the same request by another administrator within 24 hours seals the row as it now is, resolves the finding, and answers `200`. `403 second_approval_required` for the administrator who asked, and `403 own_row` for the administrator whose account the row belongs to, at either step. A request older than 24 hours is replaced by a new one, and so is a request without its sealed `integrity.reseal_request` audit event, such as one written in SQL in the name of another administrator ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)). Audited as `integrity.reseal_request` and `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. Needs a [step-up](#post-adminstep-up). |
 
 ## Currency migrations
 
@@ -1009,6 +1011,8 @@ The user never learns the reason, the case, or the note. `until` is shown only w
 
 Every operation that moves money checks the restrictions in its own transaction, after a share lock of the user's row, and creating a restriction takes the exclusive lock of that row. A restriction therefore waits for the operations in flight, on any instance, and every operation that starts after it sees it. Deposits, withdrawals, conversions, and trades call this check as they are built ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)).
 
+Each restriction has a [row seal](data-protection.md#reads-of-every-row) (#337). A check reads every restriction of the user, lifted and ended ones too, so a freeze lifted in SQL is found: in `enforce` mode a restriction that fails its check counts as a freeze, and a new session or a checked operation answers `403 account_frozen`.
+
 ### `POST /admin/users/{hk}/restrictions` (admin)
 
 ```json
@@ -1037,7 +1041,7 @@ The restrictions of the user, newest first, at most 200, with their reasons, cas
 { "note": "The court order was revoked" }
 ```
 
-Ends the restriction now. The `note` is required. The optional query parameter `version` works as for currencies. A lifted freeze lets the user sign in again; the sessions it ended stay ended. Response `200` with the restriction. Errors: `404`, and `409` with `already_lifted` or `version_conflict`. Audited as `user.restriction_lift`.
+Ends the restriction now. The `note` is required. The optional query parameter `version` works as for currencies. A lifted freeze lets the user sign in again; the sessions it ended stay ended. Response `200` with the restriction. Errors: `404`, and `409` with `already_lifted`, `version_conflict`, or `row_unverified` for a restriction changed outside the backend, in `enforce` mode. Audited as `user.restriction_lift`.
 
 ### `GET /user/restrictions`
 
@@ -1094,7 +1098,7 @@ A refusal:
 
 **Every instance applies the same controls.** They are stored in PostgreSQL. Each instance keeps a copy in memory, so the gates need no query per request, and reads the version of the controls every `platform.poll_interval_ms` (1 second by default): a change made on any instance, or with `cmd/admin platform`, applies everywhere within it, and the instance that made it applies it at once. An instance that starts during a maintenance starts in it, and its readiness stays green, so that a load balancer keeps routing to it the `503` answers and the status. Without RabbitMQ or Redis, the controls keep working. The money flows check the controls again in their transaction, under a share lock that a new control waits for, so an operation in flight when a lockdown is created either commits before it or is refused.
 
-**While an instance cannot read the controls**, for example during a database failover, it keeps applying the last ones it read for `platform.stale_after_seconds` (30), and then also closes the features of `platform.fail_closed` (deposits, withdrawals, and trading by default) with `503 feature_locked`, `info.state_unknown: true`, and `Retry-After: 5`, until a read succeeds. It does the same from its start until its first read. It never opens silently.
+**While an instance cannot read the controls**, for example during a database failover, it keeps applying the last ones it read for `platform.stale_after_seconds` (30), and then also closes the features of `platform.fail_closed` (deposits, withdrawals, and trading by default) with `503 feature_locked`, `info.state_unknown: true`, and `Retry-After: 5`, until a read succeeds. It does the same from its start until its first read. It never opens silently. A control that fails its [row seal](data-protection.md#reads-of-every-row) check in `enforce` mode, such as a lockdown lifted in SQL, makes the controls unreadable in the same way (#337).
 
 ### `GET /public/locales`
 
@@ -1191,7 +1195,7 @@ Extends or shortens a control that has not ended, or changes its message; the st
 { "note": "Wallet checked, signatures rotated" }
 ```
 
-Ends a control now, or cancels one that has not started. An active lockdown of a feature in `platform.lift_approval` (withdrawals and trading by default) needs two administrators: the first call answers `202` and records `lift_requested_by`, while the lockdown keeps applying; a call by another administrator lifts it with `200`. The administrator who asked gets `409 second_approval_required`. The `note` is required. The optional query parameter `version` works as for currencies. Errors: `400`, `404`, and `409` with `control_ended`, `second_approval_required`, or `version_conflict`. Audited as `platform.control_lift_request` and `platform.control_lift`.
+Ends a control now, or cancels one that has not started. An active lockdown of a feature in `platform.lift_approval` (withdrawals and trading by default) needs two administrators: the first call answers `202` and records `lift_requested_by`, while the lockdown keeps applying; a call by another administrator lifts it with `200`. The administrator who asked gets `409 second_approval_required`. The approval needs the sealed `platform.control_lift_request` audit event of the request, in every mode: a request without it, such as one written in SQL in the name of another administrator, counts as none, and the call asks again with `202` ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)). The `note` is required. The optional query parameter `version` works as for currencies. Errors: `400`, `404`, and `409` with `control_ended`, `second_approval_required`, `version_conflict`, or `row_unverified`. Audited as `platform.control_lift_request` and `platform.control_lift`.
 
 When the API itself is unhealthy, `cmd/admin platform status | maintenance | lockdown | lift` does the same against the database; see the [architecture](architecture.md#platform-commands).
 

@@ -137,8 +137,45 @@ var (
 	}}
 )
 
+// The rest of the state that decides access (#337): who is an
+// administrator's session, which restrictions and platform controls apply,
+// and which recovery codes reset a password.
+var (
+	// AdminSessions covers whose session it is, until when it works, and
+	// until when it may use the sensitive routes. last_used_at and the
+	// count of wrong step-up codes are outside it: requests write them.
+	AdminSessions = &Table{Name: "admin_sessions", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("admin_id"), timestamptz("created_at"), timestamptz("expires_at"),
+		timestamptz("revoked_at"), text("revoked_reason"), timestamptz("elevated_until"),
+	}}
+	// UserRestrictions covers what a restriction blocks, for whom, and
+	// until when. The case reference and the notes are for administrators.
+	UserRestrictions = &Table{Name: "user_restrictions", Key: "hk", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("scope"), text("operations"), text("currency_hk"), text("reason"),
+		timestamptz("ends_at"), text("created_by"), timestamptz("created_at"),
+		timestamptz("lifted_at"), text("lifted_by"),
+	}}
+	// PlatformControls covers what a maintenance window or a lockdown
+	// closes, for whom, when, what users read about it, and the request
+	// and the lift of the two administrators that a lockdown may need.
+	PlatformControls = &Table{Name: "platform_controls", Key: "hk", KeyType: "uuid", Columns: []Column{
+		text("kind"), text("feature"), timestamptz("starts_at"), timestamptz("ends_at"),
+		timestamptz("announce_at"), text("message_fa"), text("message_en"), text("reason"),
+		text("allow_networks"), text("allow_users"), text("created_by"), timestamptz("created_at"),
+		text("lift_requested_by"), timestamptz("lift_requested_at"), timestamptz("lifted_at"), text("lifted_by"),
+	}}
+	// UserRecoveryCodes covers the hash of each code and whether it is
+	// spent: a code inserted, or put back, in SQL would reset a password.
+	UserRecoveryCodes = &Table{Name: "user_recovery_codes", Key: "id", KeyType: "bigint", Columns: []Column{
+		text("user_hk"), secret("code_hash"), timestamptz("retired_at"), text("retired_reason"),
+	}}
+)
+
 // Tables lists the protected tables.
-var Tables = []*Table{Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps}
+var Tables = []*Table{
+	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
+	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes,
+}
 
 // AuditEvents covers every column of an audit event (#337), so that an
 // event changed after the append-only triggers were turned off is detected.

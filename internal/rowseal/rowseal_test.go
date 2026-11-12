@@ -364,6 +364,9 @@ func TestReseal_SessionsAndContacts(t *testing.T) {
 func TestReviewReseal_NeedsASecondAdministrator(t *testing.T) {
 	e := newEnv(t)
 	sealer := e.sealer(rowseal.ModeEnforce)
+	// The server seals its audit events with the same keys; an approval
+	// needs the sealed event of the request.
+	t.Cleanup(audit.UseSealer(sealer))
 	ctx := context.Background()
 	first := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
 	second := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
@@ -423,18 +426,19 @@ func TestReviewReseal_NeedsASecondAdministrator(t *testing.T) {
 	assert.Equal(t, third.ActorID, late.ResealRequestedBy)
 }
 
-// TestReviewReseal_TheStateOfASecondFactorBelongsToItsUser checks the owner
-// of each table of #337: an administrator cannot ask for the re-seal of
-// their own authenticator, recovery, or step-up, which they could change in
-// SQL to skip their own second factor.
-func TestReviewReseal_TheStateOfASecondFactorBelongsToItsUser(t *testing.T) {
+// TestReviewReseal_TheStateOfAnAccountBelongsToIt checks the owner of each
+// table of #337: an administrator cannot ask for the re-seal of their own
+// authenticator, recovery, step-up, admin session, restriction, or recovery
+// code, which they could change in SQL to skip their own second factor or
+// lift their own freeze. A platform control belongs to no account.
+func TestReviewReseal_TheStateOfAnAccountBelongsToIt(t *testing.T) {
 	e := newEnv(t)
 	sealer := e.sealer(rowseal.ModeEnforce)
 	ctx := context.Background()
 	admin := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
 	other := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
 
-	var session, recovery string
+	var session, recovery, adminSession, restriction, code, control string
 	require.NoError(t, e.conn.QueryRow(`INSERT INTO sessions (user_id, auth_method, access_token_hash, refresh_token_hash, expires_at)
 		VALUES ($1, 'otp', 'a', 'r', NOW() + INTERVAL '1 hour') RETURNING id`, admin.ActorID).Scan(&session))
 	_, err := e.conn.Exec(`INSERT INTO session_step_ups (session_id, elevated_until) VALUES ($1, NOW() + INTERVAL '5 minutes')`, session)
@@ -443,14 +447,27 @@ func TestReviewReseal_TheStateOfASecondFactorBelongsToItsUser(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, e.conn.QueryRow(`INSERT INTO account_recoveries (id, user_hk, mode, expires_at)
 		VALUES (gen_random_uuid(), $1, 'standard', NOW() + INTERVAL '1 day') RETURNING id`, admin.ActorID).Scan(&recovery))
+	require.NoError(t, e.conn.QueryRow(`INSERT INTO admin_sessions (admin_id, expires_at)
+		VALUES ($1, NOW() + INTERVAL '1 hour') RETURNING id`, admin.ActorID).Scan(&adminSession))
+	require.NoError(t, e.conn.QueryRow(`INSERT INTO user_restrictions (hk, user_hk, scope, reason, created_by)
+		VALUES (gen_random_uuid(), $1, 'account', 'aml_review', $2) RETURNING hk`, admin.ActorID, other.ActorID).Scan(&restriction))
+	require.NoError(t, e.conn.QueryRow(`INSERT INTO user_recovery_codes (user_hk, code_hash)
+		VALUES ($1, 'hash') RETURNING id::text`, admin.ActorID).Scan(&code))
+	require.NoError(t, e.conn.QueryRow(`INSERT INTO platform_controls (hk, kind, feature, starts_at, announce_at, reason)
+		VALUES (gen_random_uuid(), 'lockdown', 'withdrawals', NOW(), NOW(), 'test') RETURNING hk`).Scan(&control))
 
 	for _, tc := range []struct {
 		table *rowseal.Table
 		key   string
+		owned bool
 	}{
-		{rowseal.SessionStepUps, session},
-		{rowseal.UserTOTP, admin.ActorID},
-		{rowseal.AccountRecoveries, recovery},
+		{rowseal.SessionStepUps, session, true},
+		{rowseal.UserTOTP, admin.ActorID, true},
+		{rowseal.AccountRecoveries, recovery, true},
+		{rowseal.AdminSessions, adminSession, true},
+		{rowseal.UserRestrictions, restriction, true},
+		{rowseal.UserRecoveryCodes, code, true},
+		{rowseal.PlatformControls, control, false},
 	} {
 		t.Run(tc.table.Name, func(t *testing.T) {
 			r := tc.table.NewRow()
@@ -460,11 +477,80 @@ func TestReviewReseal_TheStateOfASecondFactorBelongsToItsUser(t *testing.T) {
 			require.NoError(t, e.conn.QueryRow(`SELECT id FROM integrity_findings WHERE table_name = $1 AND row_key = $2 AND resolved_at IS NULL`,
 				tc.table.Name, tc.key).Scan(&id))
 
-			_, _, err := sealer.ReviewReseal(ctx, id, admin, "my own row")
-			require.ErrorIs(t, err, rowseal.ErrOwnRow)
-			_, waits, err := sealer.ReviewReseal(ctx, id, other, "reviewed")
+			asker := other
+			if tc.owned {
+				_, _, err := sealer.ReviewReseal(ctx, id, admin, "my own row")
+				require.ErrorIs(t, err, rowseal.ErrOwnRow)
+			} else {
+				asker = admin
+			}
+			_, waits, err := sealer.ReviewReseal(ctx, id, asker, "reviewed")
 			require.NoError(t, err)
 			assert.True(t, waits, "another administrator may ask")
 		})
 	}
+}
+
+// TestReviewReseal_ARequestWrittenInSQLCountsAsNone writes the request of a
+// re-seal in SQL (#337): in the name of another administrator, with an
+// audit event that nobody sealed, and by changing the reason of a real
+// request. Each time the approval finds no sealed request event, so it asks
+// again in its own name, and nothing is sealed.
+func TestReviewReseal_ARequestWrittenInSQLCountsAsNone(t *testing.T) {
+	e := newEnv(t)
+	sealer := e.sealer(rowseal.ModeEnforce)
+	t.Cleanup(audit.UseSealer(sealer))
+	ctx := context.Background()
+	named := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	alone := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	victim := e.newUser(t)
+	_, err := e.conn.Exec(`UPDATE users SET first_name = 'Changed' WHERE hk = $1`, victim)
+	require.NoError(t, err)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified)
+	id := e.openFindings(t)[0].ID
+	forge := func(reason string) {
+		t.Helper()
+		_, err := e.conn.Exec(`UPDATE integrity_findings SET reseal_requested_by = $2, reseal_requested_at = NOW(),
+			reseal_request_reason = $3 WHERE id = $1`, id, named.ActorID, reason)
+		require.NoError(t, err)
+	}
+	approveAlone := func(msg string) {
+		t.Helper()
+		pending, waits, err := sealer.ReviewReseal(ctx, id, alone, "approved alone")
+		require.NoError(t, err)
+		assert.True(t, waits, msg)
+		assert.Equal(t, alone.ActorID, pending.ResealRequestedBy, "the call asks again, in its own name")
+		require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified, "nothing is sealed")
+	}
+
+	forge("Reviewed")
+	approveAlone("a request without an event")
+	assert.Contains(t, e.logs.String(), "has no sealed audit event")
+
+	forge("Reviewed")
+	_, err = e.conn.Exec(`INSERT INTO audit_events (hk, actor_type, actor_id, action, target_type, target_id, outcome, changes, occurred_at)
+		SELECT gen_random_uuid(), 'admin', reseal_requested_by, $2, table_name, row_key, 'success',
+			jsonb_build_object('after', jsonb_build_object('finding', id, 'reason', reseal_request_reason)), reseal_requested_at
+		FROM integrity_findings WHERE id = $1`, id, audit.ActionIntegrityResealRequest)
+	require.NoError(t, err)
+	approveAlone("a request with an event that nobody sealed")
+	assert.Contains(t, e.logs.String(), "fails its seal check (missing)")
+
+	// The last call left a real request of alone, whose reason is then
+	// changed in SQL: its event no longer matches, so named asks again.
+	_, err = e.conn.Exec(`UPDATE integrity_findings SET reseal_request_reason = 'Something else' WHERE id = $1`, id)
+	require.NoError(t, err)
+	pending, waits, err := sealer.ReviewReseal(ctx, id, named, "Checked against the backup")
+	require.NoError(t, err)
+	assert.True(t, waits, "a request whose reason changed")
+	assert.Equal(t, named.ActorID, pending.ResealRequestedBy)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified, "nothing is sealed")
+	assert.Equal(t, 0, e.events(t, audit.ActionIntegrityReseal))
+
+	// A real request is approved by the other administrator.
+	resolved, waits, err := sealer.ReviewReseal(ctx, id, alone, "Confirmed with the backup")
+	require.NoError(t, err)
+	assert.False(t, waits)
+	assert.Equal(t, "resealed", resolved.Resolution)
+	require.NoError(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)))
 }
