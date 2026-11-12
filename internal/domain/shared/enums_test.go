@@ -302,3 +302,23 @@ func TestDecimal_MarshalJSON(t *testing.T) {
 		t.Errorf("expected JSON '\"123\"', got %s", string(data))
 	}
 }
+
+func TestAssetType_String(t *testing.T) {
+	for want, v := range map[string]AssetType{
+		"FIAT": AssetTypeFiat, "COIN": AssetTypeCoin, "TOKEN": AssetTypeToken, "STABLE": AssetTypeStable, "WRAPPED": AssetTypeWrapped,
+	} {
+		if v.String() != want {
+			t.Errorf("%q.String() = %q", want, v.String())
+		}
+	}
+}
+
+func TestAssetStatus_String(t *testing.T) {
+	for want, v := range map[string]AssetStatus{
+		"ACTIVE": AssetStatusActive, "INACTIVE": AssetStatusInactive, "DEPRECATED": AssetStatusDeprecated, "DELISTED": AssetStatusDelisted,
+	} {
+		if v.String() != want {
+			t.Errorf("%q.String() = %q", want, v.String())
+		}
+	}
+}

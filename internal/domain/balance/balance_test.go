@@ -18,7 +18,7 @@ func dec(s string) shared.Decimal { return shared.MustNewDecimalFromString(s) }
 // total.
 func newBalance(available, locked, pending string) *Balance {
 	b := &Balance{
-		ID: shared.NewUUID(), UserID: shared.NewUUID(), AssetID: shared.NewUUID(),
+		ID: shared.NewUUID(), UserID: shared.NewUUID(), CurrencyHK: shared.NewUUID(),
 		Available: dec(available), Locked: dec(locked), PendingDeposit: dec(pending), Version: 1,
 	}
 	b.Total = b.Available.Add(b.Locked)

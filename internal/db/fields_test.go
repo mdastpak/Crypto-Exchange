@@ -372,16 +372,16 @@ func TestDecryptFields_LetsTheDownMigrationKeepTheValues(t *testing.T) {
 	_, err = conn.Exec(`UPDATE users SET first_name = NULL, first_name_enc = $2 WHERE hk = $1`, owner, sealedNames.First)
 	require.NoError(t, err)
 
-	version, _, err := m.Version()
-	require.NoError(t, err)
-	err = m.Steps(-1)
+	// The migrations after 16 go down first; 16 itself refuses.
+	const fieldsMigration = 16
+	err = m.Migrate(fieldsMigration - 1)
 	require.Error(t, err, "the down migration refuses to lose the values")
 	assert.Contains(t, err.Error(), "admin fields decrypt")
 	var stillThere bool
 	require.NoError(t, conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
 		WHERE table_name = 'user_contacts' AND column_name = 'value_enc')`).Scan(&stillThere))
 	require.True(t, stillThere, "the refused migration changed nothing")
-	require.NoError(t, m.Force(int(version)))
+	require.NoError(t, m.Force(fieldsMigration))
 
 	status, err := ReadFieldsStatus(ctx, conn)
 	require.NoError(t, err)
@@ -391,7 +391,7 @@ func TestDecryptFields_LetsTheDownMigrationKeepTheValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, FieldsReport{Contacts: 1, Users: 1}, report)
 
-	require.NoError(t, m.Steps(-1))
+	require.NoError(t, m.Migrate(fieldsMigration-1))
 	var value, first string
 	require.NoError(t, conn.QueryRow(`SELECT value FROM user_contacts WHERE id = $1`, id).Scan(&value))
 	require.NoError(t, conn.QueryRow(`SELECT first_name FROM users WHERE hk = $1`, owner).Scan(&first))

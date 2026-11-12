@@ -52,12 +52,13 @@ func TestSchema_EveryAmountIsExact(t *testing.T) {
 // refuses, instead of rounding, a value or an asset it cannot hold.
 func TestExactDecimal_HoldsTheSmallestUnitOfEveryAsset(t *testing.T) {
 	conn := pgtest.Migrated(t, "testdb_amounts")
-	var id string
-	require.NoError(t, conn.QueryRow(`INSERT INTO assets (symbol, name, type, decimals, min_withdrawal, withdrawal_fee)
-		VALUES ('NEAR', 'NEAR Protocol', 'COIN', 24, 0.000000000000000000000001, 123456789012345678.000000000000000000000001)
-		RETURNING id`).Scan(&id))
+	near := insertCurrency(t, conn, "NEAR")
+	_, err := conn.Exec(`INSERT INTO currency_networks (currency_hk, network, decimals, custody_mode, min_withdrawal, withdrawal_fee)
+		VALUES ($1, 'near', 24, 'ON_CHAIN', 0.000000000000000000000001, 123456789012345678.000000000000000000000001)`, near)
+	require.NoError(t, err)
 	var minimum, fee string
-	require.NoError(t, conn.QueryRow(`SELECT min_withdrawal::text, withdrawal_fee::text FROM assets WHERE id = $1`, id).Scan(&minimum, &fee))
+	require.NoError(t, conn.QueryRow(`SELECT min_withdrawal::text, withdrawal_fee::text FROM currency_networks WHERE currency_hk = $1`, near).
+		Scan(&minimum, &fee))
 	assert.Equal(t, "0.000000000000000000000001", minimum)
 	assert.Equal(t, "123456789012345678.000000000000000000000001", fee)
 
@@ -73,8 +74,9 @@ func TestExactDecimal_HoldsTheSmallestUnitOfEveryAsset(t *testing.T) {
 		assert.Equal(t, "23514", pgCode(err), "%s is refused, not rounded: %v", name, err)
 	}
 
-	_, err := conn.Exec(`INSERT INTO assets (symbol, name, type, decimals) VALUES ('WIDE', 'Too wide', 'TOKEN', 37)`)
-	assert.Equal(t, "23514", pgCode(err), "an asset with more decimals than an amount holds is refused: %v", err)
+	_, err = conn.Exec(`INSERT INTO currency_networks (currency_hk, network, decimals, custody_mode) VALUES ($1, 'wide', 37, 'ON_CHAIN')`,
+		insertCurrency(t, conn, "WIDE"))
+	assert.Equal(t, "23514", pgCode(err), "a network with more decimals than an amount holds is refused: %v", err)
 }
 
 func repeatZero(n int) string {

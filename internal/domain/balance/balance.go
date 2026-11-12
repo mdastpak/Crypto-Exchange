@@ -32,7 +32,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
@@ -41,7 +40,7 @@ type Balance struct {
 	ID           shared.UUID  `json:"id" db:"id"`
 	UserID       shared.UUID  `json:"user_id" db:"user_id"`
 	SubAccountID *shared.UUID `json:"sub_account_id,omitempty" db:"sub_account_id"`
-	AssetID      shared.UUID  `json:"asset_id" db:"asset_id"`
+	CurrencyHK   shared.UUID  `json:"currency_hk" db:"currency_hk"`
 
 	// Balance components
 	Available      shared.Decimal `json:"available" db:"available"`             // Free to trade and withdraw
@@ -56,9 +55,6 @@ type Balance struct {
 	// with UPDATE ... WHERE version = <the version it read>, so that two
 	// concurrent changes cannot both apply.
 	Version int `json:"version" db:"version"`
-
-	// Relations
-	Asset *asset.Asset `json:"asset,omitempty" db:"-"`
 
 	UpdatedAt shared.Timestamp `json:"updated_at" db:"updated_at"`
 }
@@ -126,7 +122,7 @@ func (b *Balance) Apply(change BalanceChangeType, amount shared.Decimal, ref Ref
 		BalanceID:     b.ID,
 		UserID:        b.UserID,
 		SubAccountID:  b.SubAccountID,
-		AssetID:       b.AssetID,
+		CurrencyHK:    b.CurrencyHK,
 		ChangeType:    change,
 		Amount:        amount,
 		OldAvailable:  b.Available,
@@ -178,7 +174,7 @@ type BalanceSnapshot struct {
 	BalanceID      shared.UUID      `json:"balance_id"`
 	UserID         shared.UUID      `json:"user_id"`
 	SubAccountID   *shared.UUID     `json:"sub_account_id,omitempty"`
-	AssetID        shared.UUID      `json:"asset_id"`
+	CurrencyHK     shared.UUID      `json:"currency_hk"`
 	Available      shared.Decimal   `json:"available"`
 	Locked         shared.Decimal   `json:"locked"`
 	PendingDeposit shared.Decimal   `json:"pending_deposit"`
@@ -194,7 +190,7 @@ type BalanceChangeEvent struct {
 	BalanceID    shared.UUID       `json:"balance_id"`
 	UserID       shared.UUID       `json:"user_id"`
 	SubAccountID *shared.UUID      `json:"sub_account_id,omitempty"`
-	AssetID      shared.UUID       `json:"asset_id"`
+	CurrencyHK   shared.UUID       `json:"currency_hk"`
 	ChangeType   BalanceChangeType `json:"change_type"`
 	Amount       shared.Decimal    `json:"amount"`
 

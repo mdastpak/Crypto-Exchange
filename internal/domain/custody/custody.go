@@ -17,24 +17,24 @@ type CustodyProvider interface {
 	GetSupportedNetworks() []string
 
 	// Deposit operations
-	GenerateDepositAddress(ctx context.Context, userID, subAccountID shared.UUID, assetID shared.UUID) (*DepositAddress, error)
-	GetDepositAddress(ctx context.Context, userID, subAccountID shared.UUID, assetID shared.UUID) (*DepositAddress, error)
-	ValidateDepositAddress(address string, assetID shared.UUID) error
+	GenerateDepositAddress(ctx context.Context, userID, subAccountID shared.UUID, currencyHK shared.UUID) (*DepositAddress, error)
+	GetDepositAddress(ctx context.Context, userID, subAccountID shared.UUID, currencyHK shared.UUID) (*DepositAddress, error)
+	ValidateDepositAddress(address string, currencyHK shared.UUID) error
 
 	// Deposit monitoring
-	StartDepositMonitoring(ctx context.Context, assetID shared.UUID) error
-	StopDepositMonitoring(ctx context.Context, assetID shared.UUID) error
+	StartDepositMonitoring(ctx context.Context, currencyHK shared.UUID) error
+	StopDepositMonitoring(ctx context.Context, currencyHK shared.UUID) error
 	GetDepositStatus(ctx context.Context, txHash string) (*DepositStatus, error)
 
 	// Withdrawal operations
 	CreateWithdrawal(ctx context.Context, req *WithdrawalRequest) (*WithdrawalResult, error)
-	ValidateWithdrawalAddress(address string, assetID shared.UUID) error
-	EstimateWithdrawalFee(ctx context.Context, assetID shared.UUID, amount shared.Decimal, address string) (*FeeEstimate, error)
+	ValidateWithdrawalAddress(address string, currencyHK shared.UUID) error
+	EstimateWithdrawalFee(ctx context.Context, currencyHK shared.UUID, amount shared.Decimal, address string) (*FeeEstimate, error)
 	GetWithdrawalStatus(ctx context.Context, withdrawalID shared.UUID) (*WithdrawalStatus, error)
 
 	// Balance
-	GetOnChainBalance(ctx context.Context, address string, assetID shared.UUID) (shared.Decimal, error)
-	GetAddressesForUser(ctx context.Context, userID shared.UUID, assetID shared.UUID) ([]string, error)
+	GetOnChainBalance(ctx context.Context, address string, currencyHK shared.UUID) (shared.Decimal, error)
+	GetAddressesForUser(ctx context.Context, userID shared.UUID, currencyHK shared.UUID) ([]string, error)
 
 	// Health
 	HealthCheck(ctx context.Context) error
@@ -60,7 +60,7 @@ type DepositAddress struct {
 	ID           shared.UUID  `json:"id"`
 	UserID       shared.UUID  `json:"user_id"`
 	SubAccountID *shared.UUID `json:"sub_account_id,omitempty"`
-	AssetID      shared.UUID  `json:"asset_id"`
+	CurrencyHK   shared.UUID  `json:"currency_hk"`
 
 	Address string `json:"address"`       // Main address
 	Tag     string `json:"tag,omitempty"` // Memo/tag/payment_id
@@ -77,10 +77,10 @@ type DepositAddress struct {
 
 // DepositStatus represents the status of a deposit
 type DepositStatus struct {
-	TxHash  string      `json:"tx_hash"`
-	AssetID shared.UUID `json:"asset_id"`
-	Address string      `json:"address"`
-	Tag     string      `json:"tag,omitempty"`
+	TxHash     string      `json:"tx_hash"`
+	CurrencyHK shared.UUID `json:"currency_hk"`
+	Address    string      `json:"address"`
+	Tag        string      `json:"tag,omitempty"`
 
 	Amount          shared.Decimal `json:"amount"`
 	ConfirmedAmount shared.Decimal `json:"confirmed_amount"` // After confirmations
@@ -119,7 +119,7 @@ type WithdrawalRequest struct {
 	ID           shared.UUID  `json:"id"`
 	UserID       shared.UUID  `json:"user_id"`
 	SubAccountID *shared.UUID `json:"sub_account_id,omitempty"`
-	AssetID      shared.UUID  `json:"asset_id"`
+	CurrencyHK   shared.UUID  `json:"currency_hk"`
 
 	Amount  shared.Decimal `json:"amount"`
 	Address string         `json:"address"`
@@ -201,7 +201,7 @@ type WithdrawalStatus struct {
 
 // FeeEstimate represents a fee estimate
 type FeeEstimate struct {
-	AssetID       shared.UUID    `json:"asset_id"`
+	CurrencyHK    shared.UUID    `json:"currency_hk"`
 	FeeLevel      FeeLevel       `json:"fee_level"`
 	EstimatedFee  shared.Decimal `json:"estimated_fee"`
 	EstimatedTime string         `json:"estimated_time"` // e.g., "10-30 minutes"
@@ -218,10 +218,13 @@ type FeeEstimate struct {
 	UpdatedAt shared.Timestamp `json:"updated_at"`
 }
 
-// CustodyConfig holds configuration for a custody provider
+// CustodyConfig is how a custody provider reaches one network of a
+// currency: a row of custody_configs. The contract, the decimals, the
+// limits, and the currency of the fee belong to the network of the
+// currency, currency.Network, which it refers to (#309).
 type CustodyConfig struct {
 	ProviderType CustodyProviderType `json:"provider_type"`
-	AssetID      shared.UUID         `json:"asset_id"`
+	CurrencyHK   shared.UUID         `json:"currency_hk"`
 	Network      string              `json:"network"`
 
 	// Connection
@@ -236,19 +239,13 @@ type CustodyConfig struct {
 	JWTToken  string `json:"jwt_token,omitempty"`
 
 	// Chain-specific
-	ChainID         string `json:"chain_id,omitempty"`         // For EVM
-	ContractAddress string `json:"contract_address,omitempty"` // For tokens
-	Decimals        int    `json:"decimals"`
+	ChainID string `json:"chain_id,omitempty"` // For EVM
 
 	// Deposit
-	ConfirmationsRequired int            `json:"confirmations_required"`
-	MinDepositAmount      shared.Decimal `json:"min_deposit_amount"`
+	ConfirmationsRequired int `json:"confirmations_required"`
 
 	// Withdrawal
-	MinWithdrawalAmount shared.Decimal `json:"min_withdrawal_amount"`
-	MaxWithdrawalAmount shared.Decimal `json:"max_withdrawal_amount"`
-	DefaultFeeLevel     FeeLevel       `json:"default_fee_level"`
-	FeeAssetID          *shared.UUID   `json:"fee_asset_id,omitempty"` // For paying fees in different asset
+	DefaultFeeLevel FeeLevel `json:"default_fee_level"`
 
 	// Hot/Cold wallet
 	HotWalletAddress  string `json:"hot_wallet_address"`
@@ -276,8 +273,8 @@ type SettlementInstruction struct {
 	ToSubAccount   *shared.UUID `json:"to_sub_account,omitempty"`
 
 	// Asset & amount
-	AssetID shared.UUID    `json:"asset_id"`
-	Amount  shared.Decimal `json:"amount"`
+	CurrencyHK shared.UUID    `json:"currency_hk"`
+	Amount     shared.Decimal `json:"amount"`
 
 	// Settlement mode
 	Mode shared.SettlementMode `json:"mode"`

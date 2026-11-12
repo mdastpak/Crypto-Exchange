@@ -33,15 +33,19 @@ func insertCurrency(t *testing.T, db *sql.DB, symbol, status string) string {
 
 func insertPair(t *testing.T, db *sql.DB, base, quote, status string) string {
 	t.Helper()
-	asset := func(symbol string) string {
-		var id string
-		require.NoError(t, db.QueryRow(`INSERT INTO assets (symbol, name, type) VALUES ($1, $1, 'COIN')
-			ON CONFLICT (symbol) DO UPDATE SET name = EXCLUDED.name RETURNING id`, symbol).Scan(&id))
-		return id
+	// A market is of two currencies (#309), created when the test has not.
+	currency := func(symbol string) string {
+		var hk string
+		err := db.QueryRow(`SELECT hk FROM currencies WHERE info->>'symbol' = $1`, symbol).Scan(&hk)
+		if errors.Is(err, sql.ErrNoRows) {
+			return insertCurrency(t, db, symbol, "approved")
+		}
+		require.NoError(t, err)
+		return hk
 	}
 	var id string
-	require.NoError(t, db.QueryRow(`INSERT INTO markets (base_asset_id, quote_asset_id, status) VALUES ($1, $2, $3) RETURNING id`,
-		asset(base), asset(quote), status).Scan(&id))
+	require.NoError(t, db.QueryRow(`INSERT INTO markets (base_currency_hk, quote_currency_hk, status) VALUES ($1, $2, $3) RETURNING id`,
+		currency(base), currency(quote), status).Scan(&id))
 	return id
 }
 

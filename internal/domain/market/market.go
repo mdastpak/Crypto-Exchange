@@ -3,15 +3,14 @@ package market
 import (
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 )
 
 // Market represents a trading market (pair of assets with trading rules)
 type Market struct {
-	ID           shared.UUID `json:"id" db:"id"`
-	BaseAssetID  shared.UUID `json:"base_asset_id" db:"base_asset_id"`
-	QuoteAssetID shared.UUID `json:"quote_asset_id" db:"quote_asset_id"`
+	ID              shared.UUID `json:"id" db:"id"`
+	BaseCurrencyHK  shared.UUID `json:"base_currency_hk" db:"base_currency_hk"`
+	QuoteCurrencyHK shared.UUID `json:"quote_currency_hk" db:"quote_currency_hk"`
 
 	// Trading parameters
 	Status       MarketStatus   `json:"status" db:"status"`
@@ -38,9 +37,9 @@ type Market struct {
 	// 24h statistics (updated periodically)
 	Stats *MarketStats `json:"stats,omitempty" db:"-"`
 
-	// Relations (populated on join)
-	BaseAsset  *asset.Asset `json:"base_asset,omitempty" db:"-"`
-	QuoteAsset *asset.Asset `json:"quote_asset,omitempty" db:"-"`
+	// The symbols of the currencies, read with the market from currencies.
+	BaseSymbol  string `json:"base_symbol,omitempty" db:"-"`
+	QuoteSymbol string `json:"quote_symbol,omitempty" db:"-"`
 
 	CreatedAt shared.Timestamp  `json:"created_at" db:"created_at"`
 	UpdatedAt shared.Timestamp  `json:"updated_at" db:"updated_at"`
@@ -94,13 +93,12 @@ type MarketStats struct {
 
 // Symbol returns the market symbol (e.g., "BTC/USDT")
 func (m *Market) Symbol() string {
-	base := "UNKNOWN"
-	quote := "UNKNOWN"
-	if m.BaseAsset != nil {
-		base = m.BaseAsset.Symbol
+	base, quote := m.BaseSymbol, m.QuoteSymbol
+	if base == "" {
+		base = "UNKNOWN"
 	}
-	if m.QuoteAsset != nil {
-		quote = m.QuoteAsset.Symbol
+	if quote == "" {
+		quote = "UNKNOWN"
 	}
 	return base + "/" + quote
 }
