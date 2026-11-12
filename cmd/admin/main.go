@@ -139,9 +139,9 @@ Row seals (see docs/data-protection.md#row-seals):
   row-seals verify                         Check every protected row now, as the server's verifier does.
 
 Personal fields (see docs/data-protection.md#field-encryption):
-  fields status    Count the rows to encrypt, or to encrypt again with the current keys.
-  fields rekey     Encrypt them now, as the server's job does every hour.
-  fields decrypt   Write back the plaintext of the fields stored only encrypted, before the
+  fields status    Count the rows still in plaintext, or encrypted with an older key.
+  fields rekey     Encrypt them now and empty their plaintext, as the server's job does every hour.
+  fields decrypt   Write back the plaintext of the fields, with the servers stopped, before the
                    down migration of 16_encrypt_personal_fields.
 
 Backups and restores (read only; exit status 1 when a check fails; see docs/disaster-recovery.md):

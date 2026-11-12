@@ -64,25 +64,36 @@ type Execer interface {
 }
 
 // EncryptContact writes the ciphertext and the blind index of the contact
-// id, of contactType and value, with the active cipher, in the transaction
-// of the write of its plaintext. Without data keys, which only development
-// allows, it writes nothing: the row keeps its plaintext only, until the
-// rekey job encrypts it. The caller seals the row after.
+// id, of contactType and value, with the active cipher, and empties its
+// plaintext, in the transaction of the write of the plaintext (#140). The
+// plaintext is written first so that user_contacts_value_unique still
+// compares it with the rows that hold only plaintext, and the blind index
+// then with the rows that hold only ciphertext. Without data keys, which
+// only development allows, it writes nothing: the row keeps its plaintext
+// only, until the rekey job encrypts it. The caller seals the row after.
 func EncryptContact(ctx context.Context, q Execer, id int64, contactType, value string) error {
-	c := field.Active()
-	if c == nil {
+	if field.Active() == nil {
 		return nil
 	}
-	sealed, err := c.Seal(ContactPlace(id), value)
+	sealed, idx, err := sealContact(id, contactType, value)
 	if err != nil {
 		return err
 	}
-	idx, err := c.Index(contactDomain(contactType), FoldContact(value))
-	if err != nil {
-		return err
-	}
-	_, err = q.ExecContext(ctx, `UPDATE user_contacts SET value_enc = $2, value_bidx = $3 WHERE id = $1`, id, sealed, idx)
+	_, err = q.ExecContext(ctx, `UPDATE user_contacts SET value = NULL, value_enc = $2, value_bidx = $3 WHERE id = $1`, id, sealed, idx)
 	return err
+}
+
+// sealContact returns the ciphertext and the blind index of the contact id,
+// of contactType and value, with the active cipher.
+func sealContact(id int64, contactType, value string) (sealed, idx []byte, err error) {
+	c := field.Active()
+	if sealed, err = c.Seal(ContactPlace(id), value); err != nil {
+		return nil, nil, err
+	}
+	if idx, err = c.Index(contactDomain(contactType), FoldContact(value)); err != nil {
+		return nil, nil, err
+	}
+	return sealed, idx, nil
 }
 
 // OpenContact returns the value of the contact id from its plaintext and
@@ -165,4 +176,15 @@ func OpenNames(userHK string, plain Names, sealed SealedNames) (Names, error) {
 		return Names{}, err
 	}
 	return n, nil
+}
+
+// StoredNames returns what a write of the names n of the user userHK
+// stores: their ciphertext, and no plaintext, with the active cipher (#140),
+// or their plaintext without data keys, which only development allows.
+func StoredNames(userHK string, n Names) (Names, SealedNames, error) {
+	if field.Active() == nil {
+		return n, SealedNames{}, nil
+	}
+	sealed, err := SealNames(userHK, n)
+	return Names{}, sealed, err
 }

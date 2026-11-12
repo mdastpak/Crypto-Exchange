@@ -63,11 +63,12 @@ func anyName(cond func(column string) string) string {
 var (
 	rekeyPass = fieldsPass{
 		contacts: func(sealing, indexing int) string {
-			return `c.value_enc IS NULL OR ` + stale("c.value_enc", sealing) + ` OR ` + stale("c.value_bidx", indexing)
+			// A row without ciphertext has plaintext, by a check.
+			return `c.value IS NOT NULL OR ` + stale("c.value_enc", sealing) + ` OR ` + stale("c.value_bidx", indexing)
 		},
 		users: func(sealing, _ int) string {
 			return anyName(func(column string) string {
-				return fmt.Sprintf("(u.%[1]s IS NOT NULL AND u.%[1]s_enc IS NULL) OR %[2]s", column, stale("u."+column+"_enc", sealing))
+				return fmt.Sprintf("u.%[1]s IS NOT NULL OR %[2]s", column, stale("u."+column+"_enc", sealing))
 			})
 		},
 	}
@@ -82,13 +83,13 @@ var (
 	}
 )
 
-// RekeyFields encrypts the personal fields that are stored in plaintext
-// only (#140), encrypts again the ones sealed with an older field-enc key,
-// and indexes again the contacts indexed with an older blind-index key, so
-// that the older versions can be retired. It reads the rows in batches,
-// each in a transaction of its own, checks their seals before it writes,
-// and seals them again after. It leaves the plaintext as it is: the release
-// after the first one of #140 empties it.
+// RekeyFields encrypts the personal fields that are still stored in
+// plaintext (#140), and empties the plaintext, which the first release of
+// #140 kept next to the ciphertext. It also encrypts again the fields sealed
+// with an older field-enc key, and indexes again the contacts indexed with
+// an older blind-index key, so that the older versions can be retired. It
+// reads the rows in batches, each in a transaction of its own, checks their
+// seals before it writes, and seals them again after.
 //
 // Rows that a run on another instance holds are skipped; that run handles
 // them. Without data keys it returns field.ErrNoCipher.
@@ -100,7 +101,8 @@ func RekeyFields(ctx context.Context, conn *sql.DB) (FieldsReport, error) {
 // stored only encrypted, as a later release of #140 stores them, and
 // encrypts them again with the current keys. It is the step before the
 // down migration of 16_encrypt_personal_fields, which refuses to drop the
-// ciphertext while a value has no plaintext. Without data keys it returns
+// ciphertext while a value has no plaintext. Stop the servers first: their
+// job empties the plaintext again. Without data keys it returns
 // field.ErrNoCipher.
 func DecryptFields(ctx context.Context, conn *sql.DB) (FieldsReport, error) {
 	return runFields(ctx, conn, decryptPass)
@@ -185,11 +187,17 @@ func contactsBatch(ctx context.Context, conn *sql.DB, where string, plaintext bo
 			continue
 		}
 		if plaintext {
-			if _, err := tx.ExecContext(ctx, `UPDATE user_contacts SET value = $2 WHERE id = $1`, r.id, value); err != nil {
+			// The plaintext, with a new ciphertext, so that the trigger of
+			// a plaintext written alone keeps them both.
+			sealed, idx, err := sealContact(r.id, r.typ, value)
+			if err != nil {
 				return 0, false, err
 			}
-		}
-		if err := EncryptContact(ctx, tx, r.id, r.typ, value); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE user_contacts SET value = $2, value_enc = $3, value_bidx = $4 WHERE id = $1`,
+				r.id, value, sealed, idx); err != nil {
+				return 0, false, err
+			}
+		} else if err := EncryptContact(ctx, tx, r.id, r.typ, value); err != nil {
 			return 0, false, err
 		}
 		if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, "id = $1", r.id); err != nil {
@@ -265,7 +273,8 @@ func usersBatch(ctx context.Context, conn *sql.DB, where string, plaintext bool,
 				first_name_enc = $5, last_name_enc = $6, display_name_enc = $7 WHERE hk = $1`,
 				r.hk, names.First, names.Last, names.Display, sealed.First, sealed.Last, sealed.Display)
 		} else {
-			_, err = tx.ExecContext(ctx, `UPDATE users SET first_name_enc = $2, last_name_enc = $3, display_name_enc = $4 WHERE hk = $1`,
+			_, err = tx.ExecContext(ctx, `UPDATE users SET first_name = NULL, last_name = NULL, display_name = NULL,
+				first_name_enc = $2, last_name_enc = $3, display_name_enc = $4 WHERE hk = $1`,
 				r.hk, sealed.First, sealed.Last, sealed.Display)
 		}
 		if err != nil {
@@ -302,8 +311,8 @@ func checked(ctx context.Context, t *rowseal.Table, r *rowseal.Row, report *Fiel
 // fields RekeyFields would still write, and the rows whose plaintext is
 // gone.
 type FieldsStatus struct {
-	// ContactsToRekey and UsersToRekey are stored in plaintext only, or
-	// with an older key version.
+	// ContactsToRekey and UsersToRekey still hold plaintext, or a value of
+	// an older key version.
 	ContactsToRekey, UsersToRekey int64
 	// ContactsEncryptedOnly and UsersEncryptedOnly have no plaintext.
 	ContactsEncryptedOnly, UsersEncryptedOnly int64

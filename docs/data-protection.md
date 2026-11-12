@@ -6,7 +6,7 @@ A crypto exchange holds identity documents and money, so access to its database 
 | --- | --- |
 | Key management: data-protection keys wrapped by a key-encryption key (KEK) in a key management service | Implemented ([#138](https://github.com/mdastpak/Crypto-Exchange/issues/138)), described here |
 | Row seals: a keyed MAC over each protected row, so that a change made outside the backend is detected | First step implemented ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)): accounts, contacts, and sessions; see [row seals](#row-seals) |
-| Field encryption: personal, identity, and financial fields stored as ciphertext, with blind indexes for lookups | First release implemented ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)): contacts and names, written in plaintext and encrypted; see [field encryption](#field-encryption) |
+| Field encryption: personal, identity, and financial fields stored as ciphertext, with blind indexes for lookups | Implemented for the contacts and names ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)): stored encrypted only, with data keys; dropping their plaintext columns is [#355](https://github.com/mdastpak/Crypto-Exchange/issues/355); see [field encryption](#field-encryption) |
 
 The data keys also protect the authenticator secrets of administrators (`users.totp_secret`, sealed with `field-enc`) and the sign-in codes in Redis (`otp-mac`), and nothing else does: no secret in the configuration can read or write either. Release mode therefore refuses to start without `keys.provider`. In development without it, sign-in codes are protected by a random secret of the process, so only that process verifies them, and admin sign-in is disabled. The first use was the secret of HMAC API keys, which is stored sealed with a `field-enc` key ([#45](https://github.com/mdastpak/Crypto-Exchange/issues/45)). The API does not issue API keys yet ([#63](https://github.com/mdastpak/Crypto-Exchange/issues/63)). Until it does, the server loads the keys when a provider is configured; without keys, which only development allows, rows are not sealed and personal fields are not encrypted.
 
@@ -197,14 +197,13 @@ A lookup compares the blind indexes of the contact under every loaded version of
 
 A sign-in also opens the ciphertext of the contact that the lookup found and compares it with the contact that was typed. A blind index copied onto the row of another account therefore signs in to no account, even with the row seals off.
 
-### Two releases
+### Steps
 
-The plaintext goes in two releases, so that instances of the previous release keep working during a rolling deploy (expand, then contract):
+The plaintext goes in steps, so that the instances of the previous release keep working during a rolling deploy (expand, then contract):
 
-1. **This release** adds the columns of migration 16. It writes each value both in plaintext and encrypted, reads the ciphertext first, and finds contacts by their blind index or their plaintext. A job encrypts the rows written before, on every instance, at startup and every hour; `admin fields rekey` runs it at once, and `admin fields status` counts what is left. An instance of the previous release writes only the plaintext: a trigger then drops the ciphertext and the blind index of that row, which no longer match it, and the job encrypts the new value. **The plaintext stays in the tables until the next release.**
-2. **The next release** stops writing the plaintext, empties it, and needs data keys in development too. Upgrade through this release, and let the job finish, before that one.
-
-The plaintext columns are dropped after that.
+1. **The first release** ([PR #354](https://github.com/mdastpak/Crypto-Exchange/pull/354)) added the columns of migration 16. It writes each value both in plaintext and encrypted, reads the ciphertext first, and finds contacts by their blind index or their plaintext. An instance of an earlier release writes only the plaintext: a trigger then drops the ciphertext and the blind index of that row, which no longer match it, and the job encrypts the new value.
+2. **The current release** stores the values encrypted only. A write puts the plaintext in first, so that `user_contacts_value_unique` still compares a new contact with the rows that hold only plaintext, and empties it in the same transaction. A job on every instance, at startup and every hour, encrypts the rows written before and empties their plaintext. `admin fields rekey` runs it at once, and `admin fields status` counts what is left. Reads and lookups still fall back to the plaintext of the rows that it has not reached yet. **Upgrade through the first release before this one:** an instance of an earlier release cannot read a value stored encrypted only.
+3. **A later release** needs data keys in development too, and drops the plaintext columns, the trigger, and the fallbacks ([#355](https://github.com/mdastpak/Crypto-Exchange/issues/355)).
 
 Without data keys, which only development allows, the values stay in plaintext only, and the job encrypts them once keys are configured.
 
@@ -214,19 +213,19 @@ After a rotation of `field-enc` or `blind-index` (see [rotating a data key](#rot
 
 ### Down path
 
-The down migration of 16 refuses to drop the ciphertext while a value has no plaintext, as the next release stores them. Run `admin fields decrypt` first: it writes the plaintext of each such value back. golang-migrate marks the version as dirty after a refused migration; [force](configuration.md#postgres) it back to 16 before you run the decrypt command and migrate down again. The seals of rows that held ciphertext no longer match afterwards, since the columns they covered are gone: run `admin row-seals verify` in `report` mode to seal them again.
+The down migration of 16 refuses to drop the ciphertext while a value has no plaintext, as the current release stores them. Stop the servers, whose job would empty the plaintext again, and run `admin fields decrypt`: it writes the plaintext of each value back. golang-migrate marks the version as dirty after a refused migration; [force](configuration.md#postgres) it back to 16 before you run the decrypt command and migrate down again. The seals of rows that held ciphertext no longer match afterwards, since the columns they covered are gone: run `admin row-seals verify` in `report` mode to seal them again.
 
 ### What is not encrypted
 
 - **Amounts and balances.** Encrypting them would stop SQL arithmetic, constraints such as `available >= 0`, and reports. They stay in plaintext, protected by the row seals, the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)), and least-privilege [database roles](configuration.md#database-roles). Hiding them too would move all arithmetic into the ledger service; that is a decision for #60.
 - **KYC records, deposit addresses, and withdrawal destinations.** Nothing writes them yet; the features that do will store them encrypted, the documents in object storage with a key per file. The secrets of API keys and the national IDs are already sealed.
-- **The audit log.** Its events keep contacts masked and, from this release, the names too. Their client addresses and user agents are still in plaintext ([#352](https://github.com/mdastpak/Crypto-Exchange/issues/352)).
+- **The audit log.** Its events keep contacts masked and, since the first release of field encryption, the names too. Their client addresses and user agents are still in plaintext ([#352](https://github.com/mdastpak/Crypto-Exchange/issues/352)).
 - **What the server shows.** The API returns decrypted values to the user they belong to, masked where the API masks them. Support tools will read through admin APIs that record each read of personal data ([#51](https://github.com/mdastpak/Crypto-Exchange/issues/51)).
 
 ### Logs, errors, and backups
 
 - Errors of the encryption name the place of a value, such as `user_contacts.value_enc:42`, never the value, and the logs never hold a decrypted value. The [log redaction](observability.md) also masks contacts that other code logs.
-- **Backups.** Backups and WAL archives taken before the next release empties the plaintext still hold it. Keep them no longer than the retention of [disaster-recovery.md](disaster-recovery.md) requires, and then delete them. A later backup needs its KEK backup to be read at all: losing the KEK loses the [encrypted fields](#losing-the-kek).
+- **Backups.** Backups and WAL archives taken before the job emptied the plaintext still hold it. Keep them no longer than the retention of [disaster-recovery.md](disaster-recovery.md) requires, and then delete them. A later backup needs its KEK backup to be read at all: losing the KEK loses the [encrypted fields](#losing-the-kek).
 
 ## Setup
 
@@ -290,9 +289,9 @@ docker compose run --rm --no-deps --entrypoint /app/admin app -config config/con
 | `keys list` | Purpose, version, state (`current`, `readable`, or `retired`), KEK, creation time, and retirement time of every key |
 | `keys rotate -purpose <purpose>` | Creates the next version of one purpose |
 | `keys retire -purpose <purpose> -version <n>` | Stops loading one version. The newest version cannot be retired, nor a version that data still uses: a `row-mac` version until the verifier has moved the rows of the sealed tables, an `audit-mac` version that seals an event, for good, and a `field-enc` or `blind-index` version that a sealed value or a blind index holds. |
-| `fields status` | Counts the rows whose personal fields are still to encrypt, or to encrypt again with the current keys, and the rows stored encrypted only |
-| `fields rekey` | Encrypts them now, as the server's job does every hour |
-| `fields decrypt` | Writes back the plaintext of the fields stored encrypted only, before the [down migration](#down-path) of 16 |
+| `fields status` | Counts the rows whose personal fields are still in plaintext, or encrypted with an older key, and the rows stored encrypted only |
+| `fields rekey` | Encrypts them now and empties their plaintext, as the server's job does every hour |
+| `fields decrypt` | Writes back the plaintext of every personal field, with the servers stopped, before the [down migration](#down-path) of 16 |
 | `keys rewrap` | Unwraps every key, including retired ones, and wraps it again with the newest version of the KEK. The keys themselves do not change. |
 
 Every change, and the creation of the first keys by the server, records a `data_key.*` event in the audit log, in its transaction, with the key's purpose, version, and KEK, never the key. Pass `-operator <name>` before the command to name yourself in the event ([#195](https://github.com/mdastpak/Crypto-Exchange/issues/195)).

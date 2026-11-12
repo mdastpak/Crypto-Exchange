@@ -39,9 +39,12 @@ func TestRun_Fields(t *testing.T) {
 	withKeys := writeLocalKeysConfig(t)
 	code, _, stderr = runCLI(t, append(withKeys, "create", "-email", "admin@example.com")...)
 	require.Equal(t, 0, code, stderr)
-	var sealed []byte
-	require.NoError(t, conn.QueryRow(`SELECT value_enc FROM user_contacts WHERE value = 'admin@example.com'`).Scan(&sealed))
-	assert.NotNil(t, sealed, "the address of the administrator is encrypted")
+	encryptedOnly := func() int {
+		var n int
+		require.NoError(t, conn.QueryRow(`SELECT COUNT(*) FROM user_contacts WHERE value IS NULL AND value_enc IS NOT NULL`).Scan(&n))
+		return n
+	}
+	assert.Equal(t, 1, encryptedOnly(), "the address of the administrator is stored encrypted only")
 
 	// A contact written without keys, as an earlier release wrote it.
 	_, err = conn.Exec(`WITH u AS (INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk)
@@ -54,11 +57,11 @@ func TestRun_Fields(t *testing.T) {
 	code, stdout, stderr = runCLI(t, append(withKeys, "fields", "rekey")...)
 	require.Equal(t, 0, code, stderr)
 	assert.Contains(t, stdout, "Encrypted 1 contacts and 0 users")
-	require.NoError(t, conn.QueryRow(`SELECT value_enc FROM user_contacts WHERE value = 'old@example.com'`).Scan(&sealed))
-	assert.NotNil(t, sealed)
+	assert.Equal(t, 2, encryptedOnly())
 	code, stdout, _ = runCLI(t, append(withKeys, "fields", "status")...)
 	require.Equal(t, 0, code)
-	assert.Contains(t, stdout, "To encrypt, or to encrypt again with the current keys: 0 contacts, 0 users.")
+	assert.Contains(t, stdout, "Still in plaintext, or encrypted with an older key: 0 contacts, 0 users.")
+	assert.Contains(t, stdout, "Stored encrypted only, without plaintext: 2 contacts, 0 users.")
 
 	code, _, stderr = runCLI(t, append(withKeys, "keys", "rotate", "-purpose", "field-enc")...)
 	require.Equal(t, 0, code, stderr)
