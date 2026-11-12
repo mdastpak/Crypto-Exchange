@@ -36,7 +36,7 @@ const schemaName = "public"
 // refuse UPDATE, DELETE, and truncation to every role as well; withholding
 // the privileges stops the server even before the triggers run, and keeps
 // the protection should a trigger ever be dropped.
-var AppendOnlyTables = []string{"audit_events"}
+var AppendOnlyTables = []string{"audit_events", "ledger_entries", "ledger_postings", "balance_changes", "balance_snapshots"}
 
 // DeletableTables are the only tables whose rows the runtime role may
 // delete (#248): outbox events, which are transport and are deleted once

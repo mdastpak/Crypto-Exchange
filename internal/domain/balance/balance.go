@@ -22,10 +22,13 @@
 //	TRADE_DEBIT                     -a                -a   (asset given in a trade)
 //	FEE                             -a                -a   (fee, locked with the order)
 //	WITHDRAWAL                      -a                -a   (withdrawal completed)
+//	TRANSFER_OUT                    -a                -a   (sent to another account)
+//	TRANSFER_IN          +a                           +a   (received from another account)
 //
-// Funds therefore only enter the total through a credited deposit or a trade
-// credit, and only leave it from the locked funds. Each transition returns
-// a BalanceChangeEvent, from which the ledger (#60) records the change.
+// Funds therefore only enter the total through a credited deposit, a trade
+// credit, or a transfer in, and only leave it from the locked funds. Each
+// transition returns a BalanceChangeEvent, from which the ledger (#60)
+// records the change.
 package balance
 
 import (
@@ -75,6 +78,8 @@ var transitions = map[BalanceChangeType]delta{
 	BalanceChangeTradeDebit:    {locked: -1},
 	BalanceChangeFee:           {locked: -1},
 	BalanceChangeWithdrawal:    {locked: -1},
+	BalanceChangeTransferOut:   {locked: -1},
+	BalanceChangeTransferIn:    {available: +1},
 }
 
 // TotalEffect is the sign of a transition's effect on the total: +1 for
@@ -225,6 +230,8 @@ const (
 	BalanceChangeTradeDebit    BalanceChangeType = "TRADE_DEBIT"     // Asset given in a trade, from the lock
 	BalanceChangeFee           BalanceChangeType = "FEE"             // Fee charged, from the lock
 	BalanceChangeWithdrawal    BalanceChangeType = "WITHDRAWAL"      // Withdrawal completed, from the lock
+	BalanceChangeTransferOut   BalanceChangeType = "TRANSFER_OUT"    // Sent to another account, from the lock
+	BalanceChangeTransferIn    BalanceChangeType = "TRANSFER_IN"     // Received from another account
 )
 
 func (b BalanceChangeType) String() string {
