@@ -87,7 +87,7 @@ func memoryTokenBucketMiddleware(rate, burst int, keyFunc func(*gin.Context) str
 	return func(c *gin.Context) {
 		allowed, remaining, wait := buckets.take(keyFunc(c), time.Now())
 		if !allowed {
-			rejectRateLimited(c, burst, wait)
+			rejectRateLimited(c, "rest-probe", burst, wait)
 			return
 		}
 		c.Header("X-RateLimit-Limit", strconv.Itoa(burst))

@@ -65,6 +65,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/logging"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -152,6 +153,12 @@ Schema (see docs/configuration.md#database-roles):
 func init() { time.Local = time.UTC }
 
 func main() {
+	// The log lines of the commands are structured (#50): records in text
+	// form, with secrets redacted, on stderr, apart from the output of the
+	// command on stdout.
+	if logger, err := logging.New(logging.Options{Format: "text", Output: os.Stderr}); err == nil {
+		logging.Install(logger)
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 

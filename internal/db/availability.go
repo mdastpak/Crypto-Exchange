@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/tracing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -71,11 +72,13 @@ func checkWritable(conn *pgx.Conn) error {
 // a node that only reads, for openPool to discard.
 type busyTracer struct{}
 
-func (busyTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
-	return ctx
+func (busyTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	// Each query is a span of the trace of its request (#50).
+	return tracing.QueryStart(ctx, data)
 }
 
 func (busyTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
+	tracing.QueryEnd(ctx, data)
 	if data.Err == nil {
 		return
 	}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/logging"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/candles"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/catalog"
@@ -68,6 +69,12 @@ func run() error {
 	config.RequireConfigFile(configFlagSet())
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
+	// Every log line is a structured record from here on (#50).
+	closeLog, err := logging.Setup(&config.Config)
+	if err != nil {
+		return fmt.Errorf("invalid logging configuration: %w", err)
+	}
+	defer closeLog()
 	if err := config.ValidateMarketWorker(); err != nil {
 		return fmt.Errorf("invalid configuration:\n%v", err)
 	}

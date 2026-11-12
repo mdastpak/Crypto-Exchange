@@ -565,6 +565,23 @@ The two `auth` limits are counted in fixed windows of one minute and one hour, w
 
 Clients behind one address, such as a carrier-grade NAT or an office network, share these budgets, and so do the IPv6 clients of one prefix. Size `auth.otp_requests_per_hour` for the busiest shared address you expect. Raising it does not let anyone flood a single email address or mobile number, because `otp.auth.contact_requests_per_hour` limits the codes sent to each contact.
 
+### `observability`
+
+The logs, metrics, and traces of the server ([#50](https://github.com/mdastpak/Crypto-Exchange/issues/50)); [observability.md](observability.md) describes what they hold. The market worker and `cmd/admin` write structured logs too.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `logging.level` | `info` | `debug`, `info`, `warn`, or `error`. Set it with `LOG_LEVEL`. |
+| `logging.format` | `json` | `json`, or `text` (key=value). |
+| `logging.output` | `stdout` | `stdout`, `stderr`, or `file`, at `logging.file_path`, created readable by its owner only. |
+| `metrics.enabled` | `false` | Serves the Prometheus metrics on a port of their own. |
+| `metrics.port` | `9090` | The port of the metrics, on every interface; keep it private, as the admin routes. |
+| `metrics.path` | `/metrics` | The path of the metrics on that port. |
+| `tracing.enabled` | `false` | Sends the traces with OTLP over HTTP. |
+| `tracing.endpoint` | none | The collector, such as `http://otel-collector:4318`, or a host and port with TLS. Set it with `OTEL_ENDPOINT`. Required with `tracing.enabled`. |
+| `tracing.service_name` | `crypto-exchange` | The `service.name` of the traces. |
+| `tracing.sample_rate` | `0.1` | The share of the traces kept, from 0 to 1, unless the client sends a sampled `traceparent`, which is followed. |
+
 ## Settings reserved for roadmap features
 
 The following sections are parsed, and some receive defaults, but no code uses them yet. They document the intended configuration surface of the [roadmap](https://github.com/mdastpak/Crypto-Exchange/issues/85).
@@ -578,7 +595,6 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
 | `compliance` | Sanctions providers, AML rules path (`config/aml_rules.yaml`), KYC providers | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
-| `observability` | Logging, metrics, tracing | [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50) |
 
 ## Environment variables
 
