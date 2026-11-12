@@ -251,9 +251,9 @@ func Get(ctx context.Context, db *sql.DB, userHK string) (List, error) {
 	}
 
 	rows, err = db.QueryContext(ctx, `
-		SELECT m.id, b.symbol, q.symbol, m.status::TEXT, f.created_at
+		SELECT m.id, b.info->>'symbol', q.info->>'symbol', m.status::TEXT, f.created_at
 		FROM user_favorites f JOIN markets m ON m.id = f.market_id
-		JOIN assets b ON b.id = m.base_asset_id JOIN assets q ON q.id = m.quote_asset_id
+		JOIN currencies b ON b.hk = m.base_currency_hk JOIN currencies q ON q.hk = m.quote_currency_hk
 		WHERE f.user_hk = $1 AND f.kind = 'pair' ORDER BY f.position, f.created_at`, userHK)
 	if err != nil {
 		return List{}, fmt.Errorf("failed to read the favorites: %w", err)

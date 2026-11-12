@@ -23,13 +23,13 @@ type Trade struct {
 	Quantity shared.Decimal   `json:"quantity" db:"quantity"` // Executed quantity
 
 	// Fees
-	MakerFee        shared.Decimal `json:"maker_fee" db:"maker_fee"`
-	MakerFeeAssetID shared.UUID    `json:"maker_fee_asset_id" db:"maker_fee_asset_id"`
-	MakerFeeRateBPS int            `json:"maker_fee_rate_bps" db:"maker_fee_rate_bps"`
+	MakerFee           shared.Decimal `json:"maker_fee" db:"maker_fee"`
+	MakerFeeCurrencyHK shared.UUID    `json:"maker_fee_currency_hk" db:"maker_fee_currency_hk"`
+	MakerFeeRateBPS    int            `json:"maker_fee_rate_bps" db:"maker_fee_rate_bps"`
 
-	TakerFee        shared.Decimal `json:"taker_fee" db:"taker_fee"`
-	TakerFeeAssetID shared.UUID    `json:"taker_fee_asset_id" db:"taker_fee_asset_id"`
-	TakerFeeRateBPS int            `json:"taker_fee_rate_bps" db:"taker_fee_rate_bps"`
+	TakerFee           shared.Decimal `json:"taker_fee" db:"taker_fee"`
+	TakerFeeCurrencyHK shared.UUID    `json:"taker_fee_currency_hk" db:"taker_fee_currency_hk"`
+	TakerFeeRateBPS    int            `json:"taker_fee_rate_bps" db:"taker_fee_rate_bps"`
 
 	// Settlement
 	SettlementMode shared.SettlementMode `json:"settlement_mode" db:"settlement_mode"`
@@ -68,10 +68,10 @@ func (t *Trade) IsTaker(orderID shared.UUID) bool {
 // GetFeeForOrder returns the fee paid by a specific order
 func (t *Trade) GetFeeForOrder(orderID shared.UUID) (shared.Decimal, shared.UUID) {
 	if t.IsMaker(orderID) {
-		return t.MakerFee, t.MakerFeeAssetID
+		return t.MakerFee, t.MakerFeeCurrencyHK
 	}
 	if t.IsTaker(orderID) {
-		return t.TakerFee, t.TakerFeeAssetID
+		return t.TakerFee, t.TakerFeeCurrencyHK
 	}
 	return shared.Decimal{}, shared.UUID{}
 }

@@ -55,7 +55,7 @@ flowchart TB
 | `internal/otp` | Sign-in codes: unbiased generation, Redis sessions with hashed codes and encrypted contacts, atomic attempt limits per code and per contact |
 | `internal/handlers/*` | HTTP and WebSocket handlers ([#48](https://github.com/mdastpak/Crypto-Exchange/issues/48)). Each handler depends only on interfaces of its stores and services, declared where they are used (`deps.go` of each package), so that its tests can use fakes; the SQL is in the stores of the domain packages, such as `currencies.Store` and `internal/signin`, or, for the user routes, in `internal/handlers/user/store.go`. `internal/codestyle` fails on a handler file that imports a database or broker package. The in-memory registries of sites and locales are values. |
 | `internal/middleware` | Security headers, CORS, Redis rate limiters, validation and recovery helpers |
-| `internal/domain/*` | Exchange domain model (asset, market, order, trade, balance, account, kyc, custody, shared). It is not used by handlers yet. |
+| `internal/domain/*` | Exchange domain model (currency networks, market, order, trade, balance, account, kyc, custody, shared). It is not used by handlers yet. |
 | `internal/recovery` | Backup and restore checks ([#236](https://github.com/mdastpak/Crypto-Exchange/issues/236)): the age of the newest archived WAL against the RPO, and the verification of a restored database. See [disaster-recovery.md](disaster-recovery.md). |
 | `internal/platform` | Maintenance and feature lockdowns ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)): the controls in PostgreSQL, the check that money operations make in their transaction, the watcher that keeps each instance's copy, and the gate of the routes. See [Platform controls](#platform-controls). |
 | `internal/geoip` | The country of a client ([#284](https://github.com/mdastpak/Crypto-Exchange/issues/284)): the country header of a trusted proxy, or a MaxMind-format database that each instance reloads when its file changes. See [geoip.md](geoip.md). |
@@ -129,7 +129,7 @@ A balance (`internal/domain/balance`) is a state machine of one asset in one acc
 
 Funds enter the total only through a credited deposit or a trade credit, and leave it only from locked funds. A property test applies random sequences of transitions and checks that the total changes by exactly the funds that entered or left. Each transition returns a change event with the components before and after and the version, which a repository uses for optimistic locking (`UPDATE ... WHERE version = $n`). The database enforces the same invariants (migration 17). Where funds are held on chain is tracked per wallet by custody, not in the user's balance.
 
-Currencies still use the legacy JSONB table next to the typed `assets` table. Unifying them is tracked in [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57).
+Every asset of the exchange is a row of `currencies`, and how it moves on each network a row of `currency_networks`: balances, markets, orders, trades, custody, restrictions, favorites, and delistings all reference a currency by its `hk`. See [the asset registry](#the-asset-registry).
 
 #### The shared currency list
 
@@ -292,6 +292,7 @@ transport (HTTP, WebSocket)  ->  services (business logic)  ->  repositories and
 | Event delivery | A transactional outbox for every event: written in the transaction of its change and relayed with publisher confirms, retries, and dead letters ([#89](https://github.com/mdastpak/Crypto-Exchange/issues/89), [#171](https://github.com/mdastpak/Crypto-Exchange/issues/171), [#192](https://github.com/mdastpak/Crypto-Exchange/issues/192)) |
 | WebSocket scaling | Per-instance consumers and channel-based subscriptions ([#66](https://github.com/mdastpak/Crypto-Exchange/issues/66)) |
 | Authentication | JWT for interactive users. HMAC and Ed25519 API keys for programmatic access ([#64](https://github.com/mdastpak/Crypto-Exchange/issues/64)). |
+| Assets | One registry: every asset is a currency, and every reference to an asset is to `currencies(hk)`, or to `currency_networks` for a network. See [the asset registry](#the-asset-registry) ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309)). |
 | Configuration | YAML plus environment variables, validated fail-closed at startup: release mode is the default and refuses unsafe settings (`internal/config/validate.go`, [#41](https://github.com/mdastpak/Crypto-Exchange/issues/41), [#306](https://github.com/mdastpak/Crypto-Exchange/issues/306)) |
 
 ### Amounts, prices, and ratios
@@ -303,7 +304,7 @@ Decision record for [#314](https://github.com/mdastpak/Crypto-Exchange/issues/31
 **Decision.**
 
 - Every amount (balances and their changes, order and trade quantities, fees, deposits, withdrawals, limits), price, rate, and ratio of the exchange's tables is an `exact_decimal`: a PostgreSQL domain over `NUMERIC` without a fixed scale, so a value is stored exactly as written. It refuses, with a check violation instead of rounding, a value with more than 36 decimals or 42 integer digits.
-- An asset has at most 36 decimals: `assets.decimals` and `custody_configs.decimals` are checked to be from 0 to 36, and the asset registry refuses more. Every unit of every listed asset therefore fits, including the smallest.
+- An asset has at most 36 decimals: `currency_networks.decimals` is checked to be from 0 to 36 ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309)), and the registry file refuses more. Every unit of every listed asset therefore fits, including the smallest.
 - Amounts are kept in whole units of the asset (1.5 BTC is `1.5`), not in base units. Code that writes an amount checks that its scale is at most the asset's `decimals`, and rounds explicitly, in the direction that favors the books (down for what a user receives, up for what a user pays), where a computation such as a price times a quantity or a conversion ratio gives more decimals. The rounding of a conversion is recorded as dust, as [currency migrations](api.md#currency-migrations) will.
 - In Go, amounts are `shared.Decimal` (`internal/domain/shared`), which wraps `shopspring/decimal` and adds the database and JSON encodings; JSON carries amounts as strings. Code outside the domain, such as market data, uses `shopspring/decimal` directly.
 - Third-party figures of market data (`market_*` tables, [market-data.md](market-data.md)) stay unconstrained `NUMERIC`: no balance is computed from them. `risk_score` is a score, not money.
@@ -311,3 +312,53 @@ Decision record for [#314](https://github.com/mdastpak/Crypto-Exchange/issues/31
 **Alternatives.** Integers in base units (`NUMERIC(78, 0)`, which holds any `uint256`) avoid fractions in the books, but need a conversion at every edge and an asset for every column, including limits and notional values that have none; whole units with an exact type and an explicit scale check give the same exactness. Keeping `NUMERIC(36, 18)` with a limit of 18 decimals would have refused assets such as NEAR.
 
 **Consequences.** `TestSchema_EveryAmountIsExact` fails on a money column of another type, and `TestExactDecimal_HoldsTheSmallestUnitOfEveryAsset` stores 1 yoctoNEAR without loss. A new money column is an `exact_decimal`.
+
+### The asset registry
+
+Decision record for [#309](https://github.com/mdastpak/Crypto-Exchange/issues/309), accepted 2026-11-12.
+
+**Context.** The code had four models of "an asset the exchange knows about", and each feature used the nearest one:
+
+| Model | Used by |
+| --- | --- |
+| The `currencies` table | The admin API, the public list and its cache, restrictions, favorites of currencies, delistings, symbols, and migrations |
+| The `assets` table | Markets, balances, orders, trades, and custody, all of which reference it, though no code wrote it |
+| `config/assets.yaml`, checked by `internal/assetregistry` | Nothing at runtime |
+| `market_assets`, the market data catalog | The market data API and the blog feed |
+
+So one coin had two rows. A user's favorite BTC and favorite BTC/USDT meant two different BTC rows. A hold on a currency would not have reached the balances the ledger keeps, and a delisting would have converted balances keyed by another table. Two tables could also disagree about a coin's contract or decimals, which on an exchange loses funds.
+
+**Decision.**
+
+- **`currencies` is the one registry** of the assets the exchange supports. It has the lifecycle, the versions, the audit log, and the cache. The following reference `currencies(hk)`, as restrictions, favorites, delistings, symbols, and migrations already did:
+  - markets (base and quote);
+  - balances, their changes, and their snapshots;
+  - the fees of orders and trades;
+  - deposit addresses, deposits, withdrawals, and settlements.
+
+  Migration 17 drops `assets` and its types.
+- **`currency_networks` holds how a currency moves on each network**, one row per currency and network. USDT is one currency and one balance, with a network on TRON and one on Ethereum. A row has:
+  - the contract, unique on its network regardless of case, and none for the native asset of the network;
+  - the decimals, from 0 to 36;
+  - the custody mode, and whether deposits and withdrawals are open;
+  - the limits and the withdrawal fee;
+  - the currency that pays the network fee, whether a deposit needs a tag, and the explorer.
+
+  In Go it is `currency.Network` (`internal/domain/currency`).
+- **`custody_configs` holds how a custody provider reaches a network:** endpoints, credentials, confirmations, wallets, and polling. It references the network of the currency, `(currency_hk, network)`, and has no contract, decimals, limits, or fee currency of its own.
+- **The market data catalog stays apart.** `market_assets` and its tables are an unverified global list, linked to a currency by one column, `market_assets.currency_hk`, as before.
+- **`config/assets.yaml` becomes an import format.** It is the file of currencies and networks that `internal/assetregistry` checks: formats and checksums of contracts, one row per network, limits. The second step of #309 imports it into `currencies`, `currency_networks`, and `markets` through those checks; until then nothing loads it.
+- **The `contract` in a currency's `info`** is what the currency API shows. Custody reads only the contracts of `currency_networks`.
+
+**Alternatives.** Making `assets` the registry, and moving the features built on `currencies` onto it, was rejected:
+
+- `currencies` has what a registry needs and `assets` lacked: the lifecycle, the versions, the audit log, and the cache;
+- every feature that exists runs on `currencies`, while no code wrote `assets`.
+
+A mapping table between the two would have kept both, and kept them able to disagree.
+
+**Consequences.**
+
+- **The guard.** `TestSchema_AssetsHaveOneRegistry` fails on a table of assets outside the market data catalog, and on a foreign key that names an asset or a currency but references neither `currencies` nor `currency_networks`.
+- **The migration** refuses to run while a table it moves holds rows. None does, since nothing wrote them; the migration does not guess which currency a row meant.
+- **Later features** build on `currency_hk`, and on `(currency_hk, network)` where a network matters: the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)), custody, deposits, and withdrawals.

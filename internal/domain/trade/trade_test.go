@@ -60,32 +60,32 @@ func TestTrade_IsTaker(t *testing.T) {
 func TestTrade_GetFeeForOrder(t *testing.T) {
 	makerOrderID := shared.NewUUID()
 	takerOrderID := shared.NewUUID()
-	makerFeeAssetID := shared.NewUUID()
-	takerFeeAssetID := shared.NewUUID()
+	makerFeeCurrencyHK := shared.NewUUID()
+	takerFeeCurrencyHK := shared.NewUUID()
 
 	trade := &Trade{
-		MakerOrderID:    makerOrderID,
-		TakerOrderID:    takerOrderID,
-		MakerFee:        shared.MustNewDecimalFromString("2.5"),
-		MakerFeeAssetID: makerFeeAssetID,
-		TakerFee:        shared.MustNewDecimalFromString("5.0"),
-		TakerFeeAssetID: takerFeeAssetID,
+		MakerOrderID:       makerOrderID,
+		TakerOrderID:       takerOrderID,
+		MakerFee:           shared.MustNewDecimalFromString("2.5"),
+		MakerFeeCurrencyHK: makerFeeCurrencyHK,
+		TakerFee:           shared.MustNewDecimalFromString("5.0"),
+		TakerFeeCurrencyHK: takerFeeCurrencyHK,
 	}
 
 	// Maker fee
-	fee, assetID := trade.GetFeeForOrder(makerOrderID)
+	fee, currencyHK := trade.GetFeeForOrder(makerOrderID)
 	assert.Equal(t, shared.MustNewDecimalFromString("2.5").String(), fee.String())
-	assert.Equal(t, makerFeeAssetID, assetID)
+	assert.Equal(t, makerFeeCurrencyHK, currencyHK)
 
 	// Taker fee
-	fee, assetID = trade.GetFeeForOrder(takerOrderID)
+	fee, currencyHK = trade.GetFeeForOrder(takerOrderID)
 	assert.Equal(t, shared.MustNewDecimalFromString("5").String(), fee.String())
-	assert.Equal(t, takerFeeAssetID, assetID)
+	assert.Equal(t, takerFeeCurrencyHK, currencyHK)
 
 	// Unknown order
-	fee, assetID = trade.GetFeeForOrder(shared.NewUUID())
+	fee, currencyHK = trade.GetFeeForOrder(shared.NewUUID())
 	assert.True(t, fee.IsZero())
-	assert.True(t, assetID.IsZero())
+	assert.True(t, currencyHK.IsZero())
 }
 
 func TestTradeSide_String(t *testing.T) {
@@ -168,9 +168,9 @@ func TestTrade_WithMarketAndOrders(t *testing.T) {
 	trade := &Trade{
 		MarketID: shared.NewUUID(),
 		Market: &market.Market{
-			ID:           shared.NewUUID(),
-			BaseAssetID:  shared.NewUUID(),
-			QuoteAssetID: shared.NewUUID(),
+			ID:              shared.NewUUID(),
+			BaseCurrencyHK:  shared.NewUUID(),
+			QuoteCurrencyHK: shared.NewUUID(),
 		},
 		MakerOrderID: makerOrderID,
 		MakerOrder: &order.Order{

@@ -323,7 +323,9 @@ func (d Decimal) InexactFloat64() float64 {
 	return f
 }
 
-// AssetType represents the type of asset
+// AssetType is the kind of an asset in the registry file, config/assets.yaml
+// (#309). The database has no type of its own for it: a currency records
+// whether it is fiat and whether it is a token.
 type AssetType string
 
 const (
@@ -338,7 +340,8 @@ func (a AssetType) String() string {
 	return string(a)
 }
 
-// AssetStatus represents the operational status of an asset
+// AssetStatus is the status of an asset in the registry file,
+// config/assets.yaml (#309).
 type AssetStatus string
 
 const (

@@ -59,8 +59,6 @@ var goEnums = map[string][]string{
 
 	"market_status": values(market.MarketStatusActive, market.MarketStatusInactive, market.MarketStatusMaintenance, market.MarketStatusSuspended, market.MarketStatusDelisted),
 
-	"asset_type":      values(shared.AssetTypeFiat, shared.AssetTypeCoin, shared.AssetTypeToken, shared.AssetTypeStable, shared.AssetTypeWrapped),
-	"asset_status":    values(shared.AssetStatusActive, shared.AssetStatusInactive, shared.AssetStatusDeprecated, shared.AssetStatusDelisted),
 	"order_side":      values(shared.OrderSideBuy, shared.OrderSideSell),
 	"order_type":      values(shared.OrderTypeMarket, shared.OrderTypeLimit, shared.OrderTypeStop, shared.OrderTypeStopLimit),
 	"order_status":    values(shared.OrderStatusNew, shared.OrderStatusPartiallyFilled, shared.OrderStatusFilled, shared.OrderStatusCancelled, shared.OrderStatusRejected, shared.OrderStatusExpired),

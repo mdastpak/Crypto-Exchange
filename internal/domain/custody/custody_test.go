@@ -13,7 +13,7 @@ func TestDepositAddress(t *testing.T) {
 		ID:             shared.NewUUID(),
 		UserID:         shared.NewUUID(),
 		SubAccountID:   func() *shared.UUID { id := shared.NewUUID(); return &id }(),
-		AssetID:        shared.NewUUID(),
+		CurrencyHK:     shared.NewUUID(),
 		Address:        "0x1234567890abcdef",
 		Tag:            "12345",
 		DerivationPath: "m/44'/60'/0'/0/0",
@@ -29,11 +29,11 @@ func TestDepositAddress(t *testing.T) {
 
 func TestDepositAddress_Minimal(t *testing.T) {
 	addr := &DepositAddress{
-		ID:      shared.NewUUID(),
-		UserID:  shared.NewUUID(),
-		AssetID: shared.NewUUID(),
-		Address: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
-		Active:  true,
+		ID:         shared.NewUUID(),
+		UserID:     shared.NewUUID(),
+		CurrencyHK: shared.NewUUID(),
+		Address:    "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+		Active:     true,
 	}
 
 	assert.NotEmpty(t, addr.ID)
@@ -45,7 +45,7 @@ func TestDepositAddress_Minimal(t *testing.T) {
 func TestDepositStatus(t *testing.T) {
 	status := &DepositStatus{
 		TxHash:           "0xabc123...",
-		AssetID:          shared.NewUUID(),
+		CurrencyHK:       shared.NewUUID(),
 		Address:          "0x123...",
 		Amount:           shared.MustNewDecimalFromString("1.5"),
 		ConfirmedAmount:  shared.MustNewDecimalFromString("1.5"),
@@ -111,7 +111,7 @@ func TestWithdrawalRequest(t *testing.T) {
 		ID:             shared.NewUUID(),
 		UserID:         shared.NewUUID(),
 		SubAccountID:   func() *shared.UUID { id := shared.NewUUID(); return &id }(),
-		AssetID:        shared.NewUUID(),
+		CurrencyHK:     shared.NewUUID(),
 		Amount:         shared.MustNewDecimalFromString("10"),
 		Address:        "0xabcdef...",
 		Tag:            "memo123",
@@ -193,7 +193,7 @@ func TestWithdrawalStatusType_String(t *testing.T) {
 
 func TestFeeEstimate(t *testing.T) {
 	estimate := &FeeEstimate{
-		AssetID:       shared.NewUUID(),
+		CurrencyHK:    shared.NewUUID(),
 		FeeLevel:      FeeLevelNormal,
 		EstimatedFee:  shared.MustNewDecimalFromString("0.0005"),
 		EstimatedTime: "10-30 minutes",
@@ -264,7 +264,7 @@ func TestSettlementInstruction(t *testing.T) {
 		Type:       SettlementTypeTransfer,
 		FromUserID: shared.NewUUID(),
 		ToUserID:   shared.NewUUID(),
-		AssetID:    shared.NewUUID(),
+		CurrencyHK: shared.NewUUID(),
 		Amount:     shared.MustNewDecimalFromString("100"),
 		Mode:       shared.SettlementModeOffChain,
 		Status:     SettlementStatusPending,

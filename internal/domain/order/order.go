@@ -33,9 +33,9 @@ type Order struct {
 	RejectReason string             `json:"reject_reason,omitempty" db:"reject_reason"`
 
 	// Fees
-	FeeAssetID shared.UUID    `json:"fee_asset_id" db:"fee_asset_id"` // Asset to pay fees in
-	FeePaid    shared.Decimal `json:"fee_paid" db:"fee_paid"`         // Accumulated fees
-	FeeRateBPS int            `json:"fee_rate_bps" db:"fee_rate_bps"` // Applied fee rate
+	FeeCurrencyHK shared.UUID    `json:"fee_currency_hk" db:"fee_currency_hk"` // Currency to pay fees in
+	FeePaid       shared.Decimal `json:"fee_paid" db:"fee_paid"`               // Accumulated fees
+	FeeRateBPS    int            `json:"fee_rate_bps" db:"fee_rate_bps"`       // Applied fee rate
 
 	// Risk
 	ReduceOnly bool `json:"reduce_only" db:"reduce_only"` // For position reduction only

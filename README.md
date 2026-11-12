@@ -318,7 +318,7 @@ internal/currencies/    The public currency catalog: Redis cache with a PostgreS
 internal/db/            PostgreSQL and Redis clients, SQL migrations
 internal/dberr/         Busy-database refusals of a request, answered as 503 database_busy
 internal/delisting/     Delistings of currencies: lifecycle steps, applied once by every instance
-internal/domain/        Exchange domain model: asset, market, order, trade, balance,
+internal/domain/        Exchange domain model: currency, market, order, trade, balance,
                         account, kyc, custody, shared types
 internal/favorites/     Personal favorites of currencies and trading pairs
 internal/geoip/         The country of a client: trusted edge header or MaxMind-format database

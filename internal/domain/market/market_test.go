@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mdastpak/crypto-exchange/internal/domain/asset"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
 	"github.com/stretchr/testify/assert"
@@ -23,17 +22,17 @@ func TestMarket_IsActive(t *testing.T) {
 
 func TestMarket_Symbol(t *testing.T) {
 	market := &Market{
-		BaseAssetID:  shared.NewUUID(),
-		QuoteAssetID: shared.NewUUID(),
-		BaseAsset:    &asset.Asset{Symbol: "BTC"},
-		QuoteAsset:   &asset.Asset{Symbol: "USDT"},
+		BaseCurrencyHK:  shared.NewUUID(),
+		QuoteCurrencyHK: shared.NewUUID(),
+		BaseSymbol:      "BTC",
+		QuoteSymbol:     "USDT",
 	}
 	assert.Equal(t, "BTC/USDT", market.Symbol())
 
-	// Without assets loaded
+	// Without the symbols read
 	market2 := &Market{
-		BaseAssetID:  shared.NewUUID(),
-		QuoteAssetID: shared.NewUUID(),
+		BaseCurrencyHK:  shared.NewUUID(),
+		QuoteCurrencyHK: shared.NewUUID(),
 	}
 	assert.Equal(t, "UNKNOWN/UNKNOWN", market2.Symbol())
 }

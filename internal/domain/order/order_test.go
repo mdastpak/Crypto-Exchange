@@ -207,10 +207,10 @@ func TestOrder_WithMarket(t *testing.T) {
 
 func TestOrder_FeeCalculation(t *testing.T) {
 	order := &Order{
-		Quantity:   shared.MustNewDecimalFromString("10"),
-		Price:      shared.MustNewDecimalFromString("100"),
-		FeeRateBPS: 10, // 0.1%
-		FeeAssetID: shared.NewUUID(),
+		Quantity:      shared.MustNewDecimalFromString("10"),
+		Price:         shared.MustNewDecimalFromString("100"),
+		FeeRateBPS:    10, // 0.1%
+		FeeCurrencyHK: shared.NewUUID(),
 	}
 
 	notional := order.Price.Mul(order.Quantity)
