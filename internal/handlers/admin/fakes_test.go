@@ -115,7 +115,7 @@ func serve(t *testing.T, h *AdminHandler, method, path, body string) (int, map[s
 // their answers, and never touches a database.
 func TestCurrencyRoutes_RunWithoutInfrastructure(t *testing.T) {
 	store := &fakeCurrencies{status: models.CurrencyStatusPending, version: 3,
-		info: models.CurrencyInfo{EnName: "Bitcoin", FaName: "بیت‌کوین", Symbol: "BTC"}}
+		info: models.CurrencyInfo{EnName: "Bitcoin", FaName: "Bitcoin in Persian", Symbol: "BTC"}}
 	h := &AdminHandler{CurrencyStore: store}
 
 	status, resp := serve(t, h, http.MethodPut, "/currencies/"+fakeHK, `{"info": {"en_name": "Bitcoin Core"}, "version": 3}`)

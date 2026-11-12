@@ -15,10 +15,14 @@ type Store struct {
 }
 
 // Open is Open on s.DB.
-func (s Store) Open(ctx context.Context) ([]*Control, error) { return Open(ctx, s.DB) }
+func (s Store) Open(ctx context.Context) ([]*Control, error) {
+	return Open(ctx, s.DB)
+}
 
 // List is List on s.DB.
-func (s Store) List(ctx context.Context, limit int) ([]*Control, error) { return List(ctx, s.DB, limit) }
+func (s Store) List(ctx context.Context, limit int) ([]*Control, error) {
+	return List(ctx, s.DB, limit)
+}
 
 // Create is Create on s.DB.
 func (s Store) Create(ctx context.Context, n New, origin audit.Event) (*Control, error) {

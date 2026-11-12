@@ -12,4 +12,6 @@ type Findings struct {
 }
 
 // List is ListFindings on f.DB.
-func (f Findings) List(ctx context.Context, o ListOptions) ([]Finding, error) { return ListFindings(ctx, f.DB, o) }
+func (f Findings) List(ctx context.Context, o ListOptions) ([]Finding, error) {
+	return ListFindings(ctx, f.DB, o)
+}
