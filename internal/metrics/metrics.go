@@ -61,6 +61,42 @@ var (
 		Name: "row_seal_findings_total",
 		Help: "Integrity findings opened, by table and failed check (missing, mismatch, unknown_key, row_missing).",
 	}, []string{"table", "check"})
+
+	// LedgerMismatches is the number of balances that the last
+	// reconciliation of the ledger found differing from the replay of their
+	// changes (#60), and LedgerImbalancedCurrencies the number of
+	// currencies whose books did not sum to zero, or whose custody held
+	// other than it must. Any value above zero is a change made outside
+	// the ledger: alert on it.
+	LedgerMismatches = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ledger_reconciliation_mismatches",
+		Help: "Balances that differ from the replay of their changes, at the last reconciliation.",
+	})
+	LedgerImbalancedCurrencies = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ledger_reconciliation_imbalanced_currencies",
+		Help: "Currencies whose books do not sum to zero, or whose custody holds other than it must, at the last reconciliation.",
+	})
+	// LedgerOperations counts the operations of the ledger (#60), by kind
+	// and outcome: applied, replayed (a retry of an applied key),
+	// insufficient (a balance would go below zero), invalid, conflict (a
+	// key of another request), unverified (a balance fails its seal), and
+	// failed. LedgerOperationDuration times them, from the first statement
+	// to the commit.
+	LedgerOperations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ledger_operations_total",
+		Help: "Operations of the ledger, by kind and outcome.",
+	}, []string{"kind", "outcome"})
+	LedgerOperationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ledger_operation_duration_seconds",
+		Help:    "Time of an operation of the ledger, by kind.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"kind"})
+	// LedgerLastReconciliation is the Unix time of the last reconciliation
+	// that completed: alert when it is too old.
+	LedgerLastReconciliation = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ledger_reconciliation_last_success_timestamp_seconds",
+		Help: "Unix time of the last completed reconciliation of the ledger.",
+	})
 )
 
 func init() {
@@ -68,6 +104,7 @@ func init() {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		HTTPRequests, HTTPDuration, RateLimitRejections, PublishDuration, SealFindings,
+		LedgerMismatches, LedgerImbalancedCurrencies, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 	)
 }
 

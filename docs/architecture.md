@@ -160,7 +160,16 @@ Every asset of the exchange is a row of `currencies`, and how it moves on each n
   - it checks that every currency sums to zero;
   - it compares what custody must hold with what custody reports holding, where a source of holdings is given.
 
-  A balance changed in SQL, or a change written outside the code, appears in the report.
+  A balance changed in SQL, or a change written outside the code, appears in the report. It reads in one REPEATABLE READ transaction, one snapshot of the books, so the operations that go on meanwhile never show as a difference.
+- **Row seals.** Every balance is sealed by the ledger in the transaction of its entry ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139), [data-protection.md](data-protection.md#row-seals)). In `enforce` mode, the ledger refuses to move a balance that fails its seal, so funds added in SQL cannot be withdrawn or traded, and the seal verifier checks the balances with the other sealed tables.
+- **The hourly audit.** Every instance runs a job at startup and every hour, and one at a time does the work, under an advisory lock:
+  - it records a snapshot of every balance whose version has none yet, in `balance_snapshots`, one per version;
+  - it reconciles the books and sets the [metrics](observability.md#metrics) `ledger_reconciliation_mismatches`, `ledger_reconciliation_imbalanced_currencies`, and `ledger_reconciliation_last_success_timestamp_seconds`;
+  - it logs a `SECURITY:` line when the books do not reconcile.
+
+  `admin ledger reconcile` runs the reconciliation at once and exits with 1 when it finds a difference; `admin ledger snapshot` records the snapshots.
+- **Metrics of the operations.** `ledger_operations_total` counts the operations by kind and outcome, and `ledger_operation_duration_seconds` times them.
+- **What is not encrypted.** The amounts are kept in plaintext, as [data-protection.md](data-protection.md#what-is-not-encrypted) explains: SQL arithmetic, the checks, and the reconciliation need them. The entries hold no personal data: users are their IDs, and references are the IDs of orders, trades, or transactions.
 
 #### The shared currency list
 

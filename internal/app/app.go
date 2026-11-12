@@ -268,6 +268,8 @@ func run() error {
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
+	// The snapshots and the reconciliation of the books (#60).
+	workers = append(workers, startLedgerAudit(services.Postgres.DB))
 	if otpWorker != nil {
 		workers = append(workers, worker{"OTP delivery worker", otpWorker.Stop})
 	}

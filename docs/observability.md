@@ -41,6 +41,11 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 | `rate_limit_rejections_total` | counter | `limiter` | Refusals of the limiters: `rest`, `rest-probe`, `ws`, `trading`, `auth:login`, `auth:otp`. |
 | `rabbitmq_publish_duration_seconds` | histogram | `exchange`, `outcome` | Time to publish a message and receive its publisher confirm; `outcome` is `ok` or `error`. |
 | `row_seal_findings_total` | counter | `table`, `check` | [Integrity findings](data-protection.md#integrity-findings) opened, by read or by the verifier. |
+| `ledger_operations_total` | counter | `kind`, `outcome` | Operations of the [ledger](architecture.md#the-ledger): `applied`, `replayed` (a retry of an applied key), `insufficient`, `invalid`, `conflict` (a key of another request), `unverified` (a balance fails its seal), `failed`. |
+| `ledger_operation_duration_seconds` | histogram | `kind` | Time of an operation of the ledger, to its commit. |
+| `ledger_reconciliation_mismatches` | gauge | | Balances that differed from the replay of their changes at the last reconciliation, on the instance that ran it. |
+| `ledger_reconciliation_imbalanced_currencies` | gauge | | Currencies whose books did not sum to zero, or whose custody held other than it must, at the last reconciliation. |
+| `ledger_reconciliation_last_success_timestamp_seconds` | gauge | | Unix time of the last completed reconciliation. One instance at a time runs it, every hour. |
 | `db_connections_open`, `db_connections_in_use`, `db_connections_idle` | gauge | | The PostgreSQL pool of the instance. |
 | `db_connection_waits`, `db_connection_wait_seconds` | gauge | | Waits for a connection of the pool, and their time, since the start. |
 | `redis_up` | gauge | | 1 when Redis answers a ping within a second. |
@@ -55,6 +60,8 @@ The metrics are meant for these alerts, at least:
 
 | Alert | Rule | Why |
 | --- | --- | --- |
+| Ledger does not reconcile | `max(ledger_reconciliation_mismatches) > 0` or `max(ledger_reconciliation_imbalanced_currencies) > 0` | A balance or a currency of the books changed outside the ledger. Page someone; `admin ledger reconcile` lists them. |
+| Ledger not reconciled | `time() - max(ledger_reconciliation_last_success_timestamp_seconds) > 3 * 3600` | No instance completed the hourly reconciliation for three hours. |
 | Integrity finding | `increase(row_seal_findings_total[5m]) > 0` | A row changed outside the backend, or a seal missing in `enforce` mode. Page someone; see [Integrity findings](data-protection.md#integrity-findings). |
 | Server errors | `sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01` | More than one request in a hundred fails. |
 | Redis or RabbitMQ down | `min(redis_up) == 0` or `min(rabbitmq_up) == 0` for 2 minutes | Sign-in codes are not delivered, and the limits fail open or closed as configured. |

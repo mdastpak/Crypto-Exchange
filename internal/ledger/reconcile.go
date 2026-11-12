@@ -81,12 +81,32 @@ const replayBatchSize = 500
 //     exchange must sum to zero;
 //   - what custody must hold is compared with what holdings reports, when
 //     holdings is set and knows the currency.
+//
+// It reads in one REPEATABLE READ transaction, one snapshot of the books,
+// so that the operations that go on meanwhile never show as a difference.
 func (l Ledger) Reconcile(ctx context.Context, holdings Holdings) (Report, error) {
-	var report Report
-	if err := l.replay(ctx, &report); err != nil {
+	tx, err := l.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
 		return Report{}, err
 	}
-	currencies, err := l.sums(ctx)
+	defer tx.Rollback()
+	return reconcile(ctx, tx, holdings)
+}
+
+// querier reads the books: a transaction, for one snapshot of them.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// reconcile is Reconcile in q.
+func reconcile(ctx context.Context, q querier, holdings Holdings) (Report, error) {
+	var report Report
+	if err := replay(ctx, q, &report); err != nil {
+		return Report{}, err
+	}
+	currencies, err := sums(ctx, q)
 	if err != nil {
 		return Report{}, err
 	}
@@ -107,10 +127,10 @@ func (l Ledger) Reconcile(ctx context.Context, holdings Holdings) (Report, error
 }
 
 // replay replays every balance, in batches by ID.
-func (l Ledger) replay(ctx context.Context, report *Report) error {
+func replay(ctx context.Context, q querier, report *Report) error {
 	after := ""
 	for {
-		rows, err := l.DB.QueryContext(ctx, `SELECT id::text, available, locked, pending_deposit, version FROM balances
+		rows, err := q.QueryContext(ctx, `SELECT id::text, available, locked, pending_deposit, version FROM balances
 			WHERE $1 = '' OR id > $1::uuid ORDER BY id LIMIT $2`, after, replayBatchSize)
 		if err != nil {
 			return fmt.Errorf("read the balances: %w", err)
@@ -134,7 +154,7 @@ func (l Ledger) replay(ctx context.Context, report *Report) error {
 		if len(ids) == 0 {
 			return nil
 		}
-		if err := l.replayBatch(ctx, ids, stored, report); err != nil {
+		if err := replayBatch(ctx, q, ids, stored, report); err != nil {
 			return err
 		}
 		report.Balances += len(ids)
@@ -146,8 +166,8 @@ func (l Ledger) replay(ctx context.Context, report *Report) error {
 }
 
 // replayBatch replays the changes of the balances ids.
-func (l Ledger) replayBatch(ctx context.Context, ids []string, stored map[string]balance.Balance, report *Report) error {
-	rows, err := l.DB.QueryContext(ctx, `SELECT balance_id::text, version, change_type, amount,
+func replayBatch(ctx context.Context, q querier, ids []string, stored map[string]balance.Balance, report *Report) error {
+	rows, err := q.QueryContext(ctx, `SELECT balance_id::text, version, change_type, amount,
 			old_available, new_available, old_locked, new_locked, old_pending, new_pending
 		FROM balance_changes WHERE balance_id = ANY($1::uuid[]) ORDER BY balance_id, version`, ids)
 	if err != nil {
@@ -215,7 +235,7 @@ func (l Ledger) replayBatch(ctx context.Context, ids []string, stored map[string
 
 // sums totals the balances of users and the accounts of the exchange by
 // currency.
-func (l Ledger) sums(ctx context.Context) ([]CurrencyReport, error) {
+func sums(ctx context.Context, q querier) ([]CurrencyReport, error) {
 	byCurrency := make(map[string]*CurrencyReport)
 	get := func(hk shared.UUID) *CurrencyReport {
 		c, ok := byCurrency[hk.String()]
@@ -228,7 +248,7 @@ func (l Ledger) sums(ctx context.Context) ([]CurrencyReport, error) {
 		}
 		return c
 	}
-	rows, err := l.DB.QueryContext(ctx, `SELECT currency_hk, COALESCE(SUM(available::numeric + locked::numeric), 0),
+	rows, err := q.QueryContext(ctx, `SELECT currency_hk, COALESCE(SUM(available::numeric + locked::numeric), 0),
 		COALESCE(SUM(pending_deposit::numeric), 0) FROM balances GROUP BY currency_hk`)
 	if err != nil {
 		return nil, fmt.Errorf("sum the balances: %w", err)
@@ -247,7 +267,7 @@ func (l Ledger) sums(ctx context.Context) ([]CurrencyReport, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sum the balances: %w", err)
 	}
-	rows, err = l.DB.QueryContext(ctx, `SELECT currency_hk, account, SUM(amount::numeric) FROM ledger_postings GROUP BY currency_hk, account`)
+	rows, err = q.QueryContext(ctx, `SELECT currency_hk, account, SUM(amount::numeric) FROM ledger_postings GROUP BY currency_hk, account`)
 	if err != nil {
 		return nil, fmt.Errorf("sum the postings: %w", err)
 	}
@@ -274,7 +294,7 @@ func (l Ledger) sums(ctx context.Context) ([]CurrencyReport, error) {
 		}
 		c.Imbalance = total
 		c.Expected = c.Accounts[AccountCustody].Neg()
-		if err := l.DB.QueryRowContext(ctx, `SELECT COALESCE(info->>'symbol', '') FROM currencies WHERE hk = $1`, c.Currency).
+		if err := q.QueryRowContext(ctx, `SELECT COALESCE(info->>'symbol', '') FROM currencies WHERE hk = $1`, c.Currency).
 			Scan(&c.Symbol); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("read the currency: %w", err)
 		}
