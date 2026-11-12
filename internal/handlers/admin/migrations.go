@@ -74,7 +74,7 @@ func (h *AdminHandler) ScheduleMigration(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	m, err := rebrand.Schedule(ctx, h.PostgresDB.DB, hk, plan, origin)
+	m, err := h.Rebrands.Schedule(ctx, hk, plan, origin)
 	switch {
 	case errors.Is(err, rebrand.ErrTargetNotListed):
 		helpers.SendError(c, http.StatusConflict, "not_listed", i18n.M("MIGRATION_TARGET_NOT_APPROVED"), nil)
@@ -111,7 +111,7 @@ func (h *AdminHandler) ListMigrations(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := rebrand.List(ctx, h.PostgresDB.DB, hk)
+	list, err := h.Rebrands.List(ctx, hk)
 	if err != nil {
 		log.Printf("Failed to list the migrations of %s: %v", hk, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_MIGRATIONS"), nil)
@@ -162,7 +162,7 @@ func (h *AdminHandler) CancelMigration(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	m, changes, err := rebrand.Cancel(ctx, h.PostgresDB.DB, hk, id.String(), req.Version, origin)
+	m, changes, err := h.Rebrands.Cancel(ctx, hk, id.String(), req.Version, origin)
 	var conflict *rebrand.VersionConflict
 	switch {
 	case errors.Is(err, rebrand.ErrNotFound):

@@ -14,18 +14,23 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
-	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// Channels opens channels of the message broker, which the consumer of the
+// currency events reads: *rabbitmq.RabbitMQService (#48).
+type Channels interface {
+	OpenChannel() (*amqp.Channel, error)
+}
+
 type WebSocketHandler struct {
 	// Config is the configuration of the process (#48). NewWebSocketHandler
 	// sets it; nil reads as the zero configuration.
 	Config          *config.Configuration
-	RabbitMQService *rabbitmq.RabbitMQService
+	RabbitMQService Channels
 	Clients         map[*Client]bool
 	Mu              sync.RWMutex
 	Upgrader        websocket.Upgrader
@@ -141,15 +146,18 @@ func (h *WebSocketHandler) settings() *config.Configuration {
 func NewWebSocketHandler(is *models.InfraServices) *WebSocketHandler {
 	cfg := is.Settings()
 	h := &WebSocketHandler{
-		Config:          cfg,
-		RabbitMQService: is.RabbitMQ,
-		Clients:         make(map[*Client]bool),
-		Upgrader:        newUpgrader(cfg),
-		ShutdownCh:      make(chan struct{}),
-		limits:          limitsOf(cfg),
-		openPerIP:       make(map[string]int),
-		openPerUser:     make(map[string]int),
-		instanceID:      uuid.NewString(),
+		Config:      cfg,
+		Clients:     make(map[*Client]bool),
+		Upgrader:    newUpgrader(cfg),
+		ShutdownCh:  make(chan struct{}),
+		limits:      limitsOf(cfg),
+		openPerIP:   make(map[string]int),
+		openPerUser: make(map[string]int),
+		instanceID:  uuid.NewString(),
+	}
+	// Never a typed nil: StartConsumer checks for no broker.
+	if is.RabbitMQ != nil {
+		h.RabbitMQService = is.RabbitMQ
 	}
 	return h
 }

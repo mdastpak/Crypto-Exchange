@@ -69,7 +69,7 @@ func setupRealSchemaHandler(t *testing.T) (*PublicHandler, *sql.DB, *redis.Clien
 		redisClient.Close()
 	})
 
-	handler := NewHandler(&models.InfraServices{
+	handler := NewHandler(&models.InfraServices{Config: &config.Config,
 		Postgres: postgresService,
 		Redis:    &db.RedisService{Client: redisClient},
 	})

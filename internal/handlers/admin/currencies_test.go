@@ -20,6 +20,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -128,7 +129,7 @@ func (s *AdminCurrenciesTestSuite) SetupTest() {
 	_, err := s.postgresSvc.DB.Exec("TRUNCATE TABLE currencies, outbox_events, user_restrictions, user_favorites, currency_capability_overrides, currency_delistings, currency_delisting_steps, currency_symbols, currency_migrations, currency_migration_sources, currency_migration_phases RESTART IDENTITY")
 	require.NoError(s.T(), err)
 
-	services := &models.InfraServices{
+	services := &models.InfraServices{Config: &config.Config,
 		Postgres: s.postgresSvc,
 		Redis:    &db.RedisService{Client: s.redisClient},
 		RabbitMQ: &rabbitmq.RabbitMQService{},
@@ -654,7 +655,7 @@ func (s *AdminCurrenciesTestSuite) TestChanges_DropTheCachedListWhenThePublicVie
 
 	s.update(public, map[string]interface{}{"info": map[string]interface{}{"en_name": "Litecoin"}})
 	assert.True(s.T(), s.isPublic(direct), "a change to a public currency drops the cached list")
-	list, err := s.handler.Currencies.List(context.Background())
+	list, err := s.handler.Currencies.(*currencies.Catalog).List(context.Background())
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), "Litecoin", list[0].Info.EnName, "the public list shows the change")
 }
@@ -924,7 +925,7 @@ func (s *AdminCurrenciesTestSuite) TestUpdateCurrency_ConcurrentUpdatesKeepEachO
 // read. The list is cached once it is read, so a change that does not drop
 // it does not show.
 func (s *AdminCurrenciesTestSuite) isPublic(hk string) bool {
-	list, err := s.handler.Currencies.List(context.Background())
+	list, err := s.handler.Currencies.(*currencies.Catalog).List(context.Background())
 	require.NoError(s.T(), err)
 	for _, currency := range list {
 		if currency.HK == hk {
@@ -1144,14 +1145,14 @@ func (s *AdminCurrenciesTestSuite) TestCachedList_CatchesUpOnceRedisRecovers() {
 	s.update(hk, map[string]interface{}{"info": map[string]interface{}{"en_name": "Neo"}})
 
 	assert.Empty(s.T(), s.takeEvents(), "the event waits for the drop of the cached list")
-	list, err := catalog.List(ctx)
+	list, err := catalog.(*currencies.Catalog).List(ctx)
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), "Bitcoin", list[0].Info.EnName, "the cached list is out of date meanwhile")
 
 	s.cacheDown.Store(false)
 	s.makeOutboxReady()
 	assert.Equal(s.T(), []string{"update " + hk}, s.takeEvents())
-	list, err = catalog.List(ctx)
+	list, err = catalog.(*currencies.Catalog).List(ctx)
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), "Neo", list[0].Info.EnName, "the relay dropped the list once Redis was back")
 }

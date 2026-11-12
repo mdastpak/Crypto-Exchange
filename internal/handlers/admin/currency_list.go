@@ -2,10 +2,7 @@ package admin
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -74,7 +71,7 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	all, err := allCurrencies(ctx, h.PostgresDB.DB)
+	all, err := h.CurrencyStore.All(ctx)
 	if err != nil {
 		log.Printf("Error listing currencies: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CURRENCIES"), nil)
@@ -91,44 +88,4 @@ func (h *AdminHandler) ListCurrencies(c *gin.Context) {
 		return
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("CURRENCIES_RETRIEVED_SUCCESSFULLY"), result)
-}
-
-// allCurrencies reads every currency, deleted ones included, for the
-// filters of the list to run over. Currencies created in the same second
-// are ordered by hk, so the order is total and a cursor never skips one.
-const allCurrenciesQuery = `SELECT c.id, c.hk, c.status, c.info, c.version, c.created_at, c.updated_at, c.deleted_at, ` +
-	currencies.DetailColumns + ` FROM currencies c`
-
-func allCurrencies(ctx context.Context, db *sql.DB) ([]models.Currency, error) {
-	rows, err := db.QueryContext(ctx, allCurrenciesQuery)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []models.Currency
-	for rows.Next() {
-		var cur models.Currency
-		var info []byte
-		var created, updated time.Time
-		var deleted sql.NullTime
-		var lifecycle currencies.DetailScan
-		if err := rows.Scan(append([]any{&cur.ID, &cur.HK, &cur.Status, &info, &cur.Version, &created, &updated, &deleted}, lifecycle.Dest()...)...); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(info, &cur.Info); err != nil {
-			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
-		}
-		var err error
-		if err = lifecycle.Apply(&cur); err != nil {
-			return nil, fmt.Errorf("currency %s: %w", cur.HK, err)
-		}
-		cur.CreatedAt = timestamp(sql.NullTime{Time: created, Valid: true})
-		cur.UpdatedAt = timestamp(sql.NullTime{Time: updated, Valid: true})
-		if deleted.Valid {
-			at := timestamp(deleted)
-			cur.DeletedAt = &at
-		}
-		list = append(list, cur)
-	}
-	return list, rows.Err()
 }

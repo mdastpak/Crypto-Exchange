@@ -195,7 +195,9 @@ func run() error {
 	}
 
 	handlers := initializeHandlers(services)
-	handlers.System.Eviction = evictionWatch
+	if evictionWatch != nil {
+		handlers.System.Eviction = evictionWatch
+	}
 	if handlers.DataKeys, err = loadDataKeys(services, keyProvider); err != nil {
 		return fmt.Errorf("failed to load the data-protection keys: %w", err)
 	}
@@ -211,7 +213,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("invalid GeoIP configuration: %w", err)
 	}
-	handlers.GeoIP, handlers.System.GeoIP = geoIP, geoIP
+	handlers.GeoIP = geoIP
+	if geoIP != nil {
+		handlers.System.GeoIP = geoIP
+	}
 	if geoIPWorker != nil {
 		workers = append(workers, *geoIPWorker)
 	}
@@ -557,9 +562,11 @@ func useDataKeysForOTP(h *InfraHandlers) {
 	if h.DataKeys == nil {
 		return
 	}
-	for _, store := range []*otp.Store{h.Public.OTP, h.User.ContactOTP, h.Admin.OTP} {
-		if store != nil {
-			store.UseDataKeys(h.DataKeys)
+	// The handlers hold their stores as interfaces (#48); the stores of
+	// the server are *otp.Store.
+	for _, store := range []any{h.Public.OTP, h.User.ContactOTP, h.Admin.OTP} {
+		if s, ok := store.(*otp.Store); ok && s != nil {
+			s.UseDataKeys(h.DataKeys)
 		}
 	}
 	// The secrets of the authenticator apps of users are sealed with the

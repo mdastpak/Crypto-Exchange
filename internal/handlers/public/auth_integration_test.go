@@ -96,7 +96,7 @@ func (s *PublicHandlerTestSuite) SetupTest() {
 
 	redisService := &db.RedisService{Client: s.redisClient}
 
-	services := &models.InfraServices{
+	services := &models.InfraServices{Config: &config.Config,
 		Postgres: postgresService,
 		Redis:    redisService,
 		RabbitMQ: nil,

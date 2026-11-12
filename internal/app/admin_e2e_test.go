@@ -272,7 +272,7 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	router.Use(contractCheck(t))
 	router.Use(middleware.RecoveryMiddleware())
 	require.NoError(t, RouteHandler(router, handlers))
-	return &e2eEnv{router: router, handlers: handlers, sender: sender, accounts: handlers.Admin.Accounts, db: services.Postgres.DB}
+	return &e2eEnv{router: router, handlers: handlers, sender: sender, accounts: adminAccounts(handlers), db: services.Postgres.DB}
 }
 
 type e2eResponse struct {
@@ -593,4 +593,11 @@ func TestSignIn_WithoutDataKeys(t *testing.T) {
 
 	status, _ = env.post(t, "/api/v1/admin/auth", map[string]string{"email": "admin@example.com"}, "")
 	assert.Equal(t, http.StatusServiceUnavailable, status)
+}
+
+// adminAccounts returns the administrators of the server, or nil without
+// data keys.
+func adminAccounts(h *InfraHandlers) *adminauth.Service {
+	accounts, _ := h.Admin.Accounts.(*adminauth.Service)
+	return accounts
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/system"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/tcpproxy"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +33,7 @@ func TestServer_StartsWithoutRabbitMQ(t *testing.T) {
 	env := newE2EEnv(t, func(c *config.Configuration) {
 		c.RabbitMQ.Host, c.RabbitMQ.Port = proxy.Host(), proxy.Port()
 	})
-	broker := env.handlers.Socket.RabbitMQService
+	broker := env.handlers.Socket.RabbitMQService.(*rabbitmq.RabbitMQService)
 	require.False(t, broker.IsHealthy())
 
 	// Sign-in codes go through the broker, as in main.

@@ -3,6 +3,7 @@ package user
 import (
 	"testing"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
@@ -15,7 +16,7 @@ func TestNewHandler_WiresInfraServices(t *testing.T) {
 	redisSvc := &db.RedisService{}
 	rmq := &rabbitmq.RabbitMQService{}
 
-	is := &models.InfraServices{
+	is := &models.InfraServices{Config: &config.Config,
 		Postgres: postgres,
 		Redis:    redisSvc,
 		RabbitMQ: rmq,
@@ -29,7 +30,7 @@ func TestNewHandler_WiresInfraServices(t *testing.T) {
 }
 
 func TestNewHandler_WithNilRabbitMQ(t *testing.T) {
-	is := &models.InfraServices{
+	is := &models.InfraServices{Config: &config.Config,
 		Postgres: &db.PostgresService{},
 		Redis:    &db.RedisService{},
 		RabbitMQ: nil,

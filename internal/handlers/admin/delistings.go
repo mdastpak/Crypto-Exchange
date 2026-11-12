@@ -105,7 +105,7 @@ func (h *AdminHandler) ScheduleDelisting(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	d, change, err := delisting.Schedule(ctx, h.PostgresDB.DB, hk, plan, origin)
+	d, change, err := h.Delistings.Schedule(ctx, hk, plan, origin)
 	switch {
 	case errors.Is(err, delisting.ErrCurrencyNotFound):
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
@@ -145,7 +145,7 @@ func (h *AdminHandler) ListDelistings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := delisting.List(ctx, h.PostgresDB.DB, hk)
+	list, err := h.Delistings.List(ctx, hk)
 	if err != nil {
 		log.Printf("Failed to list the delistings of %s: %v", hk, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_DELISTINGS"), nil)
@@ -196,7 +196,7 @@ func (h *AdminHandler) CancelDelisting(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
 		return
 	}
-	d, change, err := delisting.Cancel(ctx, h.PostgresDB.DB, hk, id.String(), req.Version, origin)
+	d, change, err := h.Delistings.Cancel(ctx, hk, id.String(), req.Version, origin)
 	var conflict *delisting.VersionConflict
 	switch {
 	case errors.Is(err, delisting.ErrNotFound):
@@ -289,7 +289,7 @@ func (h *AdminHandler) changeCapability(c *gin.Context, allowed *bool, note stri
 		return
 	}
 	var l *models.CurrencyLifecycle
-	l, change, err := delisting.Override(ctx, h.PostgresDB.DB, hk, k, allowed, note, origin)
+	l, change, err := h.Delistings.Override(ctx, hk, k, allowed, note, origin)
 	switch {
 	case errors.Is(err, delisting.ErrCurrencyNotFound):
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)

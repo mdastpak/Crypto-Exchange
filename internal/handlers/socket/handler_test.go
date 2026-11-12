@@ -24,7 +24,7 @@ func init() {
 }
 
 func newTestHandler() *WebSocketHandler {
-	return NewWebSocketHandler(&models.InfraServices{RabbitMQ: &rabbitmq.RabbitMQService{}})
+	return NewWebSocketHandler(&models.InfraServices{Config: &config.Config, RabbitMQ: &rabbitmq.RabbitMQService{}})
 }
 
 func newTestClient() *Client {

@@ -192,7 +192,7 @@ func newBrokerHandler(t *testing.T) (*WebSocketHandler, *Client) {
 	require.NoError(t, err)
 	t.Cleanup(func() { svc.Close() })
 
-	h := NewWebSocketHandler(&models.InfraServices{RabbitMQ: svc})
+	h := NewWebSocketHandler(&models.InfraServices{Config: &config.Config, RabbitMQ: svc})
 	client := newTestClient()
 	h.Mu.Lock()
 	h.Clients[client] = true
@@ -258,7 +258,7 @@ func TestConsumer_Broker_EveryInstanceReceivesEveryEvent(t *testing.T) {
 
 	// StartConsumer subscribes before it returns, so events published right
 	// away are not lost.
-	publisher := first.RabbitMQService
+	publisher := first.RabbitMQService.(*rabbitmq.RabbitMQService)
 	for _, action := range []string{"create", "update", "delete"} {
 		require.NoError(t, publisher.Publish(context.Background(), exchange, testEvent(action)))
 	}
@@ -283,7 +283,7 @@ func TestConsumer_Broker_ShutdownStopsTheConsumer(t *testing.T) {
 	svc, err := rabbitmq.NewRabbitMQService(&config.Config, config.Config.RabbitMQ.Exchanges.PriceUpdates)
 	require.NoError(t, err)
 	defer svc.Close()
-	h := NewWebSocketHandler(&models.InfraServices{RabbitMQ: svc})
+	h := NewWebSocketHandler(&models.InfraServices{Config: &config.Config, RabbitMQ: svc})
 	require.NoError(t, h.StartConsumer(context.Background()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -323,7 +323,7 @@ func TestConsumer_Broker_ResumesAfterABrokerRestart(t *testing.T) {
 	require.Eventually(t, func() bool {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = h.RabbitMQService.Publish(ctx, exchange, testEvent("update"))
+		_ = h.RabbitMQService.(*rabbitmq.RabbitMQService).Publish(ctx, exchange, testEvent("update"))
 		select {
 		case data := <-client.Send:
 			return strings.Contains(string(data), `"action":"update"`)
@@ -350,7 +350,7 @@ func TestConsumer_Broker_SubscribesWhenTheBrokerComesBack(t *testing.T) {
 
 	msg := receive(t, client)
 	assert.Equal(t, EventCurrenciesResync, msg["event"], "the clients that connected meanwhile reload")
-	require.NoError(t, h.RabbitMQService.Publish(context.Background(), exchange, testEvent("create")))
+	require.NoError(t, h.RabbitMQService.(*rabbitmq.RabbitMQService).Publish(context.Background(), exchange, testEvent("create")))
 	assert.Equal(t, "create", receive(t, client)["action"])
 }
 
@@ -359,7 +359,7 @@ func TestConsumer_Broker_DropsInvalidEventsAndKeepsConsuming(t *testing.T) {
 	h, client := newBrokerHandler(t)
 	require.NoError(t, h.StartConsumer(context.Background()))
 
-	publisher := h.RabbitMQService
+	publisher := h.RabbitMQService.(*rabbitmq.RabbitMQService)
 	for _, body := range []string{
 		`{"entity":"users","action":"create","hk":"` + testHK + `","info":{"email":"victim@example.com"}}`,
 		`not-json`,

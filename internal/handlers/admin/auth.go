@@ -341,7 +341,7 @@ func padResponse(ctx context.Context, start time.Time, minimum time.Duration) {
 // own: an attempt changes nothing that it could share a transaction with.
 // An empty adminID is an anonymous actor, such as an unknown address.
 func (h *AdminHandler) auditSignIn(ctx context.Context, c *gin.Context, action, adminID, outcome, reason string) error {
-	return audit.Record(ctx, h.PostgresDB.DB, h.signInEvent(c, action, adminID, outcome, reason))
+	return h.Audit.Record(ctx, h.signInEvent(c, action, adminID, outcome, reason))
 }
 
 // signInEvent returns an event of the admin sign-in. An empty adminID is an

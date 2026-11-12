@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -48,7 +49,7 @@ func TestOTPEndpoints_RedisFailuresRevealNoDetails(t *testing.T) {
 	// Nothing listens on port 1, so every Redis command fails.
 	unreachable := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
 	t.Cleanup(func() { unreachable.Close() })
-	handler := NewHandler(&models.InfraServices{Redis: &db.RedisService{Client: unreachable}})
+	handler := NewHandler(&models.InfraServices{Config: &config.Config, Redis: &db.RedisService{Client: unreachable}})
 	router := gin.New()
 	router.POST("/public/auth", handler.RequestOTP)
 	router.POST("/public/auth/:uuid", handler.VerifyOTP)

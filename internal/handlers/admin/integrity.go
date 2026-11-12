@@ -77,7 +77,7 @@ func (h *AdminHandler) ListIntegrityFindings(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	findings, err := rowseal.ListFindings(ctx, h.PostgresDB.DB, rowseal.ListOptions{All: all, BeforeID: after.ID, Limit: page.Limit + 1})
+	findings, err := h.Findings.List(ctx, rowseal.ListOptions{All: all, BeforeID: after.ID, Limit: page.Limit + 1})
 	if err != nil {
 		log.Printf("Failed to list the integrity findings: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_INTEGRITY_FINDINGS"), nil)

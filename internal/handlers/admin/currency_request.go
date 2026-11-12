@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -65,7 +65,10 @@ type currencyRequest struct {
 }
 
 // fieldErrors maps a field, such as "info.symbol", to what is wrong with it.
+// It is an error, so that an edit of a store can refuse a request with it.
 type fieldErrors map[string]string
+
+func (f fieldErrors) Error() string { return fmt.Sprintf("invalid fields: %v", map[string]string(f)) }
 
 func sendValidationErrors(c *gin.Context, errs fieldErrors) {
 	helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
@@ -253,6 +256,5 @@ func sendCurrencyWriteError(c *gin.Context, err error, action string) {
 			return
 		}
 	}
-	log.Printf("Error trying to %s a currency: %v", action, err)
-	helpers.SendResponse(c, http.StatusInternalServerError, currencyWriteFailures[action], nil)
+	sendUnrecordedOr(c, err, action, currencyWriteFailures[action])
 }
