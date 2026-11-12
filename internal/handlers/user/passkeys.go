@@ -61,7 +61,7 @@ func (h *UserHandler) passkeyCaller(c *gin.Context) (userHK, sessionID string, e
 	if !ok {
 		return "", "", audit.Event{}, false
 	}
-	if h.Passkeys == nil || !h.Passkeys.Enabled() || h.Passwords == nil || h.PostgresDB == nil {
+	if h.Passkeys == nil || !h.Passkeys.Enabled() || h.Passwords == nil || h.Store == nil {
 		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
 		return "", "", audit.Event{}, false
 	}
@@ -104,12 +104,7 @@ func (h *UserHandler) BeginPasskey(c *gin.Context) {
 		return
 	}
 	// The prompt shows the account under a contact of the user.
-	var account string
-	if err := h.PostgresDB.DB.QueryRowContext(ctx, `SELECT value FROM user_contacts
-		WHERE user_hk = $1 AND removed_at IS NULL AND type IN ('email', 'mobile')
-		ORDER BY is_primary DESC, id LIMIT 1`, userHK).Scan(&account); err != nil {
-		account = "account"
-	}
+	account := h.Store.AccountName(ctx, userHK)
 	options, err := h.Passkeys.BeginRegistration(ctx, userHK, account)
 	switch {
 	case errors.Is(err, passkey.ErrTooMany):

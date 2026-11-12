@@ -433,7 +433,7 @@ func TestUserContacts_ChangeStartsASecurityHold(t *testing.T) {
 // that the handlers check numbers with. Every call of one test shares them.
 func (e *e2eEnv) withNationalID(t *testing.T, userID, nationalID string) *identity.Stub {
 	t.Helper()
-	sealer, ok := e.handlers.User.Sealer.(*identitytest.Sealer)
+	sealer, ok := e.handlers.UserStore.Sealer.(*identitytest.Sealer)
 	if !ok {
 		sealer = identitytest.NewSealer()
 	}
@@ -441,7 +441,7 @@ func (e *e2eEnv) withNationalID(t *testing.T, userID, nationalID string) *identi
 	if !ok {
 		stub = &identity.Stub{}
 	}
-	e.handlers.User.Sealer, e.handlers.User.Ownership = sealer, stub
+	e.handlers.UserStore.Sealer, e.handlers.UserStore.Ownership, e.handlers.User.Ownership = sealer, stub, stub
 	e.handlers.SignIn.Sealer, e.handlers.SignIn.Ownership, e.handlers.Public.Ownership = sealer, stub, stub
 	require.NoError(t, identity.SaveNationalID(context.Background(), e.db, sealer, userID, nationalID, "stub", "", time.Now()))
 	return stub
@@ -535,7 +535,7 @@ func TestUserContacts_MobileOwnershipWaitsForTheNationalID(t *testing.T) {
 	const email, mobile = "level0@example.com", "09121110013"
 	token, _ := env.signedIn(t, email)
 	stub := &identity.Stub{}
-	env.handlers.User.Ownership, env.handlers.User.Sealer = stub, identitytest.NewSealer()
+	env.handlers.User.Ownership, env.handlers.UserStore.Ownership, env.handlers.UserStore.Sealer = stub, stub, identitytest.NewSealer()
 
 	id, accountCode, newCode := env.startChange(t, token, map[string]string{"action": "add", "value": mobile}, email, mobile)
 	status, resp := env.confirmChange(t, token, id, accountCode, newCode)

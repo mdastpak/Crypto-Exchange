@@ -46,7 +46,7 @@ func sessionOf(t *testing.T, token string) (userHK, sessionID string) {
 func TestSecondFactor_FundsNeedAPasswordAndAFreshProof(t *testing.T) {
 	env := newE2EEnv(t)
 	ctx := context.Background()
-	guard := env.handlers.User.Guard
+	guard := env.handlers.User.Guard.(*userauth.Guard)
 	const contact = "funds@example.com"
 	token, _ := env.signedIn(t, contact)
 	user, session := sessionOf(t, token)
@@ -106,7 +106,7 @@ func TestSecondFactor_FundsNeedAPasswordAndAFreshProof(t *testing.T) {
 func TestSecondFactor_ASignInWithThePasswordElevatesItsSessionOnly(t *testing.T) {
 	env := newE2EEnv(t)
 	ctx := context.Background()
-	guard := env.handlers.User.Guard
+	guard := env.handlers.User.Guard.(*userauth.Guard)
 	const contact = "elevated@example.com"
 	first, _ := env.signedIn(t, contact)
 	env.setPassword(t, first, testPassword)
@@ -137,7 +137,7 @@ func TestSecondFactor_ASignInWithThePasswordElevatesItsSessionOnly(t *testing.T)
 func TestSecondFactor_OptionalModeLeavesFundsOpenWithoutAPassword(t *testing.T) {
 	env := newE2EEnv(t, func(c *config.Configuration) { c.Security.SecondFactor.Mode = config.SecondFactorOptional })
 	ctx := context.Background()
-	guard := env.handlers.User.Guard
+	guard := env.handlers.User.Guard.(*userauth.Guard)
 	token, _ := env.signedIn(t, "optional@example.com")
 	user, session := sessionOf(t, token)
 
@@ -154,7 +154,7 @@ func TestSecondFactor_AStepUpLengthenedInSQLLetsNothingRun(t *testing.T) {
 	env := newE2EEnv(t)
 	t.Cleanup(rowseal.Use(rowseal.New(env.db, env.handlers.DataKeys, rowseal.ModeEnforce)))
 	ctx := context.Background()
-	guard := env.handlers.User.Guard
+	guard := env.handlers.User.Guard.(*userauth.Guard)
 	token, _ := env.signedIn(t, "lengthened@example.com")
 	user, session := sessionOf(t, token)
 	env.setPassword(t, token, testPassword)

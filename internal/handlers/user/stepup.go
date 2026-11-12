@@ -58,7 +58,7 @@ func (h *UserHandler) RequireSecondFactor(funds bool) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if h.Guard == nil || h.PostgresDB == nil {
+		if h.Guard == nil {
 			// Never open a protected route because its guard is missing.
 			helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
 			c.Abort()
@@ -66,7 +66,7 @@ func (h *UserHandler) RequireSecondFactor(funds bool) gin.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
 		defer cancel()
-		err := h.Guard.Check(ctx, h.PostgresDB.DB, claims.UUID, claims.SessionID, funds)
+		err := h.Guard.Allows(ctx, claims.UUID, claims.SessionID, funds)
 		var refusal *userauth.Refusal
 		switch {
 		case errors.As(err, &refusal) && refusal.Code == userauth.CodeSecondFactorRequired:
@@ -232,13 +232,13 @@ const codeSecondFactorNotSet = "second_factor_not_set"
 // noteSecurity records event with its outcome. It is best effort, as the
 // record of a refused sign-in is.
 func (h *UserHandler) noteSecurity(ctx context.Context, event audit.Event, outcome, reason string) {
-	if h.PostgresDB == nil {
+	if h.Audit == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	event.Outcome, event.Reason = outcome, reason
-	if err := audit.Record(ctx, h.PostgresDB.DB, event); err != nil {
+	if err := h.Audit.Record(ctx, event); err != nil {
 		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)
 	}
 }

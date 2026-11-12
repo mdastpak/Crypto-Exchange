@@ -46,7 +46,7 @@ func (h *UserHandler) ListRestrictions(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	active, err := restrictions.Active(ctx, h.PostgresDB.DB, userID.String())
+	active, err := h.Restrictions.Active(ctx, userID.String())
 	if errors.Is(err, rowseal.ErrUnverified) {
 		// A restriction changed in SQL counts as a freeze (#337).
 		helpers.SendError(c, http.StatusForbidden, restrictions.CodeAccountFrozen, restrictions.MessageAccountFrozen, nil)
@@ -57,7 +57,7 @@ func (h *UserHandler) ListRestrictions(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_RESTRICTIONS"), nil)
 		return
 	}
-	hold, err := restrictions.SecurityHold(ctx, h.PostgresDB.DB, userID.String())
+	hold, err := h.Restrictions.SecurityHold(ctx, userID.String())
 	if err != nil {
 		log.Printf("Failed to read the security hold of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_RESTRICTIONS"), nil)

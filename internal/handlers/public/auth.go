@@ -28,10 +28,10 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/signin"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 // PublicHandler serves the public routes: sign-in, its second step, the

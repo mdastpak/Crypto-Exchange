@@ -60,7 +60,7 @@ func (h *UserHandler) ListFavorites(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	list, err := favorites.Get(ctx, h.PostgresDB.DB, userID.String())
+	list, err := h.Favorites.Get(ctx, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the favorites of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_FAVORITES"), nil)
@@ -94,9 +94,9 @@ func (h *UserHandler) changeFavorite(c *gin.Context, kind favorites.Kind, add bo
 	var changed bool
 	var err error
 	if add {
-		changed, err = favorites.Add(ctx, h.PostgresDB.DB, userID.String(), kind, target, maxFavorites(h.settings()))
+		changed, err = h.Favorites.Add(ctx, userID.String(), kind, target, maxFavorites(h.settings()))
 	} else {
-		changed, err = favorites.Remove(ctx, h.PostgresDB.DB, userID.String(), kind, target)
+		changed, err = h.Favorites.Remove(ctx, userID.String(), kind, target)
 	}
 	switch {
 	case errors.Is(err, favorites.ErrNotListed):
@@ -238,7 +238,7 @@ func (h *UserHandler) ReorderFavorites(c *gin.Context) {
 		if !change.sent {
 			continue
 		}
-		err := favorites.Reorder(ctx, h.PostgresDB.DB, userID.String(), change.kind, change.ids)
+		err := h.Favorites.Reorder(ctx, userID.String(), change.kind, change.ids)
 		switch {
 		case errors.Is(err, favorites.ErrOrderMismatch):
 			helpers.SendError(c, http.StatusConflict, "order_mismatch",
@@ -253,7 +253,7 @@ func (h *UserHandler) ReorderFavorites(c *gin.Context) {
 			return
 		}
 	}
-	list, err := favorites.Get(ctx, h.PostgresDB.DB, userID.String())
+	list, err := h.Favorites.Get(ctx, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the favorites of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_FAVORITES"), nil)

@@ -46,14 +46,14 @@ const (
 
 // Handler serves the admin routes.
 type Handler struct {
-	store *marketdata.Store
+	store Store
 	// invalidate drops the cache of the public API; nil when there is none.
 	invalidate func(ctx context.Context) error
 }
 
 // New returns the handler. invalidate, when set, drops the cache of the
 // public API after each change.
-func New(store *marketdata.Store, invalidate func(ctx context.Context) error) *Handler {
+func New(store Store, invalidate func(ctx context.Context) error) *Handler {
 	return &Handler{store: store, invalidate: invalidate}
 }
 

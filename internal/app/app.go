@@ -98,6 +98,11 @@ type InfraHandlers struct {
 	SignIn    *signin.Accounts
 	Catalog   *currencies.Catalog
 	Passwords *userauth.Passwords
+	// UserStore is the database store of the user routes, and TOTP the
+	// authenticator apps, which the data keys and the identity checks
+	// configure.
+	UserStore *user.DBStore
+	TOTP      *userauth.TOTP
 }
 
 var (
@@ -326,7 +331,10 @@ func newSiteHandler(ih *InfraHandlers) *public.SiteHandler {
 	h := &public.SiteHandler{
 		Sites:   ih.Sites,
 		Locales: ih.Locales,
-		GeoIP:   ih.GeoIP,
+	}
+	// Never a typed nil: the handler resolves no country without one.
+	if ih.GeoIP != nil {
+		h.GeoIP = ih.GeoIP
 	}
 	for _, entry := range config.Config.Server.TrustedProxies {
 		if prefix, err := geoip.ParsePrefix(entry); err == nil {
@@ -579,8 +587,8 @@ func useDataKeysForOTP(h *InfraHandlers) {
 	}
 	// The secrets of the authenticator apps of users are sealed with the
 	// same keys (#307). Without keys, none is enrolled or checked.
-	if h.User != nil && h.User.TOTP != nil {
-		h.User.TOTP.Sealer = h.DataKeys
+	if h.TOTP != nil {
+		h.TOTP.Sealer = h.DataKeys
 	}
 }
 
@@ -682,6 +690,9 @@ func configureIdentity(h *InfraHandlers) error {
 		return err
 	}
 	h.User.Ownership, h.Public.Ownership = ownership, ownership
+	if h.UserStore != nil {
+		h.UserStore.Ownership = ownership
+	}
 	if h.SignIn != nil {
 		h.SignIn.Ownership = ownership
 	}
@@ -689,7 +700,9 @@ func configureIdentity(h *InfraHandlers) error {
 		log.Println("WARNING: identity.mobile_ownership.provider is none: users with a verified national ID cannot add or replace a mobile number")
 	}
 	if h.DataKeys != nil {
-		h.User.Sealer = h.DataKeys
+		if h.UserStore != nil {
+			h.UserStore.Sealer = h.DataKeys
+		}
 		if h.SignIn != nil {
 			h.SignIn.Sealer = h.DataKeys
 		}
@@ -931,6 +944,7 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// instances, counted in Redis (#234).
 	ws.Counter = socket.NewRedisConnectionCounter(services.Redis.Client)
 	userHandler := user.NewHandler(services)
+	userStore, _ := userHandler.Store.(*user.DBStore)
 	userHandler.Sessions = sessions
 	publicHandler := public.NewHandler(services)
 	publicHandler.AuthenticateToken = func(ctx context.Context, token string) (*auth.Claims, error) {
@@ -975,6 +989,8 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		SignIn:          signIn,
 		Catalog:         catalog,
 		Passwords:       passwords,
+		UserStore:       userStore,
+		TOTP:            totpStore,
 	}
 }
 

@@ -2,10 +2,7 @@ package user
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -13,10 +10,8 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
-	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
-	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -48,60 +43,6 @@ var (
 	errProfileNotFound    = errors.New("profile not found")
 	errAccountUnavailable = errors.New("account is not available")
 )
-
-// queryRower is implemented by *sql.DB and *sql.Tx.
-type queryRower interface {
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-}
-
-// profileQuery reads a profile.
-// The contacts come as one JSON object of the primary contact of each type.
-const profileQuery = `SELECT hk, status, role,
-	COALESCE((SELECT jsonb_object_agg(c.type, c.value) FROM user_contacts c WHERE c.user_hk = users.hk AND c.is_primary AND c.removed_at IS NULL), '{}'),
-	first_name, last_name, display_name, locale, theme, kyc_status, kyc_tier,
-	created_at
-	FROM users WHERE hk = $1 AND deleted_at IS NULL`
-
-// loadProfile reads the profile of a user. It returns errProfileNotFound for
-// a missing or deleted user, and errAccountUnavailable for an account that
-// cannot sign in or is not a user account, so that a token issued before
-// such a change no longer reaches the profile.
-func loadProfile(ctx context.Context, db queryRower, userID uuid.UUID, lock bool) (Profile, error) {
-	query := profileQuery
-	if lock {
-		query += " FOR UPDATE"
-	}
-	var p Profile
-	var role string
-	var contact []byte
-	err := db.QueryRowContext(ctx, query, userID).Scan(&p.UUID, &p.Status, &role, &contact,
-		&p.FirstName, &p.LastName, &p.DisplayName, &p.Locale, &p.Theme, &p.KYCStatus, &p.KYCTier, &p.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return p, errProfileNotFound
-	}
-	if err != nil {
-		return p, err
-	}
-	if !account.UserStatus(p.Status).CanSignIn() || role != auth.RoleUser {
-		return p, errAccountUnavailable
-	}
-
-	var contacts map[string]string
-	if err := json.Unmarshal(contact, &contacts); err != nil {
-		return p, fmt.Errorf("decoding the contacts: %w", err)
-	}
-	p.Contact = make(map[string]string)
-	for _, contactType := range []string{"email", "mobile"} {
-		if value, ok := contacts[contactType]; ok {
-			p.Contact[contactType] = maskContact(contactType, value)
-		}
-	}
-	if p.CreatedAt != nil {
-		created := p.CreatedAt.UTC()
-		p.CreatedAt = &created
-	}
-	return p, nil
-}
 
 // maskContact hides most of a contact, like the sign-in logs do: the first
 // three characters stay visible, with the domain of an email address or the
@@ -166,7 +107,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		helpers.SendError(c, http.StatusUnauthorized, helpers.CodeTokenInvalid, i18n.M("UNAUTHORIZED_INVALID_TOKEN"), nil)
 		return
 	}
-	profile, err := loadProfile(ctx, h.PostgresDB.DB, userID, false)
+	profile, err := h.Store.Profile(ctx, userID)
 	if err != nil {
 		sendProfileError(c, err)
 		return
@@ -213,42 +154,12 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	// The row is locked from the read to the write, so that the account
-	// checks hold for the write, and concurrent updates of different
-	// fields keep each other's changes.
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		log.Printf("Error starting a profile update: %v", err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_UPDATE_PROFILE"), nil)
-		return
-	}
-	defer tx.Rollback()
-
-	profile, err := loadProfile(ctx, tx, userID, true)
-	if err != nil {
+	// The store locks the row from the read to the write, and commits the
+	// change only with its audit event (#195).
+	profile, err := h.Store.UpdateProfile(ctx, userID, func(p *Profile) { update.apply(p, h.Locales) }, audit.FromRequest(c))
+	if errors.Is(err, errProfileNotFound) || errors.Is(err, errAccountUnavailable) {
 		sendProfileError(c, err)
 		return
-	}
-	before := profile
-	update.apply(&profile, h.Locales)
-	_, err = tx.ExecContext(ctx,
-		"UPDATE users SET first_name = $1, last_name = $2, display_name = $3, locale = $4, theme = $5, updated_at = NOW() WHERE hk = $6",
-		profile.FirstName, profile.LastName, profile.DisplayName, profile.Locale, profile.Theme, userID,
-	)
-	if err == nil {
-		err = rowseal.Reseal(ctx, tx, rowseal.Users, "hk = $1", userID)
-	}
-	if changes := profileChanges(before, profile); err == nil && changes != nil {
-		// The change commits only with its event (#195).
-		e := audit.FromRequest(c)
-		e.ActorType, e.ActorID = audit.ActorUser, userID.String()
-		e.Action, e.Outcome = audit.ActionUserProfileUpdate, audit.Success
-		e.TargetType, e.TargetID = audit.TargetUser, userID.String()
-		e.Changes = changes
-		err = audit.Record(ctx, tx, e)
-	}
-	if err == nil {
-		err = tx.Commit()
 	}
 	if err != nil {
 		log.Printf("Error updating a profile: %v", err)

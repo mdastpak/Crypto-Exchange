@@ -10,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/totp"
+	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func (c *totpClock) next(secret []byte) string {
 func (e *e2eEnv) withTOTP(t *testing.T, token string) ([]byte, *totpClock) {
 	t.Helper()
 	clock := &totpClock{now: time.Now()}
-	e.handlers.User.TOTP.Now = func() time.Time { return clock.now }
+	e.handlers.TOTP.Now = func() time.Time { return clock.now }
 	status, resp := e.post(t, totpRoute, nil, token)
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	assert.Contains(t, resp.Info["uri"], "otpauth://totp/")
@@ -81,7 +82,7 @@ func TestUserTOTP_IsASecondStepInsteadOfThePassword(t *testing.T) {
 
 	// A secret does nothing until its first code is right.
 	clock := &totpClock{now: time.Now()}
-	env.handlers.User.TOTP.Now = func() time.Time { return clock.now }
+	env.handlers.TOTP.Now = func() time.Time { return clock.now }
 	status, resp = env.post(t, totpRoute, nil, token)
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	status, resp = env.post(t, totpConfirmRoute, map[string]string{"code": "000000"}, token)
@@ -132,7 +133,7 @@ func TestUserTOTP_IsASecondStepInsteadOfThePassword(t *testing.T) {
 	// The sign-in with the app is a fresh proof, and a step-up takes a
 	// code too.
 	userHK, sessionID := sessionOf(t, signedIn)
-	assert.NoError(t, env.handlers.User.Guard.Check(t.Context(), env.db, userHK, sessionID, true))
+	assert.NoError(t, env.handlers.User.Guard.(*userauth.Guard).Check(t.Context(), env.db, userHK, sessionID, true))
 	_, err := env.db.Exec(`UPDATE session_step_ups SET elevated_until = NOW() - INTERVAL '1 second'`)
 	require.NoError(t, err)
 	status, resp = env.post(t, stepUpRoute, map[string]string{"totp_code": clock.next(secret)}, signedIn)
