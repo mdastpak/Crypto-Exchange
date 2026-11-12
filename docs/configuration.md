@@ -589,7 +589,7 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | Section | Purpose | Related issues |
 | --- | --- | --- |
 | `exchange` | Display name and time zone. The maintenance window that was reserved here is replaced by the scheduled [maintenance controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)); `exchange.maintenance_window` is no longer read. | none |
-| `assets` | Asset registry path (`config/assets.yaml`) and automatic synchronization | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57) |
+| `assets` | `registry_path` is the file that `admin assets import` loads into the currencies ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309)), `config/assets.yaml` by default; `auto_sync`, an import at startup, is reserved | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57) |
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
 | `price_aggregator` | Price providers, VWAP windows, outlier threshold, quorum, staleness | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |

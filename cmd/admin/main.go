@@ -24,6 +24,7 @@
 //	admin [-config path] [-migrations url] restore verify [-not-before t] [-not-after t] [-keys]
 //	admin [-config path] [-migrations url] migrate [up|status]
 //	admin [-config path] [-migrations url] fields [status|rekey|decrypt]
+//	admin [-config path] [-migrations url] assets import [-file path] [-dry-run]
 //
 // create and reset-totp print the authenticator secret once. They seal it
 // as the server does, with a field-enc data key, so they need keys.provider;
@@ -44,6 +45,8 @@
 // as the release step of postgres.migrations.mode "external". The fields
 // commands encrypt the personal fields (#140) as the server's job does,
 // count what is left, and write the plaintext back before a down migration.
+// assets import loads the registry file of the currencies, their networks,
+// and the markets (#309), through the checks of internal/assetregistry.
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -138,6 +141,12 @@ Row seals (see docs/data-protection.md#row-seals):
   row-seals reseal -id <n> -reason <text>  Seal the row of a finding again after a review, and close it.
   row-seals verify                         Check every protected row now, as the server's verifier does.
 
+Assets (see docs/architecture.md#the-asset-registry):
+  assets import [-file path] [-dry-run]
+                   Load the registry file (assets.registry_path) into the currencies, their networks,
+                   and the markets, through its checks. A currency that exists keeps its fields;
+                   -dry-run reports the changes without making them.
+
 Personal fields (see docs/data-protection.md#field-encryption):
   fields status    Count the rows still in plaintext, or encrypted with an older key.
   fields rekey     Encrypt them now and empty their plaintext, as the server's job does every hour.
@@ -196,6 +205,8 @@ type command struct {
 	market marketArgs
 	// rowSeals holds the flags of the row-seals commands.
 	rowSeals rowSealArgs
+	// assets holds the flags of assets import.
+	assets assetArgs
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -236,6 +247,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseRowSealArgs(cmd, global.Args()[1:], stderr)
 	case "fields":
 		return parseFieldsArgs(cmd, global.Args()[1:], stderr)
+	case "assets":
+		return parseAssetArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -369,6 +382,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "fields ") {
 		return runFields(cmd, stdout, stderr)
+	}
+	if cmd.name == "assets import" {
+		return runAssets(cmd, stdout, stderr)
 	}
 	if config.Config.Keys.Provider == "" {
 		fmt.Fprintln(stderr, "Error: authenticator secrets need the data keys: set keys.provider (KEYS_PROVIDER, see docs/data-protection.md)")

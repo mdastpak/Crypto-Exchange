@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -24,20 +22,7 @@ import (
 // defaultCurrencyStatus is the status of a currency created without one.
 const defaultCurrencyStatus = "pending"
 
-// currencyStatuses are the statuses an administrator can set. A currency is
-// only marked deleted by DELETE /admin/currencies/{hk}.
-var currencyStatuses = map[string]bool{"approved": true, "pending": true, "suspend": true}
-
-var (
-	symbolPattern   = regexp.MustCompile(`^[A-Z0-9]{2,15}$`)
-	contractPattern = regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,128}$`)
-)
-
-const (
-	maxCurrencyNameLength  = 100
-	maxLogoURL             = 2048
-	maxCurrencyRequestBody = 64 << 10
-)
+const maxCurrencyRequestBody = 64 << 10
 
 // currencyInfoFields is the info object of a currency request. Pointers tell
 // an omitted field from an empty or false one, so that an update changes only
@@ -156,44 +141,12 @@ func (req currencyRequest) apply(status string, info models.CurrencyInfo) (strin
 }
 
 // validateCurrency checks a complete currency: a new one, or a stored one
-// with an update applied.
+// with an update applied; see currencies.Validate.
 func validateCurrency(status string, info models.CurrencyInfo) fieldErrors {
-	errs := fieldErrors{}
-	if !currencyStatuses[status] {
-		errs["status"] = "must be approved, pending, or suspend"
+	if errs := currencies.Validate(status, info); errs != nil {
+		return fieldErrors(errs)
 	}
-	checkName := func(field, value string) {
-		switch {
-		case value == "":
-			errs[field] = "is required"
-		case utf8.RuneCountInString(value) > maxCurrencyNameLength:
-			errs[field] = "must be at most 100 characters"
-		}
-	}
-	checkName("info.en_name", info.EnName)
-	checkName("info.fa_name", info.FaName)
-	if !symbolPattern.MatchString(info.Symbol) {
-		errs["info.symbol"] = "must be 2 to 15 upper-case letters or digits"
-	}
-	switch {
-	case info.IsToken && info.Contract == "":
-		errs["info.contract"] = "is required for a token"
-	case info.Contract != "" && !contractPattern.MatchString(info.Contract):
-		errs["info.contract"] = "must be 1 to 128 letters, digits, or ':', '_', '.', '-'"
-	}
-	if info.LogoURL != "" {
-		u, err := url.Parse(info.LogoURL)
-		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || len(info.LogoURL) > maxLogoURL {
-			errs["info.logo_url"] = "must be an https URL of at most 2048 characters"
-		}
-	}
-	if info.IfFiat && info.IsToken {
-		errs["info.is_token"] = "must be false for a fiat currency"
-	}
-	if len(errs) == 0 {
-		return nil
-	}
-	return errs
+	return nil
 }
 
 // sendVersionConflict answers a change that is based on a version of the

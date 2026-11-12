@@ -42,7 +42,7 @@ func (h *AdminHandler) ReleaseSymbol(c *gin.Context) {
 		return
 	}
 	symbol := strings.ToUpper(strings.TrimSpace(c.Param("symbol")))
-	if !symbolPattern.MatchString(symbol) {
+	if !currencies.SymbolPattern.MatchString(symbol) {
 		sendValidationErrors(c, fieldErrors{"symbol": "must be 2 to 15 letters or digits"})
 		return
 	}

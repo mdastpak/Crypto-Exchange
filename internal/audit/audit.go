@@ -55,6 +55,12 @@ const (
 	ActionCurrencyDelete = "currency.delete"
 	// ActionCurrencyRestore is an administrator undoing a delete (#196).
 	ActionCurrencyRestore = "currency.restore"
+	// ActionCurrencyNetworkSet is the import of the registry file adding or
+	// changing how a currency moves on a network (#309).
+	ActionCurrencyNetworkSet = "currency.network_set"
+	// ActionMarketSet is the import of the registry file adding or changing
+	// a market of two currencies (#309).
+	ActionMarketSet = "market.set"
 	// The lifecycle of a currency (#216): an administrator scheduling or
 	// cancelling a delisting, or overriding a capability, and the scheduler
 	// applying a step.
@@ -175,7 +181,10 @@ const (
 // Target types.
 const (
 	TargetCurrency = "currency"
-	TargetUser     = "user"
+	// TargetMarket is a market of the exchange, by its ID (#309); the pairs
+	// of the market data catalog are TargetMarketPair.
+	TargetMarket = "market"
+	TargetUser   = "user"
 	// TargetSession is a user's session, by the session ID of its tokens.
 	TargetSession = "session"
 	// TargetAdminSession is an administrator's session (#308), by the

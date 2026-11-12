@@ -94,15 +94,25 @@ func ChangedFields(before, after map[string]interface{}) *audit.Changes {
 // Create records a new currency, valid already, with the audit event from
 // origin.
 func (s Store) Create(ctx context.Context, status string, info models.CurrencyInfo, origin audit.Event) (Written, error) {
-	infoJSON, err := json.Marshal(info)
-	if err != nil {
-		return Written{}, fmt.Errorf("encode the currency: %w", err)
-	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Written{}, err
 	}
 	defer tx.Rollback()
+	w, err := create(ctx, tx, status, info, origin)
+	if err != nil {
+		return Written{}, err
+	}
+	return w, tx.Commit()
+}
+
+// create inserts a new currency in tx, with the event of the public view
+// and the audit event from origin.
+func create(ctx context.Context, tx *sql.Tx, status string, info models.CurrencyInfo, origin audit.Event) (Written, error) {
+	infoJSON, err := json.Marshal(info)
+	if err != nil {
+		return Written{}, fmt.Errorf("encode the currency: %w", err)
+	}
 	var w Written
 	if err := tx.QueryRowContext(ctx, "INSERT INTO currencies (status, info) VALUES ($1, $2::jsonb) RETURNING hk, version",
 		status, infoJSON).Scan(&w.HK, &w.Version); err != nil {
@@ -114,7 +124,7 @@ func (s Store) Create(ctx context.Context, status string, info models.CurrencyIn
 	if err := record(ctx, tx, origin, audit.ActionCurrencyCreate, w.HK, &audit.Changes{After: Fields(status, info)}); err != nil {
 		return Written{}, err
 	}
-	return w, tx.Commit()
+	return w, nil
 }
 
 // Update applies edit to a currency that is not deleted, with the audit
