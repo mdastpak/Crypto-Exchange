@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,7 +41,9 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/logging"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -55,6 +58,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/signin"
 	"github.com/mdastpak/crypto-exchange/internal/sites"
+	"github.com/mdastpak/crypto-exchange/internal/tracing"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
@@ -159,6 +163,12 @@ func run() error {
 	config.RequireConfigFile(flagSet("config"))
 	config.SetMigrationsPath(migrationsPath)
 	config.LoadConfig()
+	// Every log line is a structured record from here on (#50).
+	closeLog, err := logging.Setup(&config.Config)
+	if err != nil {
+		return fmt.Errorf("invalid logging configuration: %w", err)
+	}
+	defer closeLog()
 	logPosture()
 
 	// Check the whole configuration before connecting to anything, and
@@ -167,6 +177,19 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("invalid configuration:\n%s", problemList(err))
 	}
+	// The spans of the process go to observability.tracing.endpoint (#50);
+	// they are flushed when the server stops.
+	stopTracing, err := tracing.Setup(context.Background(), &config.Config)
+	if err != nil {
+		return fmt.Errorf("invalid tracing configuration: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := stopTracing(ctx); err != nil {
+			log.Printf("Error flushing the traces: %v", err)
+		}
+	}()
 
 	// server.mode, which SERVER_MODE or GIN_MODE can set, selects the
 	// release checks above as well as Gin's mode.
@@ -233,6 +256,14 @@ func run() error {
 	if geoIPWorker != nil {
 		workers = append(workers, *geoIPWorker)
 	}
+	// The metrics of the instance, on a port of their own (#50).
+	metricsWorker, err := startMetrics(services, handlers)
+	if err != nil {
+		return err
+	}
+	if metricsWorker != nil {
+		workers = append(workers, *metricsWorker)
+	}
 	scheduler := newDelistingScheduler(services, handlers, relay)
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
@@ -284,7 +315,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create the HTTP engine: %w", err)
 	}
-	r.Use(gin.Logger())
+	r.Use(logging.Requests(slog.Default(), requestUser))
 	if err := RouteHandler(r, handlers); err != nil {
 		return fmt.Errorf("failed to register routes: %w", err)
 	}
@@ -1242,6 +1273,10 @@ func RouteHandler(r *gin.Engine, ih *InfraHandlers) error {
 		ih.Sites = registry
 	}
 
+	// The span and the metrics of each request (#50) wrap everything else,
+	// so that a recovered panic still ends them as a 500.
+	r.Use(tracing.Middleware())
+	r.Use(metrics.Middleware())
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.RequestID())
 	// Every answer after this point, refusals of the limits included, is

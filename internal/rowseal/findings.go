@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 )
 
 // Finding is a row that did not match its seal.
@@ -398,6 +399,7 @@ func (s *Sealer) verifyRecords(ctx context.Context, report *Report) error {
 		}
 		if created {
 			s.logf("SECURITY: %s %s fails its integrity check (%s); finding %d, mode %s", UserPasswords.Name, hk, CheckRowMissing, id, s.mode)
+			metrics.SealFindings.WithLabelValues(UserPasswords.Name, CheckRowMissing).Inc()
 			e := audit.Of(audit.Event{}, audit.ActionIntegritySealMismatch, UserPasswords.Name, hk)
 			e.Outcome, e.Reason = audit.Failure, CheckRowMissing
 			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "detected_by": DetectedByVerifier, "mode": s.mode}}
@@ -471,6 +473,7 @@ func (s *Sealer) verifyBatch(ctx context.Context, t *Table, after string, report
 		}
 		if created {
 			s.logf("SECURITY: %s %s fails its integrity check (%s); finding %d, mode %s", t.Name, r.Key, v, id, s.mode)
+			metrics.SealFindings.WithLabelValues(t.Name, string(v)).Inc()
 			e := audit.Of(audit.Event{}, audit.ActionIntegritySealMismatch, t.Name, r.Key)
 			e.Outcome, e.Reason = audit.Failure, string(v)
 			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "detected_by": DetectedByVerifier, "mode": s.mode}}

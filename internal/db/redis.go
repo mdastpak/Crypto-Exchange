@@ -11,6 +11,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/redisutil"
+	"github.com/mdastpak/crypto-exchange/internal/tracing"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -55,6 +56,8 @@ func NewRedisClient(cfg *config.Configuration) (redis.UniversalClient, error) {
 	// A request that fails because Redis is away answers 503, not 500
 	// (#130).
 	redisutil.NoteUnavailable(client)
+	// Each command is a span of the trace of its request (#50).
+	client.AddHook(tracing.RedisHook{})
 	return client, nil
 }
 

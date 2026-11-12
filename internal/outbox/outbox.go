@@ -24,12 +24,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/tracing"
 )
 
-// Enqueue writes a message of topic in tx. It is published after tx
+// Enqueue writes a message of topic in tx, with the trace context of ctx
+// (#50), which its publish continues. It is published after tx
 // commits, and never if tx rolls back. payload must be JSON.
 func Enqueue(ctx context.Context, tx *sql.Tx, topic string, payload []byte) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO outbox_events (topic, payload) VALUES ($1, $2::jsonb)`, topic, payload)
+	_, err := tx.ExecContext(ctx, `INSERT INTO outbox_events (topic, payload, trace_context) VALUES ($1, $2::jsonb, NULLIF($3, ''))`,
+		topic, payload, tracing.Inject(ctx))
 	return err
 }
 
@@ -250,9 +254,11 @@ func (r *Relay) Flush(ctx context.Context) (int, error) {
 }
 
 type message struct {
-	id       int64
-	topic    string
-	payload  string
+	id      int64
+	topic   string
+	payload string
+	// trace is the traceparent of the change that wrote the message, or "".
+	trace    string
 	attempts int
 	// ready is false while the message waits for its next attempt. The
 	// database's clock decides, as it set the time.
@@ -330,10 +336,10 @@ func (r *Relay) relayBatch(ctx context.Context) (published int, more bool, err e
 // that knows them. full reports whether a topic had more messages.
 func (r *Relay) pending(ctx context.Context, tx *sql.Tx) (pending []message, full bool, err error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT e.id, e.topic, e.payload, e.attempts, e.next_attempt_at <= NOW()
+		`SELECT e.id, e.topic, e.payload, e.attempts, e.next_attempt_at <= NOW(), COALESCE(e.trace_context, '')
 		FROM unnest($2::text[]) AS t(topic)
 		CROSS JOIN LATERAL (
-			SELECT id, topic, payload, attempts, next_attempt_at FROM outbox_events
+			SELECT id, topic, payload, attempts, next_attempt_at, trace_context FROM outbox_events
 			WHERE topic = t.topic AND published_at IS NULL AND failed_at IS NULL
 			ORDER BY id LIMIT $1
 		) AS e
@@ -345,7 +351,7 @@ func (r *Relay) pending(ctx context.Context, tx *sql.Tx) (pending []message, ful
 	perTopic := make(map[string]int)
 	for rows.Next() {
 		var msg message
-		if err := rows.Scan(&msg.id, &msg.topic, &msg.payload, &msg.attempts, &msg.ready); err != nil {
+		if err := rows.Scan(&msg.id, &msg.topic, &msg.payload, &msg.attempts, &msg.ready, &msg.trace); err != nil {
 			return nil, false, err
 		}
 		pending = append(pending, msg)
@@ -357,7 +363,8 @@ func (r *Relay) pending(ctx context.Context, tx *sql.Tx) (pending []message, ful
 
 // send runs the route's Before and publishes the message.
 func (r *Relay) send(ctx context.Context, route Route, msg message) error {
-	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	// The publish continues the trace of the change that wrote the message.
+	ctx, cancel := context.WithTimeout(tracing.Extract(ctx, msg.trace), sendTimeout)
 	defer cancel()
 	if route.Before != nil {
 		if err := route.Before(ctx); err != nil {

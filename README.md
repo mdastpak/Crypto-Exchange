@@ -39,6 +39,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Languages and text direction | Implemented | Supported locales with their direction (RTL or LTR), the locale of each request from its query, headers, cookie, or browser, and Persian translations of the messages users see ([#283](https://github.com/mdastpak/Crypto-Exchange/issues/283)). The country of each client from a trusted edge header or a GeoIP database ([#284](https://github.com/mdastpak/Crypto-Exchange/issues/284), [docs/geoip.md](docs/geoip.md)). A site per country with its own domain and locales, redirects that respect the visitor's choice, and the fallback to the global site in English ([#285](https://github.com/mdastpak/Crypto-Exchange/issues/285)). Each user's language and theme are saved in their profile and follow them across devices and domains ([#286](https://github.com/mdastpak/Crypto-Exchange/issues/286)). See [docs/i18n.md](docs/i18n.md). |
 | Rate limiting (Redis) | Implemented | Token buckets per client IP or per signed-in user, fixed windows for sign-in, and a configurable policy for Redis failures. |
 | Health checks | Implemented | `/system/live` for liveness, and `/system/ready`, which answers `503` while PostgreSQL or Redis is unavailable, and `200` with the status `degraded` while RabbitMQ is ([#33](https://github.com/mdastpak/Crypto-Exchange/issues/33), [#232](https://github.com/mdastpak/Crypto-Exchange/issues/232)). |
+| Observability | Implemented | Structured `log/slog` records with secrets, tokens, and contacts redacted; Prometheus metrics of requests, the database pool, Redis, RabbitMQ, WebSocket connections, publishes, rate limits, and integrity findings, on a port of their own; OpenTelemetry traces across requests, PostgreSQL, Redis, and publishing, carried through the outbox ([PR #351](https://github.com/mdastpak/Crypto-Exchange/pull/351)). See [docs/observability.md](docs/observability.md). |
 | Exchange domain model and schema | Models and migrations only | No services use them yet. |
 | Price engine, OTC trading, ledger, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
@@ -194,6 +195,8 @@ The data-protection keys, which future row seals and field encryption build on, 
 
 Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-availability.md](docs/redis-high-availability.md) describes the deployment and what a failover may lose. RabbitMQ runs as a cluster of three nodes with quorum queues, and the server keeps working without it, except for sending sign-in codes; see [docs/rabbitmq-high-availability.md](docs/rabbitmq-high-availability.md).
 
+Each process writes structured logs, with secrets and contacts redacted; the server serves Prometheus metrics on a port of their own and sends OpenTelemetry traces. [docs/observability.md](docs/observability.md) lists the metrics, the spans, and the alerts to set.
+
 Backups, point-in-time recovery, the restore drill, and the disaster-recovery runbook are in [docs/disaster-recovery.md](docs/disaster-recovery.md). `admin backup status` alerts when WAL archiving falls behind the RPO, and `admin restore verify` checks a restored database before it is put in service.
 
 ## API overview
@@ -323,7 +326,9 @@ internal/i18n/          Locales, text direction, negotiation, and translated mes
 internal/identity/      Identity checks with a KYC provider: mobile ownership against the
                         national ID (Jibit client and a stub), sealed national IDs
 internal/keys/          Data-protection keys wrapped by Vault or OpenBao Transit
+internal/logging/       Structured logs: slog records with redaction, and the request log
 internal/marketdata/    Global market data catalog: unverified assets, venues, pairs, tickers
+internal/metrics/       Prometheus metrics, served on a port of their own
 internal/middleware/    Security headers, CORS, rate limiting, validation, recovery
 internal/models/        API models for currencies and users
 internal/notify/        Delivery of sign-in codes by email and SMS through RabbitMQ
@@ -350,6 +355,7 @@ internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
                         checks, users, a field sealer, and network proxies
 internal/totp/          Time-based one-time passwords (RFC 6238)
+internal/tracing/       OpenTelemetry spans of requests, queries, commands, and publishes
 internal/userauth/      The account password of users, the second step of their sign-in
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
 scripts/doc-status/     The check that the status table agrees with the issues it links

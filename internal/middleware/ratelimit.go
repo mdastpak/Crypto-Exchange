@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -170,7 +171,8 @@ func retryAfterSeconds(wait time.Duration) string {
 	return strconv.FormatInt(int64(math.Max(1, math.Ceil(wait.Seconds()))), 10)
 }
 
-func rejectRateLimited(c *gin.Context, limit int, wait time.Duration) {
+func rejectRateLimited(c *gin.Context, limiter string, limit int, wait time.Duration) {
+	metrics.RateLimitRejections.WithLabelValues(limiter).Inc()
 	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 	c.Header("X-RateLimit-Remaining", "0")
 	c.Header("Retry-After", retryAfterSeconds(wait))
@@ -197,7 +199,7 @@ func (rl *RateLimiter) tokenBucketMiddleware(prefix string, rate, burst int, fai
 			return
 		}
 		if !allowed {
-			rejectRateLimited(c, burst, wait)
+			rejectRateLimited(c, prefix, burst, wait)
 			return
 		}
 		c.Header("X-RateLimit-Limit", strconv.Itoa(burst))
@@ -225,7 +227,7 @@ func (rl *RateLimiter) fixedWindowMiddleware(prefix string, limit int, window ti
 			return
 		}
 		if count > int64(limit) {
-			rejectRateLimited(c, limit, ttl)
+			rejectRateLimited(c, prefix, limit, ttl)
 			return
 		}
 		c.Header("X-RateLimit-Limit", strconv.Itoa(limit))

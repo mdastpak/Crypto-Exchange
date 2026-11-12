@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
+	"github.com/mdastpak/crypto-exchange/internal/tracing"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -577,7 +579,24 @@ func (r *RabbitMQService) waitForChannel(ctx context.Context) (*amqp.Channel, er
 // PublishMessage publishes msg and waits until the broker confirms it. The
 // timestamp is set when msg has none. While the publishing channel is being
 // restored, it waits up to channelWait for it.
-func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, msg amqp.Publishing) error {
+func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, msg amqp.Publishing) (err error) {
+	// The time to publish and receive the confirm (#50).
+	start := time.Now()
+	defer func() {
+		outcome := "ok"
+		if err != nil {
+			outcome = "error"
+		}
+		metrics.PublishDuration.WithLabelValues(exchange, outcome).Observe(time.Since(start).Seconds())
+	}()
+	// The publish is a span of the trace of its change, and the message
+	// carries the trace to its consumers.
+	ctx, span := tracing.StartPublish(ctx, exchange)
+	defer func() { tracing.End(span, err) }()
+	if msg.Headers == nil {
+		msg.Headers = amqp.Table{}
+	}
+	tracing.InjectHeaders(ctx, msg.Headers)
 	if r.closed.Load() {
 		return errServiceClosed
 	}
@@ -585,9 +604,9 @@ func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, m
 		msg.Timestamp = time.Now()
 	}
 
-	ch, tracker, tag, ack, err := r.send(ctx, exchange, msg)
-	if err != nil {
-		return err
+	ch, tracker, tag, ack, sendErr := r.send(ctx, exchange, msg)
+	if sendErr != nil {
+		return sendErr
 	}
 
 	timer := time.NewTimer(publishConfirmTimeout)

@@ -33,6 +33,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 )
 
 // The modes of keys.row_seals.mode.
@@ -278,6 +279,7 @@ func (s *Sealer) report(ctx context.Context, t *Table, key string, v Verdict, by
 		return
 	}
 	s.logf("SECURITY: %s %s fails its integrity check (%s); finding %d, mode %s", t.Name, key, v, id, s.mode)
+	metrics.SealFindings.WithLabelValues(t.Name, string(v)).Inc()
 	e := audit.Of(audit.Event{}, audit.ActionIntegritySealMismatch, t.Name, key)
 	e.Outcome, e.Reason = audit.Failure, string(v)
 	e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "detected_by": by, "mode": s.mode}}

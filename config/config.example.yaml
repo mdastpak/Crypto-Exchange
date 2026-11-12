@@ -447,7 +447,7 @@ platform:
   fail_closed: [deposits, withdrawals, trading]   # ["none"] closes nothing
   lift_approval: [withdrawals, trading]           # Needs a second administrator to lift
 
-# The sections from here to observability are parsed but not used yet, except
+# The sections from here to compliance are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe
 # the configuration of roadmap features; see "Settings reserved for roadmap
 # features" in docs/configuration.md.

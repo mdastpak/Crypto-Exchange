@@ -55,6 +55,7 @@ func (c *Configuration) validateServer() error {
 	c.tlsProblems(&p)
 	release := c.Server.Mode == "release"
 	c.redisModeProblems(&p)
+	c.observabilityProblems(&p)
 	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
 	if release {
@@ -825,5 +826,45 @@ func passkeyProblems(p *problems, c *Configuration) {
 		if u.Scheme != "https" && (!local || c.Server.Mode == "release") {
 			p.add("security.passkeys.origins", "has %q; an origin uses https", origin)
 		}
+	}
+}
+
+// observabilityProblems checks the observability section (#50): the level,
+// format, and output of the logs, the address of the metrics, and the
+// tracing.
+func (c *Configuration) observabilityProblems(p *problems) {
+	o := c.Observability
+	switch strings.ToLower(o.Logging.Level) {
+	case "", "debug", "info", "warn", "warning", "error":
+	default:
+		p.add("observability.logging.level", "is %q; it must be debug, info, warn, or error", o.Logging.Level)
+	}
+	switch strings.ToLower(o.Logging.Format) {
+	case "", "json", "text":
+	default:
+		p.add("observability.logging.format", "is %q; it must be json or text", o.Logging.Format)
+	}
+	switch strings.ToLower(o.Logging.Output) {
+	case "", "stdout", "stderr":
+	case "file":
+		if o.Logging.FilePath == "" {
+			p.add("observability.logging.file_path", "is empty, and observability.logging.output is file")
+		}
+	default:
+		p.add("observability.logging.output", "is %q; it must be stdout, stderr, or file", o.Logging.Output)
+	}
+	if o.Metrics.Enabled {
+		if o.Metrics.Port < 1 || o.Metrics.Port > 65535 {
+			p.add("observability.metrics.port", "is %d; it must be a port, 1 to 65535", o.Metrics.Port)
+		}
+		if !strings.HasPrefix(o.Metrics.Path, "/") {
+			p.add("observability.metrics.path", "is %q; it must start with /", o.Metrics.Path)
+		}
+	}
+	if o.Tracing.SampleRate < 0 || o.Tracing.SampleRate > 1 {
+		p.add("observability.tracing.sample_rate", "is %v; it must be from 0 to 1", o.Tracing.SampleRate)
+	}
+	if o.Tracing.Enabled && o.Tracing.Endpoint == "" {
+		p.add("observability.tracing.endpoint", "is empty, and observability.tracing.enabled is set")
 	}
 }

@@ -196,6 +196,10 @@ func (h *WebSocketHandler) unregisterClient(client *Client) {
 	log.Printf("WebSocket client disconnected. Total: %d", h.clientCount())
 }
 
+// ConnectionCount is the number of open connections of this instance, for
+// the metrics (#50).
+func (h *WebSocketHandler) ConnectionCount() int { return h.clientCount() }
+
 func (h *WebSocketHandler) clientCount() int {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
