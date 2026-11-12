@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -16,10 +15,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
-	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
-	"github.com/mdastpak/crypto-exchange/internal/db"
-	"github.com/mdastpak/crypto-exchange/internal/domain/account"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
@@ -195,7 +191,7 @@ func (h *PublicHandler) SecondStepPasskeyOptions(c *gin.Context) {
 			gin.H{"errors": map[string]string{"challenge": "is required"}})
 		return
 	}
-	if h.RedisClient == nil || h.PostgresDB == nil || h.Passkeys == nil {
+	if h.Redis == nil || h.Accounts == nil || h.Passkeys == nil {
 		helpers.SendError(c, http.StatusServiceUnavailable, codePasskeyUnavailable, i18n.M("PASSKEYS_UNAVAILABLE"), nil)
 		return
 	}
@@ -260,14 +256,12 @@ func (h *PublicHandler) sessionMethod(ctx context.Context, userHK uuid.UUID) (st
 // The challenge names the contact whose code was right, which an account
 // recovery counts as proved.
 func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userHK uuid.UUID, contactType, contact string, attempt audit.Event) {
-	if h.RedisClient == nil {
+	if h.Redis == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
-	var contactID int64
-	err := h.PostgresDB.DB.QueryRowContext(ctx, `SELECT c.id FROM user_contacts c
-		WHERE c.user_hk = $3 AND c.verified_at IS NOT NULL AND `+db.ContactMatch, contactType, contact, userHK).Scan(&contactID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	contactID, err := h.Accounts.ContactID(ctx, userHK, contactType, contact)
+	if err != nil {
 		log.Printf("Failed to read the contact of a sign-in: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)
 		return
@@ -275,7 +269,7 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw) // never fails since Go 1.24
 	challenge := base64.RawURLEncoding.EncodeToString(raw)
-	if err := h.RedisClient.Client.Set(ctx, secondStepKey(challenge), userHK.String()+"|"+strconv.FormatInt(contactID, 10), secondStepTTL).Err(); err != nil {
+	if err := h.Redis.Set(ctx, secondStepKey(challenge), userHK.String()+"|"+strconv.FormatInt(contactID, 10), secondStepTTL).Err(); err != nil {
 		// Without the challenge the sign-in cannot continue, and it never
 		// continues without the second step.
 		log.Printf("Failed to store a second-step challenge: %v", err)
@@ -283,7 +277,7 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 		return
 	}
 	reset := []string{}
-	if left, err := h.Passwords.RecoveryCodesLeft(ctx, h.PostgresDB.DB, userHK.String()); err != nil {
+	if left, err := h.Passwords.CodesLeft(ctx, userHK.String()); err != nil {
 		log.Printf("Failed to count the recovery codes of a sign-in: %v", err)
 	} else if left > 0 {
 		reset = append(reset, proofRecoveryCode)
@@ -315,17 +309,7 @@ func (h *PublicHandler) askSecondStep(c *gin.Context, ctx context.Context, userH
 // canSignIn reads whether the account of a challenge may still sign in: it
 // may have been disabled or frozen since the code was verified.
 func (h *PublicHandler) canSignIn(ctx context.Context, userHK uuid.UUID) (allowed, frozen bool, err error) {
-	var status, role string
-	var deleted bool
-	err = h.PostgresDB.DB.QueryRowContext(ctx, `SELECT status, role, deleted_at IS NOT NULL, `+restrictions.FrozenSQL("users.hk")+`
-		FROM users WHERE hk = $1`, userHK).Scan(&status, &role, &deleted, &frozen)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, false, nil
-	}
-	if err != nil {
-		return false, false, err
-	}
-	return !deleted && role == auth.RoleUser && account.UserStatus(status).CanSignIn(), frozen, nil
+	return h.Accounts.CanSignIn(ctx, userHK)
 }
 
 // challengedUser returns the user of a second-step challenge, which stays
@@ -340,7 +324,7 @@ func (h *PublicHandler) challengedUser(c *gin.Context, ctx context.Context, chal
 // challenge is challengedUser with the contact of the challenge.
 func (h *PublicHandler) challenge(c *gin.Context, ctx context.Context, challenge string) (challenged, bool) {
 	key := secondStepKey(challenge)
-	value, err := h.RedisClient.Client.Get(ctx, key).Result()
+	value, err := h.Redis.Get(ctx, key).Result()
 	owner, contactPart, _ := strings.Cut(value, "|")
 	userHK, parseErr := uuid.Parse(owner)
 	contactID, _ := strconv.ParseInt(contactPart, 10, 64)
@@ -424,7 +408,7 @@ func (h *PublicHandler) SecondStep(c *gin.Context) {
 		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
-	if h.RedisClient == nil || h.PostgresDB == nil || h.Passwords == nil {
+	if h.Redis == nil || h.Accounts == nil || h.Passwords == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
@@ -523,7 +507,7 @@ func (h *PublicHandler) verifyTOTP(c *gin.Context, ctx context.Context, userHK u
 func (h *PublicHandler) finishSecondStep(c *gin.Context, ctx context.Context, key string, userHK uuid.UUID, attempt audit.Event) {
 	// The challenge signs in once: of two requests with the right proof,
 	// the one that takes it gets the session.
-	taken, err := h.RedisClient.Client.Del(ctx, key).Result()
+	taken, err := h.Redis.Del(ctx, key).Result()
 	if err != nil {
 		log.Printf("Failed to take a second-step challenge: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CREATE_SESSION"), nil)

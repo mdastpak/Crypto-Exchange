@@ -290,8 +290,8 @@ func TestUserPassword_NothingIsHashedWithoutAChallenge(t *testing.T) {
 	token, _ := env.signedIn(t, contact)
 	env.setPassword(t, token, testPassword)
 
-	counter := &countingHasher{Hasher: env.handlers.Public.Passwords.Hasher}
-	env.handlers.Public.Passwords.Hasher = counter
+	counter := &countingHasher{Hasher: env.handlers.Passwords.Hasher}
+	env.handlers.Passwords.Hasher = counter
 
 	for _, body := range []map[string]string{
 		{"challenge": "no-such-challenge", "password": testPassword},

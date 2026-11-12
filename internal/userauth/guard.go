@@ -163,3 +163,15 @@ func (g *Guard) Elevate(ctx context.Context, userHK, sessionID string) (time.Tim
 	}
 	return until, nil
 }
+
+// StateOf is State on the database of the guard.
+func (g *Guard) StateOf(ctx context.Context, userHK, sessionID string) (State, error) {
+	return g.State(ctx, g.DB, userHK, sessionID)
+}
+
+// Allows is Check on the database of the guard, outside the transaction of
+// an operation: for the routes that the guard protects but that move no
+// money.
+func (g *Guard) Allows(ctx context.Context, userHK, sessionID string, funds bool) error {
+	return g.Check(ctx, g.DB, userHK, sessionID, funds)
+}

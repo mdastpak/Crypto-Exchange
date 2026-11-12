@@ -91,7 +91,7 @@ func TestVerifyOTP_RealSchema_ConcurrentUseOfACodeSignsInOnce(t *testing.T) {
 
 func TestRequestOTP_RealSchema_LimitsCodesPerContact(t *testing.T) {
 	handler, router, sender := newOTPLimitRouter(t)
-	handler.OTP = otp.NewStore(handler.RedisClient.Client, otp.Settings{ContactRequestsPerHour: 2})
+	handler.OTP = otp.NewStore(handler.Redis, otp.Settings{ContactRequestsPerHour: 2})
 
 	requestCode(t, router, sender, "busy@example.com")
 	requestCode(t, router, sender, "busy@example.com")
@@ -104,7 +104,7 @@ func TestRequestOTP_RealSchema_LimitsCodesPerContact(t *testing.T) {
 
 func TestRequestOTP_RealSchema_NewCodesDoNotResetTheAttempts(t *testing.T) {
 	handler, router, sender := newOTPLimitRouter(t)
-	handler.OTP = otp.NewStore(handler.RedisClient.Client, otp.Settings{AttemptsPerCode: 3, ContactAttemptsPerHour: 3})
+	handler.OTP = otp.NewStore(handler.Redis, otp.Settings{AttemptsPerCode: 3, ContactAttemptsPerHour: 3})
 
 	sessionID, code := requestCode(t, router, sender, "locked@example.com")
 	wrong := "000000"
@@ -135,7 +135,7 @@ func TestVerifyOTP_RealSchema_UnavailableAccountsAreForbidden(t *testing.T) {
 			handler, router, sender := newOTPLimitRouter(t)
 			contact := name + ".account@example.com"
 			user.Email = contact
-			usertest.Insert(t, handler.PostgresDB.DB, user)
+			usertest.Insert(t, testDB(handler), user)
 			sessionID, code := requestCode(t, router, sender, contact)
 
 			httpStatus, resp := postJSON(t, router, "/public/auth/"+sessionID, map[string]string{"otp": code})
@@ -143,7 +143,7 @@ func TestVerifyOTP_RealSchema_UnavailableAccountsAreForbidden(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, httpStatus)
 			assert.Equal(t, "This account cannot sign in. Please contact support.", resp.Message)
 			var sessions int
-			require.NoError(t, handler.PostgresDB.DB.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions))
+			require.NoError(t, testDB(handler).QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions))
 			assert.Zero(t, sessions, "no session may be created")
 		})
 	}

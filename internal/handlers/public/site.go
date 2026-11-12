@@ -30,7 +30,7 @@ type SiteHandler struct {
 	Sites   *sites.Registry
 	Locales *i18n.Registry
 	// GeoIP finds the visitor's country; nil knows none.
-	GeoIP *geoip.Resolver
+	GeoIP CountryResolver
 	// TrustedProxies are the proxies whose X-Forwarded-Host is believed.
 	TrustedProxies []netip.Prefix
 }
@@ -98,7 +98,7 @@ func (h *SiteHandler) resolve(c *gin.Context) sites.Resolution {
 	}
 	return h.Sites.Resolve(sites.Request{
 		Host:      sites.RequestHost(c.Request, h.forwarded(c)),
-		Country:   h.GeoIP.Resolve(c),
+		Country:   h.country(c),
 		Locale:    negotiated,
 		Choice:    choice,
 		UserAgent: c.Request.UserAgent(),
@@ -134,7 +134,7 @@ func (h *SiteHandler) Site(c *gin.Context) {
 		return
 	}
 	res := h.resolve(c)
-	country := h.GeoIP.Resolve(c)
+	country := h.country(c)
 	info := SiteInfo{
 		Country:       country.Country,
 		CountrySource: country.Source,
@@ -260,4 +260,17 @@ func (h *SiteHandler) setCookie(c *gin.Context, name, value string) {
 		cookie.MaxAge = -1
 	}
 	http.SetCookie(c.Writer, cookie)
+}
+
+// CountryResolver finds the country of a request (#284): *geoip.Resolver.
+type CountryResolver interface {
+	Resolve(c *gin.Context) geoip.Result
+}
+
+// country is the country of the request, or none without a resolver.
+func (h *SiteHandler) country(c *gin.Context) geoip.Result {
+	if h.GeoIP == nil {
+		return geoip.Result{Source: geoip.SourceNone}
+	}
+	return h.GeoIP.Resolve(c)
 }

@@ -82,9 +82,7 @@ func (h *PublicHandler) recoveryIdentity(c *gin.Context, ctx context.Context, ch
 	if !slices.Contains(steps, userauth.StepMobileOwnership) {
 		return proof, true
 	}
-	var contactType, value string
-	err := h.PostgresDB.DB.QueryRowContext(ctx, `SELECT type, value FROM user_contacts
-		WHERE id = $1 AND user_hk = $2 AND removed_at IS NULL`, ch.ContactID, ch.UserHK).Scan(&contactType, &value)
+	contactType, value, err := h.Accounts.Contact(ctx, ch.UserHK.String(), ch.ContactID)
 	if err != nil {
 		// A contact that is gone is refused with the recovery's own answer.
 		return proof, true
@@ -147,7 +145,7 @@ func (h *PublicHandler) Recover(c *gin.Context) {
 		helpers.SendError(c, http.StatusBadRequest, helpers.CodeValidationFailed, i18n.M("VALIDATION_FAILED"), gin.H{"errors": errs})
 		return
 	}
-	if h.RedisClient == nil || h.PostgresDB == nil || h.Passwords == nil {
+	if h.Redis == nil || h.Accounts == nil || h.Passwords == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
@@ -165,7 +163,7 @@ func (h *PublicHandler) Recover(c *gin.Context) {
 	var hasNationalID bool
 	if strict {
 		var err error
-		nationalID, hasNationalID, err = identity.NationalID(ctx, h.PostgresDB.DB, h.Sealer, userHK)
+		nationalID, hasNationalID, err = h.Accounts.NationalID(ctx, userHK)
 		if err != nil {
 			log.Printf("Failed to read the national ID of a recovery: %v", err)
 			helpers.SendError(c, http.StatusServiceUnavailable, codeRecoveryUnavailable, i18n.M("RECOVERY_UNAVAILABLE"), nil)
@@ -271,7 +269,7 @@ func (h *PublicHandler) CompleteRecovery(c *gin.Context) {
 		invalid()
 		return
 	}
-	if h.RedisClient == nil || h.PostgresDB == nil || h.Passwords == nil {
+	if h.Redis == nil || h.Accounts == nil || h.Passwords == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SIGN_IN_IS_NOT_AVAILABLE"), nil)
 		return
 	}
@@ -323,7 +321,7 @@ func (h *PublicHandler) CompleteRecovery(c *gin.Context) {
 
 	// The password is replaced. The challenge is spent, and whoever held a
 	// session of the account signed in with the old password.
-	if err := h.RedisClient.Client.Del(ctx, ch.Key).Err(); err != nil {
+	if err := h.Redis.Del(ctx, ch.Key).Err(); err != nil {
 		log.Printf("Failed to remove a second-step challenge after a recovery: %v", err)
 	}
 	if ender, ok := h.Sessions.(sessionEnder); ok {

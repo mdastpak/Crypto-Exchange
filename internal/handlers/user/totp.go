@@ -44,7 +44,7 @@ func (h *UserHandler) totpCaller(c *gin.Context) (string, audit.Event, bool) {
 	if !ok {
 		return "", audit.Event{}, false
 	}
-	if h.TOTP == nil || h.Passwords == nil || h.PostgresDB == nil {
+	if h.TOTP == nil || h.Passwords == nil || h.Store == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("SECOND_FACTOR_UNAVAILABLE"), nil)
 		return "", audit.Event{}, false
 	}
@@ -86,12 +86,7 @@ func (h *UserHandler) BeginTOTP(c *gin.Context) {
 		return
 	}
 	// The app shows the account under a contact of the user.
-	var account string
-	if err := h.PostgresDB.DB.QueryRowContext(ctx, `SELECT value FROM user_contacts
-		WHERE user_hk = $1 AND removed_at IS NULL AND type IN ('email', 'mobile')
-		ORDER BY is_primary DESC, id LIMIT 1`, userHK).Scan(&account); err != nil {
-		account = "account"
-	}
+	account := h.Store.AccountName(ctx, userHK)
 	enrollment, err := h.TOTP.Begin(ctx, userHK, account)
 	switch {
 	case errors.Is(err, userauth.ErrTOTPEnabled):

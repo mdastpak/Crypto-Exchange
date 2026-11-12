@@ -587,7 +587,7 @@ func (s *PublicHandlerTestSuite) TestCurrencies_FiltersAnswerTheSameFromTheDatab
 		_, err = s.postgresService.DB.Exec(`INSERT INTO currencies (status, info) VALUES ('approved', $1::jsonb)`, info)
 		require.NoError(s.T(), err)
 	}
-	require.NoError(s.T(), s.handler.Currencies.Invalidate(context.Background()))
+	require.NoError(s.T(), s.handler.Currencies.(*currencies.Catalog).Invalidate(context.Background()))
 
 	// Arabic yeh and kaf, without the ZWNJ, match the Persian name.
 	const path = "/public/currencies?fa_name=" + "بيتكوين" + "&sort=-symbol&limit=1"

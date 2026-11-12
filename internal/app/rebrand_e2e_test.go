@@ -115,7 +115,7 @@ func TestCurrencyRebrand_EndToEnd(t *testing.T) {
 		t.Helper()
 		_, err := rebrand.Advance(ctx, env.db, start.Add(time.Duration(hours)*time.Hour), 100)
 		require.NoError(t, err)
-		require.NoError(t, env.handlers.Public.Currencies.Invalidate(ctx))
+		require.NoError(t, env.handlers.Catalog.Invalidate(ctx))
 		found := search("symbol=LEND")
 		if len(found) == 0 {
 			return models.Currency{}

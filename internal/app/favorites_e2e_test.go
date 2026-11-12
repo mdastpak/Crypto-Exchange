@@ -24,7 +24,7 @@ func TestUserFavorites_EndToEnd(t *testing.T) {
 		require.NoError(t, env.db.QueryRow(`INSERT INTO currencies (status, info) VALUES ('approved', $1::jsonb) RETURNING hk`, info).Scan(&hk))
 		hks[symbol] = hk
 	}
-	require.NoError(t, env.handlers.Public.Currencies.Invalidate(context.Background()))
+	require.NoError(t, env.handlers.Catalog.Invalidate(context.Background()))
 	token, _ := env.signedInUser(t, "favorites@example.com")
 	other, _ := env.signedInUser(t, "other-fav@example.com")
 

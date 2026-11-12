@@ -70,14 +70,14 @@ const DefaultFeedDelay = time.Minute
 
 // Handler serves the routes of the API.
 type Handler struct {
-	store *marketdata.Store
+	store Store
 	cache Cache
 	opts  Options
 }
 
 // New returns the handler. cache may be nil: the answers are then built on
 // every request.
-func New(store *marketdata.Store, cache Cache, opts Options) *Handler {
+func New(store Store, cache Cache, opts Options) *Handler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}

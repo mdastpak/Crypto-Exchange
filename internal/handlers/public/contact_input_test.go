@@ -28,9 +28,9 @@ func persianDigits(s string) string {
 // that user_contacts stores, and a code in Persian digits is the code.
 func TestVerifyOTP_RealSchema_EveryFormOfAMobileReachesOneAccount(t *testing.T) {
 	handler, router, sender := newOTPLimitRouter(t)
-	handler.OTP = otp.NewStore(handler.RedisClient.Client, otp.Settings{ContactRequestsPerHour: 10})
+	handler.OTP = otp.NewStore(handler.Redis, otp.Settings{ContactRequestsPerHour: 10})
 	config.Config.JWT.Sessions.MaxPerUser = 10 // every form signs in to one account
-	db := handler.PostgresDB.DB
+	db := testDB(handler)
 	for _, typed := range []string{"09121112233", "۰۹۱۲۱۱۱۲۲۳۳", "+98 912 111 2233", "00989121112233", "0912-111-2233", "٠٩١٢١١١٢٢٣٣"} {
 		sessionID, code := requestCode(t, router, sender, typed)
 		status, resp := postJSON(t, router, "/public/auth/"+sessionID, map[string]string{"otp": " " + persianDigits(code) + " "})
@@ -60,7 +60,7 @@ func TestRequestOTP_RealSchema_SendsToTheNormalizedContact(t *testing.T) {
 // is refused without moving the user toward the lockout.
 func TestVerifyOTP_RealSchema_MalformedCodesSpendNoAttempt(t *testing.T) {
 	handler, router, sender := newOTPLimitRouter(t)
-	handler.OTP = otp.NewStore(handler.RedisClient.Client, otp.Settings{AttemptsPerCode: 2, ContactAttemptsPerHour: 2})
+	handler.OTP = otp.NewStore(handler.Redis, otp.Settings{AttemptsPerCode: 2, ContactAttemptsPerHour: 2})
 	sessionID, code := requestCode(t, router, sender, "typo@example.com")
 
 	for _, malformed := range []string{"12345", "1234567", "12a456", "۱۲۳ ۴۵۶", "one-two"} {

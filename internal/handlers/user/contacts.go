@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -13,18 +12,14 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
-	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
-	"github.com/mdastpak/crypto-exchange/internal/restrictions"
-	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -156,7 +151,7 @@ func (h *UserHandler) ListContacts(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	contacts, _, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
+	contacts, _, err := h.Store.Contacts(ctx, userID.String())
 	if err != nil {
 		log.Printf("Failed to list the contacts of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_LIST_CONTACTS"), nil)
@@ -173,33 +168,6 @@ func (h *UserHandler) ListContacts(c *gin.Context) {
 type storedContact struct {
 	typ, value string
 	verifiedAt time.Time
-}
-
-// verifiedContacts returns the verified email and mobile contacts of a user,
-// email first, and the time of the database when it read them. The rules
-// that depend on the age of a contact compare with that time, never with
-// the clock of the instance, so that every instance decides the same way.
-// It is the zero time when the user has no verified contact.
-func verifiedContacts(ctx context.Context, q interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-}, userHK string) ([]storedContact, time.Time, error) {
-	rows, err := q.QueryContext(ctx, `SELECT type::text, value, verified_at, NOW() FROM user_contacts c
-		WHERE user_hk = $1 AND is_primary AND verified_at IS NOT NULL AND type IN ('email', 'mobile') AND c.removed_at IS NULL
-		ORDER BY type`, userHK)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	defer rows.Close()
-	var out []storedContact
-	var now time.Time
-	for rows.Next() {
-		var ct storedContact
-		if err := rows.Scan(&ct.typ, &ct.value, &ct.verifiedAt, &now); err != nil {
-			return nil, time.Time{}, err
-		}
-		out = append(out, ct)
-	}
-	return out, now, rows.Err()
 }
 
 func findContact(contacts []storedContact, typ string) (storedContact, bool) {
@@ -343,7 +311,7 @@ func sendContactValidation(c *gin.Context, errs map[string]string) {
 
 // contactsReady reports whether the contact routes have what they need.
 func (h *UserHandler) contactsReady(c *gin.Context) bool {
-	if h.ContactOTP == nil || h.OTPSender == nil || h.PostgresDB == nil || h.RedisClient == nil {
+	if h.ContactOTP == nil || h.OTPSender == nil || h.Store == nil || h.Redis == nil {
 		helpers.SendResponse(c, http.StatusServiceUnavailable, i18n.M("CONTACT_CHANGES_ARE_NOT_AVAILABLE"), nil)
 		return false
 	}
@@ -389,7 +357,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
-	contacts, now, err := verifiedContacts(ctx, h.PostgresDB.DB, userID.String())
+	contacts, now, err := h.Store.Contacts(ctx, userID.String())
 	if err != nil {
 		log.Printf("Failed to read the contacts of a user: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_START_THE_CHANGE"), nil)
@@ -403,7 +371,7 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	// the removal is refused before any code is sent. The confirmation
 	// checks it again.
 	if plan.action == contactRemove && plan.typ == notify.ContactMobile {
-		_, has, err := h.nationalID(ctx, h.PostgresDB.DB, userID.String())
+		_, has, err := h.Store.NationalID(ctx, userID.String())
 		if sendRefusal(c, err) {
 			return
 		}
@@ -506,7 +474,7 @@ func (h *UserHandler) changeKey(id string) string { return changeKeyPrefix + id 
 // saveChange stores a started change for as long as its codes are valid.
 func (h *UserHandler) saveChange(ctx context.Context, id string, ch pendingChange) error {
 	key := h.changeKey(id)
-	pipe := h.RedisClient.Client.TxPipeline()
+	pipe := h.Redis.TxPipeline()
 	pipe.HSet(ctx, key, map[string]interface{}{
 		"user": ch.UserID, "action": ch.Action, "type": ch.Type, "value": ch.Value,
 		"account_contact": ch.AccountContact, "account_session": ch.AccountSession,
@@ -527,7 +495,7 @@ func flag(b bool) string {
 // loadChange reads a pending change of userID. A change of another user is
 // reported as missing, so that its id tells nothing.
 func (h *UserHandler) loadChange(ctx context.Context, id, userID string) (pendingChange, bool, error) {
-	fields, err := h.RedisClient.Client.HGetAll(ctx, h.changeKey(id)).Result()
+	fields, err := h.Redis.HGetAll(ctx, h.changeKey(id)).Result()
 	if err != nil {
 		return pendingChange{}, false, err
 	}
@@ -620,7 +588,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 			invalid = append(invalid, p.field)
 			continue
 		case errors.Is(err, otp.ErrTooManyAttempts):
-			h.RedisClient.Client.Del(ctx, h.changeKey(id))
+			h.Redis.Del(ctx, h.changeKey(id))
 			helpers.SendError(c, http.StatusTooManyRequests, codeRateLimited, i18n.M("TOO_MANY_WRONG_CODES"), nil)
 			return
 		case err != nil:
@@ -633,7 +601,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 			continue
 		}
 		*p.proven = true
-		if err := h.RedisClient.Client.HSet(ctx, h.changeKey(id), p.mark, "1").Err(); err != nil {
+		if err := h.Redis.HSet(ctx, h.changeKey(id), p.mark, "1").Err(); err != nil {
 			log.Printf("Failed to record an accepted contact change code: %v", err)
 		}
 	}
@@ -651,7 +619,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 	owned, err := h.checkOwnership(ctx, c, change)
 	var refusal *errChange
 	if errors.As(err, &refusal) && refusal.code == codeMobileOwnerMismatch {
-		h.RedisClient.Client.Del(ctx, h.changeKey(id))
+		h.Redis.Del(ctx, h.changeKey(id))
 	}
 	if sendRefusal(c, err) {
 		return
@@ -675,7 +643,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 
 	// Exactly one confirmation applies the change: the one that deletes the
 	// change from Redis.
-	deleted, err := h.RedisClient.Client.Del(ctx, h.changeKey(id)).Result()
+	deleted, err := h.Redis.Del(ctx, h.changeKey(id)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Failed to claim a contact change: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_CONFIRM_THE_CHANGE"), nil)
@@ -686,7 +654,7 @@ func (h *UserHandler) ConfirmContactChange(c *gin.Context) {
 		return
 	}
 
-	contacts, err := h.applyChange(ctx, c, change, owned, claimFrom)
+	contacts, err := h.Store.ApplyChange(ctx, contactEvent(c, change.UserID, change), change, owned, claimFrom)
 	if sendRefusal(c, err) {
 		return
 	}
@@ -718,17 +686,6 @@ var errIdentityUnavailable = &errChange{status: http.StatusServiceUnavailable, c
 var errMobileRequired = &errChange{status: http.StatusConflict, code: codeMobileRequired,
 	message: i18n.M("OWNED_MOBILE_REQUIRED")}
 
-// nationalID returns the verified national ID of a user, and maps keys that
-// are not loaded to errIdentityUnavailable.
-func (h *UserHandler) nationalID(ctx context.Context, q identity.Querier, userHK string) (string, bool, error) {
-	id, has, err := identity.NationalID(ctx, q, h.Sealer, userHK)
-	if errors.Is(err, identity.ErrNoKeys) {
-		log.Printf("A user has a national ID, but the data-protection keys are not loaded")
-		return "", false, errIdentityUnavailable
-	}
-	return id, has, err
-}
-
 // checkOwnership checks a change of a mobile number of a user who has a
 // verified national ID (#253): the new number must belong to it, and the
 // number cannot be removed. It returns the check of the new number, or nil
@@ -738,7 +695,7 @@ func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pen
 	if ch.Type != notify.ContactMobile {
 		return nil, nil
 	}
-	nationalID, has, err := h.nationalID(ctx, h.PostgresDB.DB, ch.UserID)
+	nationalID, has, err := h.Store.NationalID(ctx, ch.UserID)
 	if err != nil || !has {
 		return nil, err
 	}
@@ -765,7 +722,7 @@ func (h *UserHandler) checkOwnership(ctx context.Context, c *gin.Context, ch pen
 		}}
 		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if err := audit.Record(recordCtx, h.PostgresDB.DB, e); err != nil {
+		if err := h.Audit.Record(recordCtx, e); err != nil {
 			log.Printf("Failed to record the audit event %s (failure): %v", e.Action, err)
 		}
 		return nil, &errChange{status: http.StatusForbidden, code: codeMobileOwnerMismatch,
@@ -789,16 +746,14 @@ func (h *UserHandler) claimable(ctx context.Context, ch pendingChange) (string, 
 	if ch.Action == contactRemove {
 		return "", nil
 	}
-	owner, found, err := contactclaim.FindOwner(ctx, h.PostgresDB.DB, ch.Type, ch.Value)
+	owner, found, err := h.Store.ContactOwner(ctx, ch.Type, ch.Value)
 	if err != nil || !found || owner.UserHK == ch.UserID {
 		return "", err
 	}
 	if ch.Type != notify.ContactMobile {
 		return owner.UserHK, nil
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, h.settings().Identity.MobileOwnership.Timeout())
-	defer cancel()
-	verdict, _, err := contactclaim.Check(checkCtx, h.Ownership, h.Sealer, h.PostgresDB.DB, owner.UserHK, ch.Value)
+	verdict, err := h.Store.ClaimCheck(ctx, owner.UserHK, ch.Value)
 	if errors.Is(err, identity.ErrUnavailable) {
 		log.Printf("The ownership of a mobile number held by another account cannot be checked: %v", err)
 		return "", errIdentityUnavailable
@@ -820,7 +775,7 @@ func (h *UserHandler) recordContactAttempt(ctx context.Context, c *gin.Context, 
 	e.Changes = &audit.Changes{After: map[string]interface{}{"invalid": strings.Join(invalid, ",")}}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := audit.Record(ctx, h.PostgresDB.DB, e); err != nil {
+	if err := h.Audit.Record(ctx, e); err != nil {
 		log.Printf("Failed to record the audit event %s (failure): %v", e.Action, err)
 	}
 }
@@ -835,153 +790,6 @@ func contactEvent(c *gin.Context, userID string, ch pendingChange) audit.Event {
 	}[ch.Action]
 	e.TargetType, e.TargetID = audit.TargetUser, userID
 	return e
-}
-
-// applyChange applies a proven change in one transaction, under the lock of
-// the user's row, after checking it again against the contacts as they are
-// now. It returns the contacts after the change.
-func (h *UserHandler) applyChange(ctx context.Context, c *gin.Context, ch pendingChange, owned *ownership, claimFrom string) ([]storedContact, error) {
-	tx, err := h.PostgresDB.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	// A claim locks both accounts, in hk order, before anything else.
-	if claimFrom != "" {
-		if err := contactclaim.LockUsers(ctx, tx, ch.UserID, claimFrom); err != nil {
-			return nil, err
-		}
-	}
-
-	if _, err := loadProfile(ctx, tx, uuid.MustParse(ch.UserID), true); err != nil {
-		if errors.Is(err, errAccountUnavailable) || errors.Is(err, errProfileNotFound) {
-			return nil, &errChange{status: http.StatusForbidden, code: helpers.CodeAccountUnavailable, message: i18n.M("ACCOUNT_NOT_AVAILABLE_CONTACT_SUPPORT")}
-		}
-		return nil, err
-	}
-	contacts, now, err := verifiedContacts(ctx, tx, ch.UserID)
-	if err != nil {
-		return nil, err
-	}
-	// The contact that proved the account is checked by value, not by
-	// type, in case it was replaced in between.
-	plan, err := planChange(cooldownOf(h.settings()), ContactChangeRequest{Action: ch.Action, Type: ch.Type, Value: ch.Value, VerifyWith: accountType(contacts, ch.AccountContact)}, contacts, now)
-	if err != nil {
-		return nil, err
-	}
-	// The contact that proved the account must still be one of the user's.
-	if _, ok := findContactValue(contacts, ch.AccountContact); !ok {
-		return nil, &errChange{status: http.StatusConflict, code: codeContactNotFound, message: i18n.M("VERIFYING_CONTACT_CHANGED")}
-	}
-	// The national ID is read again under the lock: the check before must
-	// have been made with the one the user has now (#253).
-	if plan.typ == notify.ContactMobile {
-		nationalID, has, err := h.nationalID(ctx, tx, ch.UserID)
-		if err != nil {
-			return nil, err
-		}
-		switch {
-		case has && plan.action == contactRemove:
-			return nil, errMobileRequired
-		case has && (owned == nil || owned.nationalID != nationalID):
-			return nil, &errChange{status: http.StatusConflict, code: codeIdentityChanged, message: i18n.M("IDENTITY_CHANGED_DURING_CHANGE")}
-		case !has:
-			owned = nil
-		}
-	}
-	var checkedProvider, checkedRef any
-	if owned != nil {
-		checkedProvider, checkedRef = owned.provider, owned.ref
-	}
-
-	e := contactEvent(c, ch.UserID, ch)
-	e.Outcome = audit.Success
-
-	// The account that holds the new contact is read again under the
-	// locks: only the one that was checked may lose it.
-	claimed := false
-	if plan.action != contactRemove {
-		holder, found, err := contactclaim.FindOwner(ctx, tx, plan.typ, plan.value)
-		if err != nil {
-			return nil, err
-		}
-		if found && holder.UserHK != ch.UserID {
-			if holder.UserHK != claimFrom {
-				return nil, errContactInUse
-			}
-			origin := audit.FromRequest(c)
-			origin.ActorType, origin.ActorID = audit.ActorUser, ch.UserID
-			if _, claimed, err = contactclaim.Detach(ctx, tx, claimFrom, plan.typ, plan.value, contactclaim.ReasonClaimed, origin,
-				time.Duration(h.settings().Security.ChangeHoldHours)*time.Hour); err != nil {
-				return nil, err
-			}
-		}
-	}
-	before, _ := findContact(contacts, plan.typ)
-	switch plan.action {
-	case contactAdd:
-		err = db.InsertContact(ctx, tx, ch.UserID, plan.typ, plan.value, true)
-		if err == nil && owned != nil {
-			_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET ownership_checked_at = NOW(), ownership_provider = $3, ownership_ref = $4
-				WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, checkedProvider, checkedRef)
-		}
-		e.Changes = &audit.Changes{After: map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)}}
-	case contactReplace:
-		// A new number has not been checked, unless it was just now.
-		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET value = $3, verified_at = NOW(), updated_at = NOW(),
-				ownership_checked_at = CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() END, ownership_provider = $4, ownership_ref = $5
-			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`, ch.UserID, plan.typ, plan.value, checkedProvider, checkedRef)
-		e.Changes = &audit.Changes{
-			Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)},
-			After:  map[string]interface{}{plan.typ: maskContact(plan.typ, plan.value)},
-		}
-	case contactRemove:
-		// The row stays, marked, for the record (#248).
-		_, err = tx.ExecContext(ctx, `UPDATE user_contacts c SET removed_at = NOW(), updated_at = NOW()
-			WHERE user_hk = $1 AND type = $2::contact_type AND is_primary AND c.removed_at IS NULL`,
-			ch.UserID, plan.typ)
-		e.Changes = &audit.Changes{Before: map[string]interface{}{plan.typ: maskContact(plan.typ, before.value)}}
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		// Another account took the contact after it was read; the user
-		// may confirm again.
-		return nil, errContactInUse
-	}
-	if err != nil {
-		return nil, err
-	}
-	// Seal the contact rows that this transaction wrote (#139): their
-	// updated_at is the transaction's NOW().
-	if err := rowseal.Reseal(ctx, tx, rowseal.UserContacts, "user_hk = $1 AND updated_at = NOW()", ch.UserID); err != nil {
-		return nil, err
-	}
-	// A change of a contact is a security change: it holds withdrawals
-	// and the other operations that a second factor protects (#251), in
-	// this transaction, so that the hold exists as soon as the change does.
-	until, err := restrictions.StartSecurityHold(ctx, tx, ch.UserID, time.Duration(h.settings().Security.ChangeHoldHours)*time.Hour)
-	if err != nil {
-		return nil, err
-	}
-	if e.Changes.After == nil {
-		e.Changes.After = map[string]interface{}{}
-	}
-	e.Changes.After["security_hold_until"] = until.UTC().Format(time.RFC3339)
-	if claimed {
-		e.Changes.After["claimed_from"] = claimFrom
-	}
-	if owned != nil {
-		e.Changes.After["ownership_provider"], e.Changes.After["ownership_ref"] = owned.provider, owned.ref
-	}
-	if err := audit.Record(ctx, tx, e); err != nil {
-		return nil, err
-	}
-	after, _, err := verifiedContacts(ctx, tx, ch.UserID)
-	if err != nil {
-		return nil, err
-	}
-	return after, tx.Commit()
 }
 
 // accountType returns the type of the contact with the given value, or ""

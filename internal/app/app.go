@@ -53,6 +53,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/redisutil"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/signin"
 	"github.com/mdastpak/crypto-exchange/internal/sites"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
@@ -90,6 +91,18 @@ type InfraHandlers struct {
 	// Sites are the domains and locales per country (#285). RouteHandler
 	// fills it from the configuration when it is nil.
 	Sites *sites.Registry
+	// The concrete stores behind the interfaces of the handlers (#48),
+	// which the composition root configures after it builds them, and the
+	// tests reach: the accounts of the sign-ins, the cached catalog, and the
+	// account passwords.
+	SignIn    *signin.Accounts
+	Catalog   *currencies.Catalog
+	Passwords *userauth.Passwords
+	// UserStore is the database store of the user routes, and TOTP the
+	// authenticator apps, which the data keys and the identity checks
+	// configure.
+	UserStore *user.DBStore
+	TOTP      *userauth.TOTP
 }
 
 var (
@@ -318,7 +331,10 @@ func newSiteHandler(ih *InfraHandlers) *public.SiteHandler {
 	h := &public.SiteHandler{
 		Sites:   ih.Sites,
 		Locales: ih.Locales,
-		GeoIP:   ih.GeoIP,
+	}
+	// Never a typed nil: the handler resolves no country without one.
+	if ih.GeoIP != nil {
+		h.GeoIP = ih.GeoIP
 	}
 	for _, entry := range config.Config.Server.TrustedProxies {
 		if prefix, err := geoip.ParsePrefix(entry); err == nil {
@@ -496,7 +512,7 @@ func startPlatform(services *models.InfraServices, handlers *InfraHandlers) (*pl
 	watcher := platform.NewWatcher(services.Postgres.DB, settings.Options)
 	gate := &platform.Gate{Watcher: watcher}
 	handlers.Platform = gate
-	handlers.Public.Platform = gate
+	handlers.Public.Platform = watcher
 	handlers.Socket.Platform = gate
 	handlers.Admin.Platform = watcher
 	handlers.Admin.LiftApproval = settings.Approval
@@ -509,7 +525,7 @@ func startPlatform(services *models.InfraServices, handlers *InfraHandlers) (*pl
 
 func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers, watcher *platform.Watcher) *outbox.Relay {
 	route := outbox.Route{Exchange: config.Config.RabbitMQ.Exchanges.PriceUpdates}
-	if catalog := handlers.Public.Currencies; catalog != nil {
+	if catalog := handlers.Catalog; catalog != nil {
 		route.Before = catalog.Invalidate
 	}
 	var opts outbox.Options
@@ -533,7 +549,7 @@ func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandle
 		if !slices.ContainsFunc(changes, func(c currencies.Change) bool { return c.Public }) {
 			return
 		}
-		if catalog := handlers.Public.Currencies; catalog != nil {
+		if catalog := handlers.Catalog; catalog != nil {
 			if err := catalog.Invalidate(ctx); err != nil {
 				log.Printf("Error dropping the cached currency list after a delisting step; the outbox relay retries: %v", err)
 			}
@@ -571,8 +587,8 @@ func useDataKeysForOTP(h *InfraHandlers) {
 	}
 	// The secrets of the authenticator apps of users are sealed with the
 	// same keys (#307). Without keys, none is enrolled or checked.
-	if h.User != nil && h.User.TOTP != nil {
-		h.User.TOTP.Sealer = h.DataKeys
+	if h.TOTP != nil {
+		h.TOTP.Sealer = h.DataKeys
 	}
 }
 
@@ -674,11 +690,22 @@ func configureIdentity(h *InfraHandlers) error {
 		return err
 	}
 	h.User.Ownership, h.Public.Ownership = ownership, ownership
+	if h.UserStore != nil {
+		h.UserStore.Ownership = ownership
+	}
+	if h.SignIn != nil {
+		h.SignIn.Ownership = ownership
+	}
 	if ownership == nil {
 		log.Println("WARNING: identity.mobile_ownership.provider is none: users with a verified national ID cannot add or replace a mobile number")
 	}
 	if h.DataKeys != nil {
-		h.User.Sealer, h.Public.Sealer = h.DataKeys, h.DataKeys
+		if h.UserStore != nil {
+			h.UserStore.Sealer = h.DataKeys
+		}
+		if h.SignIn != nil {
+			h.SignIn.Sealer = h.DataKeys
+		}
 	}
 	return nil
 }
@@ -917,9 +944,16 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// instances, counted in Redis (#234).
 	ws.Counter = socket.NewRedisConnectionCounter(services.Redis.Client)
 	userHandler := user.NewHandler(services)
+	userStore, _ := userHandler.Store.(*user.DBStore)
 	userHandler.Sessions = sessions
 	publicHandler := public.NewHandler(services)
-	publicHandler.Blacklist = tb
+	publicHandler.AuthenticateToken = func(ctx context.Context, token string) (*auth.Claims, error) {
+		return auth.AuthenticateUserToken(ctx, token, tb, sessions)
+	}
+	// The concrete stores of the handlers, which the composition root
+	// configures later and the tests reach.
+	signIn, _ := publicHandler.Accounts.(*signin.Accounts)
+	catalog, _ := publicHandler.Currencies.(*currencies.Catalog)
 	// The account passwords (#307). The slow hash is wired in here, and
 	// runs only behind the checks of userauth: a challenge that a correct
 	// code issued, and an attempt counted against the lock.
@@ -952,6 +986,11 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		Redis:           services.Redis,
 		TokenBlacklist:  tb,
 		Sessions:        sessions,
+		SignIn:          signIn,
+		Catalog:         catalog,
+		Passwords:       passwords,
+		UserStore:       userStore,
+		TOTP:            totpStore,
 	}
 }
 

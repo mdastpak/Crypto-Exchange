@@ -109,6 +109,11 @@ func replaceRecoveryCodes(ctx context.Context, tx execer, userHK string) ([]stri
 	return codes, nil
 }
 
+// CodesLeft is RecoveryCodesLeft on the database of the store.
+func (p *Passwords) CodesLeft(ctx context.Context, userHK string) (int, error) {
+	return p.RecoveryCodesLeft(ctx, p.DB, userHK)
+}
+
 // RecoveryCodesLeft returns how many unused recovery codes a user has.
 func (p *Passwords) RecoveryCodesLeft(ctx context.Context, q Querier, userHK string) (int, error) {
 	var left int

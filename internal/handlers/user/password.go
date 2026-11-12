@@ -104,7 +104,7 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		return
 	}
 	settings := SecuritySettings{Password: status, PasswordMinLength: h.Passwords.MinPasswordLength()}
-	settings.RecoveryCodesLeft, err = h.Passwords.RecoveryCodesLeft(ctx, h.PostgresDB.DB, claims.UUID)
+	settings.RecoveryCodesLeft, err = h.Passwords.CodesLeft(ctx, claims.UUID)
 	if err != nil {
 		log.Printf("Failed to count the recovery codes of user %s: %v", claims.UUID, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
@@ -135,7 +135,7 @@ func (h *UserHandler) GetSecurity(c *gin.Context) {
 		return
 	}
 	if h.Guard != nil {
-		settings.SecondFactor, err = h.Guard.State(ctx, h.PostgresDB.DB, claims.UUID, claims.SessionID)
+		settings.SecondFactor, err = h.Guard.StateOf(ctx, claims.UUID, claims.SessionID)
 		if err != nil {
 			log.Printf("Failed to read the second factor of user %s: %v", claims.UUID, err)
 			helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"), nil)
@@ -260,14 +260,14 @@ func (h *UserHandler) SetPassword(c *gin.Context) {
 // notePassword records a refused change of the password. It is best
 // effort, as the record of a refused sign-in is.
 func (h *UserHandler) notePassword(ctx context.Context, event audit.Event, outcome, reason string) {
-	if h.PostgresDB == nil {
+	if h.Audit == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	event.Action, event.Outcome, event.Reason = audit.ActionUserPasswordChange, outcome, reason
 	event.TargetType, event.TargetID = audit.TargetUser, event.ActorID
-	if err := audit.Record(ctx, h.PostgresDB.DB, event); err != nil {
+	if err := h.Audit.Record(ctx, event); err != nil {
 		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)
 	}
 }
