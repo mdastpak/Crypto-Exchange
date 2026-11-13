@@ -47,7 +47,7 @@ func TestVerification_DefaultsFollowThePolicy(t *testing.T) {
 	limits := DefaultWithdrawalLimits()
 	require.Contains(t, limits, "IRR")
 	assert.NotEmpty(t, limits["IRR"][1].Daily, "rial withdrawals at level 1 have a daily limit")
-	assert.NotEmpty(t, limits["IRR"][2].Daily, "and at level 2, the central bank's")
+	assert.NotContains(t, limits["IRR"], 2, "level 2 has no limit of the exchange; the payouts follow the banks' limits")
 }
 
 func keysOf(m map[string]int) []string {

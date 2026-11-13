@@ -72,14 +72,15 @@ func DefaultVerificationMinLevel() map[string]int {
 	}
 }
 
-// DefaultWithdrawalLimits returns the daily limits of rial withdrawals: 100
-// million tomans at level 1, and 300 million at level 2. They stand in
-// for the limits of the Central Bank of Iran, which each deployment sets.
+// DefaultWithdrawalLimits returns the daily limit of rial withdrawals at
+// level 1, 100 million tomans, a placeholder that each deployment sets.
+// Level 2 has no limit of the exchange: the payouts follow the transfer
+// limits of the banks and of the payment providers, and are split into
+// several transfers when one cannot carry the amount (#70, #74).
 func DefaultWithdrawalLimits() map[string]map[int]WithdrawalLimit {
 	return map[string]map[int]WithdrawalLimit{
 		"IRR": {
 			1: {Daily: "1000000000"},
-			2: {Daily: "3000000000"},
 		},
 	}
 }

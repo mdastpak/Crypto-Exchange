@@ -1067,7 +1067,7 @@ What a user may do depends on their verification level ([#157](https://github.co
 | --- | --- | --- |
 | 0 | A contact (email or mobile number) only | Nothing that moves funds |
 | 1 | The national ID matches the owner of the user's bank card or account ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)) | Deposits, OTC and market trading, and fiat withdrawals within a daily limit |
-| 2 | Level 1, plus a reviewed video identity check and commitment letter ([#162](https://github.com/mdastpak/Crypto-Exchange/issues/162)) | Crypto withdrawals too, and fiat withdrawals up to the central bank's limit |
+| 2 | Level 1, plus a reviewed video identity check and commitment letter ([#162](https://github.com/mdastpak/Crypto-Exchange/issues/162)) | Crypto withdrawals too, and fiat withdrawals without a limit of the exchange: the payouts follow the transfer limits of the banks and payment providers, in several transfers when needed |
 
 **Where the level comes from.** It is the user's KYC tier: `NONE` is 0, `BASIC` 1, and `STANDARD` or higher 2. Only an approved tier counts. A tier that expired, or whose status is anything but `APPROVED`, is level 0 until it is renewed. The tier is part of the user's [sealed row](data-protection.md#row-seals). In `enforce` mode, a tier raised outside the backend counts as level 0, and the finding is recorded.
 

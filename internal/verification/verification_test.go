@@ -68,9 +68,9 @@ func TestPolicy_EveryActionAtEveryLevel(t *testing.T) {
 	assert.False(t, p.Allows(Level2, Action("fly")), "an unknown action is never allowed")
 	assert.Equal(t, Level2, p.Required(WithdrawCrypto))
 
-	// The rial's limits: daily only, higher at level 2.
+	// The rial's limits: daily at level 1, none at level 2.
 	assert.Equal(t, "1000000000", p.Limit(Level1, "IRR").Daily.String())
-	assert.Equal(t, "3000000000", p.Limit(Level2, "IRR").Daily.String())
+	assert.Equal(t, Limit{}, p.Limit(Level2, "IRR"), "level 2 has no limit of the exchange")
 	assert.Nil(t, p.Limit(Level1, "IRR").PerTransaction)
 	assert.Equal(t, Limit{}, p.Limit(Level2, "USDT"), "a currency without limits has none")
 }

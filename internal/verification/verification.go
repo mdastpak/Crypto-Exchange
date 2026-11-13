@@ -9,8 +9,9 @@
 //     accounts (#159), OTC and market trading, and fiat withdrawals to the
 //     user's registered destinations (#160) within a daily limit.
 //   - 2, full: level 1 with a reviewed video identity check and commitment
-//     letter (#162). Crypto withdrawals, and fiat withdrawals up to the limit
-//     of the Central Bank of Iran.
+//     letter (#162). Crypto withdrawals, and fiat withdrawals without a limit
+//     of the exchange: the payouts follow the transfer limits of the banks
+//     and the payment providers, split into several transfers if needed.
 //
 // The lowest level of each action and the withdrawal limits are settings
 // (verification in the configuration), so that a change of the rules needs

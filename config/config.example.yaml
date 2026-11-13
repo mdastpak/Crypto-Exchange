@@ -464,7 +464,8 @@ verification:
   withdrawal_limits:
     IRR:
       1: {daily: "1000000000"}       # 100 million tomans in any 24 hours
-      2: {daily: "3000000000"}       # Set to the Central Bank of Iran's limit
+      # Level 2 has no limit of the exchange: payouts follow the transfer
+      # limits of the banks and providers, split if needed (#70, #74).
 
 # The sections from here to compliance are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe
