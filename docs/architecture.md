@@ -148,6 +148,7 @@ Every asset of the exchange is a row of `currencies`, and how it moves on each n
 | `SettleTrade` (OTC, against the exchange) | `TRADE_DEBIT` of what the user gives, `TRADE_CREDIT` of what it receives, `FEE` | `inventory` +given and -received, `fees` +fee |
 | `Withdraw` | `WITHDRAWAL` and `FEE`, from the funds locked at the request | `custody` +a, `fees` +fee |
 
+- **Accounts.** An account is a user and a sub-account of the user, or none for the main account. Each has a balance per currency, so a sub-account holds funds apart from the main account, and `Transfer` moves funds between them. Sub-accounts themselves are [#63](https://github.com/mdastpak/Crypto-Exchange/issues/63). The ledger refuses a sub-account that does not exist, is another user's, or is deleted, and keeps it from being deleted until the operation commits. Every table that names a user and a sub-account (balances, their changes and snapshots, orders, deposit addresses, withdrawals, sessions, settlements, and AML alerts) also checks in a foreign key that the sub-account is of that user (migration 20).
 - **One entry per operation.** Each operation is one row of `ledger_entries`, written in one transaction with its postings:
   - the changes of the balances of users in `balance_changes`, each with the components before and after and the version it made;
   - the postings to the exchange's own accounts in `ledger_postings`.

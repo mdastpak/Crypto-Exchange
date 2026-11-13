@@ -487,6 +487,11 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 	var conds []string
 	var args []any
 	for _, w := range all {
+		if w.account.SubAccountID != nil {
+			if err := checkSubAccount(ctx, tx, w.account); err != nil {
+				return nil, err
+			}
+		}
 		var opened string
 		err := tx.QueryRowContext(ctx, `INSERT INTO balances (user_id, sub_account_id, currency_hk) VALUES ($1, $2, $3)
 			ON CONFLICT DO NOTHING RETURNING id`, w.account.UserHK, w.account.SubAccountID, w.currency).Scan(&opened)
@@ -564,4 +569,24 @@ func (l Ledger) Balance(ctx context.Context, a Account, currency shared.UUID) (b
 	}
 	b.Total = b.Available.Add(b.Locked)
 	return b, nil
+}
+
+// checkSubAccount refuses the sub-account of an account that does not
+// exist, belongs to another user, or is deleted, and keeps it from being
+// deleted until the transaction ends. The foreign keys of the balances
+// check the owner too (migration 20); this check says which.
+func checkSubAccount(ctx context.Context, tx *sql.Tx, a Account) error {
+	var deleted bool
+	err := tx.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM sub_accounts WHERE id = $1 AND user_id = $2 FOR SHARE`,
+		a.SubAccountID, a.UserHK).Scan(&deleted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: sub-account %s is not one of user %s", ErrInvalidRequest, a.SubAccountID, a.UserHK)
+	}
+	if err != nil {
+		return fmt.Errorf("read the sub-account %s: %w", a.SubAccountID, err)
+	}
+	if deleted {
+		return fmt.Errorf("%w: sub-account %s is deleted", ErrInvalidRequest, a.SubAccountID)
+	}
+	return nil
 }
