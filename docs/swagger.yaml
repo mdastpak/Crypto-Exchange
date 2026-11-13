@@ -2231,6 +2231,45 @@ definitions:
       table:
         type: string
     type: object
+  shared.KYCStatus:
+    enum:
+    - PENDING
+    - APPROVED
+    - REJECTED
+    - EXPIRED
+    - UNDER_REVIEW
+    type: string
+    x-enum-varnames:
+    - KYCStatusPending
+    - KYCStatusApproved
+    - KYCStatusRejected
+    - KYCStatusExpired
+    - KYCStatusUnderReview
+  shared.KYCTier:
+    enum:
+    - NONE
+    - BASIC
+    - STANDARD
+    - ENHANCED
+    - INSTITUTIONAL
+    type: string
+    x-enum-comments:
+      KYCTierBasic: Email/phone only
+      KYCTierEnhanced: Full KYC + source of funds
+      KYCTierInstitutional: Corporate KYC
+      KYCTierStandard: ID document + selfie
+    x-enum-descriptions:
+    - ""
+    - Email/phone only
+    - ID document + selfie
+    - Full KYC + source of funds
+    - Corporate KYC
+    x-enum-varnames:
+    - KYCTierNone
+    - KYCTierBasic
+    - KYCTierStandard
+    - KYCTierEnhanced
+    - KYCTierInstitutional
   sites.Alternate:
     properties:
       hreflang:
@@ -2723,6 +2762,86 @@ definitions:
         description: URI is the otpauth URI, which the client shows as a QR code.
         example: otpauth://totp/Exchange:user?secret=JBSWY3DPEHPK3PXP&issuer=Exchange
         type: string
+    type: object
+  verification.ActionStatus:
+    properties:
+      action:
+        example: withdraw_fiat
+        type: string
+      allowed:
+        type: boolean
+      required_level:
+        allOf:
+        - $ref: '#/definitions/verification.Level'
+        example: 1
+    type: object
+  verification.Level:
+    enum:
+    - 1
+    type: integer
+    x-enum-varnames:
+    - Level1
+  verification.LimitStatus:
+    properties:
+      currency_hk:
+        format: uuid
+        type: string
+      daily:
+        description: |-
+          Daily bounds what the user may request in any 24 hours, in all
+          their accounts, the fee included; absent is no bound.
+        example: "1000000000"
+        type: string
+      per_transaction:
+        description: PerTransaction bounds one request; absent is no bound.
+        type: string
+      remaining:
+        example: "1000000000"
+        type: string
+      symbol:
+        example: IRR
+        type: string
+      used:
+        description: |-
+          Used is what the user has requested in the last 24 hours, and
+          Remaining what the daily limit still allows.
+        example: "0"
+        type: string
+      window_hours:
+        description: WindowHours is the period of the daily limit.
+        example: 24
+        type: integer
+    type: object
+  verification.Summary:
+    properties:
+      actions:
+        description: |-
+          Actions are every action, whether the level allows it, and the level
+          that it needs.
+        items:
+          $ref: '#/definitions/verification.ActionStatus'
+        type: array
+      kyc_status:
+        allOf:
+        - $ref: '#/definitions/shared.KYCStatus'
+        example: APPROVED
+      kyc_tier:
+        allOf:
+        - $ref: '#/definitions/shared.KYCTier'
+        description: KYCTier and KYCStatus are what the level comes from.
+        example: BASIC
+      level:
+        allOf:
+        - $ref: '#/definitions/verification.Level'
+        description: Level is the user's verification level, from 0 to 2.
+        example: 1
+      withdrawal_limits:
+        description: |-
+          WithdrawalLimits are the limits of the currencies that the user may
+          withdraw at their level, and what remains of the daily ones.
+        items:
+          $ref: '#/definitions/verification.LimitStatus'
+        type: array
     type: object
 info:
   contact: {}
@@ -8064,6 +8183,50 @@ paths:
       summary: Turn the authenticator app on
       tags:
       - user-security
+  /api/v1/user/verification:
+    get:
+      description: 'The verification level of the signed-in user, from 0 to 2, and
+        the KYC tier and status it comes from. Only an approved tier counts. actions
+        lists every action (deposit_fiat, deposit_crypto, trade_otc, trade_market,
+        withdraw_fiat, withdraw_crypto), whether the level allows it, and the level
+        it needs. withdrawal_limits lists the limits of the currencies that the level
+        may withdraw: per transaction, and in any 24 hours in all the user''s accounts,
+        the fee included, with what the user has requested and what remains. An action
+        that the level does not allow answers 403 verification_required; a withdrawal
+        above a limit answers 403 withdrawal_limit_exceeded.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/verification.Summary'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get my verification level
+      tags:
+      - user
   /api/v1/ws/:
     get:
       description: 'Upgrades to a WebSocket. An optional user access token comes as

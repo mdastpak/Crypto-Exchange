@@ -344,9 +344,14 @@ func keyOf(a Account, currency shared.UUID) balanceKey {
 func (l Ledger) record(ctx context.Context, e entry) (Result, error) {
 	start := time.Now()
 	res, err := l.apply(ctx, e)
-	metrics.LedgerOperations.WithLabelValues(e.kind, outcome(res, err)).Inc()
-	metrics.LedgerOperationDuration.WithLabelValues(e.kind).Observe(time.Since(start).Seconds())
+	observe(e.kind, start, res, err)
 	return res, err
+}
+
+// observe counts and times an operation of kind that started at start.
+func observe(kind string, start time.Time, res Result, err error) {
+	metrics.LedgerOperations.WithLabelValues(kind, outcome(res, err)).Inc()
+	metrics.LedgerOperationDuration.WithLabelValues(kind).Observe(time.Since(start).Seconds())
 }
 
 // outcome names the outcome of an operation for the metrics.
@@ -373,17 +378,28 @@ func (l Ledger) apply(ctx context.Context, e entry) (Result, error) {
 	if err := e.validate(); err != nil {
 		return Result{}, err
 	}
-	hash := e.hash()
 	tx, err := l.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Result{}, err
 	}
 	defer tx.Rollback()
+	res, err := write(ctx, tx, e)
+	if err != nil || res.Replayed {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Result{}, mapError(fmt.Errorf("commit the entry: %w", err))
+	}
+	return res, nil
+}
 
+// write writes an entry in tx, which the caller commits.
+func write(ctx context.Context, tx *sql.Tx, e entry) (Result, error) {
+	hash := e.hash()
 	// The key first: a concurrent operation with the same key waits here
 	// for the first to commit, and then finds its entry.
 	var entryID string
-	err = tx.QueryRowContext(ctx, `INSERT INTO ledger_entries (kind, idempotency_key, request_hash, reference_type, reference_id)
+	err := tx.QueryRowContext(ctx, `INSERT INTO ledger_entries (kind, idempotency_key, request_hash, reference_type, reference_id)
 		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''))
 		ON CONFLICT (idempotency_key) DO NOTHING RETURNING id`, e.kind, e.key, hash, e.ref.Type, e.ref.ID).Scan(&entryID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -449,9 +465,6 @@ func (l Ledger) apply(ctx context.Context, e entry) (Result, error) {
 			return Result{}, mapError(fmt.Errorf("record the posting: %w", err))
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return Result{}, mapError(fmt.Errorf("commit the entry: %w", err))
-	}
 	return Result{EntryID: entryID}, nil
 }
 
@@ -513,10 +526,15 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 		conds = append(conds, fmt.Sprintf("(b.user_id = $%d AND b.sub_account_id IS NOT DISTINCT FROM $%d AND b.currency_hk = $%d)", n+1, n+2, n+3))
 		args = append(args, w.account.UserHK, w.account.SubAccountID, w.currency)
 	}
+	// FOR NO KEY UPDATE, not FOR UPDATE: an entry changes no key of a
+	// balance, and FOR UPDATE would also wait for the FOR KEY SHARE locks
+	// that foreign key checks take, such as those of the snapshots of the
+	// hourly audit. Those lock balances in another order than this one, so
+	// an audit and an operation could deadlock.
 	//nolint:gosec // G202: the conditions are built here from placeholders; the values are arguments.
 	rows, err := tx.QueryContext(ctx, `SELECT b.id, b.user_id, b.sub_account_id, b.currency_hk, b.available, b.locked, b.pending_deposit,
 			b.version, `+rowseal.Balances.Fields("b")+`
-		FROM balances b WHERE `+strings.Join(conds, " OR ")+` ORDER BY b.id FOR UPDATE`, args...)
+		FROM balances b WHERE `+strings.Join(conds, " OR ")+` ORDER BY b.id FOR NO KEY UPDATE`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("lock the balances: %w", err)
 	}

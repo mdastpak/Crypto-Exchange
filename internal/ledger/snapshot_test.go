@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,4 +111,31 @@ func TestReconcile_DuringOperationsFindsNothing(t *testing.T) {
 	}
 	close(done)
 	require.NoError(t, <-operations)
+}
+
+// TestLedger_DoesNotWaitForForeignKeyChecks holds the lock that a foreign
+// key check takes on a balance, as a snapshot of the hourly audit does
+// while it inserts, and checks that an operation on that balance does not
+// wait for it. FOR UPDATE would wait, and since a snapshot locks balances
+// in another order than an entry, an audit and an operation could
+// deadlock.
+func TestLedger_DoesNotWaitForForeignKeyChecks(t *testing.T) {
+	ctx := context.Background()
+	b := newBooks(t)
+	alice, bob, usdt := b.user(), b.user(), b.currency("USDT")
+	b.fund(alice, usdt, "100")
+	b.fund(bob, usdt, "100")
+
+	check, err := b.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer check.Rollback()
+	var held int
+	require.NoError(t, check.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM balances FOR KEY SHARE) k`).Scan(&held))
+	require.Equal(t, 2, held)
+
+	quick, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err = b.Transfer(quick, "fk:1", alice, bob, amount(usdt, "1"), Ref{})
+	require.NoError(t, err, "the operation does not wait for the key share locks")
+	assert.Equal(t, [3]string{"101", "0", "0"}, b.components(bob, usdt))
 }

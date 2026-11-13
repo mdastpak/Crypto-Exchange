@@ -8103,6 +8103,67 @@
                 }
             }
         },
+        "/api/v1/user/verification": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The verification level of the signed-in user, from 0 to 2, and the KYC tier and status it comes from. Only an approved tier counts. actions lists every action (deposit_fiat, deposit_crypto, trade_otc, trade_market, withdraw_fiat, withdraw_crypto), whether the level allows it, and the level it needs. withdrawal_limits lists the limits of the currencies that the level may withdraw: per transaction, and in any 24 hours in all the user's accounts, the fee included, with what the user has requested and what remains. An action that the level does not allow answers 403 verification_required; a withdrawal above a limit answers 403 withdrawal_limit_exceeded.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Get my verification level",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/verification.Summary"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ws/": {
             "get": {
                 "description": "Upgrades to a WebSocket. An optional user access token comes as Authorization: Bearer, or from a browser as the subprotocols access_token and the token. docs/api.md describes the messages.",
@@ -11239,6 +11300,53 @@
                 }
             }
         },
+        "shared.KYCStatus": {
+            "type": "string",
+            "enum": [
+                "PENDING",
+                "APPROVED",
+                "REJECTED",
+                "EXPIRED",
+                "UNDER_REVIEW"
+            ],
+            "x-enum-varnames": [
+                "KYCStatusPending",
+                "KYCStatusApproved",
+                "KYCStatusRejected",
+                "KYCStatusExpired",
+                "KYCStatusUnderReview"
+            ]
+        },
+        "shared.KYCTier": {
+            "type": "string",
+            "enum": [
+                "NONE",
+                "BASIC",
+                "STANDARD",
+                "ENHANCED",
+                "INSTITUTIONAL"
+            ],
+            "x-enum-comments": {
+                "KYCTierBasic": "Email/phone only",
+                "KYCTierEnhanced": "Full KYC + source of funds",
+                "KYCTierInstitutional": "Corporate KYC",
+                "KYCTierStandard": "ID document + selfie"
+            },
+            "x-enum-descriptions": [
+                "",
+                "Email/phone only",
+                "ID document + selfie",
+                "Full KYC + source of funds",
+                "Corporate KYC"
+            ],
+            "x-enum-varnames": [
+                "KYCTierNone",
+                "KYCTierBasic",
+                "KYCTierStandard",
+                "KYCTierEnhanced",
+                "KYCTierInstitutional"
+            ]
+        },
         "sites.Alternate": {
             "type": "object",
             "properties": {
@@ -11855,6 +11963,116 @@
                     "description": "URI is the otpauth URI, which the client shows as a QR code.",
                     "type": "string",
                     "example": "otpauth://totp/Exchange:user?secret=JBSWY3DPEHPK3PXP\u0026issuer=Exchange"
+                }
+            }
+        },
+        "verification.ActionStatus": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "withdraw_fiat"
+                },
+                "allowed": {
+                    "type": "boolean"
+                },
+                "required_level": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/verification.Level"
+                        }
+                    ],
+                    "example": 1
+                }
+            }
+        },
+        "verification.Level": {
+            "type": "integer",
+            "enum": [
+                1
+            ],
+            "x-enum-varnames": [
+                "Level1"
+            ]
+        },
+        "verification.LimitStatus": {
+            "type": "object",
+            "properties": {
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "daily": {
+                    "description": "Daily bounds what the user may request in any 24 hours, in all\ntheir accounts, the fee included; absent is no bound.",
+                    "type": "string",
+                    "example": "1000000000"
+                },
+                "per_transaction": {
+                    "description": "PerTransaction bounds one request; absent is no bound.",
+                    "type": "string"
+                },
+                "remaining": {
+                    "type": "string",
+                    "example": "1000000000"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "IRR"
+                },
+                "used": {
+                    "description": "Used is what the user has requested in the last 24 hours, and\nRemaining what the daily limit still allows.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "window_hours": {
+                    "description": "WindowHours is the period of the daily limit.",
+                    "type": "integer",
+                    "example": 24
+                }
+            }
+        },
+        "verification.Summary": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "description": "Actions are every action, whether the level allows it, and the level\nthat it needs.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/verification.ActionStatus"
+                    }
+                },
+                "kyc_status": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/shared.KYCStatus"
+                        }
+                    ],
+                    "example": "APPROVED"
+                },
+                "kyc_tier": {
+                    "description": "KYCTier and KYCStatus are what the level comes from.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/shared.KYCTier"
+                        }
+                    ],
+                    "example": "BASIC"
+                },
+                "level": {
+                    "description": "Level is the user's verification level, from 0 to 2.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/verification.Level"
+                        }
+                    ],
+                    "example": 1
+                },
+                "withdrawal_limits": {
+                    "description": "WithdrawalLimits are the limits of the currencies that the user may\nwithdraw at their level, and what remains of the daily ones.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/verification.LimitStatus"
+                    }
                 }
             }
         }

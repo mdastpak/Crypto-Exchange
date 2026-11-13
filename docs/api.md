@@ -61,6 +61,8 @@ An error response contains only a fixed message for each error. Internal details
 | `account_frozen` | `403` | The account is frozen by a [restriction](#restrictions); its tokens no longer work and it cannot sign in |
 | `currency_operation_disabled` | `403` | The [lifecycle](#delistings) of the currency does not allow the operation now; `info` names the capability and the state |
 | `operation_restricted`, `asset_restricted` | `403` | A [restriction](#restrictions) blocks the operation; `info` names it |
+| `verification_required` | `403` | The user's [verification level](#verification-levels) does not allow the action; `info.required_level` is the level it needs |
+| `withdrawal_limit_exceeded` | `403` | The withdrawal is above a limit of the user's [verification level](#verification-levels); `info` has the limit and, for the daily one, what remains |
 | `use_admin_sign_in` | `403` | An administrator used the user sign-in |
 | `not_found` | `404` | No such resource, or a hidden one, or no such route |
 | `method_not_allowed` | `405` | The path exists with other methods |
@@ -1056,6 +1058,41 @@ A change of a security setting of an account holds, for `security.change_hold_ho
 - **What it does not hold:** contact changes, so that the owner can undo an unwanted change at once ([#250](https://github.com/mdastpak/Crypto-Exchange/issues/250) keeps a new contact from changing the older ones), sign-in, deposits, and trading.
 
 The hold is part of the user's row and is read in the transaction of each held operation, so it applies on every instance at once. The audit event of the change records `security_hold_until`.
+
+## Verification levels
+
+What a user may do depends on their verification level ([#157](https://github.com/mdastpak/Crypto-Exchange/issues/157)):
+
+| Level | Verified | What it allows, by default |
+| --- | --- | --- |
+| 0 | A contact (email or mobile number) only | Nothing that moves funds |
+| 1 | The national ID matches the owner of the user's bank card or account ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)) | Deposits, OTC and market trading, and fiat withdrawals within a daily limit |
+| 2 | Level 1, plus a reviewed video identity check and commitment letter ([#162](https://github.com/mdastpak/Crypto-Exchange/issues/162)) | Crypto withdrawals too, and fiat withdrawals without a limit of the exchange: the payouts follow the transfer limits of the banks and payment providers, in several transfers when needed |
+
+**Where the level comes from.** It is the user's KYC tier: `NONE` is 0, `BASIC` 1, and `STANDARD` or higher 2. Only an approved tier counts. A tier that expired, or whose status is anything but `APPROVED`, is level 0 until it is renewed. The tier is part of the user's [sealed row](data-protection.md#row-seals). In `enforce` mode, a tier raised outside the backend counts as level 0, and the finding is recorded.
+
+**Configuration.** The lowest level of each action, and the withdrawal limits per currency and level, are [settings](configuration.md#verification):
+
+- the actions are `deposit_fiat`, `deposit_crypto`, `trade_otc`, `trade_market`, `withdraw_fiat`, and `withdraw_crypto`;
+- a daily limit counts what the user has requested to withdraw in any 24 hours, in all their accounts together, the fee included;
+- a cancelled or failed withdrawal gives its amount back.
+
+**Refusals:**
+
+- An action below its level answers `403 verification_required`. `info` has `action`, the user's `level`, and `required_level`.
+- A withdrawal above a limit answers `403 withdrawal_limit_exceeded`. `info` has `action`, `level`, `currency_hk`, `period` (`transaction` or `24h`), and `limit`. For the daily limit, it also has `used` and `remaining`.
+
+The deposit, withdrawal (#70), OTC (#61, #62), and order (#76) paths all check through the same component, `internal/verification`. A withdrawal request checks its level and limits in its own transaction, under a lock of the user's withdrawals of the currency, and locks its funds in that same transaction. Two requests of the same user therefore never pass the limit together.
+
+### `GET /user/verification`
+
+Returns the signed-in user's verification:
+
+- `level`, and the `kyc_tier` and `kyc_status` it comes from;
+- `actions`: every action, with `allowed` and `required_level`;
+- `withdrawal_limits`: the limits of the currencies the user may withdraw at their level. Each has `currency_hk`, `symbol`, and `daily` and `per_transaction`, each absent when there is no bound. It also has `used` in the last 24 hours, `remaining`, and `window_hours`.
+
+A client uses it to show what each level unlocks, and what remains of the daily limits.
 
 ## Maintenance and lockdowns
 

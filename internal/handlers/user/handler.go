@@ -1,6 +1,7 @@
 package user
 
 import (
+	"log"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
@@ -13,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/verification"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -32,6 +34,8 @@ type UserHandler struct {
 	Audit        AuditLog
 	Favorites    FavoriteStore
 	Restrictions RestrictionReader
+	// Verification reads the verification level of the user (#157).
+	Verification VerificationReader
 	// Redis holds the pending contact changes, which any instance confirms.
 	Redis redis.UniversalClient
 	// Sessions lists and ends the sessions of the signed-in user (#193).
@@ -69,6 +73,11 @@ func NewHandler(is *models.InfraServices) *UserHandler {
 		h.Audit = audit.Log{DB: is.Postgres.DB}
 		h.Favorites = favorites.Store{DB: is.Postgres.DB}
 		h.Restrictions = restrictions.Store{DB: is.Postgres.DB}
+		if policy, err := verification.NewPolicy(is.Settings().Verification); err != nil {
+			log.Printf("The verification levels are unavailable: %v", err)
+		} else {
+			h.Verification = verification.Store{DB: is.Postgres.DB, Policy: policy}
+		}
 	}
 	if is.Redis != nil {
 		h.Redis = is.Redis.Client

@@ -110,6 +110,7 @@
   "FAILED_TO_QUERY_AUDIT_LOG": "جست‌وجو در گزارش ممیزی انجام نشد.",
   "FAILED_TO_READ_CONTROLS": "خواندن کنترل‌های سامانه انجام نشد.",
   "FAILED_TO_READ_SECURITY_SETTINGS": "خواندن تنظیمات امنیتی انجام نشد.",
+  "FAILED_TO_READ_VERIFICATION": "دریافت سطح احراز هویت شما انجام نشد.",
   "FAILED_TO_RECORD_THE_CHANGE": "ثبت تغییر انجام نشد.",
   "FAILED_TO_RECOVER_ACCOUNT": "بازیابی حساب انجام نشد.",
   "FAILED_TO_REFRESH_SESSION": "تمدید نشست انجام نشد.",
@@ -323,8 +324,11 @@
   "USER_STEPPED_UP": "گذرواژه پذیرفته شد.",
   "UUID_AND_OTP_REQUIRED": "اطلاعات درخواست نامعتبر است: شناسه و کد یک‌بارمصرف الزامی است.",
   "VALIDATION_FAILED": "اطلاعات ارسال‌شده معتبر نیست.",
+  "VERIFICATION_REQUIRED": "سطح احراز هویت شما اجازه این کار را نمی‌دهد. برای ادامه، احراز هویت سطحی را که در info.required_level آمده است کامل کنید.",
+  "VERIFICATION_RETRIEVED_SUCCESSFULLY": "سطح احراز هویت با موفقیت دریافت شد.",
   "VERIFYING_CONTACT_CHANGED": "اطلاعات تماسی که با آن تأیید کردید تغییر کرده است. لطفاً تغییر را دوباره شروع کنید.",
   "VERIFYING_CONTACT_NOT_YOURS": "اطلاعات تماسی که برای تأیید انتخاب کرده‌اید جزو اطلاعات تماس تأییدشده شما نیست.",
   "VERIFYING_CONTACT_TOO_RECENT": "اطلاعات تماسی که با آن تأیید می‌کنید به‌تازگی اضافه شده و هنوز نمی‌تواند اطلاعات تماس دیگر را تغییر دهد. از همان اطلاعات تماسی که تغییر می‌دهید یا یک اطلاعات تماس قدیمی‌تر استفاده کنید، یا بعداً دوباره تلاش کنید.",
-  "WEBSOCKET_HANDSHAKE_INVALID": "درخواست اتصال WebSocket معتبر نیست: {reason}"
+  "WEBSOCKET_HANDSHAKE_INVALID": "درخواست اتصال WebSocket معتبر نیست: {reason}",
+  "WITHDRAWAL_LIMIT_EXCEEDED": "این برداشت از سقف سطح احراز هویت شما بیشتر است. مقداری که اکنون می‌توانید برداشت کنید در info.remaining آمده است."
 }
