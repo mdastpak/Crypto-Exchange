@@ -25,6 +25,7 @@
 //	admin [-config path] [-migrations url] migrate [up|status]
 //	admin [-config path] [-migrations url] fields [status|rekey|decrypt]
 //	admin [-config path] [-migrations url] assets import [-file path] [-dry-run]
+//	admin [-config path] [-migrations url] ledger [reconcile|snapshot]
 //
 // create and reset-totp print the authenticator secret once. They seal it
 // as the server does, with a field-enc data key, so they need keys.provider;
@@ -47,6 +48,8 @@
 // count what is left, and write the plaintext back before a down migration.
 // assets import loads the registry file of the currencies, their networks,
 // and the markets (#309), through the checks of internal/assetregistry.
+// ledger reconcile checks the books (#60), and exits with 1 when they do
+// not reconcile, for monitoring; ledger snapshot records snapshots.
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -146,6 +149,12 @@ Assets (see docs/architecture.md#the-asset-registry):
                    Load the registry file (assets.registry_path) into the currencies, their networks,
                    and the markets, through its checks. A currency that exists keeps its fields;
                    -dry-run reports the changes without making them.
+
+Ledger (see docs/architecture.md#the-ledger):
+  ledger reconcile   Replay every balance from its changes and check that every currency balances;
+                     exit status 1 when the books do not reconcile.
+  ledger snapshot    Record a snapshot of every balance changed since its last one, as the server
+                     does every hour.
 
 Personal fields (see docs/data-protection.md#field-encryption):
   fields status    Count the rows still in plaintext, or encrypted with an older key.
@@ -249,6 +258,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseFieldsArgs(cmd, global.Args()[1:], stderr)
 	case "assets":
 		return parseAssetArgs(cmd, global.Args()[1:], stderr)
+	case "ledger":
+		return parseLedgerArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -385,6 +396,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if cmd.name == "assets import" {
 		return runAssets(cmd, stdout, stderr)
+	}
+	if strings.HasPrefix(cmd.name, "ledger ") {
+		return runLedger(cmd, stdout, stderr)
 	}
 	if config.Config.Keys.Provider == "" {
 		fmt.Fprintln(stderr, "Error: authenticator secrets need the data keys: set keys.provider (KEYS_PROVIDER, see docs/data-protection.md)")

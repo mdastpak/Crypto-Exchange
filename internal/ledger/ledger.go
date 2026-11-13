@@ -40,9 +40,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/balance"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -94,6 +97,10 @@ var (
 	ErrInsufficientLocked  = balance.ErrInsufficientLocked
 	ErrInsufficientPending = balance.ErrInsufficientPending
 )
+
+// ErrUnverified refuses an operation on a balance that fails its row seal
+// in enforce mode (#139): it was changed outside the ledger.
+var ErrUnverified = rowseal.ErrUnverified
 
 // Ledger keeps the books in a PostgreSQL database.
 type Ledger struct {
@@ -333,8 +340,36 @@ func keyOf(a Account, currency shared.UUID) balanceKey {
 	return k
 }
 
-// record applies an entry in one transaction; see the package comment.
+// record applies an entry, and counts and times it in the metrics.
 func (l Ledger) record(ctx context.Context, e entry) (Result, error) {
+	start := time.Now()
+	res, err := l.apply(ctx, e)
+	metrics.LedgerOperations.WithLabelValues(e.kind, outcome(res, err)).Inc()
+	metrics.LedgerOperationDuration.WithLabelValues(e.kind).Observe(time.Since(start).Seconds())
+	return res, err
+}
+
+// outcome names the outcome of an operation for the metrics.
+func outcome(res Result, err error) string {
+	switch {
+	case err == nil && res.Replayed:
+		return "replayed"
+	case err == nil:
+		return "applied"
+	case errors.Is(err, ErrInsufficientBalance), errors.Is(err, ErrInsufficientLocked), errors.Is(err, ErrInsufficientPending):
+		return "insufficient"
+	case errors.Is(err, ErrInvalidRequest):
+		return "invalid"
+	case errors.Is(err, ErrIdempotencyConflict):
+		return "conflict"
+	case errors.Is(err, ErrUnverified):
+		return "unverified"
+	}
+	return "failed"
+}
+
+// apply applies an entry in one transaction; see the package comment.
+func (l Ledger) apply(ctx context.Context, e entry) (Result, error) {
 	if err := e.validate(); err != nil {
 		return Result{}, err
 	}
@@ -383,6 +418,7 @@ func (l Ledger) record(ctx context.Context, e entry) (Result, error) {
 		}
 		events = append(events, event)
 	}
+	var written []string
 	for k, b := range balances {
 		res, err := tx.ExecContext(ctx, `UPDATE balances SET available = $2, locked = $3, pending_deposit = $4, version = $5
 			WHERE id = $1 AND version = $6`, b.ID, b.Available, b.Locked, b.PendingDeposit, b.Version, read[k])
@@ -392,6 +428,11 @@ func (l Ledger) record(ctx context.Context, e entry) (Result, error) {
 		if n, err := res.RowsAffected(); err != nil || n != 1 {
 			return Result{}, fmt.Errorf("write balance %s: it changed under its lock", b.ID)
 		}
+		written = append(written, b.ID.String())
+	}
+	// The balances are sealed again with what the entry wrote (#139).
+	if err := rowseal.Reseal(ctx, tx, rowseal.Balances, "id = ANY($1::uuid[])", written); err != nil {
+		return Result{}, err
 	}
 	for _, ev := range events {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO balance_changes (entry_id, version, balance_id, user_id, sub_account_id,
@@ -446,35 +487,58 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 	var conds []string
 	var args []any
 	for _, w := range all {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO balances (user_id, sub_account_id, currency_hk) VALUES ($1, $2, $3)
-			ON CONFLICT DO NOTHING`, w.account.UserHK, w.account.SubAccountID, w.currency); err != nil {
+		var opened string
+		err := tx.QueryRowContext(ctx, `INSERT INTO balances (user_id, sub_account_id, currency_hk) VALUES ($1, $2, $3)
+			ON CONFLICT DO NOTHING RETURNING id`, w.account.UserHK, w.account.SubAccountID, w.currency).Scan(&opened)
+		switch {
+		case err == nil:
+			// A new balance is sealed at once, so that its check below
+			// passes (#139).
+			if err := rowseal.Reseal(ctx, tx, rowseal.Balances, "id = $1", opened); err != nil {
+				return nil, err
+			}
+		case !errors.Is(err, sql.ErrNoRows):
 			return nil, mapError(fmt.Errorf("open the balance of %s in %s: %w", w.account, w.currency, err))
 		}
 		n := len(args)
-		conds = append(conds, fmt.Sprintf("(user_id = $%d AND sub_account_id IS NOT DISTINCT FROM $%d AND currency_hk = $%d)", n+1, n+2, n+3))
+		conds = append(conds, fmt.Sprintf("(b.user_id = $%d AND b.sub_account_id IS NOT DISTINCT FROM $%d AND b.currency_hk = $%d)", n+1, n+2, n+3))
 		args = append(args, w.account.UserHK, w.account.SubAccountID, w.currency)
 	}
 	//nolint:gosec // G202: the conditions are built here from placeholders; the values are arguments.
-	rows, err := tx.QueryContext(ctx, `SELECT id, user_id, sub_account_id, currency_hk, available, locked, pending_deposit, version
-		FROM balances WHERE `+strings.Join(conds, " OR ")+` ORDER BY id FOR UPDATE`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT b.id, b.user_id, b.sub_account_id, b.currency_hk, b.available, b.locked, b.pending_deposit,
+			b.version, `+rowseal.Balances.Fields("b")+`
+		FROM balances b WHERE `+strings.Join(conds, " OR ")+` ORDER BY b.id FOR UPDATE`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("lock the balances: %w", err)
 	}
-	defer rows.Close()
 	out := make(map[balanceKey]*balance.Balance, len(all))
+	var sealed []*rowseal.Row
 	for rows.Next() {
 		b := &balance.Balance{}
-		if err := rows.Scan(&b.ID, &b.UserID, &b.SubAccountID, &b.CurrencyHK, &b.Available, &b.Locked, &b.PendingDeposit, &b.Version); err != nil {
+		r := rowseal.Balances.NewRow()
+		dest := append([]any{&b.ID, &b.UserID, &b.SubAccountID, &b.CurrencyHK, &b.Available, &b.Locked, &b.PendingDeposit, &b.Version},
+			r.Dest()...)
+		if err := rows.Scan(dest...); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("lock the balances: %w", err)
 		}
 		b.Total = b.Available.Add(b.Locked)
 		out[keyOf(Account{UserHK: b.UserID, SubAccountID: b.SubAccountID}, b.CurrencyHK)] = b
+		sealed = append(sealed, r)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lock the balances: %w", err)
 	}
 	if len(out) != len(all) {
 		return nil, fmt.Errorf("lock the balances: found %d of %d", len(out), len(all))
+	}
+	// A balance changed outside the ledger is not moved in enforce mode
+	// (#139): its seal no longer matches.
+	for _, r := range sealed {
+		if err := rowseal.Check(ctx, rowseal.Balances, r); err != nil {
+			return nil, fmt.Errorf("balance %s: %w", r.Key, err)
+		}
 	}
 	return out, nil
 }

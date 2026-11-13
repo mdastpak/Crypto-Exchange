@@ -185,12 +185,21 @@ var (
 	UserRecoveryCodes = &Table{Name: "user_recovery_codes", Key: "id", KeyType: "bigint", Columns: []Column{
 		text("user_hk"), secret("code_hash"), timestamptz("retired_at"), text("retired_reason"),
 	}}
+	// Balances covers the funds of users (#60): whose balance it is, of
+	// which currency, its components, and the version of the ledger that
+	// wrote them. Only the ledger writes a balance, and seals it in the
+	// transaction of its entry; a balance changed in SQL is refused before
+	// the ledger moves it, and the reconciliation replays it besides.
+	Balances = &Table{Name: "balances", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("sub_account_id"), text("currency_hk"),
+		text("available"), text("locked"), text("pending_deposit"), text("version"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
-	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes,
+	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an
