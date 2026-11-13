@@ -7,6 +7,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
@@ -36,6 +37,10 @@ type UserHandler struct {
 	Restrictions RestrictionReader
 	// Verification reads the verification level of the user (#157).
 	Verification VerificationReader
+	// Destinations keeps the withdrawal destinations of the user (#160).
+	// The server sets the provider that checks the owner of a card, an
+	// IBAN, or an account, and the keys that read the national IDs.
+	Destinations DestinationStore
 	// Redis holds the pending contact changes, which any instance confirms.
 	Redis redis.UniversalClient
 	// Sessions lists and ends the sessions of the signed-in user (#193).
@@ -77,6 +82,7 @@ func NewHandler(is *models.InfraServices) *UserHandler {
 			log.Printf("The verification levels are unavailable: %v", err)
 		} else {
 			h.Verification = verification.Store{DB: is.Postgres.DB, Policy: policy}
+			h.Destinations = destinations.Store{DB: is.Postgres.DB, Settings: is.Settings().Withdrawals, Levels: verification.Store{DB: is.Postgres.DB, Policy: policy}}
 		}
 	}
 	if is.Redis != nil {

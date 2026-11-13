@@ -607,6 +607,93 @@ definitions:
         - frozen
         - delisted
     type: object
+  destinations.Destination:
+    properties:
+      bank:
+        description: Bank is the bank of a fiat destination, when known.
+        example: parsian
+        type: string
+      created_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      kind:
+        allOf:
+        - $ref: '#/definitions/destinations.Kind'
+        enum:
+        - card
+        - iban
+        - account
+        - crypto
+      label:
+        type: string
+      masked:
+        example: IR82054***************9002
+        type: string
+      network:
+        description: Network is the network of a crypto destination.
+        example: tron
+        type: string
+      usable_from:
+        description: UsableFrom is when a withdrawal may use it.
+        type: string
+      version:
+        description: Version is the version of the row, for the removal.
+        example: 1
+        type: integer
+    type: object
+  destinations.Kind:
+    enum:
+    - card
+    - iban
+    - account
+    - crypto
+    type: string
+    x-enum-varnames:
+    - KindCard
+    - KindIBAN
+    - KindAccount
+    - KindCrypto
+  destinations.Request:
+    properties:
+      address:
+        example: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+        type: string
+      bank:
+        description: |-
+          Bank is the bank of an account number, one of Banks. A card or an
+          IBAN names its own.
+        example: parsian
+        type: string
+      kind:
+        allOf:
+        - $ref: '#/definitions/destinations.Kind'
+        enum:
+        - card
+        - iban
+        - account
+        - crypto
+        example: iban
+      label:
+        description: Label is the user's name for it.
+        example: My salary account
+        type: string
+      memo:
+        type: string
+      network:
+        description: |-
+          Network and Address are a crypto destination's, and Memo its memo
+          or tag where the network has one.
+        example: tron
+        type: string
+      number:
+        description: |-
+          Number is the card number, the IBAN, or the account number, with or
+          without spaces and dashes, in ASCII, Persian, or Arabic digits.
+        example: IR820540102680020817909002
+        type: string
+    type: object
   favorites.Currency:
     properties:
       added_at:
@@ -2435,6 +2522,13 @@ definitions:
       items:
         items:
           $ref: '#/definitions/user.Contact'
+        type: array
+    type: object
+  user.DestinationList:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/destinations.Destination'
         type: array
     type: object
   user.FavoriteChange:
@@ -8227,6 +8321,143 @@ paths:
       summary: Get my verification level
       tags:
       - user
+  /api/v1/user/withdrawal-destinations:
+    get:
+      description: The cards, IBANs, bank accounts, and crypto addresses that the
+        signed-in user may withdraw to, the newest first, with their numbers masked,
+        and when each becomes usable. A withdrawal names one of them by its id; it
+        never takes a number or an address of its own.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.DestinationList'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: destinations_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List my withdrawal destinations
+      tags:
+      - user-withdrawals
+    post:
+      consumes:
+      - application/json
+      description: 'Adds a card, an IBAN (Sheba), a bank account, or a crypto address.
+        Numbers may have spaces and dashes, and Persian or Arabic digits. A card,
+        an IBAN, or an account must belong to the user''s verified national ID, which
+        the provider checks now: 409 national_id_required without one, 403 destination_not_owned
+        when it is someone else''s, 503 ownership_check_unavailable when the provider
+        cannot answer. A crypto address must be valid for its network (bitcoin, ethereum,
+        tron). The verification level must allow the withdrawals it is for (403 verification_required),
+        and a recent change of a security setting holds new destinations (403 security_hold).
+        It needs a fresh proof of the second factor (403 step_up_required). A new
+        crypto address is usable after a waiting period, 24 hours by default; usable_from
+        says when.'
+      parameters:
+      - description: The destination
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/destinations.Request'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/destinations.Destination'
+              type: object
+        "400":
+          description: destination_invalid, with info.reason
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: destination_not_owned, verification_required, security_hold,
+            or step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: destination_exists, destination_taken, destination_limit_reached,
+            or national_id_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: ownership_check_unavailable or destinations_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a withdrawal destination
+      tags:
+      - user-withdrawals
+  /api/v1/user/withdrawal-destinations/{id}:
+    delete:
+      description: 'Removes the destination: no withdrawal can use it afterwards.
+        It needs a fresh proof of the second factor (403 step_up_required).'
+      parameters:
+      - description: The id of the destination
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Remove a withdrawal destination
+      tags:
+      - user-withdrawals
   /api/v1/ws/:
     get:
       description: 'Upgrades to a WebSocket. An optional user access token comes as

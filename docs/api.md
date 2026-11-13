@@ -63,6 +63,11 @@ An error response contains only a fixed message for each error. Internal details
 | `operation_restricted`, `asset_restricted` | `403` | A [restriction](#restrictions) blocks the operation; `info` names it |
 | `verification_required` | `403` | The user's [verification level](#verification-levels) does not allow the action; `info.required_level` is the level it needs |
 | `withdrawal_limit_exceeded` | `403` | The withdrawal is above a limit of the user's [verification level](#verification-levels); `info` has the limit and, for the daily one, what remains |
+| `destination_not_owned` | `403` | The card, IBAN, or account of a new [withdrawal destination](#withdrawal-destinations) is not the user's |
+| `destination_invalid` | `400` | Not a card number, an IBAN, an account number, or an address of its network; `info.reason` says why |
+| `destination_exists`, `destination_taken`, `destination_limit_reached` | `409` | The [withdrawal destination](#withdrawal-destinations) is in the user's list already, is another user's card, IBAN, or account, or the list is full |
+| `national_id_required` | `409` | A card, an IBAN, or an account needs the user's verified national ID first |
+| `ownership_check_unavailable`, `destinations_unavailable` | `503` | The owner of a card, an IBAN, or an account cannot be checked now, or the destinations are unavailable |
 | `use_admin_sign_in` | `403` | An administrator used the user sign-in |
 | `not_found` | `404` | No such resource, or a hidden one, or no such route |
 | `method_not_allowed` | `405` | The path exists with other methods |
@@ -1093,6 +1098,64 @@ Returns the signed-in user's verification:
 - `withdrawal_limits`: the limits of the currencies the user may withdraw at their level. Each has `currency_hk`, `symbol`, and `daily` and `per_transaction`, each absent when there is no bound. It also has `used` in the last 24 hours, `remaining`, and `window_hours`.
 
 A client uses it to show what each level unlocks, and what remains of the daily limits.
+
+## Withdrawal destinations
+
+A withdrawal goes only to a destination in the user's list, which the withdrawal names by its `id`. A number or address typed with the withdrawal is never used ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).
+
+| Kind | What it is | Checked when it is added |
+| --- | --- | --- |
+| `card` | A bank card: 16 digits that pass the Luhn check | It must belong to the user's verified national ID |
+| `iban` | An IBAN (Sheba): `IR` and 24 digits, with valid check digits. `IR` may be left out | It must belong to the user's verified national ID |
+| `account` | A bank account number, 5 to 26 digits, with its `bank` | It must belong to the user's verified national ID |
+| `crypto` | An address on a `network`: `bitcoin` (legacy, P2SH, or SegWit), `ethereum` (in one case or EIP-55 checksummed), or `tron` | It must be valid for its network |
+
+**Ownership.** A provider checks, when a card, an IBAN, or an account is added, that it belongs to the user's verified national ID ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [`identity.bank_ownership`](configuration.md#identity)).
+
+- Without a verified national ID, the answer is `409 national_id_required`.
+- When the card, IBAN, or account is someone else's, the answer is `403 destination_not_owned`, and the attempt is audited.
+- When the provider cannot answer, the answer is `503 ownership_check_unavailable`.
+- A card, an IBAN, or an account can be in only one user's list at a time (`409 destination_taken`). The same crypto address can be in several lists.
+
+**Bank.** Each fiat destination records its bank: from the card's prefix, from the IBAN's bank code, or as given for an account. Payouts prefer an account-to-account transfer when they can make one in the same bank ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). A card whose prefix is not known has no bank.
+
+**Input.** Numbers may have spaces and dashes, and Persian or Arabic digits. They are stored in their canonical form: digits only, or `IR` and digits. Addresses are stored checksummed (Ethereum) or in lower case (SegWit).
+
+**Guards.** Adding or removing a destination is a funds operation, so it needs the following:
+
+- **A second factor, proved recently:** `403 second_factor_required` without one in `required_for_funds` mode, and `403 step_up_required` without a recent proof.
+- **The right verification level:** a fiat destination needs the level of fiat withdrawals, and a crypto one the level of crypto withdrawals. Otherwise the answer is `403 verification_required`.
+- **No security hold:** a recent change of a security setting holds new destinations (`403 security_hold`).
+- **No lockdown of withdrawals:** adding waits for one to end. A lockdown does not hold a removal, so a user can take out a destination that is no longer safe at once.
+
+**Waiting period.** A new destination is usable from `usable_from`: at once for a card, an IBAN, or an account by default, and after 24 hours for a crypto address ([settings](configuration.md#withdrawals)).
+
+**Protection.** The numbers and addresses are stored encrypted only, and found by keyed blind indexes. The rows are sealed: a destination changed in SQL is left out of the list, and a withdrawal refuses it in `enforce` mode ([data protection](data-protection.md#field-encryption)). Each addition and removal is audited, with the number masked.
+
+### `GET /user/withdrawal-destinations`
+
+The destinations in the user's list, newest first. Each has `id`, `kind`, `label`, `masked` (the number or address with its middle hidden), `bank` or `network`, `usable_from`, and `created_at`.
+
+### `POST /user/withdrawal-destinations`
+
+Adds a destination. The body is one of these:
+
+- `{"kind": "card", "number": "6037-9900-0000-0006"}`
+- `{"kind": "iban", "number": "IR82 0540 1026 8002 0817 9090 02"}`
+- `{"kind": "account", "number": "0123456789", "bank": "mellat"}`
+- `{"kind": "crypto", "network": "tron", "address": "T..."}`
+
+Each takes an optional `label` of up to 50 characters. The answer is `201` with the destination.
+
+The refusals are listed above. There are three more:
+
+- `400 destination_invalid`, with `info.reason`;
+- `409 destination_exists`, for a destination already in the list;
+- `409 destination_limit_reached`.
+
+### `DELETE /user/withdrawal-destinations/{id}`
+
+Removes the destination: no withdrawal can use it afterwards. It answers `404` for a destination that is not in the user's list.
 
 ## Maintenance and lockdowns
 

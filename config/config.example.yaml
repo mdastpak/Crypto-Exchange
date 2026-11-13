@@ -276,6 +276,9 @@ identity:
     # api_key and secret_key: set IDENTITY_MOBILE_OWNERSHIP_API_KEY and _SECRET_KEY
     timeout_seconds: 10
     recheck_days: 30          # A sign-in checks a number again after this long
+  bank_ownership:
+    provider: none            # none or stub (development only), until Jibit or Finnotech is added
+    timeout_seconds: 10
 
 # Personal favorites of currencies and trading pairs.
 favorites:
@@ -466,6 +469,13 @@ verification:
       1: {daily: "1000000000"}       # 100 million tomans in any 24 hours
       # Level 2 has no limit of the exchange: payouts follow the transfer
       # limits of the banks and providers, split if needed (#70, #74).
+
+# The withdrawal destinations of users (#160): their own cards, IBANs, and
+# accounts, and crypto addresses.
+withdrawals:
+  max_destinations: 20
+  fiat_destination_wait_hours: 0     # The user's own accounts wait for nothing
+  crypto_destination_wait_hours: 24  # A new address is usable after this long
 
 # The sections from here to compliance are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe

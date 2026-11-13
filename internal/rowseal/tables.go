@@ -194,12 +194,20 @@ var (
 		text("user_id"), text("sub_account_id"), text("currency_hk"),
 		text("available"), text("locked"), text("pending_deposit"), text("version"),
 	}}
+	// WithdrawalDestinations covers whose destination it is, its number or
+	// address and memo, encrypted, and when it is usable (#160): a
+	// destination swapped or made usable in SQL is refused, not paid.
+	WithdrawalDestinations = &Table{Name: "withdrawal_destinations", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("kind"), sealedBytes("value_enc"), sealedBytes("value_bidx"), text("masked"),
+		text("bank"), text("network"), sealedBytes("memo_enc"), text("verified_by"),
+		timestamptz("usable_from"), timestamptz("removed_at"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
-	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances,
+	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

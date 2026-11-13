@@ -6,6 +6,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
+	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
@@ -51,6 +52,14 @@ type FavoriteStore interface {
 // user: restrictions.Store.
 // VerificationReader reads the verification level of a user, what it
 // allows, and their withdrawal limits (#157): verification.Store.
+// DestinationStore keeps the withdrawal destinations of users (#160):
+// destinations.Store.
+type DestinationStore interface {
+	List(ctx context.Context, userHK string) ([]destinations.Destination, error)
+	Add(ctx context.Context, userHK string, r destinations.Request, origin audit.Event) (destinations.Destination, error)
+	Remove(ctx context.Context, userHK, id string, origin audit.Event) error
+}
+
 type VerificationReader interface {
 	Summary(ctx context.Context, userHK string) (verification.Summary, error)
 }
@@ -116,6 +125,7 @@ var (
 	_ FavoriteStore      = favorites.Store{}
 	_ RestrictionReader  = restrictions.Store{}
 	_ VerificationReader = verification.Store{}
+	_ DestinationStore   = destinations.Store{}
 	_ CodeStore          = (*otp.Store)(nil)
 	_ PasswordStore      = (*userauth.Passwords)(nil)
 	_ AuthenticatorStore = (*userauth.TOTP)(nil)
