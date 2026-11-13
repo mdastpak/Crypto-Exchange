@@ -32,6 +32,22 @@ func TestLedger_SubAccountsOfTheirUser(t *testing.T) {
 	assert.Equal(t, [3]string{"60", "0", "0"}, b.components(alice, usdt))
 	assert.Equal(t, [3]string{"40", "0", "0"}, b.components(trading, usdt))
 
+	t.Run("a trade in a sub-account", func(t *testing.T) {
+		// Three balances of one sub-account: it is checked once, and the
+		// trade settles in it, apart from the main account.
+		btc := b.currency("BTC")
+		_, err := b.Lock(ctx, "trading:lock", trading, amount(usdt, "31"), Ref{})
+		require.NoError(t, err)
+		_, err = b.SettleTrade(ctx, "trading:trade", trading, Trade{
+			Give: amount(usdt, "30"), Receive: amount(btc, "0.001"), Fee: amount(usdt, "1"),
+		}, Ref{})
+		require.NoError(t, err)
+		assert.Equal(t, [3]string{"9", "0", "0"}, b.components(trading, usdt))
+		assert.Equal(t, [3]string{"0.001", "0", "0"}, b.components(trading, btc))
+		assert.Equal(t, [3]string{"60", "0", "0"}, b.components(alice, usdt), "the main account is untouched")
+		b.reconcile(btc)
+	})
+
 	t.Run("a sub-account of another user", func(t *testing.T) {
 		stolen := Account{UserHK: bob.UserHK, SubAccountID: trading.SubAccountID}
 		_, err := b.Transfer(ctx, "steal", stolen, bob, amount(usdt, "40"), Ref{})

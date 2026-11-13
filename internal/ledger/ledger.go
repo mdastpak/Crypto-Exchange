@@ -486,11 +486,15 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 	})
 	var conds []string
 	var args []any
+	// The balances are sorted by account, so each sub-account is checked
+	// once, before its first balance.
+	var checked balanceKey
 	for _, w := range all {
-		if w.account.SubAccountID != nil {
+		if w.account.SubAccountID != nil && (w.key.user != checked.user || w.key.sub != checked.sub) {
 			if err := checkSubAccount(ctx, tx, w.account); err != nil {
 				return nil, err
 			}
+			checked = w.key
 		}
 		var opened string
 		err := tx.QueryRowContext(ctx, `INSERT INTO balances (user_id, sub_account_id, currency_hk) VALUES ($1, $2, $3)
