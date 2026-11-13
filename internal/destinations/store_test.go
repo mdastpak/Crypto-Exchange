@@ -2,6 +2,8 @@ package destinations
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
@@ -234,4 +236,40 @@ func TestStore_NeedsDataKeys(t *testing.T) {
 	s := Store{DB: conn}
 	_, err := s.Add(context.Background(), shared.NewUUID().String(), Request{Kind: KindCrypto, Network: "tron", Address: trc20}, audit.Event{})
 	require.ErrorIs(t, err, ErrNoKeys)
+}
+
+// TestStore_ConcurrentAdditionsKeepTheLimit adds many addresses to one
+// list at once: exactly as many as the list holds are added.
+func TestStore_ConcurrentAdditionsKeepTheLimit(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.Settings.MaxDestinations = 3
+	alice := f.user(shared.KYCTierStandard, "")
+	const attempts = 10
+	results := make(chan error, attempts)
+	for range attempts {
+		go func() {
+			address := make([]byte, 20)
+			_, _ = rand.Read(address)
+			_, err := f.Add(ctx, alice, Request{Kind: KindCrypto, Network: "ethereum", Address: "0x" + hex.EncodeToString(address)}, audit.Event{})
+			results <- err
+		}()
+	}
+	added, full := 0, 0
+	for range attempts {
+		err := <-results
+		switch {
+		case err == nil:
+			added++
+		case errors.Is(err, ErrTooMany):
+			full++
+		default:
+			require.NoError(t, err)
+		}
+	}
+	assert.Equal(t, 3, added)
+	assert.Equal(t, attempts-3, full)
+	list, err := f.List(ctx, alice)
+	require.NoError(t, err)
+	assert.Len(t, list, 3)
 }

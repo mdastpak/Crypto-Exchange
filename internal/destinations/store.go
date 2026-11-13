@@ -268,6 +268,21 @@ func (s Store) insert(ctx context.Context, userHK string, n normalized, cipher *
 		return Destination{}, err
 	}
 	defer tx.Rollback()
+	// The additions of one user take turns, so two at once cannot both
+	// find room for one more in a full list: the count is taken again
+	// under the lock.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		"withdrawal_destinations:"+userHK); err != nil {
+		return Destination{}, fmt.Errorf("lock the withdrawal destinations of the user: %w", err)
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM withdrawal_destinations WHERE user_hk = $1 AND removed_at IS NULL`,
+		userHK).Scan(&count); err != nil {
+		return Destination{}, fmt.Errorf("count the withdrawal destinations: %w", err)
+	}
+	if count >= s.Settings.Destinations() {
+		return Destination{}, ErrTooMany
+	}
 	var d Destination
 	err = scanListed(tx.QueryRowContext(ctx, `INSERT INTO withdrawal_destinations
 			(id, user_hk, kind, value_enc, value_bidx, masked, label, bank, network, memo_enc, verified_by, verification_ref, usable_from)
