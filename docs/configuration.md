@@ -505,6 +505,17 @@ The [maintenance and lockdown controls](api.md#maintenance-and-lockdowns) ([#235
 | `fail_closed` | `[deposits, withdrawals, trading]` | The features that an instance closes while it does not know the controls: after `stale_after_seconds` without a read, and from its start until its first read. Refusals answer `503 feature_locked` with `state_unknown`. `["none"]` closes nothing. The other routes stay open. |
 | `lift_approval` | `[withdrawals, trading]` | The features whose active lockdown an administrator lifts only with a second one: the first request answers `202`, and another administrator's request lifts it. `["none"]` needs no second administrator. `cmd/admin`, which needs access to the database, lifts at once. |
 
+### `verification`
+
+What each [verification level](api.md#verification-levels) of a user may do ([#157](https://github.com/mdastpak/Crypto-Exchange/issues/157)). These are settings, so that a change of the rules of the Central Bank of Iran needs no release. Load checks them, and every instance reads the same file, so set them the same on each one.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `min_level` | `deposit_fiat: 1`, `deposit_crypto: 1`, `trade_otc: 1`, `trade_market: 1`, `withdraw_fiat: 1`, `withdraw_crypto: 2` | The lowest level, from 0 to 2, that may do each action. An action left out takes its default, and an unknown one is refused at startup. |
+| `withdrawal_limits` | `IRR`: `1: {daily: "1000000000"}` and `2: {daily: "3000000000"}` | The withdrawal limits, per currency symbol (upper case) and level, in units of the currency, with the fee included. `daily` bounds what a user may request in any 24 hours, in all their accounts together; `per_transaction` bounds one request. An empty or absent bound is no bound, and a currency or level without an entry has none. `per_transaction` may not be above `daily`. When the key is set, it replaces the defaults instead of adding to them. |
+
+The default rial limits, 100 and 300 million tomans a day, are placeholders: set them to the limits that apply to the exchange. A currency's own limits per network, `min_withdrawal` and `max_withdrawal` in the [asset registry](#settings-reserved-for-roadmap-features), apply as well.
+
 ### `keys`
 
 The data-protection keys seal rows and encrypt fields, so that someone with access to the database alone can neither change protected rows unnoticed nor read protected data. They are wrapped by a key-encryption key (KEK) that stays in a key management service. [`docs/data-protection.md`](data-protection.md) describes the key hierarchy and how to rotate keys. No feature uses the keys yet: row seals ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)) and field encryption ([#140](https://github.com/mdastpak/Crypto-Exchange/issues/140)) will, and will then require a provider in release mode.

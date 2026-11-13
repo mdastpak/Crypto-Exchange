@@ -11,6 +11,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
+	"github.com/mdastpak/crypto-exchange/internal/verification"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
@@ -48,6 +49,12 @@ type FavoriteStore interface {
 
 // RestrictionReader reads the restrictions and the security hold of a
 // user: restrictions.Store.
+// VerificationReader reads the verification level of a user, what it
+// allows, and their withdrawal limits (#157): verification.Store.
+type VerificationReader interface {
+	Summary(ctx context.Context, userHK string) (verification.Summary, error)
+}
+
 type RestrictionReader interface {
 	Active(ctx context.Context, userHK string) ([]restrictions.Restriction, error)
 	SecurityHold(ctx context.Context, userHK string) (*time.Time, error)
@@ -108,6 +115,7 @@ var (
 	_ AuditLog           = audit.Log{}
 	_ FavoriteStore      = favorites.Store{}
 	_ RestrictionReader  = restrictions.Store{}
+	_ VerificationReader = verification.Store{}
 	_ CodeStore          = (*otp.Store)(nil)
 	_ PasswordStore      = (*userauth.Passwords)(nil)
 	_ AuthenticatorStore = (*userauth.TOTP)(nil)

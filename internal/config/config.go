@@ -467,6 +467,10 @@ type Configuration struct {
 		LiftApproval []string `yaml:"lift_approval"`
 	} `yaml:"platform"`
 
+	// Verification sets what each verification level of a user may do
+	// (#157).
+	Verification VerificationConfig `yaml:"verification"`
+
 	// Keys says where the key-encryption key (KEK) of the data-protection
 	// keys lives. See docs/data-protection.md.
 	Keys KeysConfig `yaml:"keys"`
@@ -1708,6 +1712,7 @@ func setDefaults() {
 			*setting.value = setting.fallback
 		}
 	}
+	Config.applyVerificationDefaults()
 
 	if Config.MarketData.Mode == "" {
 		Config.MarketData.Mode = MarketDataModeDryRun

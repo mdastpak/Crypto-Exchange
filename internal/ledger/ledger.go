@@ -344,9 +344,14 @@ func keyOf(a Account, currency shared.UUID) balanceKey {
 func (l Ledger) record(ctx context.Context, e entry) (Result, error) {
 	start := time.Now()
 	res, err := l.apply(ctx, e)
-	metrics.LedgerOperations.WithLabelValues(e.kind, outcome(res, err)).Inc()
-	metrics.LedgerOperationDuration.WithLabelValues(e.kind).Observe(time.Since(start).Seconds())
+	observe(e.kind, start, res, err)
 	return res, err
+}
+
+// observe counts and times an operation of kind that started at start.
+func observe(kind string, start time.Time, res Result, err error) {
+	metrics.LedgerOperations.WithLabelValues(kind, outcome(res, err)).Inc()
+	metrics.LedgerOperationDuration.WithLabelValues(kind).Observe(time.Since(start).Seconds())
 }
 
 // outcome names the outcome of an operation for the metrics.
@@ -373,17 +378,28 @@ func (l Ledger) apply(ctx context.Context, e entry) (Result, error) {
 	if err := e.validate(); err != nil {
 		return Result{}, err
 	}
-	hash := e.hash()
 	tx, err := l.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Result{}, err
 	}
 	defer tx.Rollback()
+	res, err := write(ctx, tx, e)
+	if err != nil || res.Replayed {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Result{}, mapError(fmt.Errorf("commit the entry: %w", err))
+	}
+	return res, nil
+}
 
+// write writes an entry in tx, which the caller commits.
+func write(ctx context.Context, tx *sql.Tx, e entry) (Result, error) {
+	hash := e.hash()
 	// The key first: a concurrent operation with the same key waits here
 	// for the first to commit, and then finds its entry.
 	var entryID string
-	err = tx.QueryRowContext(ctx, `INSERT INTO ledger_entries (kind, idempotency_key, request_hash, reference_type, reference_id)
+	err := tx.QueryRowContext(ctx, `INSERT INTO ledger_entries (kind, idempotency_key, request_hash, reference_type, reference_id)
 		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''))
 		ON CONFLICT (idempotency_key) DO NOTHING RETURNING id`, e.kind, e.key, hash, e.ref.Type, e.ref.ID).Scan(&entryID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -448,9 +464,6 @@ func (l Ledger) apply(ctx context.Context, e entry) (Result, error) {
 			entryID, p.account, p.currency, p.amount); err != nil {
 			return Result{}, mapError(fmt.Errorf("record the posting: %w", err))
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return Result{}, mapError(fmt.Errorf("commit the entry: %w", err))
 	}
 	return Result{EntryID: entryID}, nil
 }

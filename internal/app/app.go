@@ -1221,6 +1221,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.POST("/step-up/passkey", rl.AuthRateLimit(middleware.AuthLogin), ih.User.StepUpPasskeyOptions)
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
+		activeGroup.GET("/verification", ih.User.GetVerification)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
 		activeGroup.PUT("/favorites/order", ih.User.ReorderFavorites)
 		activeGroup.PUT("/favorites/currencies/:hk", ih.User.AddFavoriteCurrency)

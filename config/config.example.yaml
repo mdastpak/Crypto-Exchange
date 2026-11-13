@@ -447,6 +447,25 @@ platform:
   fail_closed: [deposits, withdrawals, trading]   # ["none"] closes nothing
   lift_approval: [withdrawals, trading]           # Needs a second administrator to lift
 
+# What each verification level of a user may do (#157). Level 0 has a
+# verified contact only; level 1 has the national ID matched with the owner
+# of a bank card or account; level 2 adds a reviewed video identity check
+# and a commitment letter. An action left out takes its default.
+verification:
+  min_level:
+    deposit_fiat: 1
+    deposit_crypto: 1
+    trade_otc: 1
+    trade_market: 1
+    withdraw_fiat: 1
+    withdraw_crypto: 2
+  # Per currency symbol and level, in units of the currency, the fee
+  # included. Empty or absent is no limit. Unset takes these defaults.
+  withdrawal_limits:
+    IRR:
+      1: {daily: "1000000000"}       # 100 million tomans in any 24 hours
+      2: {daily: "3000000000"}       # Set to the Central Bank of Iran's limit
+
 # The sections from here to compliance are parsed but not used yet, except
 # exchange.name, which authenticator apps show as the issuer. They describe
 # the configuration of roadmap features; see "Settings reserved for roadmap

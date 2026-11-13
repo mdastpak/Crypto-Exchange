@@ -110,6 +110,7 @@
   "FAILED_TO_QUERY_AUDIT_LOG": "Failed to query the audit log.",
   "FAILED_TO_READ_CONTROLS": "Failed to read the platform controls.",
   "FAILED_TO_READ_SECURITY_SETTINGS": "The security settings could not be read.",
+  "FAILED_TO_READ_VERIFICATION": "Failed to read your verification level.",
   "FAILED_TO_RECORD_THE_CHANGE": "Failed to record the change.",
   "FAILED_TO_RECOVER_ACCOUNT": "Failed to recover the account.",
   "FAILED_TO_REFRESH_SESSION": "Failed to refresh the session",
@@ -323,8 +324,11 @@
   "USER_STEPPED_UP": "Password accepted.",
   "UUID_AND_OTP_REQUIRED": "Invalid request data: UUID and OTP are required",
   "VALIDATION_FAILED": "Validation failed",
+  "VERIFICATION_REQUIRED": "Your verification level does not allow this. Complete the verification of the level in info.required_level to continue.",
+  "VERIFICATION_RETRIEVED_SUCCESSFULLY": "Verification level retrieved successfully.",
   "VERIFYING_CONTACT_CHANGED": "The contact you verified with has changed; start the change again.",
   "VERIFYING_CONTACT_NOT_YOURS": "The contact to verify with is not one of your verified contacts.",
   "VERIFYING_CONTACT_TOO_RECENT": "The contact you verify with was added recently and cannot change your other contacts yet. Use the contact you are changing, or an older one, or try again later.",
-  "WEBSOCKET_HANDSHAKE_INVALID": "Not a valid WebSocket handshake: {reason}"
+  "WEBSOCKET_HANDSHAKE_INVALID": "Not a valid WebSocket handshake: {reason}",
+  "WITHDRAWAL_LIMIT_EXCEEDED": "This withdrawal is above the limit of your verification level. info.remaining is what you can still withdraw now."
 }

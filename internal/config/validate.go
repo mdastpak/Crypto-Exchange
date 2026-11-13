@@ -56,6 +56,7 @@ func (c *Configuration) validateServer() error {
 	release := c.Server.Mode == "release"
 	c.redisModeProblems(&p)
 	c.observabilityProblems(&p)
+	c.verificationProblems(&p)
 	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
 	if release {

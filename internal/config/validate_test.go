@@ -152,6 +152,25 @@ func TestValidateServer_Rules(t *testing.T) {
 		"outlier share over 100":        {func(c *Configuration) { c.MarketData.Tickers.OutlierPercent = 101 }, "market_data.tickers.outlier_percent is 101; it must be from 1 to 100"},
 		"median of one venue":           {func(c *Configuration) { c.MarketData.Tickers.MinVenues = 1 }, "market_data.tickers.min_venues is 1; it must be from 2 to 20"},
 
+		// The verification levels (#157).
+		"unknown verification action": {func(c *Configuration) { c.Verification.MinLevel["withdraw"] = 1 }, "verification.min_level.withdraw is not an action"},
+		"verification level above 2":  {func(c *Configuration) { c.Verification.MinLevel["withdraw_fiat"] = 3 }, "verification.min_level.withdraw_fiat is 3; it must be from 0 to 2"},
+		"limit in scientific notation": {func(c *Configuration) {
+			c.Verification.WithdrawalLimits["IRR"][1] = WithdrawalLimit{Daily: "1e9"}
+		}, `verification.withdrawal_limits.IRR.1.daily is "1e9"; it must be a positive decimal amount`},
+		"negative limit": {func(c *Configuration) {
+			c.Verification.WithdrawalLimits["IRR"][2] = WithdrawalLimit{PerTransaction: "-5"}
+		}, `verification.withdrawal_limits.IRR.2.per_transaction is "-5"`},
+		"per transaction above daily": {func(c *Configuration) {
+			c.Verification.WithdrawalLimits["IRR"][1] = WithdrawalLimit{Daily: "100", PerTransaction: "200"}
+		}, "verification.withdrawal_limits.IRR.1.per_transaction is 200, above the daily limit 100"},
+		"limit of level 3": {func(c *Configuration) {
+			c.Verification.WithdrawalLimits["IRR"][3] = WithdrawalLimit{Daily: "100"}
+		}, "verification.withdrawal_limits.IRR.3 names level 3; the levels are 0 to 2"},
+		"lower-case symbol": {func(c *Configuration) {
+			c.Verification.WithdrawalLimits["usdt"] = map[int]WithdrawalLimit{1: {Daily: "100"}}
+		}, "verification.withdrawal_limits.usdt is not a currency symbol"},
+
 		// TLS files, in every mode.
 		"TLS without files": {func(c *Configuration) { c.Server.TLS.Enabled = true }, "server.tls.enabled (SERVER_TLS_ENABLED) is true, but server.tls.cert_file (SERVER_TLS_CERT_FILE) and server.tls.key_file (SERVER_TLS_KEY_FILE) must both be set"},
 	} {
