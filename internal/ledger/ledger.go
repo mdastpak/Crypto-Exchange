@@ -526,10 +526,15 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 		conds = append(conds, fmt.Sprintf("(b.user_id = $%d AND b.sub_account_id IS NOT DISTINCT FROM $%d AND b.currency_hk = $%d)", n+1, n+2, n+3))
 		args = append(args, w.account.UserHK, w.account.SubAccountID, w.currency)
 	}
+	// FOR NO KEY UPDATE, not FOR UPDATE: an entry changes no key of a
+	// balance, and FOR UPDATE would also wait for the FOR KEY SHARE locks
+	// that foreign key checks take, such as those of the snapshots of the
+	// hourly audit. Those lock balances in another order than this one, so
+	// an audit and an operation could deadlock.
 	//nolint:gosec // G202: the conditions are built here from placeholders; the values are arguments.
 	rows, err := tx.QueryContext(ctx, `SELECT b.id, b.user_id, b.sub_account_id, b.currency_hk, b.available, b.locked, b.pending_deposit,
 			b.version, `+rowseal.Balances.Fields("b")+`
-		FROM balances b WHERE `+strings.Join(conds, " OR ")+` ORDER BY b.id FOR UPDATE`, args...)
+		FROM balances b WHERE `+strings.Join(conds, " OR ")+` ORDER BY b.id FOR NO KEY UPDATE`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("lock the balances: %w", err)
 	}
