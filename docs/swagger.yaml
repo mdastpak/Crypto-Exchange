@@ -5709,9 +5709,11 @@ paths:
         a failure still moves on to the next in the list, and a list of one is no
         failover. The order must keep, for each kind of message that a configured
         provider has a template for (sign-in codes, withdrawal codes, anti-phishing
-        reminders), a provider with that template. Every instance applies the change
-        within five seconds. A sensitive route: it needs a step-up. Audited as notification.sms_routing_set,
-        with the mode and order before and after.'
+        reminders), a provider with that template. A message that a later change of
+        the configuration leaves without any provider of the order goes through the
+        configured order instead, as effective_order shows. Every instance applies
+        the change within five seconds. A sensitive route: it needs a step-up. Audited
+        as notification.sms_routing_set, with the mode and order before and after.'
       parameters:
       - description: The routing
         in: body

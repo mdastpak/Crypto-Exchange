@@ -58,7 +58,7 @@ func (h *AdminHandler) GetSMSRouting(c *gin.Context) {
 }
 
 // @Summary Choose how SMS is routed
-// @Description Switches the SMS providers (#371). mode auto follows notifications.sms.providers and passes over the providers that fail or do not deliver, by their health. mode manual sends through order, a list of configured providers, as it is: a failure still moves on to the next in the list, and a list of one is no failover. The order must keep, for each kind of message that a configured provider has a template for (sign-in codes, withdrawal codes, anti-phishing reminders), a provider with that template. Every instance applies the change within five seconds. A sensitive route: it needs a step-up. Audited as notification.sms_routing_set, with the mode and order before and after.
+// @Description Switches the SMS providers (#371). mode auto follows notifications.sms.providers and passes over the providers that fail or do not deliver, by their health. mode manual sends through order, a list of configured providers, as it is: a failure still moves on to the next in the list, and a list of one is no failover. The order must keep, for each kind of message that a configured provider has a template for (sign-in codes, withdrawal codes, anti-phishing reminders), a provider with that template. A message that a later change of the configuration leaves without any provider of the order goes through the configured order instead, as effective_order shows. Every instance applies the change within five seconds. A sensitive route: it needs a step-up. Audited as notification.sms_routing_set, with the mode and order before and after.
 // @Tags admin notifications
 // @Accept json
 // @Produce json

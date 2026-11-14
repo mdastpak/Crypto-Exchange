@@ -298,20 +298,26 @@ func (r *SMSRouter) healthy(h ProviderHealth, now time.Time) bool {
 // order: the administrators' order in manual mode, or else the configured
 // order with the unhealthy providers last. A provider without a template
 // for purpose is left out.
+//
+// The configuration may change after administrators chose their order: a
+// provider, or its template, removed. When none of their providers is left
+// for purpose, the configured order applies, so that the message is still
+// sent.
 func (r *SMSRouter) Order(ctx context.Context, purpose string) []SMSProvider {
 	routing := r.currentRouting(ctx)
-	var candidates []SMSProvider
-	if routing.Mode == SMSRoutingManual && len(routing.Order) > 0 {
+	if routing.Mode == SMSRoutingManual {
+		var manual []SMSProvider
 		for _, name := range routing.Order {
-			if p := r.provider(name); p != nil {
-				candidates = append(candidates, p)
+			if p := r.provider(name); p != nil && p.Supports(purpose) {
+				manual = append(manual, p)
 			}
 		}
-	} else {
-		candidates = slices.Clone(r.providers)
+		if len(manual) > 0 {
+			return manual
+		}
 	}
-	candidates = slices.DeleteFunc(candidates, func(p SMSProvider) bool { return !p.Supports(purpose) })
-	if routing.Mode == SMSRoutingManual || len(candidates) < 2 {
+	candidates := slices.DeleteFunc(slices.Clone(r.providers), func(p SMSProvider) bool { return !p.Supports(purpose) })
+	if len(candidates) < 2 {
 		return candidates
 	}
 	health, now := r.healthSnapshot(ctx), r.now()
@@ -358,18 +364,21 @@ func (r *SMSRouter) send(ctx context.Context, msg OTPMessage, order []SMSProvide
 			return p, nil
 		}
 		if !IsProviderError(err) {
-			// The message itself, or the end of ctx: no other provider
-			// would do better.
+			// The message itself: no other provider would do better.
 			metrics.SMSSends.WithLabelValues(p.Name(), "refused").Inc()
 			return nil, err
 		}
-		r.healthStore().Record(ctx, p.Name(), SMSProviderFailed)
-		metrics.SMSSends.WithLabelValues(p.Name(), "provider_error").Inc()
 		texts = append(texts, err.Error())
-		allPermanent = allPermanent && IsPermanent(err)
 		if ctx.Err() != nil {
+			// The code expired, or the server is stopping, while the
+			// provider answered: not a failure of the provider, and no
+			// time for another.
+			allPermanent = false
 			break
 		}
+		r.healthStore().Record(ctx, p.Name(), SMSProviderFailed)
+		metrics.SMSSends.WithLabelValues(p.Name(), "provider_error").Inc()
+		allPermanent = allPermanent && IsPermanent(err)
 	}
 	// A new error of the texts: joined, the errors of the providers would
 	// make the whole permanent through any one of them.

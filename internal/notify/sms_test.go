@@ -26,6 +26,8 @@ type fakeProvider struct {
 	states map[string]DeliveryState
 	sent   []OTPMessage
 	next   int
+	// reportErr fails Reports after the states it read.
+	reportErr error
 }
 
 func newFake(name string, purposes ...string) *fakeProvider {
@@ -60,7 +62,7 @@ func (f *fakeProvider) Reports(_ context.Context, ids []string) (map[string]Deli
 			out[id] = s
 		}
 	}
-	return out, nil
+	return out, f.reportErr
 }
 
 func (f *fakeProvider) set(fail error) {
@@ -72,6 +74,12 @@ func (f *fakeProvider) set(fail error) {
 func (f *fakeProvider) report(id string, s DeliveryState) {
 	f.mu.Lock()
 	f.states[id] = s
+	f.mu.Unlock()
+}
+
+func (f *fakeProvider) failReports(err error) {
+	f.mu.Lock()
+	f.reportErr = err
 	f.mu.Unlock()
 }
 
@@ -214,6 +222,43 @@ func TestSMSRouter_ManualModeKeepsTheAdministratorsOrder(t *testing.T) {
 	assert.Equal(t, []string{"smsir", "kavenegar"}, st.Order)
 }
 
+func TestSMSRouter_ManualOrderLeftWithoutAProviderFallsBackToTheConfiguredOrder(t *testing.T) {
+	ctx := context.Background()
+	// The administrators chose sms.ir alone; then its withdrawal template,
+	// or the provider itself, left the configuration.
+	kavenegar, smsir := newFake("kavenegar", PurposeWithdrawal), newFake("smsir")
+	routing := &staticRouting{SMSRouting{Mode: SMSRoutingManual, Order: []string{"smsir"}}}
+	r := NewSMSRouter([]SMSProvider{kavenegar, smsir}, SMSRouterOptions{Routing: routing})
+
+	assert.Equal(t, []string{"smsir"}, names(r.Order(ctx, "")))
+	assert.Equal(t, []string{"kavenegar"}, names(r.Order(ctx, PurposeWithdrawal)), "a withdrawal code is still sent")
+	require.NoError(t, r.Deliver(ctx, OTPMessage{Contact: "+989121234567", Code: "482913", Purpose: PurposeWithdrawal}))
+	assert.Equal(t, 1, kavenegar.count())
+
+	routing.routing.Order = []string{"pigeon"}
+	r.Refresh()
+	assert.Equal(t, []string{"kavenegar", "smsir"}, names(r.Order(ctx, "")))
+}
+
+func TestSMSRouter_TheEndOfTheContextIsNoFailureOfTheProvider(t *testing.T) {
+	first, second := newFake("kavenegar"), newFake("smsir")
+	health := NewMemorySMSHealth(SMSBreaker{Failures: 1})
+	r := NewSMSRouter([]SMSProvider{first, second}, SMSRouterOptions{Health: health})
+	// The code expired while the provider answered, which its client
+	// reports as a failure to reach it.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	first.set(errCredit)
+
+	err := r.Deliver(ctx, testSMSMessage)
+	require.Error(t, err)
+	assert.False(t, IsPermanent(err))
+	assert.Zero(t, second.count(), "no time for another provider")
+	h := health.Snapshot(context.Background(), []string{"kavenegar"})["kavenegar"]
+	assert.Zero(t, h.ProviderErrors)
+	assert.Nil(t, h.BreakerOpenUntil, "the breaker stays closed")
+}
+
 func TestSMSRouter_CheckRouting(t *testing.T) {
 	r := NewSMSRouter([]SMSProvider{newFake("kavenegar", PurposeWithdrawal), newFake("smsir")}, SMSRouterOptions{})
 	require.NoError(t, r.CheckRouting(SMSRouting{Mode: SMSRoutingAuto}))
@@ -308,6 +353,43 @@ func TestSMSTracker_DeliveredOrExpiredCodesAreNotSentAgain(t *testing.T) {
 	now = now.Add(5 * time.Second)
 	r.tracker.checkDue()
 	assert.Zero(t, second.count())
+}
+
+func TestSMSTracker_KeepsUnknownMessagesAndTheReportsReadBeforeAnError(t *testing.T) {
+	first, second := newFake("kavenegar"), newFake("smsir")
+	health := NewMemorySMSHealth(SMSBreaker{})
+	r := NewSMSRouter([]SMSProvider{first, second}, SMSRouterOptions{Health: health, Reports: true, ResendFailed: true})
+	now := time.Now()
+	r.now, health.now = func() time.Time { return now }, func() time.Time { return now }
+
+	deliverAt(t, r, testSMSMessage, now.Add(2*time.Minute))
+	deliverAt(t, r, testSMSMessage, now.Add(2*time.Minute))
+	// The provider has not recorded the first yet, and fails after it read
+	// the second.
+	first.report("kavenegar-1", StateUnknown)
+	first.report("kavenegar-2", StateDelivered)
+	first.failReports(errDown)
+	now = now.Add(5 * time.Second)
+	r.tracker.checkDue()
+	require.Len(t, r.tracker.items, 1, "the unknown message is checked again")
+	assert.Equal(t, "kavenegar-1", r.tracker.items[0].id)
+	assert.Equal(t, int64(1), health.Snapshot(context.Background(), []string{"kavenegar"})["kavenegar"].Delivered,
+		"the report read before the error counts")
+
+	first.failReports(nil)
+	first.report("kavenegar-1", StateFailed)
+	now = now.Add(10 * time.Second)
+	r.tracker.checkDue()
+	assert.Equal(t, 1, second.count(), "its failure, reported later, still sends it again")
+
+	// Unknown to the last check, it is let go.
+	deliverAt(t, r, testSMSMessage, now.Add(time.Hour))
+	first.report("kavenegar-3", StateUnknown)
+	for range reportSchedule {
+		now = now.Add(5 * time.Minute)
+		r.tracker.checkDue()
+	}
+	assert.Empty(t, r.tracker.items)
 }
 
 func TestRedisSMSHealth_IsSharedByTheInstances(t *testing.T) {

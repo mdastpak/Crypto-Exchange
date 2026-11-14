@@ -53,7 +53,7 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 | `websocket_connections` | gauge | | Open WebSocket connections of the instance. |
 | `notification_sms_sends_total` | counter | `provider`, `result` | Messages handed to an [SMS provider](configuration.md#sms-providers) ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)): `accepted`, `provider_error` (the provider failed; the next one is tried), `refused` (the message itself, such as an invalid number). |
 | `notification_sms_fallbacks_total` | counter | `from`, `to`, `reason` | Messages sent through another provider than the first: `reason` `send` when the first failed to take it, `delivery` when it took it and did not deliver it. |
-| `notification_sms_delivery_reports_total` | counter | `provider`, `state` | Delivery reports of the messages sent: `delivered`, `failed`, `unknown` (no report, such as a sandbox message), `pending` (still on its way after the last check). |
+| `notification_sms_delivery_reports_total` | counter | `provider`, `state` | Delivery reports of the messages sent: `delivered`, `failed`, `unknown` (no report by the last check, such as a sandbox message), `pending` (still on its way after the last check). |
 
 The registry also has the metrics of the Go runtime (`go_*`) and of the process (`process_*`).
 

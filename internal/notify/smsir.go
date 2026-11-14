@@ -190,8 +190,13 @@ func (s *SMSIRDeliverer) Reports(ctx context.Context, ids []string) (map[string]
 		if _, err := strconv.ParseInt(id, 10, 64); err != nil {
 			continue
 		}
-		wg.Add(1)
 		sem <- struct{}{}
+		if ctx.Err() != nil {
+			// Out of time: the rest wait for the next check.
+			<-sem
+			break
+		}
+		wg.Add(1)
 		go func() {
 			defer func() { <-sem; wg.Done() }()
 			state, err := s.report(ctx, id)

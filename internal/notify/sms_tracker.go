@@ -135,8 +135,9 @@ func (t *smsTracker) checkDue() {
 			log.Printf("Failed to read the delivery reports of %s; the next check tries again: %v", p.Name(), err)
 		}
 		for _, item := range items {
+			// The reports read before an error still count.
 			state, ok := states[item.id]
-			if err != nil || !ok {
+			if !ok {
 				state = StatePending
 			}
 			if t.settle(item, state, now) {
@@ -147,8 +148,9 @@ func (t *smsTracker) checkDue() {
 				keep = append(keep, item)
 				continue
 			}
-			// Still on its way after the last check: let it go.
-			metrics.SMSDeliveryReports.WithLabelValues(p.Name(), "pending").Inc()
+			// Still on its way, or unknown, after the last check: let it
+			// go.
+			metrics.SMSDeliveryReports.WithLabelValues(p.Name(), state.String()).Inc()
 		}
 	}
 	if len(keep) > 0 {
@@ -159,11 +161,13 @@ func (t *smsTracker) checkDue() {
 }
 
 // settle acts on a final state of item and reports whether it was final.
+// An unknown state is not: a provider may not have recorded a message it
+// has just accepted.
 func (t *smsTracker) settle(item *trackedSMS, state DeliveryState, now time.Time) bool {
 	name := item.provider.Name()
 	ctx := context.Background()
 	switch state {
-	case StatePending:
+	case StatePending, StateUnknown:
 		return false
 	case StateDelivered:
 		t.router.healthStore().Record(ctx, name, SMSDelivered)

@@ -1295,7 +1295,7 @@ Returns:
 Chooses how SMS goes through the providers:
 
 - `{"mode": "auto"}` follows `notifications.sms.providers`. A provider whose breaker is open, or whose delivery rate is below the bound, goes behind the others.
-- `{"mode": "manual", "order": ["smsir", "kavenegar"]}` sends through the order as it is. A failure still moves on to the next in the list, and a list of one is no failover.
+- `{"mode": "manual", "order": ["smsir", "kavenegar"]}` sends through the order as it is. A failure still moves on to the next in the list, and a list of one is no failover. If the configuration later leaves none of its providers with the template that a message needs, for example after a provider is removed, that message goes through the configured order instead, so that it is still sent; `effective_order` shows it.
 
 The order names configured providers, each once. For each kind of message that a configured provider has a template for (sign-in codes, withdrawal codes, anti-phishing reminders), it must keep a provider with that template; otherwise the answer is `400 validation_failed`. Every instance applies the change within five seconds. A sensitive route: it needs a [step-up](#post-adminstep-up). The routing is a sealed row: one changed in SQL is ignored, and the auto mode applies. Audited as `notification.sms_routing_set`, with the mode and order before and after.
 
