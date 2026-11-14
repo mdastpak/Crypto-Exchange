@@ -51,18 +51,40 @@ func NewChannels(cfg config.NotificationsConfig, codeTTL time.Duration) (Channel
 		channels.Email = email
 	}
 
-	switch cfg.SMS.Provider {
-	case "":
-	case "kavenegar":
-		sms, err := NewKavenegarDeliverer(cfg.SMS.Kavenegar)
-		if err != nil {
-			return Channels{}, fmt.Errorf("notifications.sms.kavenegar: %w", err)
+	var providers []SMSProvider
+	for _, name := range cfg.SMS.ProviderNames() {
+		var p SMSProvider
+		var err error
+		switch name {
+		case KavenegarName:
+			p, err = NewKavenegarDeliverer(cfg.SMS.Kavenegar)
+		case SMSIRName:
+			p, err = NewSMSIRDeliverer(cfg.SMS.SMSIR)
+		default:
+			return Channels{}, fmt.Errorf("notifications.sms.providers: unsupported provider %q", name)
 		}
-		channels.SMS = sms
-	default:
-		return Channels{}, fmt.Errorf("notifications.sms.provider: unsupported provider %q", cfg.SMS.Provider)
+		if err != nil {
+			return Channels{}, fmt.Errorf("notifications.sms.%s: %w", name, err)
+		}
+		providers = append(providers, p)
+	}
+	if len(providers) > 0 {
+		f := cfg.SMS.Failover
+		channels.SMS = NewSMSRouter(providers, SMSRouterOptions{
+			Health:             NewMemorySMSHealth(SMSBreaker{Failures: f.BreakerFailures, Open: time.Duration(f.BreakerSeconds) * time.Second}),
+			MinDeliveryPercent: f.MinDeliveryPercent,
+			MinSamples:         f.MinSamples,
+			Reports:            cfg.SMS.DeliveryReports.On(),
+			ResendFailed:       cfg.SMS.DeliveryReports.Resend(),
+		})
 	}
 	return channels, nil
+}
+
+// SMSRouter returns the router of the SMS channel, or nil without one.
+func (c Channels) SMSRouter() *SMSRouter {
+	r, _ := c.SMS.(*SMSRouter)
+	return r
 }
 
 // ErrUnsupportedContactType is returned for a contact type without a

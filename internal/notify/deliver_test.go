@@ -50,7 +50,15 @@ func TestNewChannels(t *testing.T) {
 	channels, err := NewChannels(validNotificationsConfig(), time.Minute)
 	require.NoError(t, err)
 	assert.IsType(t, &EmailDeliverer{}, channels.Email)
-	assert.IsType(t, &KavenegarDeliverer{}, channels.SMS)
+	require.NotNil(t, channels.SMSRouter(), "SMS goes through the router, even with one provider")
+	assert.Equal(t, []string{KavenegarName}, channels.SMSRouter().Names())
+
+	cfg := validNotificationsConfig()
+	cfg.SMS.Provider, cfg.SMS.Providers = "", []string{SMSIRName, KavenegarName}
+	cfg.SMS.SMSIR = config.SMSIRConfig{APIKey: "smsir-key", OTPTemplateID: 100, BaseURL: config.DefaultSMSIRBaseURL}
+	channels, err = NewChannels(cfg, time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, []string{SMSIRName, KavenegarName}, channels.SMSRouter().Names(), "in the configured order")
 
 	channels, err = NewChannels(config.NotificationsConfig{}, time.Minute)
 	require.NoError(t, err)

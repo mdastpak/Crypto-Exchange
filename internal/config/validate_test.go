@@ -180,6 +180,19 @@ func TestValidateServer_Rules(t *testing.T) {
 			c.Withdrawals.FiatDestinationWaitHours = &wait
 		}, "withdrawals.fiat_destination_wait_hours is -1; it must be from 0 to 720"},
 
+		// The SMS providers (#371).
+		"unknown SMS provider": {func(c *Configuration) { c.Notifications.SMS.Providers = []string{"kavenegar", "pigeon"} },
+			`notifications.sms.providers has "pigeon"; the providers are kavenegar and smsir`},
+		"an SMS provider twice": {func(c *Configuration) { c.Notifications.SMS.Providers = []string{"smsir", "smsir"} },
+			`notifications.sms.providers has "smsir" twice`},
+		"provider beside providers": {func(c *Configuration) {
+			c.Notifications.SMS.Provider, c.Notifications.SMS.Providers = "kavenegar", []string{"smsir"}
+		}, "notifications.sms.provider is set beside notifications.sms.providers"},
+		"breaker of 101 failures": {func(c *Configuration) { c.Notifications.SMS.Failover.BreakerFailures = 101 },
+			"notifications.sms.failover.breaker_failures is 101"},
+		"delivery share over 100": {func(c *Configuration) { c.Notifications.SMS.Failover.MinDeliveryPercent = 120 },
+			"notifications.sms.failover.min_delivery_percent is 120"},
+
 		// The reminders to change the anti-phishing code (#375).
 		"no reminder interval": {func(c *Configuration) { c.AntiPhishing.Rotation.ReminderIntervalDays = -1 }, "anti_phishing.rotation.reminder_interval_days is -1; it must be at least 1"},
 		"no check interval":    {func(c *Configuration) { c.AntiPhishing.Rotation.CheckIntervalMinutes = -5 }, "anti_phishing.rotation.check_interval_minutes is -5; it must be at least 1"},

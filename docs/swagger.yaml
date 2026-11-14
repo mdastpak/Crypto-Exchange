@@ -223,6 +223,28 @@ definitions:
           $ref: '#/definitions/restrictions.Restriction'
         type: array
     type: object
+  admin.SMSRoutingRequest:
+    properties:
+      mode:
+        description: |-
+          Mode is auto, the configured order with the providers that fail or
+          do not deliver moved behind the others, or manual, Order as it is.
+        enum:
+        - auto
+        - manual
+        example: manual
+        type: string
+      order:
+        description: |-
+          Order is the providers in the order that messages try them, for the
+          manual mode; one provider is no failover.
+        example:
+        - smsir
+        - kavenegar
+        items:
+          type: string
+        type: array
+    type: object
   admin.StepUpInfo:
     properties:
       elevated_until:
@@ -1637,6 +1659,83 @@ definitions:
     properties:
       version:
         example: 2
+        type: integer
+    type: object
+  notify.SMSProviderStatus:
+    properties:
+      accepted:
+        description: |-
+          Accepted is the messages it accepted, and ProviderErrors the ones it
+          failed to take.
+        type: integer
+      breaker_open_until:
+        description: |-
+          BreakerOpenUntil is when the provider is tried again in auto mode,
+          after failing breaker_failures times in a row; absent when it is
+          closed.
+        type: string
+      delivered:
+        description: |-
+          Delivered and Failed are the delivery reports that reached a final
+          state.
+        type: integer
+      failed:
+        type: integer
+      healthy:
+        description: |-
+          Healthy is false while its breaker is open, or its delivery rate is
+          below the bound.
+        type: boolean
+      name:
+        example: kavenegar
+        type: string
+      provider_errors:
+        type: integer
+      templates:
+        description: Templates are the purposes it has a template for.
+        example:
+        - sign_in
+        - withdrawal
+        items:
+          type: string
+        type: array
+    type: object
+  notify.SMSStatus:
+    properties:
+      delivery_reports:
+        description: Reports says whether the delivery of each message is checked.
+        type: boolean
+      effective_order:
+        description: Effective is the order that sign-in codes go through now.
+        example:
+        - kavenegar
+        - smsir
+        items:
+          type: string
+        type: array
+      mode:
+        description: Mode is auto or manual.
+        enum:
+        - auto
+        - manual
+        example: auto
+        type: string
+      order:
+        description: Order is the administrators' order in manual mode.
+        example:
+        - smsir
+        - kavenegar
+        items:
+          type: string
+        type: array
+      providers:
+        description: Providers are the configured providers, in their configured order.
+        items:
+          $ref: '#/definitions/notify.SMSProviderStatus'
+        type: array
+      window_minutes:
+        description: WindowMinutes is the time that the counts cover.
+        example: 15
         type: integer
     type: object
   passkey.Options:
@@ -5477,6 +5576,100 @@ paths:
       summary: Enable a market data venue
       tags:
       - admin market data
+  /api/v1/admin/notifications/sms:
+    get:
+      description: 'The SMS providers (#371) and how messages go through them: the
+        mode (auto or manual), the order that sign-in codes take now, and for each
+        provider its templates, whether it is healthy, its breaker, and what it did
+        in the last 15 minutes: messages accepted, provider errors, and the delivery
+        reports, delivered and failed. In auto mode, a provider whose breaker is open,
+        after notifications.sms.failover.breaker_failures failures in a row, or whose
+        delivery rate is below min_delivery_percent, goes behind the others.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/notify.SMSStatus'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: sms_not_configured
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show how SMS is routed
+      tags:
+      - admin notifications
+    put:
+      consumes:
+      - application/json
+      description: 'Switches the SMS providers (#371). mode auto follows notifications.sms.providers
+        and passes over the providers that fail or do not deliver, by their health.
+        mode manual sends through order, a list of configured providers, as it is:
+        a failure still moves on to the next in the list, and a list of one is no
+        failover. The order must keep, for each kind of message that a configured
+        provider has a template for (sign-in codes, withdrawal codes, anti-phishing
+        reminders), a provider with that template. Every instance applies the change
+        within five seconds. A sensitive route: it needs a step-up. Audited as notification.sms_routing_set,
+        with the mode and order before and after.'
+      parameters:
+      - description: The routing
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.SMSRoutingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/notify.SMSStatus'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: sms_not_configured
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Choose how SMS is routed
+      tags:
+      - admin notifications
   /api/v1/admin/platform:
     get:
       description: What users see now (the status of GET /api/v1/public/status), and

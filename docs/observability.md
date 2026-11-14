@@ -51,6 +51,9 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 | `redis_up` | gauge | | 1 when Redis answers a ping within a second. |
 | `rabbitmq_up` | gauge | | 1 when the connection to RabbitMQ and its publishing channel are up. |
 | `websocket_connections` | gauge | | Open WebSocket connections of the instance. |
+| `notification_sms_sends_total` | counter | `provider`, `result` | Messages handed to an [SMS provider](configuration.md#sms-providers) ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)): `accepted`, `provider_error` (the provider failed; the next one is tried), `refused` (the message itself, such as an invalid number). |
+| `notification_sms_fallbacks_total` | counter | `from`, `to`, `reason` | Messages sent through another provider than the first: `reason` `send` when the first failed to take it, `delivery` when it took it and did not deliver it. |
+| `notification_sms_delivery_reports_total` | counter | `provider`, `state` | Delivery reports of the messages sent: `delivered`, `failed`, `unknown` (no report, such as a sandbox message), `pending` (still on its way after the last check). |
 
 The registry also has the metrics of the Go runtime (`go_*`) and of the process (`process_*`).
 
@@ -67,6 +70,8 @@ The metrics are meant for these alerts, at least:
 | Redis or RabbitMQ down | `min(redis_up) == 0` or `min(rabbitmq_up) == 0` for 2 minutes | Sign-in codes are not delivered, and the limits fail open or closed as configured. |
 | Pool exhausted | `rate(db_connection_waits[5m]) > 0` and `db_connections_in_use == db_connections_open` | Requests wait for PostgreSQL connections. |
 | Slow publishes | `histogram_quantile(0.99, sum(rate(rabbitmq_publish_duration_seconds_bucket[5m])) by (le)) > 1` | The broker confirms slowly; the outbox falls behind. |
+| SMS provider failing | `sum by (provider) (increase(notification_sms_sends_total{result="provider_error"}[10m])) > 5` | A provider keeps failing: messages wait for the next one, and its breaker opens. Check its credit, key, and status page. |
+| SMS not delivered | `sum by (provider) (increase(notification_sms_delivery_reports_total{state="failed"}[15m])) / sum by (provider) (increase(notification_sms_delivery_reports_total{state=~"delivered\|failed"}[15m])) > 0.2` | More than a fifth of a provider's messages do not reach the phones. In auto mode the provider goes behind the others below `min_delivery_percent`; consider the manual mode. |
 
 ## Traces
 

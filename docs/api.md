@@ -1231,6 +1231,32 @@ Returns `set`, `hint`, `set_at`, `shown_count`, `change_suggested`, and `change_
 
 `PUT` with `{"code": "blue falcon 7"}` sets or changes the code. A code is 4 to 20 letters, digits, spaces, or hyphens, of any script, Persian among them; runs of spaces become one. Anything else answers `400 anti_phishing_code_invalid`, and the current code answers `409 anti_phishing_code_same`. A new code starts with no uses. `DELETE` removes it (`404 anti_phishing_code_not_set` without one). Both need a fresh proof of the second factor for a user who has one (`403 step_up_required`), and are closed by the `profile_changes` lockdown.
 
+## SMS providers
+
+Codes and reminders go by SMS through Kavenegar, sms.ir, or both, with failover and delivery reports ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371); [configuration](configuration.md#sms-providers)). Administrators see the health of each provider and switch between the automatic mode and an order of their own.
+
+### `GET /admin/notifications/sms` (admin)
+
+Returns:
+
+- `mode`: `auto` or `manual`;
+- `order`: the administrator's order, in manual mode;
+- `effective_order`: the order that sign-in codes take now;
+- `delivery_reports`: whether the delivery of each message is checked;
+- `window_minutes`: the time that the counts cover, 15 minutes;
+- `providers`: each configured provider with its `templates` (`sign_in`, `withdrawal`, `anti_phishing_reminder`), `healthy`, `breaker_open_until` while its breaker is open, and its counts in the window: `accepted`, `provider_errors`, `delivered`, and `failed`.
+
+`404 sms_not_configured` on a server without SMS.
+
+### `PUT /admin/notifications/sms` (admin)
+
+Chooses how SMS goes through the providers:
+
+- `{"mode": "auto"}` follows `notifications.sms.providers`. A provider whose breaker is open, or whose delivery rate is below the bound, goes behind the others.
+- `{"mode": "manual", "order": ["smsir", "kavenegar"]}` sends through the order as it is. A failure still moves on to the next in the list, and a list of one is no failover.
+
+The order names configured providers, each once. For each kind of message that a configured provider has a template for (sign-in codes, withdrawal codes, anti-phishing reminders), it must keep a provider with that template; otherwise the answer is `400 validation_failed`. Every instance applies the change within five seconds. A sensitive route: it needs a [step-up](#post-adminstep-up). The routing is a sealed row: one changed in SQL is ignored, and the auto mode applies. Audited as `notification.sms_routing_set`, with the mode and order before and after.
+
 ## Maintenance and lockdowns
 
 Administrators take the whole service, or one feature, out of users' reach for planned maintenance or in an incident ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). A control is one of:

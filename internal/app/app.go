@@ -299,6 +299,9 @@ func run() error {
 	if w := startAntiPhishingReminders(services.Postgres.DB, otpSender); w != nil {
 		workers = append(workers, *w)
 	}
+	if w := useSMSRouting(otpChannels.SMSRouter(), services, handlers); w != nil {
+		workers = append(workers, *w)
+	}
 	if err := configureIdentity(handlers); err != nil {
 		return fmt.Errorf("failed to configure the identity checks: %w", err)
 	}
@@ -1062,7 +1065,7 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		Codes:             otp.NewStore(services.Redis.Client, confirmCodes),
 		AntiPhishing:      antiPhishing,
 		Authenticator:     totpStore,
-		SMSForWithdrawals: config.Config.Notifications.SMS.Kavenegar.WithdrawalTemplate != "" || config.Config.OTP.Auth.DevLogCodes}
+		SMSForWithdrawals: config.Config.Notifications.SMS.HasTemplate("withdrawal") || config.Config.OTP.Auth.DevLogCodes}
 	guard := &userauth.Guard{DB: services.Postgres.DB}
 	userHandler.Guard, publicHandler.Guard = guard, guard
 	marketData := newMarketDataAPI(services)
@@ -1232,6 +1235,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.POST("/platform/controls", ih.Admin.CreateControl)
 		adminGroup.PATCH("/platform/controls/:id", ih.Admin.UpdateControl)
 		adminGroup.POST("/platform/controls/:id/lift", ih.Admin.LiftControl)
+		// How SMS goes through the providers (#371).
+		adminGroup.GET("/notifications/sms", ih.Admin.GetSMSRouting)
+		adminGroup.PUT("/notifications/sms", ih.Admin.SetSMSRouting)
 		adminGroup.POST("/logout", adminLogout(ih))
 		adminGroup.GET("/sessions", ih.Admin.ListSessions)
 		adminGroup.DELETE("/sessions/:id", ih.Admin.EndSession)

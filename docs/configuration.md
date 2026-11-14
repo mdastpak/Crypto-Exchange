@@ -57,7 +57,7 @@ In an international release, the server and the market data worker refuse to sta
 | Feature | Setting that turns it on | Checked by |
 | --- | --- | --- |
 | The Shahkar check of Iranian mobile numbers ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) | `identity.mobile_ownership.provider` other than `none` | server |
-| Sign-in codes by SMS through Kavenegar | `notifications.sms.provider: kavenegar`. An international release has no SMS until another provider is added. | server |
+| Codes by SMS through Kavenegar or sms.ir ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) | `kavenegar` or `smsir` in `notifications.sms.providers` (or `notifications.sms.provider`). An international release has no SMS until a provider outside Iran is added. | server |
 | The Iranian exchanges, Nobitex and Wallex | `market_data.sources.nobitex.enabled`, `market_data.sources.wallex.enabled` | market data worker |
 | The Iranian venues on the public market data routes | `ir` in `market_data.api.regions` | server |
 | Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
@@ -301,7 +301,8 @@ Sign-in codes are published to the `rabbitmq.exchanges.notifications` exchange a
 | `email.implicit_tls` | `false` | Connect with TLS from the start, usually on port `465`. Otherwise the connection is upgraded with `STARTTLS`. Codes and credentials are only sent over TLS; a server without `STARTTLS` is refused unless it runs on the local machine. |
 | `email.timeout_seconds` | `10` | Limit for one SMTP session |
 | `email.otp_subject`, `email.otp_body` | An English subject and body | [Go templates](https://pkg.go.dev/text/template) for the email. They can use `{{.Code}}` and `{{.TTLSeconds}}`, and can be written in any language. The server refuses to start if a template is invalid or the subject spans several lines. |
-| `sms.provider` | none | `kavenegar`, or empty to disable SMS |
+| `sms.providers` | none | The SMS providers, `kavenegar` and `smsir`, in the order that messages try them ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)). See [SMS providers](#sms-providers). Empty disables SMS. |
+| `sms.provider` | none | One provider, as before `sms.providers`, which takes its place. Set one of the two. |
 | `sms.kavenegar.api_key` | **required** with the provider | Kavenegar API key. `KAVENEGAR_API_KEY` overrides it. |
 | `sms.kavenegar.otp_template` | **required** with the provider | A verify template approved in the Kavenegar panel. The code fills its `%token` placeholder, so the panel defines the text and language of the message. |
 | `email.withdrawal_subject`, `email.withdrawal_body` | An English subject and body | The templates of the codes that [confirm a withdrawal](api.md#withdrawal-confirmations) ([#161](https://github.com/mdastpak/Crypto-Exchange/issues/161)). They can use `{{.Code}}`, `{{.TTLSeconds}}`, and `{{.Details}}`, what the code confirms, such as `100 USDT to TR7NHq...gjLj6t`. A withdrawal code never goes out with the sign-in text, so that it cannot pass for a sign-in code. |
@@ -311,6 +312,16 @@ Sign-in codes are published to the `rabbitmq.exchanges.notifications` exchange a
 | `sms.kavenegar.anti_phishing_reminder_template` | none | The verify template of the reminder to change the anti-phishing code: `%token` receives the number of emails that have shown it, never the code. Without it, the reminder goes by email only. |
 | `sms.kavenegar.base_url` | `https://api.kavenegar.com` | API base URL. Codes are sent with the [verify lookup](https://kavenegar.com/rest.html) method. |
 | `sms.kavenegar.timeout_seconds` | `10` | Limit for one API request |
+| `sms.smsir.api_key` | **required** with the provider | The key of the sms.ir API. `SMSIR_API_KEY` overrides it. A sandbox key sends nothing and records nothing, so its messages have no delivery report. |
+| `sms.smsir.otp_template_id` | **required** with the provider | A quick-send (verify) template of the sms.ir panel with `#CODE#`. |
+| `sms.smsir.withdrawal_template_id` | none | The template of the codes that confirm a withdrawal, with `#CODE#`, `#AMOUNT#` (such as `100 USDT`), and `#DEST#` (the destination masked). Each value is at most 25 characters. Without it, withdrawal codes go through the other providers. |
+| `sms.smsir.anti_phishing_reminder_template_id` | none | The template of the reminder to change the anti-phishing code, with `#COUNT#`, the emails that have shown it, never the code. |
+| `sms.smsir.base_url` | `https://api.sms.ir` | API base URL. Messages are sent with `POST /v1/send/verify`, and their reports read with `GET /v1/send/{messageId}`. |
+| `sms.smsir.timeout_seconds` | `10` | Limit for one API request |
+| `sms.failover.breaker_failures`, `sms.failover.breaker_seconds` | `3`, `60` | In the auto mode, a provider that fails this many times in a row, on any instance, is skipped for this long. |
+| `sms.failover.min_delivery_percent`, `sms.failover.min_samples` | `50`, `20` | In the auto mode, a provider whose share of delivered messages in the last 15 minutes, of at least `min_samples` delivery reports, is below `min_delivery_percent` goes behind the others. A negative percent turns this off. |
+| `sms.delivery_reports.enabled` | `true` | Check that each message reached the phone. |
+| `sms.delivery_reports.resend_failed` | `true` | Send a message that did not reach the phone again, once, through the next provider, while its code is valid. |
 | `worker.concurrency` | `4` | Codes delivered in parallel by each server instance |
 | `worker.max_attempts` | `3` | Delivery attempts per code. Temporary failures, such as timeouts or SMTP `4xx` replies, are retried with exponential backoff starting at one second. Permanent failures, such as an unknown recipient or invalid credentials, are not retried. Delivery also stops once the code expires. |
 
@@ -323,6 +334,19 @@ The worker declares this RabbitMQ topology at startup:
 | `notifications.otp.dead-letter.quorum` | Quorum queue bound to `notifications.dead-letter` | Keeps those records for seven days. A record holds the contact type, the masked contact, the reason, the number of attempts, and the last error, but never the code or the raw contact. Its depth is a direct measure of delivery failures. |
 
 Failed attempts and abandoned codes are also logged with the masked contact. Delivery metrics are part of [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50).
+
+#### SMS providers
+
+SMS goes through Kavenegar, sms.ir, or both ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)). With both, a message goes through the first provider of the effective order. It moves on to the next only when that provider fails to take it: a network error, a timeout, HTTP `5xx` or `429`, or a refusal of the key, the account, the credit, the template, or the line. A refusal of the message itself, such as an invalid or blacklisted number, is not tried elsewhere. When every provider failed, the worker retries the message until its code expires, unless every failure was one that retrying cannot fix. A provider without the template of a kind of message, such as withdrawal codes, is passed over for those messages. SMS is offered for withdrawals, and for the anti-phishing reminder, only when a provider has their template.
+
+**Delivery reports.** The providers accept a message before it reaches the phone. With `delivery_reports.enabled`, each instance checks the messages it sent at 5, 15, 30, 60, 120, and 300 seconds, through the report APIs of the providers (Kavenegar `sms/status.json`, sms.ir `GET /v1/send/{messageId}`). It sorts them into delivered, failed (refused by the carrier, not delivered, blocked, or blacklisted), or still pending. A message that failed while its code is valid goes again, once, through the next provider, with the same code. The code stays in the memory of the instance that sent it and never reaches a store, so an instance that stops lets go of the messages it was checking. Neither provider documents a webhook for the reports, so they are read, not pushed.
+
+**Automatic and manual switch.** Administrators choose the mode at [`PUT /admin/notifications/sms`](api.md#sms-providers):
+
+- **`auto`** (the default) follows `sms.providers` and moves a provider behind the others while its breaker is open (`failover.breaker_failures` failures in a row, on any instance, for `failover.breaker_seconds`), or while its share of delivered messages in the last 15 minutes is below `failover.min_delivery_percent`.
+- **`manual`** sends through an order the administrator sets, as it is: a failure still moves on to the next in the list, and a list of one is no failover.
+
+The health of the providers and their breakers are in Redis, shared by the instances, and in each instance's memory while Redis is away. The mode is in the database, sealed, and every instance applies a change within five seconds. Metrics: `notification_sms_sends_total`, `notification_sms_fallbacks_total`, and `notification_sms_delivery_reports_total` ([observability](observability.md)).
 
 ### `admin`
 
@@ -534,7 +558,7 @@ The [anti-phishing code](api.md#anti-phishing-code) of users ([#375](https://git
 | `rotation.reminder_interval_days` | `30` | The time between two reminders to one user, at least 1 |
 | `rotation.check_interval_minutes` | `60` | How often each instance looks for the codes that are due, at least 1. Every instance runs the job: each claims the rows it reminds (`FOR UPDATE SKIP LOCKED`), so that a user is reminded once. A reminder that cannot be sent is tried again an hour later, without holding up the others. |
 
-A tighter bound applies to each code from its next look: one whose first reminder was set for a later date waits for that date, or for the use that reaches `max_uses`. A looser one applies at once. The SMS reminder needs `notifications.sms.kavenegar.anti_phishing_reminder_template`.
+A tighter bound applies to each code from its next look: one whose first reminder was set for a later date waits for that date, or for the use that reaches `max_uses`. A looser one applies at once. The SMS reminder needs an SMS provider with a reminder template: `notifications.sms.kavenegar.anti_phishing_reminder_template` or `notifications.sms.smsir.anti_phishing_reminder_template_id`.
 
 ### `withdrawals`
 
@@ -797,6 +821,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `KEYS_ROW_SEALS_VERIFY_INTERVAL_MINUTES` | `keys.row_seals.verify_interval_minutes` |
 | `SMTP_PASSWORD` | `notifications.email.password` |
 | `KAVENEGAR_API_KEY` | `notifications.sms.kavenegar.api_key` |
+| `SMSIR_API_KEY` | `notifications.sms.smsir.api_key` |
 | `WS_ALLOWED_ORIGINS` | `websocket.allowed_origins`, as a comma-separated list |
 | `WS_PING_INTERVAL_SECONDS` | `websocket.ping_interval_seconds` |
 | `WS_MAX_MESSAGE_SIZE_BYTES` | `websocket.max_message_size_bytes` |

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -193,5 +194,58 @@ func TestKavenegarDeliverer_RemindersHaveTheirOwnTemplate(t *testing.T) {
 	assert.Equal(t, "212", got[0].form.Get("token"))
 	for key, values := range got[0].form {
 		assert.NotContains(t, strings.Join(values, ","), "blue-falcon", "an SMS never carries the code: %s", key)
+	}
+}
+
+// TestKavenegarDeliverer_ReportsDeliveryAndClassifiesFailures checks the
+// message ID of a send, the delivery reports (#371), and which failures
+// let another provider try.
+func TestKavenegarDeliverer_ReportsDeliveryAndClassifiesFailures(t *testing.T) {
+	var mu sync.Mutex
+	var statusQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/verify/lookup.json"):
+			_, _ = w.Write([]byte(`{"return":{"status":200,"message":"OK"},"entries":[{"messageid":8792343,"status":5}]}`))
+		case strings.HasSuffix(r.URL.Path, "/sms/status.json"):
+			mu.Lock()
+			statusQueries = append(statusQueries, r.URL.Query().Get("messageid"))
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"return":{"status":200,"message":"OK"},"entries":[
+				{"messageid":1,"status":10},{"messageid":2,"status":11},{"messageid":3,"status":4},{"messageid":4,"status":100}]}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	k := newTestKavenegar(t, server.URL)
+	ctx := context.Background()
+
+	id, err := k.Send(ctx, testSMSMessage)
+	require.NoError(t, err)
+	assert.Equal(t, "8792343", id)
+
+	states, err := k.Reports(ctx, []string{"1", "2", "3", "4"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]DeliveryState{"1": StateDelivered, "2": StateFailed, "3": StatePending, "4": StateUnknown}, states)
+	assert.Equal(t, []string{"1,2,3,4"}, statusQueries, "one request for up to 500 IDs")
+
+	for _, tc := range []struct {
+		status            int
+		provider, lasting bool
+	}{
+		{411, false, true}, // an invalid number: no other provider either
+		{431, false, true},
+		{418, true, true}, // no credit: the next provider
+		{403, true, true},
+		{424, true, true},
+		{500, true, false},
+		{429, true, false},
+		{451, true, false},
+	} {
+		server, _ := fakeKavenegar(t, tc.status, `{"return":{"status":`+strconv.Itoa(tc.status)+`,"message":"x"},"entries":null}`)
+		_, err := newTestKavenegar(t, server.URL).Send(ctx, testSMSMessage)
+		require.Error(t, err)
+		assert.Equal(t, tc.provider, IsProviderError(err), "status %d is a failure of the provider", tc.status)
+		assert.Equal(t, tc.lasting, IsPermanent(err), "status %d is permanent", tc.status)
 	}
 }
