@@ -374,6 +374,7 @@ internal/totp/          Time-based one-time passwords (RFC 6238)
 internal/tracing/       OpenTelemetry spans of requests, queries, commands, and publishes
 internal/userauth/      The account password of users, the second step of their sign-in
 internal/verification/  Verification levels: what each allows, and the withdrawal limits
+internal/withdrawals/   Withdrawals of users: request, confirmation, lock of the funds, review
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker
 scripts/doc-status/     The check that the status table agrees with the issues it links
 scripts/rabbitmq-ha/    The RabbitMQ failover drill: a three-node cluster on Docker
