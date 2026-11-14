@@ -3648,6 +3648,140 @@
                 }
             }
         },
+        "/api/v1/admin/notifications/sms": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The SMS providers (#371) and how messages go through them: the mode (auto or manual), the order that sign-in codes take now, and for each provider its templates, whether it is healthy, its breaker, and what it did in the last 15 minutes: messages accepted, provider errors, and the delivery reports, delivered and failed. In auto mode, a provider whose breaker is open, after notifications.sms.failover.breaker_failures failures in a row, or whose delivery rate is below min_delivery_percent, goes behind the others.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin notifications"
+                ],
+                "summary": "Show how SMS is routed",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/notify.SMSStatus"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "sms_not_configured",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Switches the SMS providers (#371). mode auto follows notifications.sms.providers and passes over the providers that fail or do not deliver, by their health. mode manual sends through order, a list of configured providers, as it is: a failure still moves on to the next in the list, and a list of one is no failover. The order must keep, for each kind of message that a configured provider has a template for (sign-in codes, withdrawal codes, anti-phishing reminders), a provider with that template. Every instance applies the change within five seconds. A sensitive route: it needs a step-up. Audited as notification.sms_routing_set, with the mode and order before and after.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin notifications"
+                ],
+                "summary": "Choose how SMS is routed",
+                "parameters": [
+                    {
+                        "description": "The routing",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.SMSRoutingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/notify.SMSStatus"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "sms_not_configured",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/platform": {
             "get": {
                 "security": [
@@ -9500,6 +9634,31 @@
                 }
             }
         },
+        "admin.SMSRoutingRequest": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "description": "Mode is auto, the configured order with the providers that fail or\ndo not deliver moved behind the others, or manual, Order as it is.",
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "manual"
+                    ],
+                    "example": "manual"
+                },
+                "order": {
+                    "description": "Order is the providers in the order that messages try them, for the\nmanual mode; one provider is no failover.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "smsir",
+                        "kavenegar"
+                    ]
+                }
+            }
+        },
         "admin.StepUpInfo": {
             "type": "object",
             "properties": {
@@ -11473,6 +11632,100 @@
                 "version": {
                     "type": "integer",
                     "example": 2
+                }
+            }
+        },
+        "notify.SMSProviderStatus": {
+            "type": "object",
+            "properties": {
+                "accepted": {
+                    "description": "Accepted is the messages it accepted, and ProviderErrors the ones it\nfailed to take.",
+                    "type": "integer"
+                },
+                "breaker_open_until": {
+                    "description": "BreakerOpenUntil is when the provider is tried again in auto mode,\nafter failing breaker_failures times in a row; absent when it is\nclosed.",
+                    "type": "string"
+                },
+                "delivered": {
+                    "description": "Delivered and Failed are the delivery reports that reached a final\nstate.",
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "healthy": {
+                    "description": "Healthy is false while its breaker is open, or its delivery rate is\nbelow the bound.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "kavenegar"
+                },
+                "provider_errors": {
+                    "type": "integer"
+                },
+                "templates": {
+                    "description": "Templates are the purposes it has a template for.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "sign_in",
+                        "withdrawal"
+                    ]
+                }
+            }
+        },
+        "notify.SMSStatus": {
+            "type": "object",
+            "properties": {
+                "delivery_reports": {
+                    "description": "Reports says whether the delivery of each message is checked.",
+                    "type": "boolean"
+                },
+                "effective_order": {
+                    "description": "Effective is the order that sign-in codes go through now.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "kavenegar",
+                        "smsir"
+                    ]
+                },
+                "mode": {
+                    "description": "Mode is auto or manual.",
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "manual"
+                    ],
+                    "example": "auto"
+                },
+                "order": {
+                    "description": "Order is the administrators' order in manual mode.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "smsir",
+                        "kavenegar"
+                    ]
+                },
+                "providers": {
+                    "description": "Providers are the configured providers, in their configured order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/notify.SMSProviderStatus"
+                    }
+                },
+                "window_minutes": {
+                    "description": "WindowMinutes is the time that the counts cover.",
+                    "type": "integer",
+                    "example": 15
                 }
             }
         },

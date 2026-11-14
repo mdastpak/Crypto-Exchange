@@ -159,6 +159,11 @@ const (
 	ActionPlatformControlLiftRequest = "platform.control_lift_request"
 	ActionPlatformControlLift        = "platform.control_lift"
 
+	// ActionNotificationSMSRoutingSet is an administrator choosing how SMS
+	// goes through the providers (#371): the auto mode, or an order. The
+	// target is the sms notification channel.
+	ActionNotificationSMSRoutingSet = "notification.sms_routing_set"
+
 	// The commands of cmd/admin (#195). Their actor is the system, and the
 	// operator who ran them is named in the user agent; see Operator.
 	ActionAdminCreate    = "admin.create"
@@ -238,6 +243,9 @@ const (
 	TargetMarketPair     = "market_pair"
 	TargetMarketConflict = "market_conflict"
 	TargetMarketJob      = "market_job"
+	// TargetNotificationChannel is a channel of notifications, such as sms
+	// (#371).
+	TargetNotificationChannel = "notification_channel"
 )
 
 // Operator returns the origin of the changes that an operator makes with a

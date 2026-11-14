@@ -29,7 +29,7 @@ func startAntiPhishingReminders(conn *sql.DB, sender notify.OTPSender) *worker {
 	}
 	r := &antiPhishingReminder{
 		reminders: antiphishing.Reminders{Store: antiPhishingStore(conn), Sender: sender,
-			SMS: config.Config.Notifications.SMS.Kavenegar.AntiPhishingReminderTemplate != "" || config.Config.OTP.Auth.DevLogCodes},
+			SMS: config.Config.Notifications.SMS.HasTemplate("anti_phishing_reminder") || config.Config.OTP.Auth.DevLogCodes},
 		interval: time.Duration(rotation.CheckIntervalMinutes) * time.Minute,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),

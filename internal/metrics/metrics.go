@@ -97,6 +97,28 @@ var (
 		Name: "ledger_reconciliation_last_success_timestamp_seconds",
 		Help: "Unix time of the last completed reconciliation of the ledger.",
 	})
+	// SMSSends counts the messages handed to each SMS provider (#371), by
+	// result: accepted, provider_error (the provider failed; the next one
+	// is tried), and refused (the message itself, such as an invalid
+	// number).
+	SMSSends = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "notification_sms_sends_total",
+		Help: "Messages handed to an SMS provider, by provider and result.",
+	}, []string{"provider", "result"})
+	// SMSFallbacks counts the messages that went through another provider
+	// than the first: reason send when the first failed to take it,
+	// delivery when it took it and did not deliver it.
+	SMSFallbacks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "notification_sms_fallbacks_total",
+		Help: "Messages sent through another SMS provider, by the one that failed, the one that sent, and why.",
+	}, []string{"from", "to", "reason"})
+	// SMSDeliveryReports counts the delivery reports of the messages sent,
+	// by provider and final state: delivered, failed, unknown, or pending
+	// after the last check.
+	SMSDeliveryReports = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "notification_sms_delivery_reports_total",
+		Help: "Delivery reports of SMS, by provider and state.",
+	}, []string{"provider", "state"})
 )
 
 func init() {
@@ -105,6 +127,7 @@ func init() {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		HTTPRequests, HTTPDuration, RateLimitRejections, PublishDuration, SealFindings,
 		LedgerMismatches, LedgerImbalancedCurrencies, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
+		SMSSends, SMSFallbacks, SMSDeliveryReports,
 	)
 }
 

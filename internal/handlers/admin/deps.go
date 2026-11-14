@@ -9,6 +9,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
@@ -122,3 +123,16 @@ var (
 	_ AuditLog         = audit.Log{}
 	_ FindingStore     = rowseal.Findings{}
 )
+
+// SMSRouter routes SMS through the providers (#371): *notify.SMSRouter.
+type SMSRouter interface {
+	Status(ctx context.Context) notify.SMSStatus
+	CheckRouting(routing notify.SMSRouting) error
+	Refresh()
+}
+
+// SMSRoutingStore keeps the routing that administrators set:
+// smsrouting.Store.
+type SMSRoutingStore interface {
+	Set(ctx context.Context, routing notify.SMSRouting, adminHK string, origin audit.Event) error
+}
