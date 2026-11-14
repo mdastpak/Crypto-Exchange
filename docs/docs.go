@@ -1605,6 +1605,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.APIResponse"
                         }
                     },
+                    "409": {
+                        "description": "row_unverified: a row fails its seal (#139)",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
                     "default": {
                         "description": "Any other error, in the envelope with a code",
                         "schema": {
@@ -1726,7 +1732,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "network_contract_fixed or contract_taken",
+                        "description": "network_contract_fixed, contract_taken, or row_unverified: the network fails its seal",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -3898,6 +3904,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.APIResponse"
                         }
                     },
+                    "409": {
+                        "description": "row_unverified: a row fails its seal (#139)",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
                     "default": {
                         "description": "Any other error, in the envelope with a code",
                         "schema": {
@@ -3966,6 +3978,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "market_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified: a row fails its seal (#139)",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -4073,6 +4091,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified: a row fails its seal (#139)",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }

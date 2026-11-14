@@ -226,13 +226,31 @@ var (
 	SMSRouting = &Table{Name: "sms_routing", Key: "id", KeyType: "bigint", Columns: []Column{
 		text("mode"), text("provider_order"), text("updated_by"),
 	}}
+	// CurrencyNetworks covers how a currency moves on a network (#57): the
+	// contract that custody credits deposits by, the decimals that scale
+	// them, whether deposits and withdrawals are open, the limits, the
+	// fees, and the explorer that users follow. A contract swapped in SQL
+	// for another token's is not acted on.
+	CurrencyNetworks = &Table{Name: "currency_networks", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("currency_hk"), text("network"), text("contract_address"), text("decimals"), text("custody_mode"),
+		text("deposit_enabled"), text("withdrawal_enabled"), text("min_deposit"), text("min_withdrawal"),
+		text("max_withdrawal"), text("withdrawal_fee"), text("fee_currency_hk"), text("requires_tag"), text("explorer_url"),
+	}}
+	// Markets covers the pair, the status, the rules, and the fees of a
+	// market (#57): a market opened or made free in SQL is not acted on.
+	Markets = &Table{Name: "markets", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("base_currency_hk"), text("quote_currency_hk"), text("status"), text("min_order_size"), text("max_order_size"),
+		text("min_notional"), text("tick_size"), text("lot_size"), text("maker_fee_bps"), text("taker_fee_bps"),
+		text("max_position_size"), text("max_leverage"), text("market_maker_fee_bps"), text("price_band_bps"),
+		timestamptz("deleted_at"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
-	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting,
+	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

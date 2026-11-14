@@ -9,7 +9,9 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/assetregistry"
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/sealtest"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -311,4 +313,86 @@ func TestCatalog_ShowsTheNetworksOfThePublicCurrencies(t *testing.T) {
 	assert.Equal(t, "0", tron.MinDeposit)
 	assert.Equal(t, 6, tron.Decimals)
 	assert.True(t, tron.DepositEnabled)
+}
+
+// TestRegistry_SealsNetworksAndMarkets checks the seals of #57 in enforce
+// mode: every write seals its row, and a network or a market changed in SQL
+// is neither served nor written over.
+func TestRegistry_SealsNetworksAndMarkets(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	sealtest.Use(t, f.db, rowseal.ModeEnforce)
+	store := Store{DB: f.db}
+	_, err := store.Import(ctx, registryFile(t), importOrigin, false)
+	require.NoError(t, err)
+	assert.Zero(t, count(t, f.db, `SELECT COUNT(*) FROM currency_networks WHERE row_seal IS NULL`), "the import seals")
+	assert.Zero(t, count(t, f.db, `SELECT COUNT(*) FROM markets WHERE row_seal IS NULL`))
+	usdt := hkOf(t, f.db, "USDT")
+
+	t.Run("a write seals again", func(t *testing.T) {
+		n := usdtOnTron()
+		n.WithdrawalFee = "3"
+		_, err := store.SetNetwork(ctx, usdt, n, 6, importOrigin)
+		require.NoError(t, err)
+		list, err := store.Networks(ctx, usdt)
+		require.NoError(t, err)
+		assert.Equal(t, "3", list[1].WithdrawalFee.String())
+	})
+
+	// A contract swapped in SQL for another token's.
+	_, err = f.db.Exec(`UPDATE currency_networks SET contract_address = 'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8'
+		WHERE currency_hk = $1 AND network = 'tron'`, usdt)
+	require.NoError(t, err)
+
+	t.Run("a network changed in SQL", func(t *testing.T) {
+		_, err := store.Networks(ctx, usdt)
+		require.ErrorIs(t, err, rowseal.ErrUnverified, "the admin view")
+		_, err = store.SetNetwork(ctx, usdt, usdtOnTron(), 6, importOrigin)
+		require.ErrorIs(t, err, rowseal.ErrUnverified, "a write does not seal what nobody checked")
+		_, err = store.Import(ctx, registryFile(t), importOrigin, false)
+		require.ErrorIs(t, err, rowseal.ErrUnverified, "nor does the import")
+
+		list, err := f.catalog.List(ctx)
+		require.NoError(t, err)
+		for _, cur := range list {
+			if cur.Info.Symbol == "USDT" {
+				require.Len(t, cur.Networks, 1, "users never see the swapped contract")
+				assert.Equal(t, "ethereum", cur.Networks[0].Network)
+			}
+		}
+		assert.Equal(t, 1, count(t, f.db, `SELECT COUNT(*) FROM integrity_findings
+			WHERE table_name = 'currency_networks' AND resolved_at IS NULL`))
+	})
+
+	// A market made free in SQL.
+	_, err = f.db.Exec(`UPDATE markets SET taker_fee_bps = 0 WHERE base_currency_hk = $1`, hkOf(t, f.db, "TRX"))
+	require.NoError(t, err)
+
+	t.Run("a market changed in SQL", func(t *testing.T) {
+		_, err := store.Markets(ctx)
+		require.ErrorIs(t, err, rowseal.ErrUnverified)
+		_, err = store.Market(ctx, "TRX", "USDT")
+		require.ErrorIs(t, err, rowseal.ErrUnverified)
+		m := btcUSDT()
+		m.Base = "TRX"
+		_, err = store.SetMarket(ctx, m, importOrigin)
+		require.ErrorIs(t, err, rowseal.ErrUnverified)
+		_, err = store.Market(ctx, "BTC", "USDT")
+		require.NoError(t, err, "the other markets are served")
+
+		markets, err := NewMarketList(f.db, 0).List(ctx)
+		require.NoError(t, err)
+		for _, m := range markets {
+			assert.NotEqual(t, "TRX", m.Base, m.Symbol)
+		}
+		assert.Contains(t, symbolsOf(markets), "BTC/USDT")
+	})
+}
+
+func symbolsOf(markets []PublicMarket) []string {
+	var symbols []string
+	for _, m := range markets {
+		symbols = append(symbols, m.Symbol)
+	}
+	return symbols
 }
