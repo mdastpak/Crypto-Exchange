@@ -190,3 +190,33 @@ jobs:
       # The files to skip are listed in .markdownlint-cli2.jsonc.
       - name: Run markdownlint
         run: npx --yes markdownlint-cli2@0.13.0 "**/*.md"
+
+  # A pull request stays reviewable (#311, CONTRIBUTING.md "Review policy"):
+  # above 800 changed lines of non-generated code, the check warns. It never
+  # fails: a change that cannot be split says why in its description.
+  size:
+    name: Pull request size
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Count the changed lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          LIMIT: "800"
+        run: |
+          # Generated files, the module checksums, test data, and the
+          # CHANGELOG do not count.
+          changed=$(git diff --numstat "$BASE"...HEAD -- . \
+              ':(exclude)docs/docs.go' ':(exclude)docs/swagger.json' ':(exclude)docs/swagger.yaml' \
+              ':(exclude)go.sum' ':(exclude)**/testdata/**' ':(exclude)CHANGELOG.md' \
+            | awk '$1 != "-" { n += $1 + $2 } END { print n + 0 }')
+          echo "Changed lines of non-generated code: $changed (guideline: $LIMIT)"
+          echo "Changed lines of non-generated code: **$changed** (guideline: $LIMIT)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$changed" -gt "$LIMIT" ]; then
+            echo "::warning::This pull request changes $changed lines of non-generated code, above the guideline of $LIMIT. Split it into reviewable steps, or say in its description why it cannot be split (CONTRIBUTING.md, Review policy)."
+          fi

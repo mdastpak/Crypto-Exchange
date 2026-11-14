@@ -1,0 +1,45 @@
+# Code owners (#311). A pull request that changes one of these paths asks
+# the owners for a review. With "Require review from Code Owners" in the
+# branch protection of main, it cannot merge without their approval.
+# CONTRIBUTING.md, "Review policy", says why these paths, and the pull
+# request template has the security checklist they fill in.
+#
+# The paths are checked by TestCodeOwners_SecurityPaths
+# (internal/codestyle): each one exists, and the template lists the same.
+
+# Authentication, sessions, and second factors
+/internal/auth/            @mdastpak
+/internal/adminauth/       @mdastpak
+/internal/userauth/        @mdastpak
+/internal/passkey/         @mdastpak
+/internal/passwordhash/    @mdastpak
+/internal/otp/             @mdastpak
+/internal/totp/            @mdastpak
+/internal/identity/        @mdastpak
+/internal/signin/          @mdastpak
+
+# Keys, seals, and the audit log
+/internal/keys/            @mdastpak
+/internal/rowseal/         @mdastpak
+/internal/audit/           @mdastpak
+
+# Money: the books, withdrawals, and their confirmation
+/internal/ledger/          @mdastpak
+/internal/destinations/    @mdastpak
+/internal/confirm/         @mdastpak
+/internal/verification/    @mdastpak
+/internal/crypto/          @mdastpak
+
+# Controls on what users and operators may do
+/internal/platform/        @mdastpak
+/internal/restrictions/    @mdastpak
+/internal/middleware/      @mdastpak
+
+# The schema, the database roles, and the validation of the configuration
+/internal/db/migrations/   @mdastpak
+/internal/db/roles.go      @mdastpak
+/internal/config/validate.go @mdastpak
+
+# What runs in production, and how it is built
+/Dockerfile                @mdastpak
+/.github/                  @mdastpak
