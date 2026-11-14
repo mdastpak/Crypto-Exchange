@@ -11,6 +11,8 @@ on:
     - cron: "23 6 * * 1"
   workflow_dispatch:
   pull_request:
+    # edited: a change of the body changes the issues it closes.
+    types: [opened, synchronize, reopened, edited]
     paths:
       - "README.md"
       - "scripts/doc-status/**"
@@ -33,4 +35,8 @@ jobs:
       - name: Check the status table
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # The issues that the pull request closes count as closed. The
+          # body is passed through the environment, never into the script,
+          # so that it cannot inject commands. Empty on a scheduled run.
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: go run ./scripts/doc-status -repo "$GITHUB_REPOSITORY" README.md
