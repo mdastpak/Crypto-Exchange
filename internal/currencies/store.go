@@ -334,11 +334,7 @@ func scanDetail(scan func(...any) error) (models.Currency, error) {
 
 // Get returns one currency, whatever its status, with its version.
 func (s Store) Get(ctx context.Context, hk string) (models.Currency, error) {
-	cur, err := scanDetail(s.DB.QueryRowContext(ctx, detailQuery+` WHERE c.hk = $1`, hk).Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return cur, ErrNotFound
-	}
-	return cur, err
+	return Detail(ctx, s.DB, hk)
 }
 
 // All reads every currency, deleted ones included, for the filters of the

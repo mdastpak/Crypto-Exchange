@@ -314,6 +314,9 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
+	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
+		return err
+	}
 	if w := startAntiPhishingReminders(services.Postgres.DB, otpSender); w != nil {
 		workers = append(workers, *w)
 	}
@@ -1245,6 +1248,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/markets", ih.Admin.ListMarkets)
 		adminGroup.GET("/markets/:base/:quote", ih.Admin.GetMarket)
 		adminGroup.PUT("/markets/:base/:quote", ih.Admin.SetMarket)
+		// The withdrawals held for review (#70).
+		adminGroup.GET("/withdrawals", ih.Admin.ListWithdrawals)
+		adminGroup.POST("/withdrawals/:id/approve", ih.Admin.ApproveWithdrawal)
+		adminGroup.POST("/withdrawals/:id/reject", ih.Admin.RejectWithdrawal)
 		adminGroup.GET("/currencies/:hk/migrations", ih.Admin.ListMigrations)
 		adminGroup.POST("/currencies/:hk/migrations", ih.Admin.ScheduleMigration)
 		adminGroup.POST("/currencies/:hk/migrations/:id/cancel", ih.Admin.CancelMigration)
@@ -1333,6 +1340,12 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.PUT("/confirmation-method", profileChanges, ih.User.RequireSecondFactor(true), ih.User.SetConfirmationMethod)
 		activeGroup.POST("/confirmations/:id", rl.AuthRateLimit(middleware.AuthLogin), ih.User.ConfirmOperation)
 		activeGroup.POST("/confirmations/:id/resend", rl.AuthRateLimit(middleware.AuthOTP), ih.User.ResendConfirmation)
+		// Withdrawals (#70): a request starts a confirmation, and runs once
+		// it is confirmed. The code store limits the codes it sends.
+		activeGroup.POST("/withdrawals", gate.Require(platform.FeatureWithdrawals), ih.User.RequestWithdrawal)
+		activeGroup.GET("/withdrawals", ih.User.ListWithdrawals)
+		activeGroup.GET("/withdrawals/:id", ih.User.GetWithdrawal)
+		activeGroup.POST("/withdrawals/:id/cancel", ih.User.CancelWithdrawal)
 		// The anti-phishing code that the emails show (#375). Changing it
 		// needs a fresh proof of the second factor.
 		activeGroup.GET("/anti-phishing-code", ih.User.GetAntiPhishingCode)

@@ -5096,6 +5096,268 @@
                 }
             }
         },
+        "/api/v1/admin/withdrawals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The withdrawals that wait for an administrator (status review), oldest first; or, with status, those of that status, newest first. At most limit (100). Each has the user's user_hk. A withdrawal that fails its seal answers 409 row_unverified, as the other administrative lists do.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "List withdrawals for review",
+                "parameters": [
+                    {
+                        "enum": [
+                            "review",
+                            "queued",
+                            "processing",
+                            "partially_paid",
+                            "completed",
+                            "cancelled",
+                            "rejected",
+                            "failed"
+                        ],
+                        "type": "string",
+                        "description": "review by default",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "At most 100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/withdrawals.Withdrawal"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/withdrawals/{id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lets a withdrawal held for review go to its payouts (status queued). A sensitive route: it needs a step-up. Audited as withdrawal.approve.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "Approve a withdrawal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The withdrawal",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Withdrawal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "withdrawal_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "withdrawal_not_in_review or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/withdrawals/{id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Refuses a withdrawal held for review (status rejected), and releases its amount and fee to the user's available balance. The user sees reason. A sensitive route: it needs a step-up. Audited as withdrawal.reject, with the reason.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "Reject a withdrawal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The withdrawal",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The reason",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.withdrawalReview"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Withdrawal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "withdrawal_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "withdrawal_not_in_review or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/market-data/assets": {
             "get": {
                 "description": "The crypto assets of the global catalog. sort=rank (the default) lists them by market cap rank, the unranked last; sort=newest lists the one the catalog first collected last first, by created_at. A cursor holds its order: a cursor of one order is refused by the other. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.",
@@ -9729,6 +9991,350 @@
                 }
             }
         },
+        "/api/v1/user/withdrawals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The withdrawals of the signed-in user, newest first, at most limit (100). before, an RFC 3339 time, lists those created before it, for the next page: the created_at of the last one.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "List my withdrawals",
+                "parameters": [
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "At most 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "An RFC 3339 time",
+                        "name": "before",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/withdrawals.Withdrawal"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Request a withdrawal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1 to 100 letters, digits, dots, colons, underscores, or hyphens; the same for both steps",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "The withdrawal",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.withdrawalRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The request ran before",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Withdrawal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Withdrawal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.withdrawalChallenge"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed, or idempotency_key_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "verification_required, withdrawal_limit_exceeded, account_frozen, operation_restricted, asset_restricted, or security_hold",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "withdrawals_unavailable or feature_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/withdrawals/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Get my withdrawal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The withdrawal",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Withdrawal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "withdrawal_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/withdrawals/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cancels a withdrawal whose payouts have not started (status review or queued), and releases its amount and fee. Audited as user.withdrawal_cancel.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Cancel my withdrawal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The withdrawal",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Withdrawal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "withdrawal_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "withdrawal_not_cancellable or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ws/": {
             "get": {
                 "description": "Upgrades to a WebSocket. An optional user access token comes as Authorization: Bearer, or from a browser as the subprotocols access_token and the token. docs/api.md describes the messages.",
@@ -10357,6 +10963,16 @@
             "properties": {
                 "totp": {
                     "type": "string"
+                }
+            }
+        },
+        "admin.withdrawalReview": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "description": "Reason, for a rejection, is what the user is told, 1 to 500\ncharacters.",
+                    "type": "string",
+                    "example": "The destination is under investigation."
                 }
             }
         },
@@ -14467,6 +15083,42 @@
                 }
             }
         },
+        "user.withdrawalChallenge": {
+            "type": "object",
+            "properties": {
+                "confirmation": {
+                    "$ref": "#/definitions/confirm.Challenge"
+                }
+            }
+        },
+        "user.withdrawalRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "100"
+                },
+                "confirmation_id": {
+                    "description": "ConfirmationID is the confirmation that the first request returned,\nonce confirmed with POST /user/confirmations/{id}.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "destination_id": {
+                    "description": "DestinationID is a destination of the user's book that is usable.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "network": {
+                    "description": "Network is a network of the currency, such as \"tron\", or \"internal\"\nfor rials.",
+                    "type": "string",
+                    "example": "tron"
+                }
+            }
+        },
         "userauth.Recovery": {
             "type": "object",
             "properties": {
@@ -14680,6 +15332,122 @@
                     "items": {
                         "$ref": "#/definitions/verification.LimitStatus"
                     }
+                }
+            }
+        },
+        "withdrawals.Status": {
+            "type": "string",
+            "enum": [
+                "review",
+                "queued",
+                "processing",
+                "partially_paid",
+                "completed",
+                "cancelled",
+                "rejected",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "StatusReview",
+                "StatusQueued",
+                "StatusProcessing",
+                "StatusPartiallyPaid",
+                "StatusCompleted",
+                "StatusCancelled",
+                "StatusRejected",
+                "StatusFailed"
+            ]
+        },
+        "withdrawals.Withdrawal": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is what the destination receives, Fee the fee of the network,\nand Total their sum, which left the user's available balance.",
+                    "type": "string",
+                    "example": "100"
+                },
+                "cancelled_at": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "description": "Currency is the symbol of the currency.",
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "destination": {
+                    "type": "string",
+                    "example": "TR7NHq...gjLj6t"
+                },
+                "destination_id": {
+                    "description": "DestinationID is the destination of the user's book, and\nDestination its number or address, masked.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "fee": {
+                    "type": "string",
+                    "example": "1"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                },
+                "reason": {
+                    "description": "Reason is why it was rejected or failed.",
+                    "type": "string"
+                },
+                "review_reason": {
+                    "description": "ReviewReason is why it waits, or waited, for an administrator.",
+                    "type": "string",
+                    "enum": [
+                        "amount"
+                    ]
+                },
+                "reviewed_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "enum": [
+                        "review",
+                        "queued",
+                        "processing",
+                        "partially_paid",
+                        "completed",
+                        "cancelled",
+                        "rejected",
+                        "failed"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/withdrawals.Status"
+                        }
+                    ],
+                    "example": "queued"
+                },
+                "total": {
+                    "type": "string",
+                    "example": "101"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_hk": {
+                    "description": "UserHK is the user's, in the views of administrators.",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         }

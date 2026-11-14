@@ -580,13 +580,14 @@ A tighter bound applies to each code from its next look: one whose first reminde
 
 ### `withdrawals`
 
-The [withdrawal destinations](api.md#withdrawal-destinations) of users ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).
+The [withdrawal destinations](api.md#withdrawal-destinations) of users ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)), and the [withdrawals](api.md#withdrawals) to them ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)).
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `max_destinations` | `20` | From 1 to 200. How many destinations a user's list may hold, not counting removed ones. One more answers `409 destination_limit_reached`. |
 | `fiat_destination_wait_hours` | `0` | From 0 to 720. How long a new card, IBAN, or account waits before a withdrawal may use it. It must be the user's own, so by default it does not wait. |
 | `crypto_destination_wait_hours` | `24` | From 0 to 720. How long a new crypto address waits before a withdrawal may use it, so that a hijacked session cannot add an address and withdraw to it at once. |
+| `review_above` | none | By currency symbol, the amount from which a withdrawal waits for an administrator before it is paid, such as `USDT: "10000"` and `IRR: "5000000000"`. The amount is what the destination receives, without the fee. A currency left out is never held for review. Each value is a positive decimal; a key must be an upper-case symbol. |
 
 ### `keys`
 

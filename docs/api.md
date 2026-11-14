@@ -629,6 +629,7 @@ The sensitive routes:
 | `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` | Capability overrides |
 | `PUT /admin/currencies/{hk}/networks/{network}` | How a currency moves on a network: its contract, limits, and fees ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) |
 | `PUT /admin/markets/{base}/{quote}` | The status, rules, and fees of a market ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) |
+| `POST /admin/withdrawals/{id}/approve`, `POST …/reject` | Withdrawals held for review ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) |
 | `PUT /admin/notifications/sms` | The routing of SMS through the providers ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
 
@@ -1366,6 +1367,67 @@ It has the limits of a sign-in. The withdrawal workflow ([#70](https://github.co
 ### `POST /user/confirmations/{id}/resend`
 
 Sends a new code of an SMS or email confirmation, or begins a new ceremony of a confirmation by passkey and returns its options, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`).
+
+## Withdrawals
+
+A user withdraws a currency, on one of its [networks](#networks), to a destination of their [book](#withdrawal-destinations), confirmed with their second factor ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). The payouts that pay a withdrawal, by bank or on chain, are the next part of #70; until then, a withdrawal waits as `queued`.
+
+### `POST /user/withdrawals`
+
+In two steps, with the same `Idempotency-Key` header: 1 to 100 letters, digits, dots, colons, underscores, or hyphens. Without it, the answer is `400 idempotency_key_required`.
+
+```json
+{
+  "currency_hk": "0d4f2a7e-8c1b-4f0e-9a51-3c2f6f1b7d10",
+  "network": "tron",
+  "destination_id": "6b0f0a52-0d1e-4b3a-9c8e-1f2a3b4c5d6e",
+  "amount": "100"
+}
+```
+
+1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, and key. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
+2. **Confirm it** with `POST /user/confirmations/{id}`.
+3. **Send the same request with `confirmation_id`.** It runs in one transaction, under a lock of the user: the checks again, the confirmation consumed, the withdrawal recorded, and its amount and fee locked in the [ledger](architecture.md#the-ledger). The answer is `201` with the withdrawal. The same request again answers `200` with it, and locks nothing more; another request with the key answers `409 idempotency_key_reused`.
+
+The checks:
+
+- `amount` is what the destination receives, a decimal string within the decimals, the minimum, and the maximum of the network. The fee of the network is added: `total`, which leaves the available balance (`409 insufficient_balance`), and which the [limits of the user's level](#verification-levels) count (`403 verification_required`, `403 withdrawal_limit_exceeded`).
+- The currency is listed, and its lifecycle allows withdrawals; the network allows them (`409 withdrawals_closed`).
+- The destination is the user's, usable now (`409 destination_not_usable_yet` with `usable_from`), and of the kind of the currency: a card, an IBAN, or an account for a fiat currency, an address on `network` for a crypto one.
+- The user's restrictions and security hold (`403`, as for the other operations), and the `withdrawals` lockdown (`503 feature_locked`).
+- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, or `confirmation_mismatch` for one of another request.
+
+A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
+
+**The withdrawal:**
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `currency_hk`, `currency`, `network` | The withdrawal, and the symbol of its currency |
+| `destination_id`, `destination` | The destination, and its number or address, masked |
+| `amount`, `fee`, `total` | What the destination receives, the fee of the network, and their sum |
+| `status` | `review`, `queued`, `processing`, `partially_paid`, `completed`, `cancelled`, `rejected`, or `failed` |
+| `review_reason`, `reviewed_at` | Why and when an administrator reviewed it |
+| `reason` | Why it was rejected, or failed |
+| `created_at`, `updated_at`, `completed_at`, `cancelled_at` | Times |
+
+### `GET /user/withdrawals` and `GET /user/withdrawals/{id}`
+
+The user's withdrawals, newest first, at most `limit` (100). `before`, an RFC 3339 time, lists those created before it: the `created_at` of the last one, for the next page. `404 withdrawal_not_found` for one that is not the user's.
+
+### `POST /user/withdrawals/{id}/cancel`
+
+Cancels a withdrawal whose payouts have not started (`review` or `queued`), and releases its total. `409 withdrawal_not_cancellable` otherwise. Audited as `user.withdrawal_cancel`.
+
+### Review (admin)
+
+- `GET /admin/withdrawals` lists the withdrawals that wait for review, oldest first; with `status`, those of the status, newest first. Each has the user's `user_hk`.
+- `POST /admin/withdrawals/{id}/approve` lets one go to its payouts (`queued`). Audited as `withdrawal.approve`.
+- `POST /admin/withdrawals/{id}/reject` with `{"reason": "…"}`, 1 to 500 characters, refuses it (`rejected`) and releases its total; the user sees the reason. Audited as `withdrawal.reject`.
+
+Both are sensitive routes: they need a [step-up](#post-adminstep-up). `409 withdrawal_not_in_review` for one that does not wait.
+
+**Protection.** Withdrawals are [sealed](data-protection.md#row-seals): one raised, sent elsewhere, or approved in SQL is not acted on. In `enforce` mode, it is left out of the user's list, `GET` and the cancellation answer `409 row_unverified`, and its funds stay locked until two administrators re-seal it.
 
 ## Anti-phishing code
 

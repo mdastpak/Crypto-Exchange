@@ -40,6 +40,10 @@ var adminRoutes = map[string]admin.RouteClass{
 	"PUT /currencies/:hk/networks/:network": admin.RouteSensitive,
 	"PUT /markets/:base/:quote":             admin.RouteSensitive,
 
+	// Letting a withdrawal held for review be paid, or refusing it (#70).
+	"POST /withdrawals/:id/approve": admin.RouteSensitive,
+	"POST /withdrawals/:id/reject":  admin.RouteSensitive,
+
 	// Freezing users and locking the platform.
 	"POST /users/:hk/restrictions":          admin.RouteSensitive,
 	"POST /users/:hk/restrictions/:id/lift": admin.RouteSensitive,

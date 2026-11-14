@@ -35,7 +35,10 @@ type AdminHandler struct {
 	// The stores of the routes.
 	CurrencyStore CurrencyStore
 	// Registry holds the networks of the currencies and the markets (#57).
-	Registry     RegistryStore
+	Registry RegistryStore
+	// Withdrawals are the withdrawals held for review (#70). The server
+	// sets it; without it, the routes answer withdrawals_unavailable.
+	Withdrawals  WithdrawalReviews
 	Restrictions RestrictionStore
 	Controls     ControlStore
 	Delistings   DelistingStore

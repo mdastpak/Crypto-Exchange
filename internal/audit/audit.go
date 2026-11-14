@@ -124,6 +124,15 @@ const (
 	// (#161). The target is the confirmation; a wrong code is a failure.
 	// The event never holds the code.
 	ActionUserOperationConfirm = "user.operation_confirm"
+	// A user requesting a withdrawal, which locks its funds, and cancelling
+	// one before it is paid (#70). The target is the withdrawal; the event
+	// holds the currency, network, destination, amount, and fee.
+	ActionUserWithdrawalRequest = "user.withdrawal_request"
+	ActionUserWithdrawalCancel  = "user.withdrawal_cancel"
+	// An administrator approving a withdrawal held for review, or
+	// rejecting it, which releases its funds (#70), with the reason.
+	ActionWithdrawalApprove = "withdrawal.approve"
+	ActionWithdrawalReject  = "withdrawal.reject"
 	// A user setting or removing their anti-phishing code (#375). The
 	// target is the user; the event never holds the phrase.
 	ActionUserAntiPhishingCodeSet    = "user.anti_phishing_code_set"
@@ -218,6 +227,8 @@ const (
 	// TargetWithdrawalDestination is a withdrawal destination of a user
 	// (#160), by its id.
 	TargetWithdrawalDestination = "withdrawal_destination"
+	// TargetWithdrawal is a withdrawal of a user (#70), by its id.
+	TargetWithdrawal = "withdrawal"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"
