@@ -240,6 +240,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 		p.add("security.second_factor.step_up_minutes", "is %d; it must be from 1 to %d", v, MaxUserStepUpMinutes)
 	}
 	passkeyProblems(p, c)
+	legalProblems(p, c)
 	if m := c.Security.Recovery.Mode; m != RecoveryStandard && m != RecoveryStrict {
 		p.add("security.recovery.mode", "is %q; it must be %q or %q", m, RecoveryStandard, RecoveryStrict)
 	}
@@ -872,5 +873,38 @@ func (c *Configuration) observabilityProblems(p *problems) {
 	}
 	if o.Tracing.Enabled && o.Tracing.Endpoint == "" {
 		p.add("observability.tracing.endpoint", "is empty, and observability.tracing.enabled is set")
+	}
+}
+
+var (
+	legalKindPattern    = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	legalVersionPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
+	countryCodePattern  = regexp.MustCompile(`^[A-Z]{2}$`)
+)
+
+// legalProblems checks the legal section: each document has a kind, once,
+// and a version, and the blocked countries are country codes.
+func legalProblems(p *problems, c *Configuration) {
+	seen := map[string]bool{}
+	for _, d := range c.Legal.Documents {
+		switch {
+		case !legalKindPattern.MatchString(d.Kind):
+			p.add("legal.documents", "has the kind %q; a kind is lower-case letters, digits, and underscores", d.Kind)
+		case seen[d.Kind]:
+			p.add("legal.documents", "has the kind %q twice", d.Kind)
+		case !legalVersionPattern.MatchString(d.Version):
+			p.add("legal.documents", "has the version %q of %s; a version is 1 to 32 letters, digits, dots, dashes, and underscores", d.Version, d.Kind)
+		}
+		seen[d.Kind] = true
+		if d.URL != "" {
+			if u, err := url.Parse(d.URL); err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+				p.add("legal.documents", "has the URL %q of %s, which is not an http or https URL", d.URL, d.Kind)
+			}
+		}
+	}
+	for _, country := range c.Legal.SignUp.BlockedCountries {
+		if !countryCodePattern.MatchString(country) {
+			p.add("legal.signup.blocked_countries", "has %q; a country is an ISO 3166-1 alpha-2 code in upper case", country)
+		}
 	}
 }

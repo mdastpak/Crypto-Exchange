@@ -302,6 +302,8 @@ Errors:
 - `401`: wrong, expired, or already used code
 - `403`: the account is disabled, deleted, or suspended (`This account cannot sign in. Please contact support.`), or belongs to an administrator (`Administrators must use the admin sign-in.`). The code was right, so no information is revealed to someone who does not control the contact.
 - `409` (`session_limit_reached`): the user has `jwt.sessions.max_per_user` active sessions. See [Session limit](#session-limit).
+- `428` (`signup_terms_required`): the contact has no account yet, and the request did not accept the current legal documents. See [Sign-up and the legal documents](#sign-up-and-the-legal-documents).
+- `403` (`signup_country_unsupported`): the contact has no account yet, and new accounts are not offered in the country of the request.
 - `429`: the attempts of the code or of the contact are used up. See [Sign-in limits](#sign-in-limits).
 - `500`: the user could not be created or loaded, or the session could not be read
 
@@ -310,6 +312,46 @@ A user who has an [account password](#account-password) gets `202` instead of `2
 The first successful verification for a contact creates the user. Each email address and mobile number belongs to at most one user, and concurrent first sign-ins for the same contact resolve to the same user. Email addresses are matched case-insensitively, so `Alice@Example.com` and `alice@example.com` are the same contact.
 
 A mobile number of an account with a verified national ID is checked again at sign-in once its last check is older than `identity.mobile_ownership.recheck_days` ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)). Mobile numbers are recycled, so a number that the provider no longer matches to that national ID is taken off the account. The account keeps its data, every one of its sessions ends, and a [security hold](#security-hold) starts. The sign-in then continues as for an unknown number, with a new, empty account: the new subscriber never sees the previous owner's account. When the check is due and the provider cannot answer, the sign-in answers `503 identity_unavailable`; request a new code later, or sign in with the email address.
+
+### Sign-up and the legal documents
+
+An account is created only with a record of what its holder accepted ([#316](https://github.com/mdastpak/Crypto-Exchange/issues/316)). `legal.documents` lists the required documents, such as the terms of service and the privacy notice, each with its current version; with an empty list nothing is asked, and this section does not apply.
+
+A client that knows the current versions sends them with the code, by kind:
+
+```json
+{ "otp": "123456", "accept": { "terms": "2026-11", "privacy": "2026-11" } }
+```
+
+For a contact that has an account, `accept` is ignored. For a new contact whose request does not have the current version of every document, a correct code answers `428`, and no account exists yet:
+
+```json
+{
+  "status": 428,
+  "code": "signup_terms_required",
+  "message": "Accept the terms to create your account.",
+  "info": {
+    "challenge": "<opaque>",
+    "expires_in": 600,
+    "documents": [
+      { "kind": "terms", "version": "2026-11", "url": "https://example.com/legal/terms" },
+      { "kind": "privacy", "version": "2026-11", "url": "https://example.com/legal/privacy" }
+    ]
+  }
+}
+```
+
+The client shows the documents and, once the user accepted them, sends `POST /public/auth/sign-up`:
+
+```json
+{ "challenge": "<opaque>", "accept": { "terms": "2026-11", "privacy": "2026-11" } }
+```
+
+The answer is that of a sign-in: `200` with the access token and the refresh cookie. The challenge stands for the verified code for ten minutes and creates one account. An acceptance that misses a document or names another version answers `428` again with the same challenge; `401` (`challenge_invalid`) answers a challenge that is unknown, expired, or used. Only the holder of a correct code sees `428`, so it does not tell anyone else whether a contact has an account.
+
+Each acceptance is stored in `user_agreements` in the transaction that creates the account, with the document, its version, the time, the client address, the user agent, and the country of the request when [GeoIP](configuration.md#geoip) knows it, and is recorded in the [audit log](architecture.md) as `user.agreement.accept`. Rows are only added. When a version changes, users accept the new one before their next change: see [Legal documents](#legal-documents).
+
+`legal.signup.blocked_countries` lists the countries whose visitors cannot create an account: `403` (`signup_country_unsupported`) answers their correct code, and nothing is created. It applies to new accounts only; a user who has an account signs in from anywhere. A request whose country is not known is not refused, so the list is a filter for sign-up and not a sanctions control on its own.
 
 ### `POST /public/auth/second-step`
 
@@ -1483,6 +1525,24 @@ The account password is the second factor of a user ([#307](https://github.com/m
 - `POST /user/step-up` with `{"password": "…"}` renews the proof and answers `200` with `elevated_until`. `403 password_invalid` and `429 password_locked` are as for a password change; `409 second_factor_not_set` answers a user without a password. Audited as `user.step_up`.
 - Today the protected operations are the [contact changes](#contacts). Deposits, withdrawals, and API keys call the same guard (`userauth.Guard.Check`, in the transaction of the change) when they are built.
 - The proof belongs to one session and is kept in PostgreSQL, so every instance sees it. Its row has a [row seal](data-protection.md#row-seals): in `enforce` mode, a proof lengthened in SQL counts as none, and the operation answers `403 step_up_required` until the user proves the factor again.
+
+### Legal documents
+
+`GET /user/agreements` lists the documents of `legal.documents` in their current versions, and those that the user has not accepted yet ([#316](https://github.com/mdastpak/Crypto-Exchange/issues/316)):
+
+```json
+{
+  "documents": [
+    { "kind": "terms", "version": "2027-01", "url": "https://example.com/legal/terms" },
+    { "kind": "privacy", "version": "2026-11" }
+  ],
+  "pending": [{ "kind": "terms", "version": "2027-01", "url": "https://example.com/legal/terms" }]
+}
+```
+
+While `pending` is not empty, every change of the user under `/user` (any method but `GET`) answers `403` (`terms_update_required`) with the same info. Reading, signing in, signing out, and ending sessions stay open. This is the case after an operator changes the version of a document, and for the accounts created before any document was required.
+
+`POST /user/agreements` with `{ "accept": { "terms": "2027-01", "privacy": "2026-11" } }` records the acceptance, as at sign-up, and answers with the list, now without pending documents. `accept` must have the current version of every required document: `409` (`terms_update_required`) otherwise, and nothing is recorded. A version that the user already accepted keeps its first record.
 
 ### `GET /user/profile`
 
