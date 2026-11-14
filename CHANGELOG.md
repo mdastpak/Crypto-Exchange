@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `assets.auto_sync`, an import of the asset registry at startup ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)).
+  - It adds what the registry has and the database lacks: currencies, networks, and markets. It never changes what exists, so a restart does not undo what administrators changed. `admin assets import` still applies a change of the file to what exists.
+  - Each entry is written in a savepoint. One it cannot add, such as a currency whose symbol a deleted currency holds, is logged and left out. A registry that fails its checks keeps the server from starting.
+  - The registry is built into the release (`config.AssetRegistry`), so an empty `assets.registry_path` works in a container. `admin assets import` without `-file` uses it too.
+  - `assets` leaves the reserved settings. `config.example.yaml` sets `registry_path: ""` and `auto_sync: true`; the default when unset is `false`.
 - Row seals for the networks of the currencies and for the markets ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). Custody will credit deposits by the contract of a network, so a contract swapped in SQL for another token's must not be acted on.
   - Migration 28 adds the seal columns to `currency_networks` and `markets`, and `id` to `currency_networks` for its seals.
   - Every write seals its row: the admin routes and `admin assets import`.

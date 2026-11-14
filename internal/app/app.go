@@ -296,6 +296,21 @@ func run() error {
 		}
 		_ = handlers.Socket.Shutdown(ctx)
 	}()
+	// After the row seals, so that what it adds is sealed (#57).
+	added, err := syncAssets(context.Background(), services.Postgres.DB, &config.Config)
+	if err != nil {
+		return err
+	}
+	if added {
+		// The new currencies' events are in the outbox; the networks of the
+		// public list are not.
+		if catalog := handlers.Catalog; catalog != nil {
+			if err := catalog.Invalidate(context.Background()); err != nil {
+				log.Printf("Error dropping the cached currency list after the asset sync; it expires on its own: %v", err)
+			}
+		}
+		relay.Nudge()
+	}
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)

@@ -471,6 +471,15 @@ sites:
     - {id: ir, domain: example.ir, aliases: [www.example.ir], countries: [IR], locales: [fa, en]}
 ```
 
+### `assets`
+
+The asset registry: the currencies, how each moves on its networks, and the markets ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309), [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)). See [the asset registry](architecture.md#the-asset-registry).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `registry_path` | none | The registry file that `admin assets import` and `auto_sync` read. Empty is the registry built into the release, `config/assets.yaml` of its source, which a container has no copy of. A path that does not exist is an error, never the built-in registry. |
+| `auto_sync` | `false` | At startup, adds what the registry has and the database lacks: currencies, their networks, and markets. It never changes one that exists, so a restart does not undo what administrators changed, such as a network they closed. To apply a change of the file to what exists, run `admin assets import`. An entry it cannot add, such as a currency whose symbol a deleted currency holds, is logged and left out. A registry that cannot be read or fails its checks keeps the server from starting. Every instance runs it under one lock, and the later ones find nothing to add. `config.example.yaml` turns it on. |
+
 ### `delisting`
 
 | Key | Default | Description |
@@ -663,7 +672,6 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | Section | Purpose | Related issues |
 | --- | --- | --- |
 | `exchange` | Display name and time zone. The maintenance window that was reserved here is replaced by the scheduled [maintenance controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)); `exchange.maintenance_window` is no longer read. | none |
-| `assets` | `registry_path` is the file that `admin assets import` loads into the currencies ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309)), `config/assets.yaml` by default; `auto_sync`, an import at startup, is reserved | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57) |
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
 | `price_aggregator` | Price providers, VWAP windows, outlier threshold, quorum, staleness | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |

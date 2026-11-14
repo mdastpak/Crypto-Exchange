@@ -25,3 +25,11 @@ var Example []byte
 //
 //go:embed email
 var EmailTemplates embed.FS
+
+// AssetRegistry is assets.yaml, the asset registry of this release (#57):
+// assets.auto_sync and `admin assets import` read it when
+// assets.registry_path names no other file, as in a container, which has
+// no copy of the repository's files.
+//
+//go:embed assets.yaml
+var AssetRegistry []byte

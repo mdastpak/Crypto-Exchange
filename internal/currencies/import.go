@@ -37,92 +37,6 @@ type ImportCounts struct{ Created, Updated, Unchanged int }
 // with a status that only a delisting reaches.
 var ErrImport = errors.New("the registry file cannot be imported")
 
-// Import applies the registry file reg to the currencies (#309), in one
-// transaction and under a lock, with an audit event from origin for each
-// change:
-//
-//   - an asset whose symbol no currency has becomes a new currency, from
-//     its names, type, logo, and status (ACTIVE is approved, INACTIVE
-//     pending); a currency that exists is left as it is;
-//   - each network of an asset is written to currency_networks, with the
-//     decimals of the asset and the currency of its fee;
-//   - each market is written to markets, by its base and quote currencies.
-//
-// Networks and markets that the file leaves out are kept: custody and the
-// orders may reference them. With dryRun, the changes are made and rolled
-// back, and the report says what they would be.
-func (s Store) Import(ctx context.Context, reg *assetregistry.Registry, origin audit.Event, dryRun bool) (ImportReport, error) {
-	if err := reg.Validate(); err != nil {
-		return ImportReport{}, err
-	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return ImportReport{}, err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, importLockID); err != nil {
-		return ImportReport{}, err
-	}
-	var report ImportReport
-	hks, err := importCurrencies(ctx, tx, reg, origin, &report)
-	if err != nil {
-		return ImportReport{}, err
-	}
-	for _, a := range reg.Assets {
-		for _, n := range a.Networks {
-			if err := importNetwork(ctx, tx, hks, a, n, origin, &report); err != nil {
-				return ImportReport{}, fmt.Errorf("%s on %s: %w", a.Symbol, n.Network, err)
-			}
-		}
-	}
-	for _, m := range reg.Markets {
-		if err := importMarket(ctx, tx, hks, m, origin, &report); err != nil {
-			return ImportReport{}, fmt.Errorf("market %s/%s: %w", m.Base, m.Quote, err)
-		}
-	}
-	if dryRun {
-		return report, nil
-	}
-	return report, tx.Commit()
-}
-
-// importCurrencies finds or creates the currency of each asset, and returns
-// their hks by symbol.
-func importCurrencies(ctx context.Context, tx *sql.Tx, reg *assetregistry.Registry, origin audit.Event, report *ImportReport) (map[string]string, error) {
-	hks := make(map[string]string, len(reg.Assets))
-	for _, a := range reg.Assets {
-		info := infoOf(a)
-		var hk, enName, faName string
-		err := tx.QueryRowContext(ctx, `SELECT hk, info->>'en_name', info->>'fa_name' FROM currencies
-			WHERE info->>'symbol' = $1 AND deleted_at IS NULL FOR UPDATE`, a.Symbol).Scan(&hk, &enName, &faName)
-		if err == nil {
-			hks[a.Symbol] = hk
-			report.Existing = append(report.Existing, a.Symbol)
-			if enName != info.EnName || faName != info.FaName {
-				report.Notes = append(report.Notes, fmt.Sprintf("%s: the names differ from the file's; the admin API changes them", a.Symbol))
-			}
-			continue
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-		status, err := statusOf(a.Status)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", a.Symbol, err)
-		}
-		if problems := Validate(status, info); problems != nil {
-			return nil, fmt.Errorf("%w: %s: %s", ErrImport, a.Symbol, describe(problems))
-		}
-		w, err := create(ctx, tx, status, info, origin)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", a.Symbol, err)
-		}
-		hks[a.Symbol] = w.HK
-		report.Created = append(report.Created, a.Symbol)
-	}
-	return hks, nil
-}
-
 // infoOf is the info of the currency of an asset. A token keeps one
 // contract in its info, which the currency API shows: that of its first
 // network with one. Custody reads the contracts of currency_networks.
@@ -166,25 +80,6 @@ func describe(problems map[string]string) string {
 		parts[i] = field + " " + problems[field]
 	}
 	return strings.Join(parts, "; ")
-}
-
-// importNetwork writes one network of an asset to currency_networks.
-func importNetwork(ctx context.Context, tx *sql.Tx, hks map[string]string, a assetregistry.Asset, n assetregistry.Network, origin audit.Event, report *ImportReport) error {
-	feeHK := ""
-	if n.FeeAsset != "" {
-		var err error
-		if feeHK, err = currencyOf(ctx, tx, hks, n.FeeAsset); err != nil {
-			return err
-		}
-	}
-	// The reviewed file may change a contract or decimals, which the admin
-	// API may not (ErrContractFixed).
-	result, err := writeNetwork(ctx, tx, hks[a.Symbol], n, a.Decimals, feeHK, origin, false)
-	if err != nil {
-		return err
-	}
-	report.Networks.count(result)
-	return nil
 }
 
 // count counts a row that a write created, changed, or left.
@@ -255,20 +150,186 @@ func currencyOf(ctx context.Context, tx *sql.Tx, hks map[string]string, symbol s
 	return hk, err
 }
 
-// importMarket writes one market to markets.
-func importMarket(ctx context.Context, tx *sql.Tx, hks map[string]string, m assetregistry.Market, origin audit.Event, report *ImportReport) error {
-	base, err := currencyOf(ctx, tx, hks, m.Base)
+// Import applies the registry file reg to the currencies (#309), in one
+// transaction and under a lock, with an audit event from origin for each
+// change:
+//
+//   - an asset whose symbol no currency has becomes a new currency, from
+//     its names, type, logo, and status (ACTIVE is approved, INACTIVE
+//     pending); a currency that exists is left as it is;
+//   - each network of an asset is written to currency_networks, with the
+//     decimals of the asset and the currency of its fee;
+//   - each market is written to markets, by its base and quote currencies.
+//
+// Networks and markets that the file leaves out are kept: custody and the
+// orders may reference them. With dryRun, the changes are made and rolled
+// back, and the report says what they would be.
+func (s Store) Import(ctx context.Context, reg *assetregistry.Registry, origin audit.Event, dryRun bool) (ImportReport, error) {
+	return s.apply(ctx, reg, origin, dryRun, false)
+}
+
+// Sync adds to the currencies what the registry file reg has and they lack
+// (#57): the import at startup of assets.auto_sync. It creates the
+// currencies, networks, and markets that do not exist, as Import does, and
+// never changes one that exists, so that a restart does not undo what
+// administrators changed, such as a network they closed. An entry that it
+// cannot add, such as a currency whose symbol a deleted currency holds or a
+// rebrand reserved, or a contract that another currency has, is left out
+// with a note, so that one entry does not keep the servers from starting. A
+// file that fails its checks is refused whole.
+func (s Store) Sync(ctx context.Context, reg *assetregistry.Registry, origin audit.Event) (ImportReport, error) {
+	return s.apply(ctx, reg, origin, false, true)
+}
+
+// importRun is one import or sync, in its transaction.
+type importRun struct {
+	tx     *sql.Tx
+	origin audit.Event
+	report ImportReport
+	// sync adds what is missing, and notes what it cannot add.
+	sync bool
+	// hks are the currencies of the assets of the file, by symbol.
+	hks map[string]string
+}
+
+// rule is what the writes of the run do with a row that exists.
+func (r *importRun) rule() rowRule {
+	if r.sync {
+		return keepRow
+	}
+	return replaceRow
+}
+
+func (s Store) apply(ctx context.Context, reg *assetregistry.Registry, origin audit.Event, dryRun, sync bool) (ImportReport, error) {
+	if err := reg.Validate(); err != nil {
+		return ImportReport{}, err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return ImportReport{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, importLockID); err != nil {
+		return ImportReport{}, err
+	}
+	r := &importRun{tx: tx, origin: origin, sync: sync, hks: make(map[string]string, len(reg.Assets))}
+	for _, a := range reg.Assets {
+		if err := r.tolerate(ctx, a.Symbol, func() error { return r.importCurrency(ctx, a) }); err != nil {
+			return ImportReport{}, err
+		}
+	}
+	for _, a := range reg.Assets {
+		if r.hks[a.Symbol] == "" {
+			// Left out by the sync, with a note.
+			continue
+		}
+		for _, n := range a.Networks {
+			where := fmt.Sprintf("%s on %s", a.Symbol, n.Network)
+			if err := r.tolerate(ctx, where, func() error { return r.importNetwork(ctx, a, n) }); err != nil {
+				return ImportReport{}, fmt.Errorf("%s: %w", where, err)
+			}
+		}
+	}
+	for _, m := range reg.Markets {
+		where := fmt.Sprintf("market %s/%s", m.Base, m.Quote)
+		if err := r.tolerate(ctx, where, func() error { return r.importMarket(ctx, m) }); err != nil {
+			return ImportReport{}, fmt.Errorf("%s: %w", where, err)
+		}
+	}
+	if dryRun {
+		return r.report, nil
+	}
+	return r.report, tx.Commit()
+}
+
+// tolerate runs write. In a sync, it runs in a savepoint: a write that
+// fails is undone, noted as left out under what, and the sync goes on.
+// Otherwise, its error fails the import.
+func (r *importRun) tolerate(ctx context.Context, what string, write func() error) error {
+	if !r.sync {
+		return write()
+	}
+	if _, err := r.tx.ExecContext(ctx, `SAVEPOINT registry_sync`); err != nil {
+		return err
+	}
+	if err := write(); err != nil {
+		if _, undo := r.tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT registry_sync`); undo != nil {
+			return fmt.Errorf("%w (undoing it: %v)", err, undo)
+		}
+		r.report.Notes = append(r.report.Notes, fmt.Sprintf("%s: left out: %v", what, err))
+		return nil
+	}
+	_, err := r.tx.ExecContext(ctx, `RELEASE SAVEPOINT registry_sync`)
+	return err
+}
+
+// importCurrency finds or creates the currency of asset a, and keeps its
+// hk.
+func (r *importRun) importCurrency(ctx context.Context, a assetregistry.Asset) error {
+	info := infoOf(a)
+	var hk, enName, faName string
+	err := r.tx.QueryRowContext(ctx, `SELECT hk, info->>'en_name', info->>'fa_name' FROM currencies
+		WHERE info->>'symbol' = $1 AND deleted_at IS NULL FOR UPDATE`, a.Symbol).Scan(&hk, &enName, &faName)
+	if err == nil {
+		r.hks[a.Symbol] = hk
+		r.report.Existing = append(r.report.Existing, a.Symbol)
+		if enName != info.EnName || faName != info.FaName {
+			r.report.Notes = append(r.report.Notes, fmt.Sprintf("%s: the names differ from the file's; the admin API changes them", a.Symbol))
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	status, err := statusOf(a.Status)
+	if err != nil {
+		return fmt.Errorf("%s: %w", a.Symbol, err)
+	}
+	if problems := Validate(status, info); problems != nil {
+		return fmt.Errorf("%w: %s: %s", ErrImport, a.Symbol, describe(problems))
+	}
+	w, err := create(ctx, r.tx, status, info, r.origin)
+	if err != nil {
+		return fmt.Errorf("%s: %w", a.Symbol, err)
+	}
+	r.hks[a.Symbol] = w.HK
+	r.report.Created = append(r.report.Created, a.Symbol)
+	return nil
+}
+
+// importNetwork writes the network n of asset a to currency_networks.
+func (r *importRun) importNetwork(ctx context.Context, a assetregistry.Asset, n assetregistry.Network) error {
+	feeHK := ""
+	if n.FeeAsset != "" {
+		var err error
+		if feeHK, err = currencyOf(ctx, r.tx, r.hks, n.FeeAsset); err != nil {
+			return err
+		}
+	}
+	// The reviewed file may change a contract or decimals, which the admin
+	// API may not (ErrContractFixed); the sync changes nothing.
+	result, err := writeNetwork(ctx, r.tx, r.hks[a.Symbol], n, a.Decimals, feeHK, r.origin, r.rule())
 	if err != nil {
 		return err
 	}
-	quote, err := currencyOf(ctx, tx, hks, m.Quote)
+	r.report.Networks.count(result)
+	return nil
+}
+
+// importMarket writes the market m to markets.
+func (r *importRun) importMarket(ctx context.Context, m assetregistry.Market) error {
+	base, err := currencyOf(ctx, r.tx, r.hks, m.Base)
 	if err != nil {
 		return err
 	}
-	_, result, err := writeMarket(ctx, tx, base, quote, m, origin)
+	quote, err := currencyOf(ctx, r.tx, r.hks, m.Quote)
 	if err != nil {
 		return err
 	}
-	report.Markets.count(result)
+	_, result, err := writeMarket(ctx, r.tx, base, quote, m, r.origin, r.rule())
+	if err != nil {
+		return err
+	}
+	r.report.Markets.count(result)
 	return nil
 }
