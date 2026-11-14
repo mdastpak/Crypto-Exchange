@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
@@ -59,6 +61,9 @@ type Service struct {
 	// is no such method.
 	Codes  Codes
 	Sender notify.OTPSender
+	// AntiPhishing reads the anti-phishing code that the emails show
+	// (#375); nil shows none.
+	AntiPhishing antiphishing.Reader
 	// SMSForWithdrawals reports that the SMS provider has a template for
 	// the codes that confirm withdrawals. Without one, SMS is not offered:
 	// a withdrawal code never goes out with the sign-in text.
@@ -168,7 +173,7 @@ func (s Service) available(ctx context.Context, userHK string) (map[Method]conta
 		if err != nil {
 			return nil, err
 		}
-		out[method] = contactOf{typ: r.typ, value: value, masked: mask(r.typ, value)}
+		out[method] = contactOf{typ: r.typ, value: value, masked: notify.MaskContact(r.typ, value)}
 	}
 	return out, nil
 }
@@ -408,7 +413,7 @@ func (s Service) Start(ctx context.Context, userHK string, p Purpose, digest []b
 		return Challenge{}, err
 	}
 	if session != nil {
-		if err := s.send(ctx, p, contact, code, details); err != nil {
+		if err := s.send(ctx, userHK, p, contact, code, details); err != nil {
 			return Challenge{}, err
 		}
 	}
@@ -417,13 +422,24 @@ func (s Service) Start(ctx context.Context, userHK string, p Purpose, digest []b
 
 const sha256Size = 32
 
-func (s Service) send(ctx context.Context, p Purpose, to contactOf, code string, details Details) error {
+// send sends a code to a verified contact of userHK. An email shows the
+// user's anti-phishing code (#375).
+func (s Service) send(ctx context.Context, userHK string, p Purpose, to contactOf, code string, details Details) error {
 	purpose := ""
 	if p == PurposeWithdrawal {
 		purpose = notify.PurposeWithdrawal
 	}
-	return s.Sender.SendOTP(ctx, notify.OTPMessage{ContactType: to.typ, Contact: to.value, MaskedContact: to.masked,
-		Code: code, Purpose: purpose, Details: details.String(), Amount: details.Amount, Destination: details.Destination})
+	msg := notify.OTPMessage{ContactType: to.typ, Contact: to.value, MaskedContact: to.masked,
+		Code: code, Purpose: purpose, Details: details.String(), Amount: details.Amount, Destination: details.Destination}
+	if s.AntiPhishing != nil {
+		var err error
+		if msg.AntiPhishingCode, err = s.AntiPhishing.ShowTo(ctx, userHK, to.typ, to.value); err != nil {
+			// The code still goes out, without the anti-phishing code.
+			log.Printf("Failed to read the anti-phishing code of user %s for a confirmation: %v", userHK, err)
+			msg.AntiPhishingCode = ""
+		}
+	}
+	return s.Sender.SendOTP(ctx, msg)
 }
 
 // stored is a confirmation as it is stored.
@@ -636,7 +652,7 @@ func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challen
 	if err := tx.Commit(); err != nil {
 		return Challenge{}, err
 	}
-	return out, s.send(ctx, Purpose(c.purpose), contact, issued.Code, c.details)
+	return out, s.send(ctx, userHK, Purpose(c.purpose), contact, issued.Code, c.details)
 }
 
 // restartPasskey begins a new passkey ceremony of the confirmation c, whose

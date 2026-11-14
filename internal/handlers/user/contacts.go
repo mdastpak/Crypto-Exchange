@@ -397,14 +397,14 @@ func (h *UserHandler) StartContactChange(c *gin.Context) {
 	// of it first, and only then may the refusal say so.
 	client := clientip.Key(c.ClientIP(), h.settings().RateLimits.IPv6PrefixLength)
 	change := pendingChange{UserID: userID.String(), Action: plan.action, Type: plan.typ, Value: plan.value, AccountContact: plan.account.value}
-	accountIssued, err := h.issue(ctx, plan.account.value, plan.account.typ, client)
+	accountIssued, err := h.issue(ctx, userID.String(), plan.account.value, plan.account.typ, client)
 	if sendIssueError(c, err) {
 		return
 	}
 	change.AccountSession = accountIssued.SessionID
 	started := ContactChangeStarted{AccountCodeSentTo: maskContact(plan.account.typ, plan.account.value), ExpiresIn: int(h.ContactOTP.TTL().Seconds())}
 	if plan.action != contactRemove {
-		newIssued, err := h.issue(ctx, plan.value, plan.typ, client)
+		newIssued, err := h.issue(ctx, userID.String(), plan.value, plan.typ, client)
 		if sendIssueError(c, err) {
 			return
 		}
@@ -430,14 +430,26 @@ func (p contactChange) newType() string {
 	return p.typ
 }
 
-// issue issues a code for a contact and sends it.
-func (h *UserHandler) issue(ctx context.Context, value, typ, client string) (otp.Issued, error) {
+// issue issues a code for a contact of a change of userHK's contacts and
+// sends it. The email shows the user's anti-phishing code (#375) only when
+// the contact is a verified email of the account, never one that the
+// change is adding: a hijacked session that adds its own address would
+// otherwise learn the code.
+func (h *UserHandler) issue(ctx context.Context, userHK, value, typ, client string) (otp.Issued, error) {
 	issued, err := h.ContactOTP.Issue(ctx, value, client)
 	if err != nil {
 		return issued, err
 	}
 	_, masked := contact.Identify(value)
-	return issued, h.OTPSender.SendOTP(ctx, notify.OTPMessage{ContactType: typ, Contact: value, MaskedContact: masked, Code: issued.Code})
+	msg := notify.OTPMessage{ContactType: typ, Contact: value, MaskedContact: masked, Code: issued.Code}
+	if h.AntiPhishing != nil {
+		if msg.AntiPhishingCode, err = h.AntiPhishing.ShowTo(ctx, userHK, typ, value); err != nil {
+			// The code still goes out, without the anti-phishing code.
+			log.Printf("Failed to read the anti-phishing code of user %s for a contact change: %v", userHK, err)
+			msg.AntiPhishingCode = ""
+		}
+	}
+	return issued, h.OTPSender.SendOTP(ctx, msg)
 }
 
 // sendRefusal answers a refused change and reports whether it did.

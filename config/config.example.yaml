@@ -219,8 +219,17 @@ notifications:
       Your code to confirm the withdrawal of {{.Details}} is {{.Code}}. It expires in {{.TTLSeconds}} seconds.
 
       If you did not request this withdrawal, do not enter or share the code: sign in, change your password, and contact support.
+    # The reminder to change the anti-phishing code (#375). It can use
+    # {{.AntiPhishingCode}}, {{.Uses}}, the emails that have shown it, and
+    # {{.AgeDays}}. A text without the code gets it on its first line.
+    anti_phishing_reminder_subject: "Time to change your anti-phishing code"
+    anti_phishing_reminder_body: |
+      Your anti-phishing code {{.AntiPhishingCode}} was set {{.AgeDays}} days ago, and {{.Uses}} emails from us have shown it.
+
+      The more emails show it, the more places it can be seen. Sign in to the exchange yourself, not through a link, and choose a new code in the security settings.
     # The HTML part beside the text: en or fa (config/email), none for text
-    # only, or a directory with otp.html and withdrawal.html.
+    # only, or a directory with otp.html, withdrawal.html, and
+    # anti_phishing_reminder.html, each showing {{.AntiPhishingCode}}.
     html_templates: en
   sms:
     provider: ""            # "kavenegar", or empty to disable SMS
@@ -228,6 +237,7 @@ notifications:
       api_key: ""           # Or set KAVENEGAR_API_KEY
       otp_template: ""      # A verify template approved in the Kavenegar panel; the code fills %token
       withdrawal_template: ""  # For withdrawal codes: %token the code, %token10 what it confirms; empty is no SMS for them
+      anti_phishing_reminder_template: ""  # The reminder to change the anti-phishing code: %token the emails that showed it; empty is no SMS reminder
       base_url: "https://api.kavenegar.com"
       timeout_seconds: 10
   worker:
@@ -481,6 +491,18 @@ verification:
       1: {daily: "1000000000"}       # 100 million tomans in any 24 hours
       # Level 2 has no limit of the exchange: payouts follow the transfer
       # limits of the banks and providers, split if needed (#70, #74).
+
+# The anti-phishing code of users (#375), which every email to their
+# verified contacts shows. The exchange suggests a new one once it is
+# max_age_days old or max_uses emails have shown it, by email and SMS, and
+# again every reminder_interval_days until it changes. A negative bound is
+# off; both off is no reminder.
+anti_phishing:
+  rotation:
+    max_age_days: 180
+    max_uses: 200
+    reminder_interval_days: 30
+    check_interval_minutes: 60  # How often each instance looks for the codes that are due
 
 # The withdrawal destinations of users (#160): their own cards, IBANs, and
 # accounts, and crypto addresses.

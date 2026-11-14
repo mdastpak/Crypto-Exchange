@@ -296,6 +296,9 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
+	if w := startAntiPhishingReminders(services.Postgres.DB, otpSender); w != nil {
+		workers = append(workers, *w)
+	}
 	if err := configureIdentity(handlers); err != nil {
 		return fmt.Errorf("failed to configure the identity checks: %w", err)
 	}
@@ -1050,9 +1053,14 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// Run gives them the delivery of the codes.
 	confirmCodes := otp.SettingsOf(&config.Config)
 	confirmCodes.Namespace = confirm.Namespace
+	// The anti-phishing code that the emails to verified contacts show
+	// (#375): the codes of sign-ins, contact changes, and confirmations.
+	antiPhishing := antiPhishingStore(services.Postgres.DB)
+	publicHandler.AntiPhishing, userHandler.AntiPhishing = antiPhishing, antiPhishing
 	userHandler.Confirmations = confirm.Service{DB: services.Postgres.DB,
 		Passkeys:          passkeys,
 		Codes:             otp.NewStore(services.Redis.Client, confirmCodes),
+		AntiPhishing:      antiPhishing,
 		Authenticator:     totpStore,
 		SMSForWithdrawals: config.Config.Notifications.SMS.Kavenegar.WithdrawalTemplate != "" || config.Config.OTP.Auth.DevLogCodes}
 	guard := &userauth.Guard{DB: services.Postgres.DB}
@@ -1288,6 +1296,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.PUT("/confirmation-method", profileChanges, ih.User.RequireSecondFactor(true), ih.User.SetConfirmationMethod)
 		activeGroup.POST("/confirmations/:id", rl.AuthRateLimit(middleware.AuthLogin), ih.User.ConfirmOperation)
 		activeGroup.POST("/confirmations/:id/resend", rl.AuthRateLimit(middleware.AuthOTP), ih.User.ResendConfirmation)
+		// The anti-phishing code that the emails show (#375). Changing it
+		// needs a fresh proof of the second factor.
+		activeGroup.GET("/anti-phishing-code", ih.User.GetAntiPhishingCode)
+		activeGroup.PUT("/anti-phishing-code", profileChanges, ih.User.RequireSecondFactor(false), ih.User.SetAntiPhishingCode)
+		activeGroup.DELETE("/anti-phishing-code", profileChanges, ih.User.RequireSecondFactor(false), ih.User.RemoveAntiPhishingCode)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
 		activeGroup.PUT("/favorites/order", ih.User.ReorderFavorites)
 		activeGroup.PUT("/favorites/currencies/:hk", ih.User.AddFavoriteCurrency)

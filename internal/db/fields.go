@@ -359,6 +359,7 @@ var sealedColumns = map[keys.Purpose][]sealedColumn{
 		{"api_keys", "secret_sealed", "secret_sealed"},
 		{"withdrawal_destinations", "value_enc", "value_enc"},
 		{"withdrawal_destinations", "memo_enc", "memo_enc"},
+		{"user_anti_phishing_codes", "phrase_enc", "phrase_enc"},
 	},
 	keys.PurposeBlindIndex: {
 		{"user_contacts", "value_bidx", "value_bidx"},

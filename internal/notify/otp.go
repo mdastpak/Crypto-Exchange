@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 )
 
 // Contact types that sign-in codes can be delivered to.
@@ -31,10 +32,43 @@ type OTPMessage struct {
 	// and "TR7NHq...gjLj6t", each at most 25 characters, for templates
 	// whose parameters are short (#371).
 	Amount, Destination string
+	// AntiPhishingCode is the user's anti-phishing phrase (#375), which
+	// every email shows, or "" when they have none. It is set only for a
+	// contact that the account has verified. Never log it.
+	AntiPhishingCode string
+	// Uses and AgeDays are, for a reminder to change the anti-phishing
+	// code, the emails that have shown it and its age in days.
+	Uses    int64
+	AgeDays int
 }
 
-// PurposeWithdrawal is the purpose of a code that confirms a withdrawal.
-const PurposeWithdrawal = "withdrawal"
+// The purposes of a message other than a sign-in code.
+const (
+	// PurposeWithdrawal is the purpose of a code that confirms a
+	// withdrawal.
+	PurposeWithdrawal = "withdrawal"
+	// PurposeAntiPhishingReminder is the reminder to change the
+	// anti-phishing code (#375). It carries no code.
+	PurposeAntiPhishingReminder = "anti_phishing_reminder"
+)
+
+// MaskContact hides most of a contact, as the sign-in logs do: the first
+// three characters stay visible, with the domain of an email address or the
+// last three digits of a mobile number.
+func MaskContact(contactType, value string) string {
+	const hidden = "*****"
+	if contactType == ContactEmail {
+		at := strings.LastIndex(value, "@")
+		if at <= 0 {
+			return hidden
+		}
+		return value[:min(3, at)] + hidden + value[at:]
+	}
+	if len(value) <= 6 {
+		return hidden
+	}
+	return value[:3] + hidden + value[len(value)-3:]
+}
 
 // OTPSender delivers sign-in codes.
 type OTPSender interface {
@@ -66,8 +100,13 @@ func (DevLogSender) Supports(contactType string) bool { return knownContactType(
 
 func (s DevLogSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 	what := "sign-in code"
-	if msg.Purpose == PurposeWithdrawal {
+	switch msg.Purpose {
+	case PurposeWithdrawal:
 		what = "withdrawal confirmation code (" + msg.Details + ")"
+	case PurposeAntiPhishingReminder:
+		s.Logger.Printf("DEVELOPMENT ONLY: reminder to change the anti-phishing code for %s %s: shown in %d emails, %d days old",
+			msg.ContactType, msg.MaskedContact, msg.Uses, msg.AgeDays)
+		return nil
 	}
 	s.Logger.Printf("DEVELOPMENT ONLY: %s for %s %s: %s", what, msg.ContactType, msg.MaskedContact, msg.Code)
 	return nil

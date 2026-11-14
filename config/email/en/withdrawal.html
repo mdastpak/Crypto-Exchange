@@ -11,6 +11,7 @@
 <tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:12px;border:1px solid #e4e7eb;">
 <tr><td style="padding:28px 28px 8px;font-size:15px;font-weight:600;color:#52606d;">{{.Sender}}</td></tr>
+{{if .AntiPhishingCode}}<tr><td style="padding:12px 28px 0;"><div style="padding:10px 14px;border-radius:8px;background:#eef9f1;border:1px solid #a6dfb8;font-size:13px;color:#1d6b38;">Your anti-phishing code: <b>{{.AntiPhishingCode}}</b>. An email from us without it is not from us.</div></td></tr>{{end}}
 <tr><td style="padding:8px 28px 0;font-size:20px;font-weight:700;">Confirm your withdrawal</td></tr>
 <tr><td style="padding:16px 28px 0;font-size:15px;line-height:1.6;">This code confirms this withdrawal, and no other:</td></tr>
 <tr><td style="padding:12px 28px 0;">

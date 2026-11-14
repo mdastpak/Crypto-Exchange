@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 
@@ -166,4 +167,31 @@ func TestKavenegarDeliverer_WithdrawalCodesHaveTheirOwnTemplate(t *testing.T) {
 	assert.Equal(t, "withdraw", got[0].form.Get("template"))
 	assert.Equal(t, "482913", got[0].form.Get("token"))
 	assert.Equal(t, "100 USDT to TR7NHq...gjLj6t", got[0].form.Get("token10"))
+}
+
+// TestKavenegarDeliverer_RemindersHaveTheirOwnTemplate checks that the
+// reminder to change the anti-phishing code (#375) goes out with its own
+// template and the number of emails that showed the code, never the code.
+func TestKavenegarDeliverer_RemindersHaveTheirOwnTemplate(t *testing.T) {
+	server, requests := fakeKavenegar(t, http.StatusOK, `{"return":{"status":200,"message":"OK"}}`)
+	reminder := OTPMessage{ContactType: ContactMobile, Contact: testSMSMessage.Contact, MaskedContact: testSMSMessage.MaskedContact,
+		Purpose: PurposeAntiPhishingReminder, AntiPhishingCode: "blue-falcon", Uses: 212, AgeDays: 190}
+
+	k := newTestKavenegar(t, server.URL)
+	err := k.Deliver(context.Background(), reminder)
+	require.Error(t, err, "without a reminder template, the reminder is not sent")
+	assert.True(t, IsPermanent(err))
+	assert.Empty(t, requests())
+
+	k, err = NewKavenegarDeliverer(config.KavenegarConfig{APIKey: testKavenegarKey, OTPTemplate: "signin",
+		AntiPhishingReminderTemplate: "antiphishing", BaseURL: server.URL, Timeout: 5})
+	require.NoError(t, err)
+	require.NoError(t, k.Deliver(context.Background(), reminder))
+	got := requests()
+	require.Len(t, got, 1)
+	assert.Equal(t, "antiphishing", got[0].form.Get("template"))
+	assert.Equal(t, "212", got[0].form.Get("token"))
+	for key, values := range got[0].form {
+		assert.NotContains(t, strings.Join(values, ","), "blue-falcon", "an SMS never carries the code: %s", key)
+	}
 }

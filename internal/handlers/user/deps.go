@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
@@ -143,3 +144,12 @@ var (
 	_ PasskeyStore        = (*passkey.Service)(nil)
 	_ Guard               = (*userauth.Guard)(nil)
 )
+
+// AntiPhishingStore keeps the anti-phishing codes of users (#375):
+// antiphishing.Store.
+type AntiPhishingStore interface {
+	Status(ctx context.Context, userHK string) (antiphishing.Status, error)
+	Set(ctx context.Context, userHK, phrase string, origin audit.Event) error
+	Remove(ctx context.Context, userHK string, origin audit.Event) error
+	antiphishing.Reader
+}

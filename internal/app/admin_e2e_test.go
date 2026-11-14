@@ -50,6 +50,9 @@ const (
 type capturingSender struct {
 	mu    sync.Mutex
 	codes map[string][]string // contact -> codes, oldest first
+	// antiPhishing is the anti-phishing code that the last message to
+	// each contact showed (#375).
+	antiPhishing map[string]string
 }
 
 func (s *capturingSender) Supports(contactType string) bool {
@@ -63,6 +66,10 @@ func (s *capturingSender) SendOTP(ctx context.Context, msg notify.OTPMessage) er
 		s.codes = make(map[string][]string)
 	}
 	s.codes[msg.Contact] = append(s.codes[msg.Contact], msg.Code)
+	if s.antiPhishing == nil {
+		s.antiPhishing = make(map[string]string)
+	}
+	s.antiPhishing[msg.Contact] = msg.AntiPhishingCode
 	return nil
 }
 

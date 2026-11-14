@@ -17,8 +17,10 @@ import (
 var Example []byte
 
 // EmailTemplates are the HTML templates of the emails, in email/<language>:
-// otp.html for a sign-in code and withdrawal.html for the code that
-// confirms a withdrawal (#161). notifications.email.html_templates chooses
+// otp.html for a sign-in code, withdrawal.html for the code that
+// confirms a withdrawal (#161), and anti_phishing_reminder.html for the
+// reminder to change the anti-phishing code (#375).
+// notifications.email.html_templates chooses
 // the language.
 //
 //go:embed email

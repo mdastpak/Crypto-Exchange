@@ -26,7 +26,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"slices"
-	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
@@ -103,24 +102,6 @@ var (
 	// ErrUnverified is a confirmation that does not match its seal.
 	ErrUnverified = rowseal.ErrUnverified
 )
-
-// mask hides most of a contact, as the sign-in logs do: the first three
-// characters stay visible, with the domain of an email address or the last
-// three digits of a mobile number.
-func mask(contactType, value string) string {
-	const hidden = "*****"
-	if contactType == "email" {
-		at := strings.LastIndex(value, "@")
-		if at <= 0 {
-			return hidden
-		}
-		return value[:min(3, at)] + hidden + value[at:]
-	}
-	if len(value) <= 6 {
-		return hidden
-	}
-	return value[:3] + hidden + value[len(value)-3:]
-}
 
 // Namespace is the namespace of the codes of the confirmations in the code
 // store, apart from the sign-in codes and the codes of contact changes.

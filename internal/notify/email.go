@@ -31,6 +31,10 @@ type EmailDeliverer struct {
 	// withdrawal (#161).
 	withdrawalSubject *template.Template
 	withdrawalBody    *template.Template
+	// reminderSubject and reminderBody render the reminder to change the
+	// anti-phishing code (#375).
+	reminderSubject *template.Template
+	reminderBody    *template.Template
 	// html renders the HTML part beside the text; nil is text only.
 	html    *htmlTemplates
 	codeTTL time.Duration
@@ -49,7 +53,17 @@ type emailData struct {
 	Details, Amount, Destination string
 	// Sender is the name of the sender address, such as the exchange's.
 	Sender string
+	// AntiPhishingCode is the user's anti-phishing phrase (#375), or "".
+	AntiPhishingCode string
+	// Uses and AgeDays are, in a reminder to change the anti-phishing
+	// code, the emails that have shown it and its age in days.
+	Uses    int64
+	AgeDays int
 }
+
+// antiPhishingLabel introduces the anti-phishing code that the text part of
+// an email gains when its template does not show it.
+const antiPhishingLabel = "Anti-phishing code / کد ضدفیشینگ: "
 
 // NewEmailDeliverer validates cfg and returns a deliverer for it. codeTTL is
 // the lifetime of sign-in codes, shown to templates as {{.TTLSeconds}}.
@@ -68,10 +82,13 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	d := &EmailDeliverer{cfg: cfg, from: from, codeTTL: codeTTL, now: time.Now, plaintextAllowed: isLocalHost}
 	templates["otp_subject"], templates["otp_body"] = &d.subject, &d.body
 	templates["withdrawal_subject"], templates["withdrawal_body"] = &d.withdrawalSubject, &d.withdrawalBody
+	templates["anti_phishing_reminder_subject"], templates["anti_phishing_reminder_body"] = &d.reminderSubject, &d.reminderBody
 	for name, text := range map[string]string{
 		"otp_subject": cfg.OTPSubject, "otp_body": cfg.OTPBody,
-		"withdrawal_subject": orDefault(cfg.WithdrawalSubject, config.DefaultWithdrawalEmailSubject),
-		"withdrawal_body":    orDefault(cfg.WithdrawalBody, config.DefaultWithdrawalEmailBody),
+		"withdrawal_subject":             orDefault(cfg.WithdrawalSubject, config.DefaultWithdrawalEmailSubject),
+		"withdrawal_body":                orDefault(cfg.WithdrawalBody, config.DefaultWithdrawalEmailBody),
+		"anti_phishing_reminder_subject": orDefault(cfg.AntiPhishingReminderSubject, config.DefaultAntiPhishingReminderSubject),
+		"anti_phishing_reminder_body":    orDefault(cfg.AntiPhishingReminderBody, config.DefaultAntiPhishingReminderBody),
 	} {
 		t, err := template.New(name).Parse(text)
 		if err != nil {
@@ -89,10 +106,21 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	}
 	// Render once, so that a template that fails, for example by using an
 	// unknown field, stops the server at startup instead of every delivery.
-	for _, purpose := range []string{"", PurposeWithdrawal} {
-		sample := OTPMessage{Code: "000000", Purpose: purpose, Details: "1 USDT to T...0000", Amount: "1 USDT", Destination: "T...0000"}
-		if _, _, _, err := d.render(sample); err != nil {
+	for _, purpose := range []string{"", PurposeWithdrawal, PurposeAntiPhishingReminder} {
+		sample := OTPMessage{Code: "000000", Purpose: purpose, Details: "1 USDT to T...0000", Amount: "1 USDT", Destination: "T...0000",
+			AntiPhishingCode: "sample-phrase-7q", Uses: 200, AgeDays: 180}
+		if purpose == PurposeAntiPhishingReminder {
+			sample.Code, sample.Details, sample.Amount, sample.Destination = "", "", "", ""
+		}
+		_, _, html, err := d.render(sample)
+		if err != nil {
 			return nil, err
+		}
+		// An HTML template must show the anti-phishing code itself (#375):
+		// a place in the HTML cannot be guessed, as the text's first line
+		// can.
+		if html != "" && !strings.Contains(html, sample.AntiPhishingCode) {
+			return nil, fmt.Errorf("html_templates: %s must show {{.AntiPhishingCode}}", htmlTemplateName(purpose))
 		}
 	}
 	return d, nil
@@ -113,10 +141,15 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 		sender = d.from.Address
 	}
 	data := emailData{Code: msg.Code, TTLSeconds: int(d.codeTTL / time.Second), Details: msg.Details,
-		Amount: msg.Amount, Destination: msg.Destination, Sender: sender}
+		Amount: msg.Amount, Destination: msg.Destination, Sender: sender, AntiPhishingCode: msg.AntiPhishingCode,
+		Uses: msg.Uses, AgeDays: msg.AgeDays}
 	subjectT, bodyT, names := d.subject, d.body, [2]string{"otp_subject", "otp_body"}
-	if msg.Purpose == PurposeWithdrawal {
+	switch msg.Purpose {
+	case PurposeWithdrawal:
 		subjectT, bodyT, names = d.withdrawalSubject, d.withdrawalBody, [2]string{"withdrawal_subject", "withdrawal_body"}
+	case PurposeAntiPhishingReminder:
+		subjectT, bodyT = d.reminderSubject, d.reminderBody
+		names = [2]string{"anti_phishing_reminder_subject", "anti_phishing_reminder_body"}
 	}
 	var buf bytes.Buffer
 	if err := subjectT.Execute(&buf, data); err != nil {
@@ -130,10 +163,16 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 	if err := bodyT.Execute(&buf, data); err != nil {
 		return "", "", "", fmt.Errorf("render %s: %w", names[1], err)
 	}
+	text = buf.String()
+	// The anti-phishing code is in every email (#375): a text template of
+	// the operator's that does not show it gets it on its first line.
+	if code := msg.AntiPhishingCode; code != "" && !strings.Contains(text, code) {
+		text = antiPhishingLabel + code + "\n\n" + text
+	}
 	if html, err = d.html.render(msg, data); err != nil {
 		return "", "", "", err
 	}
-	return subject, buf.String(), html, nil
+	return subject, text, html, nil
 }
 
 // Deliver sends the code to the email address in msg.Contact.
