@@ -398,11 +398,11 @@ Recorded on 2026-11-14 for [#310](https://github.com/mdastpak/Crypto-Exchange/is
 
 1. The asset and market registry on `currencies` [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57).
 2. Prices: the aggregator [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) and the price cache [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59).
-3. OTC: firm quotes [#61](https://github.com/mdastpak/Crypto-Exchange/issues/61) and their execution [#62](https://github.com/mdastpak/Crypto-Exchange/issues/62).
+3. OTC: firm quotes [#61](https://github.com/mdastpak/Crypto-Exchange/issues/61) and their execution [#62](https://github.com/mdastpak/Crypto-Exchange/issues/62). Right after them, liquidity routing to external exchanges [#383](https://github.com/mdastpak/Crypto-Exchange/issues/383): a trade that our own inventory cannot cover is filled on an Iranian or global venue where we hold balance, by rules that administrators set, and the proceeds are withdrawn to the user's destination.
 4. Settlement [#67](https://github.com/mdastpak/Crypto-Exchange/issues/67), custody on TRON [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68) and Bitcoin [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69), and the withdrawal workflow [#70](https://github.com/mdastpak/Crypto-Exchange/issues/70).
 5. KYC [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72) and AML with sanctions screening [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73).
 
-**Scope freeze.** Until a user can deposit test funds, get a quote, execute it, and withdraw on a testnet, no new peripheral feature starts: no new market-data source, no new site or i18n feature, and no new admin convenience. Bugs, security fixes, and review findings continue.
+**Scope freeze.** Until a user can deposit test funds, get a quote, execute it, and withdraw on a testnet, no new peripheral feature starts: no new market-data source, no new site or i18n feature, and no new admin convenience. Bugs, security fixes, and review findings continue. Treasury risk protection [#390](https://github.com/mdastpak/Crypto-Exchange/issues/390), which moves house holdings to safer assets when markets or venues turn, waits for this run.
 
 **Definition of done.** A milestone closes when its epic's acceptance criteria work end to end, not when its issues are closed. For M2 [#85](https://github.com/mdastpak/Crypto-Exchange/issues/85), that is the testnet run above.
 
