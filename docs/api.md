@@ -1130,7 +1130,7 @@ A withdrawal goes only to a destination in the user's list, which the withdrawal
 
 **Waiting period.** A new destination is usable from `usable_from`: at once for a card, an IBAN, or an account by default, and after 24 hours for a crypto address ([settings](configuration.md#withdrawals)).
 
-**Protection.** The numbers and addresses are stored encrypted only, and found by keyed blind indexes. The rows are sealed: a destination changed in SQL is left out of the list, and a withdrawal refuses it in `enforce` mode ([data protection](data-protection.md#field-encryption)). Each addition and removal is audited, with the number masked.
+**Protection.** The numbers and addresses are stored encrypted only, and found by keyed blind indexes. The rows are sealed: a destination changed in SQL is left out of the list, and a withdrawal refuses it in `enforce` mode ([data protection](data-protection.md#field-encryption)). Before a withdrawal uses a destination, its number or address is checked again, as it was when it was added: a card's Luhn digit, an IBAN's check digits, an address for its network. One that fails is refused. The user's national ID, which the ownership check sends to the provider, is also checked again whenever it is read: 10 digits, with its check digit. Each addition and removal is audited, with the number masked.
 
 ### `GET /user/withdrawal-destinations`
 

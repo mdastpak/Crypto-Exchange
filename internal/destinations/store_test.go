@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/crypto/field"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
@@ -272,4 +274,29 @@ func TestStore_ConcurrentAdditionsKeepTheLimit(t *testing.T) {
 	list, err := f.List(ctx, alice)
 	require.NoError(t, err)
 	assert.Len(t, list, 3)
+}
+
+// TestStore_AStoredNumberIsCheckedAgainBeforeUse stores a card number that
+// fails its check digit, encrypted and sealed as the backend would, and
+// checks that no withdrawal can use it.
+func TestStore_AStoredNumberIsCheckedAgainBeforeUse(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	alice := f.user(shared.KYCTierBasic, "0012345679")
+	card := luhn("603799123456789")
+	f.stub.SetOwner(card, "0012345679")
+	d, err := f.Add(ctx, alice, Request{Kind: KindCard, Number: card}, audit.Event{})
+	require.NoError(t, err)
+	_, err = f.Usable(ctx, f.DB, alice, d.ID)
+	require.NoError(t, err)
+
+	wrong := card[:15] + fmt.Sprint((int(card[15]-'0')+1)%10)
+	sealed, err := field.Active().Seal(place(d.ID, "value_enc"), wrong)
+	require.NoError(t, err)
+	_, err = f.DB.Exec(`UPDATE withdrawal_destinations SET value_enc = $2 WHERE id = $1`, d.ID, sealed)
+	require.NoError(t, err)
+	require.NoError(t, rowseal.Reseal(ctx, f.DB, rowseal.WithdrawalDestinations, "id = $1", d.ID))
+
+	_, err = f.Usable(ctx, f.DB, alice, d.ID)
+	require.ErrorIs(t, err, ErrUnverified)
 }

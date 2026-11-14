@@ -397,5 +397,28 @@ func (s Store) Usable(ctx context.Context, q Querier, userHK, id string) (Resolv
 			return Resolved{}, fmt.Errorf("open the memo of the withdrawal destination: %w", err)
 		}
 	}
+	if err := revalidate(r); err != nil {
+		return Resolved{}, err
+	}
 	return r, nil
+}
+
+// revalidate checks the number or address of a destination again, as
+// normalize checked it when it was added: a card's Luhn digit, an IBAN's
+// check digits, an account's digits and bank, an address for its network.
+// Nothing stores one that fails, so a failure marks a value written outside
+// the backend, and the withdrawal is refused rather than sent.
+func revalidate(r Resolved) error {
+	req := Request{Kind: r.Kind, Number: r.Value, Bank: r.Bank}
+	if r.Kind == KindCrypto {
+		req = Request{Kind: r.Kind, Network: r.Network, Address: r.Value, Memo: r.Memo}
+	}
+	if r.Kind != KindAccount {
+		req.Bank = ""
+	}
+	n, err := normalize(req)
+	if err != nil || n.Value != r.Value {
+		return fmt.Errorf("%w: the stored number or address of withdrawal destination %s is not valid", ErrUnverified, r.ID)
+	}
+	return nil
 }

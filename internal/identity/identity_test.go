@@ -63,6 +63,15 @@ func TestNationalID_IsSealedAndBoundToItsUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "9876543210", got)
 	assert.Error(t, identity.SaveNationalID(ctx, db, sealer, user, "1111111111", "jibit", "", time.Now()), "an invalid ID is refused")
+
+	// A malformed ID sealed for the user outside the backend is checked
+	// again when it is read, and never used.
+	forged, err := sealer.SealField([]byte("user_national_ids.national_id_sealed:"+user), []byte("1234567890"))
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE user_national_ids SET national_id_sealed = $2 WHERE user_hk = $1`, user, forged)
+	require.NoError(t, err)
+	_, _, err = identity.NationalID(ctx, db, sealer, user)
+	assert.ErrorIs(t, err, identity.ErrInvalidNationalID)
 }
 
 func TestStub(t *testing.T) {

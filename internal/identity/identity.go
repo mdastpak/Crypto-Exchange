@@ -86,8 +86,18 @@ func NationalID(ctx context.Context, q Querier, sealer Sealer, userHK string) (s
 	if err != nil {
 		return "", false, fmt.Errorf("failed to open the national ID: %w", err)
 	}
+	// A national ID is checked when it is saved, and again before any
+	// check relies on it, so that a malformed one never reaches a
+	// provider.
+	if !ValidNationalID(string(plain)) {
+		return "", false, ErrInvalidNationalID
+	}
 	return string(plain), true, nil
 }
+
+// ErrInvalidNationalID is a stored national ID that is not well formed.
+// Nothing stores one, so it marks a value written outside the backend.
+var ErrInvalidNationalID = errors.New("the stored national ID is not a valid national ID")
 
 // Execer is a *sql.DB or a *sql.Tx.
 type Execer interface {
