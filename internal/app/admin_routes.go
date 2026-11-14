@@ -41,6 +41,10 @@ var adminRoutes = map[string]admin.RouteClass{
 	"PATCH /platform/controls/:id":          admin.RouteSensitive,
 	"POST /platform/controls/:id/lift":      admin.RouteSensitive,
 
+	// Switching the SMS providers (#371): where the codes of sign-in and
+	// withdrawals go.
+	"PUT /notifications/sms": admin.RouteSensitive,
+
 	// Accepting a row that was changed outside the backend.
 	"POST /integrity/findings/:id/reseal": admin.RouteSensitive,
 

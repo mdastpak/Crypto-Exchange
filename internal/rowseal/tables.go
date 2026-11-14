@@ -221,13 +221,18 @@ var (
 	AntiPhishingCodes = &Table{Name: "user_anti_phishing_codes", Key: "user_hk", KeyType: "uuid", Columns: []Column{
 		sealedBytes("phrase_enc"), timestamptz("set_at"), timestamptz("removed_at"),
 	}}
+	// SMSRouting covers the routing of SMS that administrators set (#371):
+	// one changed in SQL is ignored, and the auto mode applies.
+	SMSRouting = &Table{Name: "sms_routing", Key: "id", KeyType: "bigint", Columns: []Column{
+		text("mode"), text("provider_order"), text("updated_by"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
-	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes,
+	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

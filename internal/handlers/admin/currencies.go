@@ -60,6 +60,12 @@ type AdminHandler struct {
 	// active lockdown needs a second administrator to lift.
 	Platform     ControlRefresher
 	LiftApproval []platform.Feature
+
+	// SMS routes SMS through the providers, and SMSRoutes keeps the
+	// routing that administrators choose (#371). Run sets them when SMS is
+	// configured; without them, the routes answer sms_not_configured.
+	SMS       SMSRouter
+	SMSRoutes SMSRoutingStore
 }
 
 // NewHandler returns the handler with the stores of the services in is. A

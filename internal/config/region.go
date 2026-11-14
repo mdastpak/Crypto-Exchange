@@ -52,11 +52,17 @@ var regionFeatures = []regionFeature{
 		},
 	},
 	{
-		what:    "Kavenegar, an Iranian SMS gateway",
+		what:    "Kavenegar and sms.ir, Iranian SMS gateways",
 		regions: []region.Region{region.Iran},
 		on: func(c *Configuration) []regionSetting {
-			if p := c.Notifications.SMS.Provider; p == "kavenegar" {
-				return []regionSetting{{"notifications.sms.provider", p, "leave it empty, which turns SMS off"}}
+			key := "notifications.sms.providers"
+			if len(c.Notifications.SMS.Providers) == 0 {
+				key = "notifications.sms.provider"
+			}
+			for _, p := range c.Notifications.SMS.ProviderNames() {
+				if p == SMSProviderKavenegar || p == SMSProviderSMSIR {
+					return []regionSetting{{key, p, "leave it empty, which turns SMS off"}}
+				}
 			}
 			return nil
 		},

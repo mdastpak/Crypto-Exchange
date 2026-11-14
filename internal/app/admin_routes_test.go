@@ -42,7 +42,7 @@ func TestAdminRoutes_EveryChangeIsClassified(t *testing.T) {
 	}
 
 	// What the issue names: platform controls, restrictions, delistings,
-	// migrations, capabilities, and seals.
+	// migrations, capabilities, and seals; and the SMS routing (#371).
 	sensitive := 0
 	for key, class := range adminRoutes {
 		if class != admin.RouteSensitive {
@@ -50,12 +50,12 @@ func TestAdminRoutes_EveryChangeIsClassified(t *testing.T) {
 		}
 		sensitive++
 		named := false
-		for _, part := range []string{"/platform/controls", "/restrictions", "/delistings", "/migrations", "/capabilities/", "/reseal"} {
+		for _, part := range []string{"/platform/controls", "/restrictions", "/delistings", "/migrations", "/capabilities/", "/reseal", "/notifications/sms"} {
 			named = named || strings.Contains(key, part)
 		}
 		assert.True(t, named, key)
 	}
-	assert.Equal(t, 12, sensitive)
+	assert.Equal(t, 13, sensitive)
 	assert.Equal(t, admin.RouteUnclassified, adminRouteClass(http.MethodPost, adminRoutePrefix+"/new-route"))
 }
 

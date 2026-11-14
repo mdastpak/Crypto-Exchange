@@ -58,6 +58,7 @@ func (c *Configuration) validateServer() error {
 	c.observabilityProblems(&p)
 	c.verificationProblems(&p)
 	c.antiPhishingProblems(&p)
+	c.smsProblems(&p)
 	c.withdrawalProblems(&p)
 	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)

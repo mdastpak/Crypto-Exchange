@@ -814,13 +814,105 @@ type EmailConfig struct {
 	HTMLTemplates string `yaml:"html_templates"`
 }
 
-// SMSConfig selects and configures the SMS provider. SMS is disabled when
-// Provider is empty.
+// SMSConfig selects and configures the SMS providers. SMS is disabled when
+// none is set.
 type SMSConfig struct {
-	// Provider is "kavenegar" or empty.
-	Provider  string          `yaml:"provider"`
+	// Provider is one provider, kavenegar or smsir; Providers takes its
+	// place for more than one.
+	Provider string `yaml:"provider"`
+	// Providers are the SMS providers in the order that messages try them
+	// (#371): when one fails, the next sends the message.
+	Providers []string        `yaml:"providers"`
 	Kavenegar KavenegarConfig `yaml:"kavenegar"`
+	SMSIR     SMSIRConfig     `yaml:"smsir"`
+	// Failover sets when a provider is passed over, in the auto mode.
+	Failover SMSFailoverConfig `yaml:"failover"`
+	// DeliveryReports checks that each message reached the phone.
+	DeliveryReports SMSDeliveryReportsConfig `yaml:"delivery_reports"`
 }
+
+// The SMS providers.
+const (
+	SMSProviderKavenegar = "kavenegar"
+	SMSProviderSMSIR     = "smsir"
+)
+
+// SMSProviders are the SMS providers there are.
+var SMSProviders = []string{SMSProviderKavenegar, SMSProviderSMSIR}
+
+// ProviderNames returns the configured providers, in order: Providers, or
+// Provider alone.
+func (s SMSConfig) ProviderNames() []string {
+	if len(s.Providers) > 0 {
+		return s.Providers
+	}
+	if s.Provider != "" {
+		return []string{s.Provider}
+	}
+	return nil
+}
+
+// HasTemplate reports whether a configured provider has a template for
+// purpose: "withdrawal" or "anti_phishing_reminder".
+func (s SMSConfig) HasTemplate(purpose string) bool {
+	for _, name := range s.ProviderNames() {
+		switch {
+		case name == SMSProviderKavenegar && purpose == "withdrawal" && s.Kavenegar.WithdrawalTemplate != "",
+			name == SMSProviderKavenegar && purpose == "anti_phishing_reminder" && s.Kavenegar.AntiPhishingReminderTemplate != "",
+			name == SMSProviderSMSIR && purpose == "withdrawal" && s.SMSIR.WithdrawalTemplateID > 0,
+			name == SMSProviderSMSIR && purpose == "anti_phishing_reminder" && s.SMSIR.AntiPhishingReminderTemplateID > 0:
+			return true
+		}
+	}
+	return false
+}
+
+// SMSIRConfig configures the verify API of sms.ir (#371). The templates are
+// defined in its panel: the sign-in one with #CODE#, the withdrawal one
+// with #CODE#, #AMOUNT#, and #DEST#, and the reminder with #COUNT#.
+type SMSIRConfig struct {
+	APIKey string `yaml:"api_key"`
+	// OTPTemplateID is the template of sign-in codes.
+	OTPTemplateID int `yaml:"otp_template_id"`
+	// WithdrawalTemplateID is the template of the codes that confirm a
+	// withdrawal; 0 is none, and such codes go through other providers.
+	WithdrawalTemplateID int `yaml:"withdrawal_template_id"`
+	// AntiPhishingReminderTemplateID is the template of the reminder to
+	// change the anti-phishing code (#375); 0 is none.
+	AntiPhishingReminderTemplateID int    `yaml:"anti_phishing_reminder_template_id"`
+	BaseURL                        string `yaml:"base_url"`
+	Timeout                        int    `yaml:"timeout_seconds"`
+}
+
+// SMSFailoverConfig sets when a provider is passed over in the auto mode.
+type SMSFailoverConfig struct {
+	// BreakerFailures failures of a provider in a row, on any instance,
+	// skip it for BreakerSeconds.
+	BreakerFailures int `yaml:"breaker_failures"`
+	BreakerSeconds  int `yaml:"breaker_seconds"`
+	// A provider whose share of delivered messages in the last 15 minutes,
+	// of at least MinSamples delivery reports, is below
+	// MinDeliveryPercent goes behind the others. A negative
+	// MinDeliveryPercent turns it off.
+	MinDeliveryPercent int `yaml:"min_delivery_percent"`
+	MinSamples         int `yaml:"min_samples"`
+}
+
+// SMSDeliveryReportsConfig turns on the delivery reports of SMS.
+type SMSDeliveryReportsConfig struct {
+	// Enabled checks each message until it reaches the phone or fails;
+	// true when unset.
+	Enabled *bool `yaml:"enabled"`
+	// ResendFailed sends a message that failed again, once, through the
+	// next provider while its code is valid; true when unset.
+	ResendFailed *bool `yaml:"resend_failed"`
+}
+
+// On reports whether the delivery reports are on.
+func (d SMSDeliveryReportsConfig) On() bool { return d.Enabled == nil || *d.Enabled }
+
+// Resend reports whether a message that failed is sent again.
+func (d SMSDeliveryReportsConfig) Resend() bool { return d.ResendFailed == nil || *d.ResendFailed }
 
 // KavenegarConfig configures the Kavenegar verify lookup API.
 type KavenegarConfig struct {
@@ -1953,6 +2045,7 @@ const (
 		"The more emails show it, the more places it can be seen. Sign in to the exchange yourself, not through a link, " +
 		"and choose a new code in the security settings.\n"
 	DefaultKavenegarBaseURL = "https://api.kavenegar.com"
+	DefaultSMSIRBaseURL     = "https://api.sms.ir"
 )
 
 func setNotificationDefaults(n *NotificationsConfig) {
@@ -1985,6 +2078,24 @@ func setNotificationDefaults(n *NotificationsConfig) {
 	}
 	if n.SMS.Kavenegar.Timeout == 0 {
 		n.SMS.Kavenegar.Timeout = 10
+	}
+	if n.SMS.SMSIR.BaseURL == "" {
+		n.SMS.SMSIR.BaseURL = DefaultSMSIRBaseURL
+	}
+	if n.SMS.SMSIR.Timeout == 0 {
+		n.SMS.SMSIR.Timeout = 10
+	}
+	if n.SMS.Failover.BreakerFailures == 0 {
+		n.SMS.Failover.BreakerFailures = 3
+	}
+	if n.SMS.Failover.BreakerSeconds == 0 {
+		n.SMS.Failover.BreakerSeconds = 60
+	}
+	if n.SMS.Failover.MinDeliveryPercent == 0 {
+		n.SMS.Failover.MinDeliveryPercent = 50
+	}
+	if n.SMS.Failover.MinSamples == 0 {
+		n.SMS.Failover.MinSamples = 20
 	}
 	if n.Worker.Concurrency == 0 {
 		n.Worker.Concurrency = 4

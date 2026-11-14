@@ -232,7 +232,11 @@ notifications:
     # anti_phishing_reminder.html, each showing {{.AntiPhishingCode}}.
     html_templates: en
   sms:
-    provider: ""            # "kavenegar", or empty to disable SMS
+    # The SMS providers in the order that messages try them (#371): when one
+    # fails, the next sends the message. Empty disables SMS. Administrators
+    # can switch the order at PUT /admin/notifications/sms. One provider
+    # can also be set as provider: kavenegar.
+    providers: []           # For example [kavenegar, smsir]
     kavenegar:
       api_key: ""           # Or set KAVENEGAR_API_KEY
       otp_template: ""      # A verify template approved in the Kavenegar panel; the code fills %token
@@ -240,6 +244,26 @@ notifications:
       anti_phishing_reminder_template: ""  # The reminder to change the anti-phishing code: %token the emails that showed it; empty is no SMS reminder
       base_url: "https://api.kavenegar.com"
       timeout_seconds: 10
+    smsir:
+      api_key: ""           # Or set SMSIR_API_KEY
+      otp_template_id: 0    # A quick-send (verify) template of the panel with #CODE#
+      withdrawal_template_id: 0  # With #CODE#, #AMOUNT#, and #DEST#; 0 sends withdrawal codes through other providers
+      anti_phishing_reminder_template_id: 0  # With #COUNT#, the emails that showed the code; 0 is none
+      base_url: "https://api.sms.ir"
+      timeout_seconds: 10
+    # In the auto mode, a provider is passed over while it fails or does
+    # not deliver.
+    failover:
+      breaker_failures: 3   # Failures in a row, on any instance, that skip a provider ...
+      breaker_seconds: 60   # ... for this long
+      min_delivery_percent: 50  # A lower share delivered in 15 minutes puts it behind the others; negative turns it off
+      min_samples: 20       # Delivery reports needed to judge
+    # Checks that each message reached the phone, and sends one that
+    # failed again, once, through the next provider while its code is
+    # valid.
+    delivery_reports:
+      enabled: true
+      resend_failed: true
   worker:
     concurrency: 4          # Codes delivered in parallel
     max_attempts: 3         # Attempts per code; delivery also stops when the code expires

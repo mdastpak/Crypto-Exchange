@@ -282,6 +282,7 @@ var envVars = []EnvVar{
 
 	stringVar("SMTP_PASSWORD", "notifications.email.password", func(c *Configuration) *string { return &c.Notifications.Email.Password }),
 	stringVar("KAVENEGAR_API_KEY", "notifications.sms.kavenegar.api_key", func(c *Configuration) *string { return &c.Notifications.SMS.Kavenegar.APIKey }),
+	stringVar("SMSIR_API_KEY", "notifications.sms.smsir.api_key", func(c *Configuration) *string { return &c.Notifications.SMS.SMSIR.APIKey }),
 
 	listVar("WS_ALLOWED_ORIGINS", "websocket.allowed_origins", func(c *Configuration) *[]string { return &c.WebSocket.AllowedOrigins }),
 	intVar("WS_SESSION_CHECK_SECONDS", "websocket.session_check_seconds", func(c *Configuration) *int { return &c.WebSocket.SessionCheckSeconds }),
