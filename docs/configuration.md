@@ -426,7 +426,7 @@ The sites of the product: the domain of each, the countries it serves, and its l
 | `list[].locales` | **required** | Codes of [`i18n.locales`](#i18n); the first is the site's default, which a visitor gets when they ask for no locale it offers. |
 | `list[].enforce` | `false` | Keeps the visitors of its countries on it, even when they picked another site or a locale elsewhere, for a legal requirement. Needs `countries`. |
 
-Every domain and alias of every site is also allowed by CORS and by the WebSocket, in addition to `server.cors.allowed_origins` and `websocket.allowed_origins`. A release for users outside Iran lists no Iranian site; [#272](https://github.com/mdastpak/Crypto-Exchange/issues/272) will bind sites to the release's region.
+Every domain and alias of every site is also allowed by CORS and by the WebSocket, in addition to `server.cors.allowed_origins` and `websocket.allowed_origins`. A release for users outside Iran lists no Iranian site: an `international` release refuses to start while a site serves `IR` ([region of a release](#region-of-a-release), [#272](https://github.com/mdastpak/Crypto-Exchange/issues/272)). Visitors from Iran then get the default site, by the usual rules.
 
 ```yaml
 sites:
