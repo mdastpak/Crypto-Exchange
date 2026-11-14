@@ -55,11 +55,12 @@ const (
 	ActionCurrencyDelete = "currency.delete"
 	// ActionCurrencyRestore is an administrator undoing a delete (#196).
 	ActionCurrencyRestore = "currency.restore"
-	// ActionCurrencyNetworkSet is the import of the registry file adding or
-	// changing how a currency moves on a network (#309).
+	// ActionCurrencyNetworkSet is the import of the registry file (#309), or
+	// an administrator (#57), adding or changing how a currency moves on a
+	// network.
 	ActionCurrencyNetworkSet = "currency.network_set"
-	// ActionMarketSet is the import of the registry file adding or changing
-	// a market of two currencies (#309).
+	// ActionMarketSet is the import of the registry file (#309), or an
+	// administrator (#57), adding or changing a market of two currencies.
 	ActionMarketSet = "market.set"
 	// The lifecycle of a currency (#216): an administrator scheduling or
 	// cancelling a delisting, or overriding a capability, and the scheduler

@@ -22,6 +22,7 @@ func TestNewHandler_BuildsTheStoresOfTheServices(t *testing.T) {
 
 	assert.Same(t, &config.Config, h.Config)
 	assert.Equal(t, currencies.Store{DB: postgres.DB}, h.CurrencyStore)
+	assert.Equal(t, currencies.Store{DB: postgres.DB}, h.Registry)
 	assert.Equal(t, restrictions.Store{DB: postgres.DB}, h.Restrictions)
 	assert.Equal(t, platform.Store{DB: postgres.DB}, h.Controls)
 	assert.Equal(t, audit.Log{DB: postgres.DB}, h.Audit)
@@ -35,6 +36,7 @@ func TestNewHandler_LeavesNoTypedNil(t *testing.T) {
 	h := NewHandler(&models.InfraServices{})
 
 	assert.True(t, h.CurrencyStore == nil)
+	assert.True(t, h.Registry == nil)
 	assert.True(t, h.Restrictions == nil)
 	assert.True(t, h.Currencies == nil, "no catalog without PostgreSQL and Redis")
 	assert.True(t, h.OTP == nil)

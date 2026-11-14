@@ -30,11 +30,11 @@ type Network struct {
 
 	DepositEnabled    bool           `json:"deposit_enabled" db:"deposit_enabled"`
 	WithdrawalEnabled bool           `json:"withdrawal_enabled" db:"withdrawal_enabled"`
-	MinDeposit        shared.Decimal `json:"min_deposit" db:"min_deposit"`
-	MinWithdrawal     shared.Decimal `json:"min_withdrawal" db:"min_withdrawal"`
+	MinDeposit        shared.Decimal `json:"min_deposit" db:"min_deposit" swaggertype:"string"`
+	MinWithdrawal     shared.Decimal `json:"min_withdrawal" db:"min_withdrawal" swaggertype:"string"`
 	// MaxWithdrawal of 0 means no maximum.
-	MaxWithdrawal shared.Decimal `json:"max_withdrawal" db:"max_withdrawal"`
-	WithdrawalFee shared.Decimal `json:"withdrawal_fee" db:"withdrawal_fee"`
+	MaxWithdrawal shared.Decimal `json:"max_withdrawal" db:"max_withdrawal" swaggertype:"string"`
+	WithdrawalFee shared.Decimal `json:"withdrawal_fee" db:"withdrawal_fee" swaggertype:"string"`
 	// FeeCurrencyHK is the currency that pays the network fee, such as TRX
 	// for a TRC20 token.
 	FeeCurrencyHK *shared.UUID `json:"fee_currency_hk,omitempty" db:"fee_currency_hk"`

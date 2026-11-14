@@ -170,7 +170,6 @@ func describe(problems map[string]string) string {
 
 // importNetwork writes one network of an asset to currency_networks.
 func importNetwork(ctx context.Context, tx *sql.Tx, hks map[string]string, a assetregistry.Asset, n assetregistry.Network, origin audit.Event, report *ImportReport) error {
-	hk := hks[a.Symbol]
 	feeHK := ""
 	if n.FeeAsset != "" {
 		var err error
@@ -178,56 +177,26 @@ func importNetwork(ctx context.Context, tx *sql.Tx, hks map[string]string, a ass
 			return err
 		}
 	}
-	after := map[string]interface{}{
-		"network": n.Network, "contract_address": n.ContractAddress, "decimals": a.Decimals,
-		"custody_mode": string(n.CustodyMode), "deposit_enabled": n.DepositEnabled, "withdrawal_enabled": n.WithdrawalEnabled,
-		"min_deposit": n.MinDepositOrZero(), "min_withdrawal": n.MinWithdrawal, "max_withdrawal": n.MaxWithdrawal,
-		"withdrawal_fee": n.WithdrawalFee, "fee_currency_hk": feeHK, "requires_tag": n.RequiresTag, "explorer_url": n.ExplorerURL,
-	}
-	var stored storedNetwork
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(contract_address, ''), decimals, custody_mode::text, deposit_enabled, withdrawal_enabled,
-			min_deposit::text, min_withdrawal::text, max_withdrawal::text, withdrawal_fee::text, COALESCE(fee_currency_hk::text, ''),
-			requires_tag, COALESCE(explorer_url, '')
-		FROM currency_networks WHERE currency_hk = $1 AND network = $2 FOR UPDATE`, hk, n.Network).
-		Scan(&stored.contract, &stored.decimals, &stored.custodyMode, &stored.depositEnabled, &stored.withdrawalEnabled,
-			&stored.minDeposit, &stored.minWithdrawal, &stored.maxWithdrawal, &stored.withdrawalFee, &stored.feeHK,
-			&stored.requiresTag, &stored.explorerURL)
-	found := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	var changes *audit.Changes
-	if found {
-		before := stored.fields(n.Network)
-		changes = changedValues(before, after)
-		if len(changes.After) == 0 {
-			report.Networks.Unchanged++
-			return nil
-		}
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO currency_networks (currency_hk, network, contract_address, decimals, custody_mode,
-			deposit_enabled, withdrawal_enabled, min_deposit, min_withdrawal, max_withdrawal, withdrawal_fee, fee_currency_hk,
-			requires_tag, explorer_url)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5::settlement_mode, $6, $7, $8::numeric, $9::numeric, $10::numeric, $11::numeric,
-			NULLIF($12, '')::uuid, $13, NULLIF($14, ''))
-		ON CONFLICT (currency_hk, network) DO UPDATE SET contract_address = EXCLUDED.contract_address, decimals = EXCLUDED.decimals,
-			custody_mode = EXCLUDED.custody_mode, deposit_enabled = EXCLUDED.deposit_enabled,
-			withdrawal_enabled = EXCLUDED.withdrawal_enabled, min_deposit = EXCLUDED.min_deposit,
-			min_withdrawal = EXCLUDED.min_withdrawal, max_withdrawal = EXCLUDED.max_withdrawal,
-			withdrawal_fee = EXCLUDED.withdrawal_fee, fee_currency_hk = EXCLUDED.fee_currency_hk,
-			requires_tag = EXCLUDED.requires_tag, explorer_url = EXCLUDED.explorer_url`,
-		hk, n.Network, n.ContractAddress, a.Decimals, string(n.CustodyMode), n.DepositEnabled, n.WithdrawalEnabled,
-		n.MinDepositOrZero(), n.MinWithdrawal, n.MaxWithdrawal, n.WithdrawalFee, feeHK, n.RequiresTag, n.ExplorerURL)
+	// The reviewed file may change a contract or decimals, which the admin
+	// API may not (ErrContractFixed).
+	result, err := writeNetwork(ctx, tx, hks[a.Symbol], n, a.Decimals, feeHK, origin, false)
 	if err != nil {
 		return err
 	}
-	if found {
-		report.Networks.Updated++
-	} else {
-		report.Networks.Created++
-		changes = &audit.Changes{After: after}
+	report.Networks.count(result)
+	return nil
+}
+
+// count counts a row that a write created, changed, or left.
+func (c *ImportCounts) count(result writeResult) {
+	switch result {
+	case rowCreated:
+		c.Created++
+	case rowUpdated:
+		c.Updated++
+	default:
+		c.Unchanged++
 	}
-	return record(ctx, tx, origin, audit.ActionCurrencyNetworkSet, hk, changes)
 }
 
 // storedNetwork is a row of currency_networks as an import compares it.
@@ -296,53 +265,10 @@ func importMarket(ctx context.Context, tx *sql.Tx, hks map[string]string, m asse
 	if err != nil {
 		return err
 	}
-	after := map[string]interface{}{
-		"base": m.Base, "quote": m.Quote, "status": string(m.Status), "min_order_size": m.MinOrderSize,
-		"max_order_size": m.MaxOrderSize, "min_notional": m.MinNotional, "tick_size": m.TickSize, "lot_size": m.LotSize,
-		"maker_fee_bps": m.MakerFeeBPS, "taker_fee_bps": m.TakerFeeBPS,
-	}
-	var id string
-	var status, minOrder, maxOrder, minNotional, tick, lot string
-	var maker, taker int
-	err = tx.QueryRowContext(ctx, `SELECT id, status::text, min_order_size::text, max_order_size::text, min_notional::text,
-			tick_size::text, lot_size::text, maker_fee_bps, taker_fee_bps
-		FROM markets WHERE base_currency_hk = $1 AND quote_currency_hk = $2 FOR UPDATE`, base, quote).
-		Scan(&id, &status, &minOrder, &maxOrder, &minNotional, &tick, &lot, &maker, &taker)
-	found := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	changes := &audit.Changes{After: after}
-	if found {
-		changes = changedValues(map[string]interface{}{
-			"base": m.Base, "quote": m.Quote, "status": status, "min_order_size": minOrder, "max_order_size": maxOrder,
-			"min_notional": minNotional, "tick_size": tick, "lot_size": lot, "maker_fee_bps": maker, "taker_fee_bps": taker,
-		}, after)
-		if len(changes.After) == 0 {
-			report.Markets.Unchanged++
-			return nil
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE markets SET status = $2::market_status, min_order_size = $3::numeric,
-				max_order_size = $4::numeric, min_notional = $5::numeric, tick_size = $6::numeric, lot_size = $7::numeric,
-				maker_fee_bps = $8, taker_fee_bps = $9, updated_at = NOW()
-			WHERE id = $1`, id, string(m.Status), m.MinOrderSize, m.MaxOrderSize, m.MinNotional, m.TickSize, m.LotSize,
-			m.MakerFeeBPS, m.TakerFeeBPS)
-		report.Markets.Updated++
-	} else {
-		err = tx.QueryRowContext(ctx, `INSERT INTO markets (base_currency_hk, quote_currency_hk, status, min_order_size,
-				max_order_size, min_notional, tick_size, lot_size, maker_fee_bps, taker_fee_bps)
-			VALUES ($1, $2, $3::market_status, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9, $10)
-			RETURNING id`, base, quote, string(m.Status), m.MinOrderSize, m.MaxOrderSize, m.MinNotional, m.TickSize, m.LotSize,
-			m.MakerFeeBPS, m.TakerFeeBPS).Scan(&id)
-		report.Markets.Created++
-	}
+	_, result, err := writeMarket(ctx, tx, base, quote, m, origin)
 	if err != nil {
 		return err
 	}
-	e := audit.Of(origin, audit.ActionMarketSet, audit.TargetMarket, id)
-	e.Changes = changes
-	if err := audit.Record(ctx, tx, e); err != nil {
-		return fmt.Errorf("%w: %s of %s: %v", ErrUnrecorded, audit.ActionMarketSet, id, err)
-	}
+	report.Markets.count(result)
 	return nil
 }

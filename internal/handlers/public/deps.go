@@ -50,6 +50,11 @@ type CurrencyCatalog interface {
 	Get(ctx context.Context, hk string) (models.Currency, bool, error)
 }
 
+// MarketList lists the public markets (#57): *currencies.MarketList.
+type MarketList interface {
+	List(ctx context.Context) ([]currencies.PublicMarket, error)
+}
+
 // StatusSource serves what users see of the platform controls:
 // *platform.Watcher.
 type StatusSource interface {

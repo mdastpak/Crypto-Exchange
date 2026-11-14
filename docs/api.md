@@ -627,6 +627,9 @@ The sensitive routes:
 | `POST /admin/currencies/{hk}/delistings`, `POST …/delistings/{id}/cancel` | Delistings |
 | `POST /admin/currencies/{hk}/migrations`, `POST …/migrations/{id}/cancel` | Currency migrations |
 | `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` | Capability overrides |
+| `PUT /admin/currencies/{hk}/networks/{network}` | How a currency moves on a network: its contract, limits, and fees ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) |
+| `PUT /admin/markets/{base}/{quote}` | The status, rules, and fees of a market ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) |
+| `PUT /admin/notifications/sms` | The routing of SMS through the providers ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
 
 Every admin route that changes something is classified in one table, `adminRoutes` of `internal/app/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
@@ -663,11 +666,27 @@ On every request, all `/admin/*` routes except sign-in check that the token's ad
       "deposit": true, "withdraw": true, "buy": true, "sell": true,
       "convert_into": true, "convert_from": true, "listed": true
     }
-  }
+  },
+  "networks": [
+    {
+      "network": "tron",
+      "contract_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+      "decimals": 6,
+      "deposit_enabled": true,
+      "withdrawal_enabled": true,
+      "min_deposit": "0",
+      "min_withdrawal": "20",
+      "max_withdrawal": "1000000",
+      "withdrawal_fee": "1",
+      "fee_currency": "TRX",
+      "requires_tag": false,
+      "explorer_url": "https://tronscan.org/#/transaction/"
+    }
+  ]
 }
 ```
 
-`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. `logo_url`, optional, is an https URL of at most 2048 characters. `lifecycle` says where the currency is in a [delisting](#delistings) and what users may do with it now, with what a [migration](#currency-migrations) pauses; `next`, when present, is the next scheduled step. `previous_symbols`, when present, are the symbols the currency had before a rebrand, newest first. `migration`, on the source of a migration from its announcement on, has its `id`, `target_hk`, `phase`, `forced`, `ratio`, and `next` phase, so that clients can show a banner. The field name `if_fiat` is a known typo for `is_fiat`. It will be renamed together with the move from `currencies` to the assets table ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), so that clients change only once.
+`status` is one of `approved`, `pending`, `suspend`, or `deleted`. Only `approved` currencies are public: they are the only ones returned by public and user routes and announced to WebSocket clients. `symbol` is unique, and so is `contract` when it is not empty: native coins and fiat currencies have no contract. `logo_url`, optional, is an https URL of at most 2048 characters. `lifecycle` says where the currency is in a [delisting](#delistings) and what users may do with it now, with what a [migration](#currency-migrations) pauses; `next`, when present, is the next scheduled step. `previous_symbols`, when present, are the symbols the currency had before a rebrand, newest first. `migration`, on the source of a migration from its announcement on, has its `id`, `target_hk`, `phase`, `forced`, `ratio`, and `next` phase, so that clients can show a banner. `networks`, in the public list, are the [networks](#networks) the currency moves on, by name: where it can be deposited and withdrawn, the limits and the fee of a withdrawal, and `fee_currency`, the symbol of the currency that pays the network fee. Amounts are decimal strings, and `max_withdrawal` of `"0"` is no maximum. The field name `if_fiat` is a known typo for `is_fiat`. Its rename was to come with a move of the currencies to an assets table, which [#309](https://github.com/mdastpak/Crypto-Exchange/issues/309) replaced by keeping `currencies` as the one registry, so the field keeps its name rather than break every client.
 
 ### `GET /public/currencies`
 
@@ -833,6 +852,96 @@ A rebrand that changes the symbol, as MATIC became POL, keeps the symbol before 
 `DELETE /admin/currencies/{hk}/symbols/{symbol}` (admin) releases a previous symbol, so that another currency can take it, as the new LUNA took LUNA from the renamed LUNC. Response `200`. Errors: `404` when it is not a previous symbol of the currency, and `409 symbol_current` for the current one. Audited as `currency.symbol_release`.
 
 The history of a currency, each change with its fields before and after, is in the audit log: `GET /admin/audit?target_type=currency&target_id={hk}`.
+
+### Networks
+
+How a currency moves on each network is a row of its own ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309), [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)): USDT is one currency and one balance, with a network on `tron` and one on `ethereum`, each with its contract, decimals, and limits. `admin assets import` loads them from `config/assets.yaml`; these routes read and change them one at a time, with the same checks.
+
+`GET /admin/currencies/{hk}/networks` (admin) lists them, by name, with `custody_mode` and `fee_currency_hk`. `404` for an unknown currency.
+
+`PUT /admin/currencies/{hk}/networks/{network}` (admin) writes one, whole: a field left out is empty, false, or 0.
+
+```json
+{
+  "contract_address": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+  "decimals": 6,
+  "custody_mode": "ON_CHAIN",
+  "deposit_enabled": true,
+  "withdrawal_enabled": true,
+  "min_deposit": "1",
+  "min_withdrawal": "20",
+  "max_withdrawal": "0",
+  "withdrawal_fee": "1",
+  "fee_currency": "TRX",
+  "requires_tag": false,
+  "explorer_url": "https://tronscan.org"
+}
+```
+
+- `network` is `internal` for fiat currencies, and only for them, or `bitcoin`, `ethereum`, or `tron`.
+- A token needs its `contract_address`, which the network's format and checksum must accept (EIP-55 on Ethereum, Base58Check on TRON). The native asset of a network has none. `409 contract_taken` when another currency has it on the network.
+- `decimals` is required, from 0 to 36.
+- `custody_mode` is `OFF_CHAIN` on `internal` and `ON_CHAIN` elsewhere.
+- `fee_currency` is the native asset of the network.
+- The amounts are decimal strings of at least 0, with the minimum withdrawal not over a maximum that is not 0.
+- `explorer_url` is an https URL.
+
+**The contract and the decimals of a network do not change once it exists:** `409 network_contract_fixed`. Deposits are read by the contract, so a new one would credit another token as this currency, and new decimals would scale every amount on the network. A token that moved to a new contract is a [migration](#currency-migrations) of the currency. The reviewed registry file can still change them. To stop a network, close its deposits and withdrawals.
+
+Response `201` for a new network and `200` otherwise, with the network. Other errors: `400 validation_failed` with the problems by field, and `404` for an unknown or deleted currency. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `currency.network_set` with the fields that changed. A change to a public currency drops the cached list, so users see it at once. `admin assets import` works on PostgreSQL alone, so its changes reach the public list within `redis.currency_cache_ttl_seconds`, as other changes made outside the API do.
+
+## Markets
+
+A market is a pair of two currencies with its rules ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)).
+
+### `GET /public/markets`
+
+The markets that trade (`ACTIVE`) or are paused (`MAINTENANCE`, `SUSPENDED`), of two listed currencies, by symbol:
+
+```json
+{
+  "symbol": "BTC/USDT",
+  "base": "BTC",
+  "quote": "USDT",
+  "base_hk": "…",
+  "quote_hk": "…",
+  "status": "ACTIVE",
+  "min_order_size": "0.0001",
+  "max_order_size": "10",
+  "min_notional": "10",
+  "tick_size": "0.01",
+  "lot_size": "0.0001",
+  "maker_fee_bps": 10,
+  "taker_fee_bps": 20
+}
+```
+
+Amounts are decimal strings, and `max_order_size` of `"0"` is no maximum. Fees are in basis points: 10 is 0.1%. A market leaves the list with either of its currencies, as when a currency is [delisted](#delistings). Each instance reads the markets again at most every ten seconds, and serves the ones it read last while PostgreSQL cannot be read. `503 service_unavailable`, with `Retry-After`, when it has none.
+
+### `GET /admin/markets` and `GET /admin/markets/{base}/{quote}` (admin)
+
+The markets that are not deleted, of any status, with every rule: also `max_position_size`, `max_leverage`, `market_maker_fee_bps`, and `price_band_bps`. A market is named by the symbols of its currencies. `404 market_not_found`.
+
+### `PUT /admin/markets/{base}/{quote}` (admin)
+
+Writes the market, whole, with the checks of the registry file:
+
+```json
+{
+  "status": "ACTIVE",
+  "min_order_size": "0.0001",
+  "max_order_size": "10",
+  "min_notional": "10",
+  "tick_size": "0.01",
+  "lot_size": "0.0001",
+  "maker_fee_bps": 10,
+  "taker_fee_bps": 20
+}
+```
+
+The currencies must exist and differ. `status` is `ACTIVE`, `INACTIVE`, `MAINTENANCE`, `SUSPENDED`, or `DELISTED`; `INACTIVE` and `DELISTED` take the market out of the public list. The minimum order size must not be over a maximum that is not 0, the tick and lot sizes must be positive, and each fee is required, from 0 to 1000 basis points.
+
+Response `201` for a new market and `200` otherwise, with the market. `400 validation_failed` with the problems by field, a currency that does not exist among them. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `market.set` with the fields that changed. Every instance shows the change in the public list within ten seconds.
 
 ## Market data
 

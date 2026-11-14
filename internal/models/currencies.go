@@ -36,6 +36,36 @@ type Currency struct {
 	// Migration is the migration that moves the holders of this currency to
 	// another one, from its announcement on (#215).
 	Migration *CurrencyMigration `json:"migration,omitempty"`
+	// Networks are the networks the currency moves on, in the public list
+	// (#57).
+	Networks []CurrencyNetwork `json:"networks,omitempty"`
+}
+
+// CurrencyNetwork is how a currency moves on one network, as users see it
+// (#57): whether it can be deposited and withdrawn there, the limits, and
+// the fee. Amounts are decimal strings.
+type CurrencyNetwork struct {
+	// Network names the chain, such as "tron" or "ethereum", or "internal"
+	// for a fiat currency.
+	Network string `json:"network" example:"tron"`
+	// ContractAddress is the token's contract on the network, empty for the
+	// native asset.
+	ContractAddress   string `json:"contract_address,omitempty" example:"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"`
+	Decimals          int    `json:"decimals" example:"6"`
+	DepositEnabled    bool   `json:"deposit_enabled" example:"true"`
+	WithdrawalEnabled bool   `json:"withdrawal_enabled" example:"true"`
+	MinDeposit        string `json:"min_deposit" example:"1"`
+	MinWithdrawal     string `json:"min_withdrawal" example:"10"`
+	// MaxWithdrawal of "0" is no maximum.
+	MaxWithdrawal string `json:"max_withdrawal" example:"0"`
+	WithdrawalFee string `json:"withdrawal_fee" example:"1"`
+	// FeeCurrency is the symbol of the currency that pays the network fee,
+	// such as TRX for a TRC20 token.
+	FeeCurrency string `json:"fee_currency,omitempty" example:"TRX"`
+	// RequiresTag says that a deposit names its account with a tag or
+	// memo.
+	RequiresTag bool   `json:"requires_tag" example:"false"`
+	ExplorerURL string `json:"explorer_url,omitempty" example:"https://tronscan.org"`
 }
 
 // CurrencyMigration is a migration of a currency into another, as its
