@@ -14,19 +14,19 @@ type Market struct {
 
 	// Trading parameters
 	Status       MarketStatus   `json:"status" db:"status"`
-	MinOrderSize shared.Decimal `json:"min_order_size" db:"min_order_size"` // Minimum base asset quantity
-	MaxOrderSize shared.Decimal `json:"max_order_size" db:"max_order_size"` // Maximum base asset quantity
-	MinNotional  shared.Decimal `json:"min_notional" db:"min_notional"`     // Minimum quote asset value
-	TickSize     shared.Decimal `json:"tick_size" db:"tick_size"`           // Price increment (e.g., 0.01)
-	LotSize      shared.Decimal `json:"lot_size" db:"lot_size"`             // Quantity increment (e.g., 0.001)
+	MinOrderSize shared.Decimal `json:"min_order_size" db:"min_order_size" swaggertype:"string"` // Minimum base asset quantity
+	MaxOrderSize shared.Decimal `json:"max_order_size" db:"max_order_size" swaggertype:"string"` // Maximum base asset quantity
+	MinNotional  shared.Decimal `json:"min_notional" db:"min_notional" swaggertype:"string"`     // Minimum quote asset value
+	TickSize     shared.Decimal `json:"tick_size" db:"tick_size" swaggertype:"string"`           // Price increment (e.g., 0.01)
+	LotSize      shared.Decimal `json:"lot_size" db:"lot_size" swaggertype:"string"`             // Quantity increment (e.g., 0.001)
 
 	// Fee structure (basis points)
 	MakerFeeBPS int `json:"maker_fee_bps" db:"maker_fee_bps"` // e.g., 10 = 0.10%
 	TakerFeeBPS int `json:"taker_fee_bps" db:"taker_fee_bps"` // e.g., 20 = 0.20%
 
 	// Risk limits
-	MaxPositionSize shared.Decimal `json:"max_position_size" db:"max_position_size"` // Per user
-	MaxLeverage     int            `json:"max_leverage" db:"max_leverage"`           // For margin (1 = spot)
+	MaxPositionSize shared.Decimal `json:"max_position_size" db:"max_position_size" swaggertype:"string"` // Per user
+	MaxLeverage     int            `json:"max_leverage" db:"max_leverage"`                                // For margin (1 = spot)
 
 	// Market making
 	MarketMakerFeeBPS int `json:"market_maker_fee_bps" db:"market_maker_fee_bps"`
@@ -66,28 +66,28 @@ type MarketStats struct {
 	Timestamp shared.Timestamp `json:"timestamp"`
 
 	// Price
-	LastPrice      shared.Decimal `json:"last_price"`
-	OpenPrice      shared.Decimal `json:"open_price"`
-	HighPrice      shared.Decimal `json:"high_price"`
-	LowPrice       shared.Decimal `json:"low_price"`
-	PriceChange    shared.Decimal `json:"price_change"`     // Absolute
-	PriceChangePct shared.Decimal `json:"price_change_pct"` // Percentage
+	LastPrice      shared.Decimal `json:"last_price" swaggertype:"string"`
+	OpenPrice      shared.Decimal `json:"open_price" swaggertype:"string"`
+	HighPrice      shared.Decimal `json:"high_price" swaggertype:"string"`
+	LowPrice       shared.Decimal `json:"low_price" swaggertype:"string"`
+	PriceChange    shared.Decimal `json:"price_change" swaggertype:"string"`     // Absolute
+	PriceChangePct shared.Decimal `json:"price_change_pct" swaggertype:"string"` // Percentage
 
 	// Volume
-	BaseVolume  shared.Decimal `json:"base_volume"`  // In base asset
-	QuoteVolume shared.Decimal `json:"quote_volume"` // In quote asset
+	BaseVolume  shared.Decimal `json:"base_volume" swaggertype:"string"`  // In base asset
+	QuoteVolume shared.Decimal `json:"quote_volume" swaggertype:"string"` // In quote asset
 	TradeCount  int64          `json:"trade_count"`
 
 	// Order book
-	BidPrice  shared.Decimal `json:"bid_price"`
-	BidSize   shared.Decimal `json:"bid_size"`
-	AskPrice  shared.Decimal `json:"ask_price"`
-	AskSize   shared.Decimal `json:"ask_size"`
-	Spread    shared.Decimal `json:"spread"`     // Ask - Bid
-	SpreadBPS int            `json:"spread_bps"` // Spread in basis points
+	BidPrice  shared.Decimal `json:"bid_price" swaggertype:"string"`
+	BidSize   shared.Decimal `json:"bid_size" swaggertype:"string"`
+	AskPrice  shared.Decimal `json:"ask_price" swaggertype:"string"`
+	AskSize   shared.Decimal `json:"ask_size" swaggertype:"string"`
+	Spread    shared.Decimal `json:"spread" swaggertype:"string"` // Ask - Bid
+	SpreadBPS int            `json:"spread_bps"`                  // Spread in basis points
 
 	// Funding (for derivatives)
-	FundingRate     shared.Decimal `json:"funding_rate,omitempty"`
+	FundingRate     shared.Decimal `json:"funding_rate,omitempty" swaggertype:"string"`
 	NextFundingTime *time.Time     `json:"next_funding_time,omitempty"`
 }
 

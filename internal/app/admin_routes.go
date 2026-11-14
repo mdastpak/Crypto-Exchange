@@ -34,6 +34,12 @@ var adminRoutes = map[string]admin.RouteClass{
 	"PUT /currencies/:hk/capabilities/:capability":    admin.RouteSensitive,
 	"DELETE /currencies/:hk/capabilities/:capability": admin.RouteSensitive,
 
+	// How a currency moves on a network, and the markets (#57): the
+	// contracts that deposits are read by, the limits and fees of
+	// withdrawals, and the fees and status of trading.
+	"PUT /currencies/:hk/networks/:network": admin.RouteSensitive,
+	"PUT /markets/:base/:quote":             admin.RouteSensitive,
+
 	// Freezing users and locking the platform.
 	"POST /users/:hk/restrictions":          admin.RouteSensitive,
 	"POST /users/:hk/restrictions/:id/lift": admin.RouteSensitive,

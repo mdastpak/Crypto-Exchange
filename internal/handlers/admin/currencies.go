@@ -34,12 +34,14 @@ type AdminHandler struct {
 	Config *config.Configuration
 	// The stores of the routes.
 	CurrencyStore CurrencyStore
-	Restrictions  RestrictionStore
-	Controls      ControlStore
-	Delistings    DelistingStore
-	Rebrands      RebrandStore
-	Audit         AuditLog
-	Findings      FindingStore
+	// Registry holds the networks of the currencies and the markets (#57).
+	Registry     RegistryStore
+	Restrictions RestrictionStore
+	Controls     ControlStore
+	Delistings   DelistingStore
+	Rebrands     RebrandStore
+	Audit        AuditLog
+	Findings     FindingStore
 	// Outbox is the relay that publishes the currency events, which changes
 	// write to the outbox. Without it, they wait there for the relay of
 	// another instance.
@@ -78,6 +80,7 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 	if is.Postgres != nil {
 		db := is.Postgres.DB
 		h.CurrencyStore = currencies.Store{DB: db}
+		h.Registry = currencies.Store{DB: db}
 		h.Restrictions = restrictions.Store{DB: db}
 		h.Controls = platform.Store{DB: db}
 		h.Delistings = delisting.Store{DB: db}

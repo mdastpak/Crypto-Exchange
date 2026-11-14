@@ -302,6 +302,101 @@ definitions:
           refused with 409. A create may not send it.
         type: integer
     type: object
+  admin.marketRequest:
+    properties:
+      lot_size:
+        example: "0.0001"
+        type: string
+      maker_fee_bps:
+        description: |-
+          MakerFeeBPS and TakerFeeBPS are fees in basis points, from 0 to
+          1000. Required.
+        example: 10
+        type: integer
+      max_order_size:
+        description: MaxOrderSize of "0" is no maximum.
+        example: "0"
+        type: string
+      min_notional:
+        example: "10"
+        type: string
+      min_order_size:
+        example: "0.0001"
+        type: string
+      status:
+        enum:
+        - ACTIVE
+        - INACTIVE
+        - MAINTENANCE
+        - SUSPENDED
+        - DELISTED
+        example: ACTIVE
+        type: string
+      taker_fee_bps:
+        example: 20
+        type: integer
+      tick_size:
+        example: "0.01"
+        type: string
+    type: object
+  admin.networkRequest:
+    properties:
+      contract_address:
+        description: |-
+          ContractAddress is the token's contract, which its network's format
+          and checksum must accept; empty for the native asset of the network.
+          It does not change once the network exists.
+        example: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+        type: string
+      custody_mode:
+        description: |-
+          CustodyMode is OFF_CHAIN on the internal network of fiat currencies
+          and ON_CHAIN on the others.
+        enum:
+        - ON_CHAIN
+        - OFF_CHAIN
+        example: ON_CHAIN
+        type: string
+      decimals:
+        description: |-
+          Decimals of an amount on the network, from 0 to 36. Required, and
+          fixed once the network exists.
+        example: 6
+        type: integer
+      deposit_enabled:
+        example: true
+        type: boolean
+      explorer_url:
+        description: ExplorerURL is an https URL.
+        example: https://tronscan.org
+        type: string
+      fee_currency:
+        description: |-
+          FeeCurrency is the symbol of the currency that pays the network fee:
+          the native asset of the network, such as TRX on tron.
+        example: TRX
+        type: string
+      max_withdrawal:
+        description: MaxWithdrawal of "0" is no maximum.
+        example: "0"
+        type: string
+      min_deposit:
+        description: MinDeposit is "0" when left out.
+        example: "1"
+        type: string
+      min_withdrawal:
+        example: "10"
+        type: string
+      requires_tag:
+        example: false
+        type: boolean
+      withdrawal_enabled:
+        example: true
+        type: boolean
+      withdrawal_fee:
+        example: "1"
+        type: string
+    type: object
   admin.stepUpRequest:
     properties:
       totp:
@@ -594,6 +689,110 @@ definitions:
     - LifecycleWithdrawalOnly
     - LifecycleFrozen
     - LifecycleDelisted
+  currencies.PublicMarket:
+    properties:
+      base:
+        example: BTC
+        type: string
+      base_hk:
+        format: uuid
+        type: string
+      lot_size:
+        example: "0.0001"
+        type: string
+      maker_fee_bps:
+        description: |-
+          MakerFeeBPS and TakerFeeBPS are the fees in basis points: 10 is
+          0.1%.
+        example: 10
+        type: integer
+      max_order_size:
+        description: MaxOrderSize of "0" is no maximum.
+        example: "0"
+        type: string
+      min_notional:
+        example: "10"
+        type: string
+      min_order_size:
+        example: "0.0001"
+        type: string
+      quote:
+        example: USDT
+        type: string
+      quote_hk:
+        format: uuid
+        type: string
+      status:
+        description: Status is ACTIVE while it trades; MAINTENANCE and SUSPENDED pause
+          it.
+        enum:
+        - ACTIVE
+        - MAINTENANCE
+        - SUSPENDED
+        example: ACTIVE
+        type: string
+      symbol:
+        description: Symbol is the pair, base/quote.
+        example: BTC/USDT
+        type: string
+      taker_fee_bps:
+        example: 20
+        type: integer
+      tick_size:
+        example: "0.01"
+        type: string
+    type: object
+  currency.Network:
+    properties:
+      contract_address:
+        description: |-
+          ContractAddress is the token contract, empty for the native asset of
+          the network and on networks without contracts.
+        type: string
+      created_at:
+        type: string
+      currency_hk:
+        type: string
+      custody_mode:
+        $ref: '#/definitions/shared.SettlementMode'
+      decimals:
+        description: |-
+          Decimals is the precision of an amount on the network: 6 for USDT on
+          TRON, 18 for ETH, 0 for IRR.
+        type: integer
+      deposit_enabled:
+        type: boolean
+      explorer_url:
+        type: string
+      fee_currency_hk:
+        description: |-
+          FeeCurrencyHK is the currency that pays the network fee, such as TRX
+          for a TRC20 token.
+        type: string
+      max_withdrawal:
+        description: MaxWithdrawal of 0 means no maximum.
+        type: string
+      min_deposit:
+        type: string
+      min_withdrawal:
+        type: string
+      network:
+        description: |-
+          Network names the chain, such as "bitcoin", "ethereum", or "tron",
+          or "internal" for a fiat currency that moves off chain.
+        type: string
+      requires_tag:
+        description: |-
+          RequiresTag says that a deposit names its account with a tag or memo,
+          as on XRP and XLM.
+        type: boolean
+      updated_at:
+        type: string
+      withdrawal_enabled:
+        type: boolean
+      withdrawal_fee:
+        type: string
+    type: object
   delisting.Delisting:
     properties:
       announcement_url:
@@ -924,6 +1123,131 @@ definitions:
         example: فارسی
         type: string
     type: object
+  market.Market:
+    properties:
+      base_currency_hk:
+        type: string
+      base_symbol:
+        description: The symbols of the currencies, read with the market from currencies.
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      id:
+        type: string
+      lot_size:
+        description: Quantity increment (e.g., 0.001)
+        type: string
+      maker_fee_bps:
+        description: Fee structure (basis points)
+        type: integer
+      market_maker_fee_bps:
+        description: Market making
+        type: integer
+      max_leverage:
+        description: For margin (1 = spot)
+        type: integer
+      max_order_size:
+        description: Maximum base asset quantity
+        type: string
+      max_position_size:
+        description: Risk limits
+        type: string
+      min_notional:
+        description: Minimum quote asset value
+        type: string
+      min_order_size:
+        description: Minimum base asset quantity
+        type: string
+      price_band_bps:
+        description: Price bands (for circuit breakers)
+        type: integer
+      quote_currency_hk:
+        type: string
+      quote_symbol:
+        type: string
+      stats:
+        allOf:
+        - $ref: '#/definitions/market.MarketStats'
+        description: 24h statistics (updated periodically)
+      status:
+        allOf:
+        - $ref: '#/definitions/market.MarketStatus'
+        description: Trading parameters
+      taker_fee_bps:
+        description: e.g., 20 = 0.20%
+        type: integer
+      tick_size:
+        description: Price increment (e.g., 0.01)
+        type: string
+      updated_at:
+        type: string
+    type: object
+  market.MarketStats:
+    properties:
+      ask_price:
+        type: string
+      ask_size:
+        type: string
+      base_volume:
+        description: Volume
+        type: string
+      bid_price:
+        description: Order book
+        type: string
+      bid_size:
+        type: string
+      funding_rate:
+        description: Funding (for derivatives)
+        type: string
+      high_price:
+        type: string
+      last_price:
+        description: Price
+        type: string
+      low_price:
+        type: string
+      market_id:
+        type: string
+      next_funding_time:
+        type: string
+      open_price:
+        type: string
+      price_change:
+        description: Absolute
+        type: string
+      price_change_pct:
+        description: Percentage
+        type: string
+      quote_volume:
+        description: In quote asset
+        type: string
+      spread:
+        description: Ask - Bid
+        type: string
+      spread_bps:
+        description: Spread in basis points
+        type: integer
+      timestamp:
+        type: string
+      trade_count:
+        type: integer
+    type: object
+  market.MarketStatus:
+    enum:
+    - ACTIVE
+    - INACTIVE
+    - MAINTENANCE
+    - SUSPENDED
+    - DELISTED
+    type: string
+    x-enum-varnames:
+    - MarketStatusActive
+    - MarketStatusInactive
+    - MarketStatusMaintenance
+    - MarketStatusSuspended
+    - MarketStatusDelisted
   marketdata.AssetPage:
     properties:
       items:
@@ -1495,6 +1819,13 @@ definitions:
         description: |-
           Migration is the migration that moves the holders of this currency to
           another one, from its announcement on (#215).
+      networks:
+        description: |-
+          Networks are the networks the currency moves on, in the public list
+          (#57).
+        items:
+          $ref: '#/definitions/models.CurrencyNetwork'
+        type: array
       previous_symbols:
         description: |-
           PreviousSymbols are the symbols the currency had before a rebrand,
@@ -1643,6 +1974,58 @@ definitions:
         type: string
       phase:
         example: deposits_paused
+        type: string
+    type: object
+  models.CurrencyNetwork:
+    properties:
+      contract_address:
+        description: |-
+          ContractAddress is the token's contract on the network, empty for the
+          native asset.
+        example: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+        type: string
+      decimals:
+        example: 6
+        type: integer
+      deposit_enabled:
+        example: true
+        type: boolean
+      explorer_url:
+        example: https://tronscan.org
+        type: string
+      fee_currency:
+        description: |-
+          FeeCurrency is the symbol of the currency that pays the network fee,
+          such as TRX for a TRC20 token.
+        example: TRX
+        type: string
+      max_withdrawal:
+        description: MaxWithdrawal of "0" is no maximum.
+        example: "0"
+        type: string
+      min_deposit:
+        example: "1"
+        type: string
+      min_withdrawal:
+        example: "10"
+        type: string
+      network:
+        description: |-
+          Network names the chain, such as "tron" or "ethereum", or "internal"
+          for a fiat currency.
+        example: tron
+        type: string
+      requires_tag:
+        description: |-
+          RequiresTag says that a deposit names its account with a tag or
+          memo.
+        example: false
+        type: boolean
+      withdrawal_enabled:
+        example: true
+        type: boolean
+      withdrawal_fee:
+        example: "1"
         type: string
     type: object
   models.SignInCodeInfo:
@@ -2630,6 +3013,14 @@ definitions:
     - KYCTierStandard
     - KYCTierEnhanced
     - KYCTierInstitutional
+  shared.SettlementMode:
+    enum:
+    - OFF_CHAIN
+    - ON_CHAIN
+    type: string
+    x-enum-varnames:
+    - SettlementModeOffChain
+    - SettlementModeOnChain
   sites.Alternate:
     properties:
       hreflang:
@@ -4299,6 +4690,144 @@ paths:
       summary: Cancel a migration
       tags:
       - admin currencies
+  /api/v1/admin/currencies/{hk}/networks:
+    get:
+      description: 'How the currency moves on each network (#57): the contract, the
+        decimals, the custody mode, whether deposits and withdrawals are open, the
+        limits, the withdrawal fee, and the currency that pays the network fee. A
+        deleted currency keeps its networks.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/currency.Network'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the networks of a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/networks/{network}:
+    put:
+      consumes:
+      - application/json
+      description: 'Writes how the currency moves on the network (#57), whole, with
+        the checks of config/assets.yaml: a known network (internal for fiat currencies,
+        and only for them), a contract that the network''s format and checksum accept
+        and no other currency has there, none for the native asset, the custody mode,
+        the native asset as the fee currency, and the limits. The contract and the
+        decimals of a network do not change once it exists (409 network_contract_fixed):
+        deposits are read by the contract, so a new one would credit another token
+        as this currency. A token that moved to a new contract is a migration of the
+        currency; the reviewed registry file can still change them. To stop a network,
+        close its deposits and withdrawals. 201 for a new network, 200 otherwise.
+        A sensitive route: it needs a step-up. Audited as currency.network_set with
+        the fields that changed. The public currency list shows the networks of approved
+        currencies.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The network
+        enum:
+        - internal
+        - bitcoin
+        - ethereum
+        - tron
+        in: path
+        name: network
+        required: true
+        type: string
+      - description: The network
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.networkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/currency.Network'
+              type: object
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/currency.Network'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: network_contract_fixed or contract_taken
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Add or change a network of a currency
+      tags:
+      - admin currencies
   /api/v1/admin/currencies/{hk}/restore:
     post:
       description: 'Undoes a delete: the currency keeps its hk, symbol, and contract,
@@ -5662,6 +6191,154 @@ paths:
       summary: Enable a market data venue
       tags:
       - admin market data
+  /api/v1/admin/markets:
+    get:
+      description: The markets of two currencies (#57) that are not deleted, by symbol,
+        with their status and rules.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/market.Market'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the markets
+      tags:
+      - admin markets
+  /api/v1/admin/markets/{base}/{quote}:
+    get:
+      parameters:
+      - description: The symbol of the base currency
+        example: BTC
+        in: path
+        name: base
+        required: true
+        type: string
+      - description: The symbol of the quote currency
+        example: USDT
+        in: path
+        name: quote
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/market.Market'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: market_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show a market
+      tags:
+      - admin markets
+    put:
+      consumes:
+      - application/json
+      description: 'Writes the market of two currencies, named by symbol (#57), whole,
+        with the checks of config/assets.yaml: two different currencies that exist,
+        a known status, order sizes whose minimum is not over the maximum, a positive
+        tick and lot size, a minimum notional of at least 0, and fees from 0 to 1000
+        basis points. ACTIVE trades; MAINTENANCE and SUSPENDED pause trading, and
+        INACTIVE and DELISTED take the market out of the public list. 201 for a new
+        market, 200 otherwise. A sensitive route: it needs a step-up. Audited as market.set
+        with the fields that changed. Every instance shows the change in the public
+        list within ten seconds.'
+      parameters:
+      - description: The symbol of the base currency
+        example: BTC
+        in: path
+        name: base
+        required: true
+        type: string
+      - description: The symbol of the quote currency
+        example: USDT
+        in: path
+        name: quote
+        required: true
+        type: string
+      - description: The market
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.marketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/market.Market'
+              type: object
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/market.Market'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Add or change a market
+      tags:
+      - admin markets
   /api/v1/admin/notifications/sms:
     get:
       description: 'The SMS providers (#371) and how messages go through them: the
@@ -7411,6 +8088,39 @@ paths:
       summary: List the supported languages and their text direction
       tags:
       - system
+  /api/v1/public/markets:
+    get:
+      description: 'The markets of the exchange (#57): pairs of two listed currencies
+        that trade (ACTIVE) or are paused (MAINTENANCE, SUSPENDED), with their order
+        sizes, tick and lot sizes, minimum notional, and fees in basis points. Amounts
+        are decimal strings. A market leaves the list with either of its currencies,
+        as when a currency is delisted. Every instance reads the markets again at
+        most every ten seconds.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/currencies.PublicMarket'
+                  type: array
+              type: object
+        "503":
+          description: service_unavailable, with Retry-After
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: List the markets
+      tags:
+      - public
   /api/v1/public/site:
     get:
       description: The visitor's country (GeoIP), the site they are on (by the Origin

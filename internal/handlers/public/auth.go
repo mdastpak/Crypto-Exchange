@@ -66,6 +66,8 @@ type PublicHandler struct {
 	OTPSender notify.OTPSender
 	// Currencies lists the public currencies.
 	Currencies CurrencyCatalog
+	// Markets lists the public markets (#57).
+	Markets MarketList
 	// Platform serves the status of the platform controls (#235). Without
 	// it, the status is open.
 	Platform StatusSource
@@ -100,6 +102,7 @@ func NewHandler(is *models.InfraServices) *PublicHandler {
 		h.Accounts = &signin.Accounts{DB: is.Postgres.DB, Config: is.Settings()}
 		h.Audit = audit.Log{DB: is.Postgres.DB}
 		h.Sessions = auth.NewPostgresSessionStore(is.Postgres.DB)
+		h.Markets = currencies.NewMarketList(is.Postgres.DB, 0)
 	}
 	if catalog := currencies.ForServices(is); catalog != nil {
 		h.Currencies = catalog

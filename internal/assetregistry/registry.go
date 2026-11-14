@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
@@ -171,8 +172,8 @@ func (r *Registry) Validate() error {
 		if !contains(assetStatuses, a.Status) {
 			add("%s: unknown status %q", where, a.Status)
 		}
-		if a.Decimals < 0 || a.Decimals > maxDecimals {
-			add("%s: decimals is %d; it must be from 0 to %d", where, a.Decimals, maxDecimals)
+		for _, p := range CheckDecimals(a.Decimals) {
+			add("%s: %s", where, p.Text)
 		}
 		if len(a.Networks) == 0 {
 			add("%s: at least one network is required", where)
@@ -181,41 +182,26 @@ func (r *Registry) Validate() error {
 		seen := make(map[string]bool)
 		for _, n := range a.Networks {
 			at := fmt.Sprintf("%s on %s", where, n.Network)
-			info, known := networks[n.Network]
-			if !known {
-				add("%s: unknown network %q", at, n.Network)
+			found := CheckNetwork(a.Symbol, a.Type == shared.AssetTypeFiat, n)
+			for _, p := range found {
+				add("%s: %s", at, p.Text)
+			}
+			if _, known := networks[n.Network]; !known {
 				continue
 			}
 			if seen[n.Network] {
 				add("%s: network %s is defined twice", at, n.Network)
 			}
 			seen[n.Network] = true
-			if (a.Type == shared.AssetTypeFiat) != (n.Network == "internal") {
-				add("%s: fiat assets, and only they, use the internal network", at)
+			// A contract is one asset's on its network.
+			if n.ContractAddress == "" || slices.ContainsFunc(found, func(p Problem) bool { return p.Field == "contract_address" }) {
+				continue
 			}
-			switch {
-			case info.contracts && a.Symbol != info.native && n.ContractAddress == "":
-				add("%s: a token needs its contract_address", at)
-			case (!info.contracts || a.Symbol == info.native) && n.ContractAddress != "":
-				add("%s: the native asset of a network, or an asset on a network without contracts, has no contract_address", at)
-			case n.ContractAddress != "":
-				if err := info.validate(n.ContractAddress); err != nil {
-					add("%s: contract_address %s: %v", at, n.ContractAddress, err)
-				} else if other, dup := contracts[n.Network+"/"+strings.ToLower(n.ContractAddress)]; dup {
-					add("%s: contract_address is also the contract of %s", at, other)
-				} else {
-					contracts[n.Network+"/"+strings.ToLower(n.ContractAddress)] = a.Symbol
-				}
-			}
-			if !contains(custodyModes, n.CustodyMode) || (n.Network == "internal") != (n.CustodyMode == shared.SettlementModeOffChain) {
-				add("%s: custody_mode %q must be OFF_CHAIN on the internal network and ON_CHAIN elsewhere", at, n.CustodyMode)
-			}
-			if info.native != "" && n.FeeAsset != info.native {
-				add("%s: fee_asset is %q; network fees on %s are paid in %s", at, n.FeeAsset, n.Network, info.native)
-			}
-			problems = append(problems, limitProblems(at, "withdrawal", n.MinWithdrawal, n.MaxWithdrawal, n.WithdrawalFee)...)
-			if d, err := shared.NewDecimalFromString(n.MinDepositOrZero()); err != nil || d.IsNegative() {
-				add("%s: min_deposit %q must be a decimal of at least 0", at, n.MinDeposit)
+			key := n.Network + "/" + strings.ToLower(n.ContractAddress)
+			if other, dup := contracts[key]; dup {
+				add("%s: contract_address is also the contract of %s", at, other)
+			} else {
+				contracts[key] = a.Symbol
 			}
 		}
 	}
@@ -226,32 +212,12 @@ func (r *Registry) Validate() error {
 		if !symbols[m.Base] || !symbols[m.Quote] {
 			add("%s: base and quote must be assets of the registry", where)
 		}
-		if m.Base == m.Quote {
-			add("%s: base and quote must differ", where)
-		}
 		if pairs[m.Base+"/"+m.Quote] {
 			add("%s: the market is defined twice", where)
 		}
 		pairs[m.Base+"/"+m.Quote] = true
-		if !contains(marketStatus, m.Status) {
-			add("%s: unknown status %q", where, m.Status)
-		}
-		problems = append(problems, limitProblems(where, "order size", m.MinOrderSize, m.MaxOrderSize, "0")...)
-		for name, value := range map[string]string{"min_notional": m.MinNotional, "tick_size": m.TickSize, "lot_size": m.LotSize} {
-			d, err := shared.NewDecimalFromString(value)
-			switch {
-			case err != nil:
-				add("%s: %s %q is not a decimal", where, name, value)
-			case name != "min_notional" && !d.IsPositive():
-				add("%s: %s must be positive", where, name)
-			case d.IsNegative():
-				add("%s: %s must not be negative", where, name)
-			}
-		}
-		for name, bps := range map[string]int{"maker_fee_bps": m.MakerFeeBPS, "taker_fee_bps": m.TakerFeeBPS} {
-			if bps < 0 || bps > maxFeeBPS {
-				add("%s: %s is %d; it must be from 0 to %d", where, name, bps, maxFeeBPS)
-			}
+		for _, p := range CheckMarket(m) {
+			add("%s: %s", where, p.Text)
 		}
 	}
 
@@ -261,24 +227,122 @@ func (r *Registry) Validate() error {
 	return nil
 }
 
-// limitProblems checks a minimum, a maximum (0 means none), and a fee.
-func limitProblems(where, what, minimum, maximum, fee string) []string {
-	var problems []string
-	parse := func(name, value string) (shared.Decimal, bool) {
-		d, err := shared.NewDecimalFromString(value)
-		if err != nil || d.IsNegative() {
-			problems = append(problems, fmt.Sprintf("%s: %s %q must be a decimal of at least 0", where, name, value))
-			return d, false
-		}
-		return d, true
+// Problem is a problem of one entry, with the field it is about, so that
+// the admin API answers it by field (#57).
+type Problem struct {
+	Field, Text string
+}
+
+// CheckDecimals checks the decimals of an amount on a network.
+func CheckDecimals(decimals int) []Problem {
+	if decimals < 0 || decimals > maxDecimals {
+		return []Problem{{"decimals", fmt.Sprintf("decimals is %d; it must be from 0 to %d", decimals, maxDecimals)}}
 	}
-	lo, okLo := parse("minimum "+what, minimum)
-	hi, okHi := parse("maximum "+what, maximum)
-	parse(what+" fee", fee)
-	if okLo && okHi && hi.IsPositive() && lo.GreaterThan(hi) {
-		problems = append(problems, fmt.Sprintf("%s: the minimum %s %s exceeds the maximum %s", where, what, lo, hi))
+	return nil
+}
+
+// CheckNetwork checks a network of the asset symbol, which is fiat or not,
+// as the registry file and the admin API take it: a known network, the
+// contract that its format and checksum accept, none for the native asset,
+// the custody mode, the currency of the network fee, and the limits. That a
+// contract is no other asset's is checked by the caller, which knows them.
+func CheckNetwork(symbol string, fiat bool, n Network) []Problem {
+	var problems []Problem
+	add := func(field, format string, args ...interface{}) {
+		problems = append(problems, Problem{field, fmt.Sprintf(format, args...)})
+	}
+	info, known := networks[n.Network]
+	if !known {
+		add("network", "unknown network %q", n.Network)
+		return problems
+	}
+	if fiat != (n.Network == "internal") {
+		add("network", "fiat assets, and only they, use the internal network")
+	}
+	switch {
+	case info.contracts && symbol != info.native && n.ContractAddress == "":
+		add("contract_address", "a token needs its contract_address")
+	case (!info.contracts || symbol == info.native) && n.ContractAddress != "":
+		add("contract_address", "the native asset of a network, or an asset on a network without contracts, has no contract_address")
+	case n.ContractAddress != "":
+		if err := info.validate(n.ContractAddress); err != nil {
+			add("contract_address", "contract_address %s: %v", n.ContractAddress, err)
+		}
+	}
+	if !contains(custodyModes, n.CustodyMode) || (n.Network == "internal") != (n.CustodyMode == shared.SettlementModeOffChain) {
+		add("custody_mode", "custody_mode %q must be OFF_CHAIN on the internal network and ON_CHAIN elsewhere", n.CustodyMode)
+	}
+	if info.native != "" && n.FeeAsset != info.native {
+		add("fee_asset", "fee_asset is %q; network fees on %s are paid in %s", n.FeeAsset, n.Network, info.native)
+	}
+	problems = append(problems, limitProblems("withdrawal", "min_withdrawal", n.MinWithdrawal, "max_withdrawal", n.MaxWithdrawal)...)
+	problems = append(problems, amountProblems("withdrawal_fee", "withdrawal fee", n.WithdrawalFee)...)
+	if d, err := shared.NewDecimalFromString(n.MinDepositOrZero()); err != nil || d.IsNegative() {
+		add("min_deposit", "min_deposit %q must be a decimal of at least 0", n.MinDeposit)
 	}
 	return problems
+}
+
+// CheckMarket checks the rules of a market: two currencies, a known status,
+// the order sizes, a positive tick and lot, and fees of at most 10%. That
+// its currencies exist is checked by the caller.
+func CheckMarket(m Market) []Problem {
+	var problems []Problem
+	add := func(field, format string, args ...interface{}) {
+		problems = append(problems, Problem{field, fmt.Sprintf(format, args...)})
+	}
+	if m.Base == m.Quote {
+		add("quote", "base and quote must differ")
+	}
+	if !contains(marketStatus, m.Status) {
+		add("status", "unknown status %q", m.Status)
+	}
+	problems = append(problems, limitProblems("order size", "min_order_size", m.MinOrderSize, "max_order_size", m.MaxOrderSize)...)
+	for _, f := range []struct{ name, value string }{{"min_notional", m.MinNotional}, {"tick_size", m.TickSize}, {"lot_size", m.LotSize}} {
+		d, err := shared.NewDecimalFromString(f.value)
+		switch {
+		case err != nil:
+			add(f.name, "%s %q is not a decimal", f.name, f.value)
+		case f.name != "min_notional" && !d.IsPositive():
+			add(f.name, "%s must be positive", f.name)
+		case d.IsNegative():
+			add(f.name, "%s must not be negative", f.name)
+		}
+	}
+	for _, f := range []struct {
+		name string
+		bps  int
+	}{{"maker_fee_bps", m.MakerFeeBPS}, {"taker_fee_bps", m.TakerFeeBPS}} {
+		if f.bps < 0 || f.bps > maxFeeBPS {
+			add(f.name, "%s is %d; it must be from 0 to %d", f.name, f.bps, maxFeeBPS)
+		}
+	}
+	return problems
+}
+
+// limitProblems checks a minimum and a maximum, of which 0 means none.
+func limitProblems(what, minField, minimum, maxField, maximum string) []Problem {
+	lo, problems := amount(minField, "minimum "+what, minimum)
+	hi, more := amount(maxField, "maximum "+what, maximum)
+	problems = append(problems, more...)
+	if problems == nil && hi.IsPositive() && lo.GreaterThan(hi) {
+		problems = append(problems, Problem{minField, fmt.Sprintf("the minimum %s %s exceeds the maximum %s", what, lo, hi)})
+	}
+	return problems
+}
+
+// amountProblems checks an amount of at least 0.
+func amountProblems(field, name, value string) []Problem {
+	_, problems := amount(field, name, value)
+	return problems
+}
+
+func amount(field, name, value string) (shared.Decimal, []Problem) {
+	d, err := shared.NewDecimalFromString(value)
+	if err != nil || d.IsNegative() {
+		return d, []Problem{{field, fmt.Sprintf("%s %q must be a decimal of at least 0", name, value)}}
+	}
+	return d, nil
 }
 
 func contains[T comparable](list []T, value T) bool {

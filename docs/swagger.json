@@ -1533,6 +1533,206 @@
                 }
             }
         },
+        "/api/v1/admin/currencies/{hk}/networks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "How the currency moves on each network (#57): the contract, the decimals, the custody mode, whether deposits and withdrawals are open, the limits, the withdrawal fee, and the currency that pays the network fee. A deleted currency keeps its networks.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "List the networks of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/currency.Network"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/networks/{network}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Writes how the currency moves on the network (#57), whole, with the checks of config/assets.yaml: a known network (internal for fiat currencies, and only for them), a contract that the network's format and checksum accept and no other currency has there, none for the native asset, the custody mode, the native asset as the fee currency, and the limits. The contract and the decimals of a network do not change once it exists (409 network_contract_fixed): deposits are read by the contract, so a new one would credit another token as this currency. A token that moved to a new contract is a migration of the currency; the reviewed registry file can still change them. To stop a network, close its deposits and withdrawals. 201 for a new network, 200 otherwise. A sensitive route: it needs a step-up. Audited as currency.network_set with the fields that changed. The public currency list shows the networks of approved currencies.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Add or change a network of a currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "internal",
+                            "bitcoin",
+                            "ethereum",
+                            "tron"
+                        ],
+                        "type": "string",
+                        "description": "The network",
+                        "name": "network",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The network",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.networkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/currency.Network"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/currency.Network"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "network_contract_fixed or contract_taken",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/currencies/{hk}/restore": {
             "post": {
                 "security": [
@@ -3635,6 +3835,237 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/markets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The markets of two currencies (#57) that are not deleted, by symbol, with their status and rules.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin markets"
+                ],
+                "summary": "List the markets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/market.Market"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/markets/{base}/{quote}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin markets"
+                ],
+                "summary": "Show a market",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "BTC",
+                        "description": "The symbol of the base currency",
+                        "name": "base",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "USDT",
+                        "description": "The symbol of the quote currency",
+                        "name": "quote",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/market.Market"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "market_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Writes the market of two currencies, named by symbol (#57), whole, with the checks of config/assets.yaml: two different currencies that exist, a known status, order sizes whose minimum is not over the maximum, a positive tick and lot size, a minimum notional of at least 0, and fees from 0 to 1000 basis points. ACTIVE trades; MAINTENANCE and SUSPENDED pause trading, and INACTIVE and DELISTED take the market out of the public list. 201 for a new market, 200 otherwise. A sensitive route: it needs a step-up. Audited as market.set with the fields that changed. Every instance shows the change in the public list within ten seconds.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin markets"
+                ],
+                "summary": "Add or change a market",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "BTC",
+                        "description": "The symbol of the base currency",
+                        "name": "base",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "USDT",
+                        "description": "The symbol of the quote currency",
+                        "name": "quote",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The market",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.marketRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/market.Market"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/market.Market"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -6219,6 +6650,53 @@
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/markets": {
+            "get": {
+                "description": "The markets of the exchange (#57): pairs of two listed currencies that trade (ACTIVE) or are paused (MAINTENANCE, SUSPENDED), with their order sizes, tick and lot sizes, minimum notional, and fees in basis points. Amounts are decimal strings. A market leaves the list with either of its currencies, as when a currency is delisted. Every instance reads the markets again at most every ten seconds.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "public"
+                ],
+                "summary": "List the markets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/currencies.PublicMarket"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "503": {
+                        "description": "service_unavailable, with Retry-After",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
                         }
                     },
                     "default": {
@@ -9740,6 +10218,116 @@
                 }
             }
         },
+        "admin.marketRequest": {
+            "type": "object",
+            "properties": {
+                "lot_size": {
+                    "type": "string",
+                    "example": "0.0001"
+                },
+                "maker_fee_bps": {
+                    "description": "MakerFeeBPS and TakerFeeBPS are fees in basis points, from 0 to\n1000. Required.",
+                    "type": "integer",
+                    "example": 10
+                },
+                "max_order_size": {
+                    "description": "MaxOrderSize of \"0\" is no maximum.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "min_notional": {
+                    "type": "string",
+                    "example": "10"
+                },
+                "min_order_size": {
+                    "type": "string",
+                    "example": "0.0001"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "ACTIVE",
+                        "INACTIVE",
+                        "MAINTENANCE",
+                        "SUSPENDED",
+                        "DELISTED"
+                    ],
+                    "example": "ACTIVE"
+                },
+                "taker_fee_bps": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "tick_size": {
+                    "type": "string",
+                    "example": "0.01"
+                }
+            }
+        },
+        "admin.networkRequest": {
+            "type": "object",
+            "properties": {
+                "contract_address": {
+                    "description": "ContractAddress is the token's contract, which its network's format\nand checksum must accept; empty for the native asset of the network.\nIt does not change once the network exists.",
+                    "type": "string",
+                    "example": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+                },
+                "custody_mode": {
+                    "description": "CustodyMode is OFF_CHAIN on the internal network of fiat currencies\nand ON_CHAIN on the others.",
+                    "type": "string",
+                    "enum": [
+                        "ON_CHAIN",
+                        "OFF_CHAIN"
+                    ],
+                    "example": "ON_CHAIN"
+                },
+                "decimals": {
+                    "description": "Decimals of an amount on the network, from 0 to 36. Required, and\nfixed once the network exists.",
+                    "type": "integer",
+                    "example": 6
+                },
+                "deposit_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "explorer_url": {
+                    "description": "ExplorerURL is an https URL.",
+                    "type": "string",
+                    "example": "https://tronscan.org"
+                },
+                "fee_currency": {
+                    "description": "FeeCurrency is the symbol of the currency that pays the network fee:\nthe native asset of the network, such as TRX on tron.",
+                    "type": "string",
+                    "example": "TRX"
+                },
+                "max_withdrawal": {
+                    "description": "MaxWithdrawal of \"0\" is no maximum.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "min_deposit": {
+                    "description": "MinDeposit is \"0\" when left out.",
+                    "type": "string",
+                    "example": "1"
+                },
+                "min_withdrawal": {
+                    "type": "string",
+                    "example": "10"
+                },
+                "requires_tag": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "withdrawal_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "withdrawal_fee": {
+                    "type": "string",
+                    "example": "1"
+                }
+            }
+        },
         "admin.stepUpRequest": {
             "type": "object",
             "properties": {
@@ -10130,6 +10718,131 @@
                 "LifecycleFrozen",
                 "LifecycleDelisted"
             ]
+        },
+        "currencies.PublicMarket": {
+            "type": "object",
+            "properties": {
+                "base": {
+                    "type": "string",
+                    "example": "BTC"
+                },
+                "base_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "lot_size": {
+                    "type": "string",
+                    "example": "0.0001"
+                },
+                "maker_fee_bps": {
+                    "description": "MakerFeeBPS and TakerFeeBPS are the fees in basis points: 10 is\n0.1%.",
+                    "type": "integer",
+                    "example": 10
+                },
+                "max_order_size": {
+                    "description": "MaxOrderSize of \"0\" is no maximum.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "min_notional": {
+                    "type": "string",
+                    "example": "10"
+                },
+                "min_order_size": {
+                    "type": "string",
+                    "example": "0.0001"
+                },
+                "quote": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "quote_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "description": "Status is ACTIVE while it trades; MAINTENANCE and SUSPENDED pause it.",
+                    "type": "string",
+                    "enum": [
+                        "ACTIVE",
+                        "MAINTENANCE",
+                        "SUSPENDED"
+                    ],
+                    "example": "ACTIVE"
+                },
+                "symbol": {
+                    "description": "Symbol is the pair, base/quote.",
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "taker_fee_bps": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "tick_size": {
+                    "type": "string",
+                    "example": "0.01"
+                }
+            }
+        },
+        "currency.Network": {
+            "type": "object",
+            "properties": {
+                "contract_address": {
+                    "description": "ContractAddress is the token contract, empty for the native asset of\nthe network and on networks without contracts.",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "custody_mode": {
+                    "$ref": "#/definitions/shared.SettlementMode"
+                },
+                "decimals": {
+                    "description": "Decimals is the precision of an amount on the network: 6 for USDT on\nTRON, 18 for ETH, 0 for IRR.",
+                    "type": "integer"
+                },
+                "deposit_enabled": {
+                    "type": "boolean"
+                },
+                "explorer_url": {
+                    "type": "string"
+                },
+                "fee_currency_hk": {
+                    "description": "FeeCurrencyHK is the currency that pays the network fee, such as TRX\nfor a TRC20 token.",
+                    "type": "string"
+                },
+                "max_withdrawal": {
+                    "description": "MaxWithdrawal of 0 means no maximum.",
+                    "type": "string"
+                },
+                "min_deposit": {
+                    "type": "string"
+                },
+                "min_withdrawal": {
+                    "type": "string"
+                },
+                "network": {
+                    "description": "Network names the chain, such as \"bitcoin\", \"ethereum\", or \"tron\",\nor \"internal\" for a fiat currency that moves off chain.",
+                    "type": "string"
+                },
+                "requires_tag": {
+                    "description": "RequiresTag says that a deposit names its account with a tag or memo,\nas on XRP and XLM.",
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "withdrawal_enabled": {
+                    "type": "boolean"
+                },
+                "withdrawal_fee": {
+                    "type": "string"
+                }
+            }
         },
         "delisting.Delisting": {
             "type": "object",
@@ -10587,6 +11300,184 @@
                     "example": "فارسی"
                 }
             }
+        },
+        "market.Market": {
+            "type": "object",
+            "properties": {
+                "base_currency_hk": {
+                    "type": "string"
+                },
+                "base_symbol": {
+                    "description": "The symbols of the currencies, read with the market from currencies.",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "deleted_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lot_size": {
+                    "description": "Quantity increment (e.g., 0.001)",
+                    "type": "string"
+                },
+                "maker_fee_bps": {
+                    "description": "Fee structure (basis points)",
+                    "type": "integer"
+                },
+                "market_maker_fee_bps": {
+                    "description": "Market making",
+                    "type": "integer"
+                },
+                "max_leverage": {
+                    "description": "For margin (1 = spot)",
+                    "type": "integer"
+                },
+                "max_order_size": {
+                    "description": "Maximum base asset quantity",
+                    "type": "string"
+                },
+                "max_position_size": {
+                    "description": "Risk limits",
+                    "type": "string"
+                },
+                "min_notional": {
+                    "description": "Minimum quote asset value",
+                    "type": "string"
+                },
+                "min_order_size": {
+                    "description": "Minimum base asset quantity",
+                    "type": "string"
+                },
+                "price_band_bps": {
+                    "description": "Price bands (for circuit breakers)",
+                    "type": "integer"
+                },
+                "quote_currency_hk": {
+                    "type": "string"
+                },
+                "quote_symbol": {
+                    "type": "string"
+                },
+                "stats": {
+                    "description": "24h statistics (updated periodically)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/market.MarketStats"
+                        }
+                    ]
+                },
+                "status": {
+                    "description": "Trading parameters",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/market.MarketStatus"
+                        }
+                    ]
+                },
+                "taker_fee_bps": {
+                    "description": "e.g., 20 = 0.20%",
+                    "type": "integer"
+                },
+                "tick_size": {
+                    "description": "Price increment (e.g., 0.01)",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "market.MarketStats": {
+            "type": "object",
+            "properties": {
+                "ask_price": {
+                    "type": "string"
+                },
+                "ask_size": {
+                    "type": "string"
+                },
+                "base_volume": {
+                    "description": "Volume",
+                    "type": "string"
+                },
+                "bid_price": {
+                    "description": "Order book",
+                    "type": "string"
+                },
+                "bid_size": {
+                    "type": "string"
+                },
+                "funding_rate": {
+                    "description": "Funding (for derivatives)",
+                    "type": "string"
+                },
+                "high_price": {
+                    "type": "string"
+                },
+                "last_price": {
+                    "description": "Price",
+                    "type": "string"
+                },
+                "low_price": {
+                    "type": "string"
+                },
+                "market_id": {
+                    "type": "string"
+                },
+                "next_funding_time": {
+                    "type": "string"
+                },
+                "open_price": {
+                    "type": "string"
+                },
+                "price_change": {
+                    "description": "Absolute",
+                    "type": "string"
+                },
+                "price_change_pct": {
+                    "description": "Percentage",
+                    "type": "string"
+                },
+                "quote_volume": {
+                    "description": "In quote asset",
+                    "type": "string"
+                },
+                "spread": {
+                    "description": "Ask - Bid",
+                    "type": "string"
+                },
+                "spread_bps": {
+                    "description": "Spread in basis points",
+                    "type": "integer"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "trade_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "market.MarketStatus": {
+            "type": "string",
+            "enum": [
+                "ACTIVE",
+                "INACTIVE",
+                "MAINTENANCE",
+                "SUSPENDED",
+                "DELISTED"
+            ],
+            "x-enum-varnames": [
+                "MarketStatusActive",
+                "MarketStatusInactive",
+                "MarketStatusMaintenance",
+                "MarketStatusSuspended",
+                "MarketStatusDelisted"
+            ]
         },
         "marketdata.AssetPage": {
             "type": "object",
@@ -11396,6 +12287,13 @@
                         }
                     ]
                 },
+                "networks": {
+                    "description": "Networks are the networks the currency moves on, in the public list\n(#57).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.CurrencyNetwork"
+                    }
+                },
                 "previous_symbols": {
                     "description": "PreviousSymbols are the symbols the currency had before a rebrand,\nnewest first (#215). They stay reserved for it, and the lists find the\ncurrency by them.",
                     "type": "array",
@@ -11589,6 +12487,64 @@
                 "phase": {
                     "type": "string",
                     "example": "deposits_paused"
+                }
+            }
+        },
+        "models.CurrencyNetwork": {
+            "type": "object",
+            "properties": {
+                "contract_address": {
+                    "description": "ContractAddress is the token's contract on the network, empty for the\nnative asset.",
+                    "type": "string",
+                    "example": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "deposit_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "explorer_url": {
+                    "type": "string",
+                    "example": "https://tronscan.org"
+                },
+                "fee_currency": {
+                    "description": "FeeCurrency is the symbol of the currency that pays the network fee,\nsuch as TRX for a TRC20 token.",
+                    "type": "string",
+                    "example": "TRX"
+                },
+                "max_withdrawal": {
+                    "description": "MaxWithdrawal of \"0\" is no maximum.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "min_deposit": {
+                    "type": "string",
+                    "example": "1"
+                },
+                "min_withdrawal": {
+                    "type": "string",
+                    "example": "10"
+                },
+                "network": {
+                    "description": "Network names the chain, such as \"tron\" or \"ethereum\", or \"internal\"\nfor a fiat currency.",
+                    "type": "string",
+                    "example": "tron"
+                },
+                "requires_tag": {
+                    "description": "RequiresTag says that a deposit names its account with a tag or\nmemo.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "withdrawal_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "withdrawal_fee": {
+                    "type": "string",
+                    "example": "1"
                 }
             }
         },
@@ -12869,6 +13825,17 @@
                 "KYCTierStandard",
                 "KYCTierEnhanced",
                 "KYCTierInstitutional"
+            ]
+        },
+        "shared.SettlementMode": {
+            "type": "string",
+            "enum": [
+                "OFF_CHAIN",
+                "ON_CHAIN"
+            ],
+            "x-enum-varnames": [
+                "SettlementModeOffChain",
+                "SettlementModeOnChain"
             ]
         },
         "sites.Alternate": {

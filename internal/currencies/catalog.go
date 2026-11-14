@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 
 	"github.com/redis/go-redis/v9"
@@ -30,13 +31,13 @@ const (
 	// loaded. The hash tag keeps all the keys in one slot of a Redis
 	// cluster, since scripts and MGET use several of them. The version
 	// changes with the format of the value.
-	listKey = "{currencies}:public:v1"
+	listKey = "{currencies}:public:v2"
 	// generationKey counts the invalidations. A list is written only if no
 	// invalidation happened since its load began, so that a slow load
 	// cannot write what a change replaced.
-	generationKey = "{currencies}:public:v1:generation"
+	generationKey = "{currencies}:public:v2:generation"
 	// lockKey is held by the one instance that loads and writes the list.
-	lockKey = "{currencies}:public:v1:loading"
+	lockKey = "{currencies}:public:v2:loading"
 
 	// DefaultTTL is how long a loaded list is fresh when the configuration
 	// sets no time. Changes invalidate it at once; the time bounds how long
@@ -398,9 +399,21 @@ func (c *Catalog) warn(format string, args ...interface{}) {
 	log.Printf(format, args...)
 }
 
+// publicNetworks reads the networks of the currency c as JSON objects of
+// models.CurrencyNetwork, in the query of the list, so that a currency and
+// its networks are read together (#57). NULL for none.
+const publicNetworks = `(SELECT json_agg(json_build_object(
+		'network', n.network, 'contract_address', COALESCE(n.contract_address, ''), 'decimals', n.decimals,
+		'deposit_enabled', n.deposit_enabled, 'withdrawal_enabled', n.withdrawal_enabled,
+		'min_deposit', n.min_deposit::text, 'min_withdrawal', n.min_withdrawal::text,
+		'max_withdrawal', n.max_withdrawal::text, 'withdrawal_fee', n.withdrawal_fee::text,
+		'fee_currency', COALESCE(f.info->>'symbol', ''), 'requires_tag', n.requires_tag,
+		'explorer_url', COALESCE(n.explorer_url, '')) ORDER BY n.network)
+	FROM currency_networks n LEFT JOIN currencies f ON f.hk = n.fee_currency_hk WHERE n.currency_hk = c.hk)`
+
 func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+DetailColumns+` FROM currencies c
+		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+publicNetworks+`, `+DetailColumns+` FROM currencies c
 		WHERE c.status = 'approved' AND c.deleted_at IS NULL ORDER BY c.id`)
 	if err != nil {
 		return nil, err
@@ -410,14 +423,23 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 	list := make([]models.Currency, 0)
 	for rows.Next() {
 		var currency models.Currency
-		var info []byte
+		var info, networks []byte
 		var created, updated sql.NullTime
 		var lifecycle DetailScan
-		if err := rows.Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated}, lifecycle.Dest()...)...); err != nil {
+		if err := rows.Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated, &networks},
+			lifecycle.Dest()...)...); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(info, &currency.Info); err != nil {
 			return nil, fmt.Errorf("currency %s: %w", currency.HK, err)
+		}
+		if networks != nil {
+			if err := json.Unmarshal(networks, &currency.Networks); err != nil {
+				return nil, fmt.Errorf("the networks of currency %s: %w", currency.HK, err)
+			}
+			for i := range currency.Networks {
+				normalizeAmounts(&currency.Networks[i])
+			}
 		}
 		var err error
 		if err = lifecycle.Apply(&currency); err != nil {
@@ -428,6 +450,22 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 		list = append(list, currency)
 	}
 	return list, rows.Err()
+}
+
+// normalizeAmounts trims the amounts of a network.
+func normalizeAmounts(n *models.CurrencyNetwork) {
+	for _, amount := range []*string{&n.MinDeposit, &n.MinWithdrawal, &n.MaxWithdrawal, &n.WithdrawalFee} {
+		*amount = trimAmount(*amount)
+	}
+}
+
+// trimAmount writes an amount without trailing zeros, as the other amounts
+// of the API are: "1.50" is "1.5".
+func trimAmount(s string) string {
+	if d, err := shared.NewDecimalFromString(s); err == nil {
+		return d.String()
+	}
+	return s
 }
 
 // timestamp formats a database time in RFC 3339, in UTC, or as "" when it is

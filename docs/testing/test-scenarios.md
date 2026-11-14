@@ -79,8 +79,8 @@ Approved currency fixture:
 Redis keys:
 
 ```text
-{currencies}:public:v1
-{currencies}:public:v1:generation
+{currencies}:public:v2
+{currencies}:public:v2:generation
 blacklist:token:<sha256-of-token>
 ```
 

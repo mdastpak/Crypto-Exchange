@@ -5,9 +5,12 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/assetregistry"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
+	"github.com/mdastpak/crypto-exchange/internal/domain/currency"
+	"github.com/mdastpak/crypto-exchange/internal/domain/market"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -31,6 +34,16 @@ type CurrencyStore interface {
 	ReleaseSymbol(ctx context.Context, hk, symbol string, origin audit.Event) (currencies.Written, error)
 	Get(ctx context.Context, hk string) (models.Currency, error)
 	All(ctx context.Context) ([]models.Currency, error)
+}
+
+// RegistryStore changes and reads the networks of the currencies and the
+// markets (#57): currencies.Store.
+type RegistryStore interface {
+	Networks(ctx context.Context, hk string) ([]currency.Network, error)
+	SetNetwork(ctx context.Context, hk string, n assetregistry.Network, decimals int, origin audit.Event) (currencies.NetworkWritten, error)
+	Markets(ctx context.Context) ([]market.Market, error)
+	Market(ctx context.Context, base, quote string) (market.Market, error)
+	SetMarket(ctx context.Context, m assetregistry.Market, origin audit.Event) (currencies.MarketWritten, error)
 }
 
 // CatalogCache is the cached list of public currencies, which a change

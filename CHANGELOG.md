@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The registry of networks and markets ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), on the currencies of [#309](https://github.com/mdastpak/Crypto-Exchange/issues/309).
+  - `GET /admin/currencies/{hk}/networks` and `PUT /admin/currencies/{hk}/networks/{network}` read and write how a currency moves on each network, and `GET /admin/markets` and `GET`/`PUT /admin/markets/{base}/{quote}` the markets. The writes are sensitive routes, audited as `currency.network_set` and `market.set`.
+  - They share the checks of `config/assets.yaml`, now `assetregistry.CheckNetwork` and `CheckMarket`, and the writes of `admin assets import`.
+  - The contract and the decimals of a network that exists do not change through the API (`409 network_contract_fixed`): deposits are read by the contract. A contract that another currency has on the network answers `409 contract_taken`.
+  - The public currency list shows each currency's `networks`, with the limits, fees, and fee currency. Its Redis keys move to `{currencies}:public:v2`.
+  - `GET /public/markets` lists the markets that trade or are paused, of listed currencies, from each instance's memory for ten seconds.
 - sms.ir as a second SMS provider beside Kavenegar, with failover, delivery reports, and an automatic and a manual switch for administrators ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)).
   - `notifications.sms.providers` lists the providers in order; `provider` still works for one.
   - A message moves on to the next provider when one fails to take it (network, `5xx`, `429`, key, account, credit, template, or line), never when the message itself is refused, such as an invalid or blacklisted number.
