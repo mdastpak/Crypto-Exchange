@@ -376,6 +376,8 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `mobile_ownership.api_key`, `mobile_ownership.secret_key` | none | The provider's credentials, required for `jibit`. Set them with `IDENTITY_MOBILE_OWNERSHIP_API_KEY` and `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`. |
 | `mobile_ownership.timeout_seconds` | `10` | From 1 to 60. How long one check may take, with its retries. A check that does not finish changes nothing and answers `503 identity_unavailable`. |
 | `mobile_ownership.recheck_days` | `30` | From 1 to 365. How long a successful check of a number counts before a sign-in with it checks it again ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)). |
+| `bank_ownership.provider` | `none` | `none` or `stub`, until the APIs of Jibit and Finnotech are added. It checks that a card, an IBAN, or a bank account belongs to the user's verified national ID before it joins the [withdrawal destinations](api.md#withdrawal-destinations) ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)). With `none`, cards, IBANs, and accounts cannot be added (`503 ownership_check_unavailable`); crypto addresses are not affected. `stub` matches every number, for development; release mode refuses it. |
+| `bank_ownership.timeout_seconds` | `10` | From 1 to 60. How long one check may take. A check that does not finish adds nothing and answers `503 ownership_check_unavailable`. |
 
 ### `favorites`
 
@@ -515,6 +517,16 @@ What each [verification level](api.md#verification-levels) of a user may do ([#1
 | `withdrawal_limits` | `IRR`: `1: {daily: "1000000000"}` | The withdrawal limits, per currency symbol (upper case) and level, in units of the currency, with the fee included. `daily` bounds what a user may request in any 24 hours, in all their accounts together; `per_transaction` bounds one request. An empty or absent bound is no bound, and a currency or level without an entry has none. `per_transaction` may not be above `daily`. When the key is set, it replaces the defaults instead of adding to them. |
 
 The default rial limit of level 1, 100 million tomans a day, is a placeholder: set it to the limit that applies to the exchange. Level 2 has no limit of the exchange by default: the payouts of a rial withdrawal follow the transfer limits of the banks and the payment providers, and are split into several transfers when one cannot carry the amount ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70), [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74)). A currency's own limits per network, `min_withdrawal` and `max_withdrawal` in the [asset registry](#settings-reserved-for-roadmap-features), apply as well.
+
+### `withdrawals`
+
+The [withdrawal destinations](api.md#withdrawal-destinations) of users ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `max_destinations` | `20` | From 1 to 200. How many destinations a user's list may hold, not counting removed ones. One more answers `409 destination_limit_reached`. |
+| `fiat_destination_wait_hours` | `0` | From 0 to 720. How long a new card, IBAN, or account waits before a withdrawal may use it. It must be the user's own, so by default it does not wait. |
+| `crypto_destination_wait_hours` | `24` | From 0 to 720. How long a new crypto address waits before a withdrawal may use it, so that a hijacked session cannot add an address and withdraw to it at once. |
 
 ### `keys`
 

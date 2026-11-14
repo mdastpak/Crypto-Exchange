@@ -57,6 +57,7 @@ func (c *Configuration) validateServer() error {
 	c.redisModeProblems(&p)
 	c.observabilityProblems(&p)
 	c.verificationProblems(&p)
+	c.withdrawalProblems(&p)
 	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
 	if release {
@@ -356,6 +357,9 @@ func (c *Configuration) releaseProblems(p *problems) {
 	}
 	if len(c.GeoIP.Overrides) > 0 {
 		p.add("geoip.overrides", "is set; it fixes the country of addresses for local tests, and release mode refuses it")
+	}
+	if c.Identity.BankOwnership.Provider == BankOwnershipStub {
+		p.add("identity.bank_ownership.provider", "is \"stub\", which matches every card, IBAN, and account; release mode needs a real provider, or none")
 	}
 	if c.Identity.MobileOwnership.Provider == MobileOwnershipStub {
 		p.add("identity.mobile_ownership.provider", "is \"stub\", which matches every mobile number; release mode needs a real provider, or none")

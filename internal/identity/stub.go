@@ -7,12 +7,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// Stub is a MobileOwnership for development and tests. It matches the
-// numbers that Owners lists to their national ID, and every other number
-// when MatchUnlisted is set. Release mode refuses it.
+// Stub is a MobileOwnership and a BankOwnership for development and tests.
+// It matches the numbers that Owners lists to their national ID, and every
+// other number when MatchUnlisted is set. Release mode refuses it.
 type Stub struct {
 	mu sync.Mutex
-	// Owners maps a mobile number to the national ID it belongs to.
+	// Owners maps a mobile number, or the number of a card, an IBAN, or an
+	// account, to the national ID it belongs to.
 	Owners map[string]string
 	// MatchUnlisted matches the numbers that Owners does not list.
 	MatchUnlisted bool

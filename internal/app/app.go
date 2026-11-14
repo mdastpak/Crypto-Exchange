@@ -29,6 +29,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
+	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/handlers/admin"
 	marketdataapi "github.com/mdastpak/crypto-exchange/internal/handlers/marketdata"
@@ -741,6 +742,30 @@ func configureIdentity(h *InfraHandlers) error {
 			h.SignIn.Sealer = h.DataKeys
 		}
 	}
+	return configureDestinations(h)
+}
+
+// configureDestinations sets the provider that checks the owner of a
+// card, an IBAN, or a bank account before it joins a user's withdrawal
+// destinations (#160), and the keys that read the national IDs it is
+// checked against.
+func configureDestinations(h *InfraHandlers) error {
+	bank, err := identity.BankFromConfig(config.Config.Identity.BankOwnership)
+	if err != nil {
+		return err
+	}
+	store, ok := h.User.Destinations.(destinations.Store)
+	if !ok {
+		return nil
+	}
+	store.Ownership, store.OwnershipTimeout = bank, config.Config.Identity.BankOwnership.Timeout()
+	if h.DataKeys != nil {
+		store.NationalIDs = h.DataKeys
+	}
+	h.User.Destinations = store
+	if bank == nil {
+		log.Println("WARNING: identity.bank_ownership.provider is none: users cannot add cards, IBANs, or bank accounts as withdrawal destinations")
+	}
 	return nil
 }
 
@@ -1222,6 +1247,14 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/verification", ih.User.GetVerification)
+		// The withdrawal destinations (#160). Adding one waits for a
+		// lockdown of withdrawals to end, and both changes need a fresh
+		// proof of the second factor. A lockdown of withdrawals does not hold
+		// a removal, so that a user can take out an address that is no
+		// longer safe at once.
+		activeGroup.GET("/withdrawal-destinations", ih.User.ListDestinations)
+		activeGroup.POST("/withdrawal-destinations", gate.Require(platform.FeatureWithdrawals), ih.User.RequireSecondFactor(true), ih.User.AddDestination)
+		activeGroup.DELETE("/withdrawal-destinations/:id", ih.User.RequireSecondFactor(true), ih.User.RemoveDestination)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
 		activeGroup.PUT("/favorites/order", ih.User.ReorderFavorites)
 		activeGroup.PUT("/favorites/currencies/:hk", ih.User.AddFavoriteCurrency)

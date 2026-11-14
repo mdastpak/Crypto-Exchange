@@ -109,6 +109,13 @@ const (
 	// A user adding or removing a passkey (#307). The target is the user.
 	ActionUserPasskeyAdd    = "user.passkey_add"
 	ActionUserPasskeyRemove = "user.passkey_remove" //nolint:gosec // G101: the name of a code, not a credential.
+	// A user adding or removing a withdrawal destination (#160). The target
+	// is the destination, or the user for an addition that failed, and the
+	// event holds its kind, its bank or network, and its number masked. A
+	// fiat destination whose owner the provider did not match is a failure,
+	// with the provider's reference.
+	ActionUserDestinationAdd    = "user.withdrawal_destination_add"
+	ActionUserDestinationRemove = "user.withdrawal_destination_remove"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"
@@ -187,6 +194,9 @@ const (
 	TargetUser   = "user"
 	// TargetSession is a user's session, by the session ID of its tokens.
 	TargetSession = "session"
+	// TargetWithdrawalDestination is a withdrawal destination of a user
+	// (#160), by its id.
+	TargetWithdrawalDestination = "withdrawal_destination"
 	// TargetAdminSession is an administrator's session (#308), by the
 	// session ID of its token.
 	TargetAdminSession = "admin_session"

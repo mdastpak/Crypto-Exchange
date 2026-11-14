@@ -8171,6 +8171,204 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/withdrawal-destinations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The cards, IBANs, bank accounts, and crypto addresses that the signed-in user may withdraw to, the newest first, with their numbers masked, and when each becomes usable. A withdrawal names one of them by its id; it never takes a number or an address of its own.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "List my withdrawal destinations",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.DestinationList"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "destinations_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID, which the provider checks now: 409 national_id_required without one, 403 destination_not_owned when it is someone else's, 503 ownership_check_unavailable when the provider cannot answer. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Add a withdrawal destination",
+                "parameters": [
+                    {
+                        "description": "The destination",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/destinations.Request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/destinations.Destination"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "destination_invalid, with info.reason",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "destination_not_owned, verification_required, security_hold, or step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "destination_exists, destination_taken, destination_limit_reached, or national_id_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "ownership_check_unavailable or destinations_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/withdrawal-destinations/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the destination: no withdrawal can use it afterwards. It needs a fresh proof of the second factor (403 step_up_required).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Remove a withdrawal destination",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The id of the destination",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ws/": {
             "get": {
                 "description": "Upgrades to a WebSocket. An optional user access token comes as Authorization: Bearer, or from a browser as the subprotocols access_token and the token. docs/api.md describes the messages.",
@@ -9113,6 +9311,118 @@ const docTemplate = `{
                             "$ref": "#/definitions/currencies.Lifecycle"
                         }
                     ]
+                }
+            }
+        },
+        "destinations.Destination": {
+            "type": "object",
+            "properties": {
+                "bank": {
+                    "description": "Bank is the bank of a fiat destination, when known.",
+                    "type": "string",
+                    "example": "parsian"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "enum": [
+                        "card",
+                        "iban",
+                        "account",
+                        "crypto"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/destinations.Kind"
+                        }
+                    ]
+                },
+                "label": {
+                    "type": "string"
+                },
+                "masked": {
+                    "type": "string",
+                    "example": "IR82054***************9002"
+                },
+                "network": {
+                    "description": "Network is the network of a crypto destination.",
+                    "type": "string",
+                    "example": "tron"
+                },
+                "usable_from": {
+                    "description": "UsableFrom is when a withdrawal may use it.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version is the version of the row, for the removal.",
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "destinations.Kind": {
+            "type": "string",
+            "enum": [
+                "card",
+                "iban",
+                "account",
+                "crypto"
+            ],
+            "x-enum-varnames": [
+                "KindCard",
+                "KindIBAN",
+                "KindAccount",
+                "KindCrypto"
+            ]
+        },
+        "destinations.Request": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+                },
+                "bank": {
+                    "description": "Bank is the bank of an account number, one of Banks. A card or an\nIBAN names its own.",
+                    "type": "string",
+                    "example": "parsian"
+                },
+                "kind": {
+                    "enum": [
+                        "card",
+                        "iban",
+                        "account",
+                        "crypto"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/destinations.Kind"
+                        }
+                    ],
+                    "example": "iban"
+                },
+                "label": {
+                    "description": "Label is the user's name for it.",
+                    "type": "string",
+                    "example": "My salary account"
+                },
+                "memo": {
+                    "type": "string"
+                },
+                "network": {
+                    "description": "Network and Address are a crypto destination's, and Memo its memo\nor tag where the network has one.",
+                    "type": "string",
+                    "example": "tron"
+                },
+                "number": {
+                    "description": "Number is the card number, the IBAN, or the account number, with or\nwithout spaces and dashes, in ASCII, Persian, or Arabic digits.",
+                    "type": "string",
+                    "example": "IR820540102680020817909002"
                 }
             }
         },
@@ -11562,6 +11872,17 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/user.Contact"
+                    }
+                }
+            }
+        },
+        "user.DestinationList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/destinations.Destination"
                     }
                 }
             }

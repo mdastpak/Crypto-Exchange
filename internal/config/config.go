@@ -384,6 +384,10 @@ type Configuration struct {
 		// the national ID of its user (#253), as the Shahkar service of the
 		// Communications Regulatory Authority answers it.
 		MobileOwnership MobileOwnershipConfig `yaml:"mobile_ownership"`
+		// BankOwnership checks that a card, an IBAN, or a bank account
+		// belongs to the national ID of its user (#158), before it joins
+		// the user's withdrawal destinations (#160).
+		BankOwnership BankOwnershipConfig `yaml:"bank_ownership"`
 	} `yaml:"identity"`
 
 	// I18n lists the locales that the product supports and its fallback
@@ -470,6 +474,9 @@ type Configuration struct {
 	// Verification sets what each verification level of a user may do
 	// (#157).
 	Verification VerificationConfig `yaml:"verification"`
+
+	// Withdrawals configures the withdrawal destinations of users (#160).
+	Withdrawals WithdrawalsConfig `yaml:"withdrawals"`
 
 	// Keys says where the key-encryption key (KEK) of the data-protection
 	// keys lives. See docs/data-protection.md.

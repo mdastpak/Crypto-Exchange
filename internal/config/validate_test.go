@@ -171,6 +171,15 @@ func TestValidateServer_Rules(t *testing.T) {
 			c.Verification.WithdrawalLimits["usdt"] = map[int]WithdrawalLimit{1: {Daily: "100"}}
 		}, "verification.withdrawal_limits.usdt is not a currency symbol"},
 
+		// The withdrawal destinations (#160).
+		"unknown bank ownership provider": {func(c *Configuration) { c.Identity.BankOwnership.Provider = "jibit" }, `identity.bank_ownership.provider is "jibit"; it must be none or stub`},
+		"bank ownership stub released":    {func(c *Configuration) { c.Identity.BankOwnership.Provider = BankOwnershipStub }, `identity.bank_ownership.provider is "stub"`},
+		"too many destinations":           {func(c *Configuration) { c.Withdrawals.MaxDestinations = 500 }, "withdrawals.max_destinations is 500; it must be from 1 to 200"},
+		"a negative wait": {func(c *Configuration) {
+			wait := -1
+			c.Withdrawals.FiatDestinationWaitHours = &wait
+		}, "withdrawals.fiat_destination_wait_hours is -1; it must be from 0 to 720"},
+
 		// TLS files, in every mode.
 		"TLS without files": {func(c *Configuration) { c.Server.TLS.Enabled = true }, "server.tls.enabled (SERVER_TLS_ENABLED) is true, but server.tls.cert_file (SERVER_TLS_CERT_FILE) and server.tls.key_file (SERVER_TLS_KEY_FILE) must both be set"},
 	} {
