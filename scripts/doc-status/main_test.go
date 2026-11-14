@@ -75,3 +75,18 @@ func TestParseStatusTable_TheReadme(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, len(rows), 10)
 }
+
+func TestClosedBy(t *testing.T) {
+	body := "## Related issues\n\nFixes #371\nCloses: #12, and resolves #7. See #8, fixed #9.\nRefs #10; prefix#11 is not one."
+	assert.Equal(t, map[int]bool{371: true, 12: true, 7: true, 9: true}, ClosedBy(body))
+	assert.Empty(t, ClosedBy(""), "a scheduled run has no pull request")
+
+	// The row of a pull request that implements #1, with #1 still open
+	// until it merges, agrees.
+	rows, err := ParseStatusTable(readme, "o/r")
+	require.NoError(t, err)
+	closing := ClosedBy("Fixes #1")
+	problems, err := Check(rows[:1], func(n int) (bool, error) { return !closing[n], nil })
+	require.NoError(t, err)
+	assert.Empty(t, problems)
+}

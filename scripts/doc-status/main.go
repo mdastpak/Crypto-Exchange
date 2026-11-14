@@ -2,7 +2,9 @@
 // with the issues it links (#313). A row that says Implemented must link
 // only closed issues; any other row (Partial, Planned, Foundation, ...) that
 // links issues must link at least one open one, the work it waits for.
-// Pull request links are not checked.
+// Pull request links are not checked. On a pull request, the issues that
+// its body closes with a keyword such as "Fixes #12" count as closed, as
+// they are once it merges (PR_BODY).
 //
 // It reads issue states from the GitHub API, so it runs in a scheduled
 // workflow (.github/workflows/doc-status.yml), not in go test:
@@ -113,6 +115,24 @@ func Check(rows []Row, open func(int) (bool, error)) ([]string, error) {
 	return problems, nil
 }
 
+// closingRef is a closing keyword of GitHub with the issue it closes, such
+// as "Fixes #371" or "closes: #12".
+var closingRef = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b`)
+
+// ClosedBy returns the issues that a pull request with body closes when it
+// merges. A row of the pull request that marks one of them Implemented
+// agrees with it once the pull request merges, so the check counts them
+// as closed.
+func ClosedBy(body string) map[int]bool {
+	closed := map[int]bool{}
+	for _, m := range closingRef.FindAllStringSubmatch(body, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			closed[n] = true
+		}
+	}
+	return closed
+}
+
 // githubStates reads issue states from the GitHub API, once per issue.
 func githubStates(ctx context.Context, repo, token string) func(int) (bool, error) {
 	client := &http.Client{Timeout: 20 * time.Second}
@@ -174,7 +194,19 @@ func run(path, repo string) error {
 	if err != nil {
 		return err
 	}
-	problems, err := Check(rows, githubStates(context.Background(), repo, os.Getenv("GITHUB_TOKEN")))
+	states := githubStates(context.Background(), repo, os.Getenv("GITHUB_TOKEN"))
+	// On a pull request, the workflow passes its body: the issues it
+	// closes are closed once it merges.
+	closing := ClosedBy(os.Getenv("PR_BODY"))
+	for n := range closing {
+		fmt.Printf("#%d counts as closed: this pull request closes it\n", n)
+	}
+	problems, err := Check(rows, func(n int) (bool, error) {
+		if closing[n] {
+			return false, nil
+		}
+		return states(n)
+	})
 	if err != nil {
 		return err
 	}
