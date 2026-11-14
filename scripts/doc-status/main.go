@@ -3,8 +3,8 @@
 // only closed issues; any other row (Partial, Planned, Foundation, ...) that
 // links issues must link at least one open one, the work it waits for.
 // Pull request links are not checked. On a pull request, the issues that
-// its body closes with a keyword such as "Fixes #12" count as closed, as
-// they are once it merges (PR_BODY).
+// its body closes with a keyword such as "Fixes #12", outside comments and
+// code, count as closed, as they are once it merges (PR_BODY).
 //
 // It reads issue states from the GitHub API, so it runs in a scheduled
 // workflow (.github/workflows/doc-status.yml), not in go test:
@@ -119,12 +119,18 @@ func Check(rows []Row, open func(int) (bool, error)) ([]string, error) {
 // as "Fixes #371" or "closes: #12".
 var closingRef = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b`)
 
+// notReferences are the parts of a body in which GitHub closes no issue:
+// HTML comments, such as the example "Fixes #8" of the pull request
+// template, fenced code blocks, and code spans.
+var notReferences = regexp.MustCompile("(?s)<!--.*?-->|```.*?```|~~~.*?~~~|`[^`\n]*`")
+
 // ClosedBy returns the issues that a pull request with body closes when it
 // merges. A row of the pull request that marks one of them Implemented
 // agrees with it once the pull request merges, so the check counts them
-// as closed.
+// as closed. A keyword in a comment or in code closes nothing.
 func ClosedBy(body string) map[int]bool {
 	closed := map[int]bool{}
+	body = notReferences.ReplaceAllString(body, " ")
 	for _, m := range closingRef.FindAllStringSubmatch(body, -1) {
 		if n, err := strconv.Atoi(m[1]); err == nil {
 			closed[n] = true

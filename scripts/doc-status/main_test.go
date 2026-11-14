@@ -81,6 +81,12 @@ func TestClosedBy(t *testing.T) {
 	assert.Equal(t, map[int]bool{371: true, 12: true, 7: true, 9: true}, ClosedBy(body))
 	assert.Empty(t, ClosedBy(""), "a scheduled run has no pull request")
 
+	// GitHub closes nothing from a comment or code, such as the example
+	// of the pull request template.
+	template := "<!-- Use a closing keyword, for example: Fixes #8 -->\n\nFixes #\n\n" +
+		"Keywords such as `Fixes #12` and\n```\nCloses #13\n```\n~~~\nresolves #14\n~~~\n<!--\nfixes #15\n-->\nFixes #16"
+	assert.Equal(t, map[int]bool{16: true}, ClosedBy(template))
+
 	// The row of a pull request that implements #1, with #1 still open
 	// until it merges, agrees.
 	rows, err := ParseStatusTable(readme, "o/r")
