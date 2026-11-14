@@ -1036,17 +1036,6 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// The authenticator apps; useDataKeysForOTP gives them the keys.
 	totpStore := &userauth.TOTP{DB: services.Postgres.DB, Passwords: passwords, Issuer: config.Config.Exchange.Name}
 	userHandler.TOTP, publicHandler.TOTP = totpStore, totpStore
-	// The confirmations of withdrawals (#161): codes of their own
-	// namespace, so that a confirmation code cannot sign in and a sign-in
-	// code cannot confirm. Run gives them the delivery of the codes.
-	if services.Redis != nil {
-		settings := otp.SettingsOf(&config.Config)
-		settings.Namespace = confirm.Namespace
-		userHandler.Confirmations = confirm.Service{DB: services.Postgres.DB,
-			Codes:             otp.NewStore(services.Redis.Client, settings),
-			Authenticator:     totpStore,
-			SMSForWithdrawals: config.Config.Notifications.SMS.Kavenegar.WithdrawalTemplate != "" || config.Config.OTP.Auth.DevLogCodes}
-	}
 	// The passkeys of users. Without security.passkeys.rp_id the service
 	// is disabled, and its routes say so.
 	passkeys, err := passkey.New(services.Postgres.DB, services.Redis.Client, passkeyConfig())
@@ -1055,6 +1044,17 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 		passkeys, _ = passkey.New(services.Postgres.DB, services.Redis.Client, passkey.Config{})
 	}
 	userHandler.Passkeys, publicHandler.Passkeys = passkeys, passkeys
+	// The confirmations of withdrawals (#161): by passkey (#373), by the
+	// authenticator app, or by codes of their own namespace, so that a
+	// confirmation code cannot sign in and a sign-in code cannot confirm.
+	// Run gives them the delivery of the codes.
+	confirmCodes := otp.SettingsOf(&config.Config)
+	confirmCodes.Namespace = confirm.Namespace
+	userHandler.Confirmations = confirm.Service{DB: services.Postgres.DB,
+		Passkeys:          passkeys,
+		Codes:             otp.NewStore(services.Redis.Client, confirmCodes),
+		Authenticator:     totpStore,
+		SMSForWithdrawals: config.Config.Notifications.SMS.Kavenegar.WithdrawalTemplate != "" || config.Config.OTP.Auth.DevLogCodes}
 	guard := &userauth.Guard{DB: services.Postgres.DB}
 	userHandler.Guard, publicHandler.Guard = guard, guard
 	marketData := newMarketDataAPI(services)

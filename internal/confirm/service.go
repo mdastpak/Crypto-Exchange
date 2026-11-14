@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -12,9 +13,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
 )
 
@@ -34,9 +37,24 @@ type Authenticator interface {
 	Verify(ctx context.Context, userHK, code string) error
 }
 
+// Passkeys proves the user's passkeys: *passkey.Service. A ceremony begun
+// for one scope finishes no other, and the device must verify its holder.
+type Passkeys interface {
+	Enabled() bool
+	Count(ctx context.Context, userHK string) (int, error)
+	BeginAssertion(ctx context.Context, userHK, scope string) (*protocol.CredentialAssertion, error)
+	FinishAssertion(ctx context.Context, userHK, scope string, response []byte) error
+}
+
+// passkeyScope is the scope of the passkey ceremony of a confirmation, so
+// that the answer to one confirmation's challenge confirms no other.
+func passkeyScope(id string) string { return "confirmation:" + id }
+
 // Service confirms operations with the user's second factor.
 type Service struct {
 	DB *sql.DB
+	// Passkeys proves passkeys (#373); nil is no such method.
+	Passkeys Passkeys
 	// Codes and Sender issue and deliver the codes of SMS and email; nil
 	// is no such method.
 	Codes  Codes
@@ -77,6 +95,15 @@ type contactOf struct{ typ, value, masked string }
 // that the codes of SMS and email go to.
 func (s Service) available(ctx context.Context, userHK string) (map[Method]contactOf, error) {
 	out := map[Method]contactOf{}
+	if s.Passkeys != nil && s.Passkeys.Enabled() {
+		n, err := s.Passkeys.Count(ctx, userHK)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			out[MethodPasskey] = contactOf{}
+		}
+	}
 	if s.Authenticator != nil {
 		enabled, err := s.Authenticator.Enabled(ctx, userHK)
 		switch {
@@ -150,11 +177,11 @@ func (s Service) available(ctx context.Context, userHK string) (map[Method]conta
 // confirmations use, and every one they can use now.
 type Settings struct {
 	// Method is the method the user chose; absent when they chose none.
-	Method Method `json:"method,omitempty" enums:"totp,sms,email"`
+	Method Method `json:"method,omitempty" enums:"passkey,totp,sms,email"`
 	// Effective is the method that confirmations use: the chosen one
 	// while it is available, or else the first available of totp, sms,
 	// and email. Absent when none is available.
-	Effective Method `json:"effective,omitempty" enums:"totp,sms,email"`
+	Effective Method `json:"effective,omitempty" enums:"passkey,totp,sms,email"`
 	// Available are the methods the user can use now.
 	Available []Method `json:"available"`
 }
@@ -279,12 +306,45 @@ func (d Details) valid() bool {
 // Challenge is a confirmation as the user sees it.
 type Challenge struct {
 	ID     string `json:"id" format:"uuid"`
-	Method Method `json:"method" enums:"totp,sms,email"`
+	Method Method `json:"method" enums:"passkey,totp,sms,email"`
 	// SentTo is the contact that an SMS or email code went to, masked.
 	SentTo string `json:"sent_to,omitempty" example:"091*****567"`
+	// Passkey are the options for navigator.credentials.get of a
+	// confirmation by passkey, under publicKey. The device's answer goes to
+	// POST /user/confirmations/{id} as passkey.
+	Passkey *PasskeyOptions `json:"passkey,omitempty"`
 	// Details are what the code confirms.
 	Details   Details   `json:"details"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// PasskeyOptions are the options of a confirmation by passkey that the
+// client hands to navigator.credentials.get, as passkey.Options documents
+// them.
+type PasskeyOptions struct {
+	// PublicKey holds the options, as the WebAuthn API defines them.
+	PublicKey map[string]any `json:"publicKey"`
+}
+
+// optionsOf returns the options of an assertion in the form the API
+// documents.
+func optionsOf(a *protocol.CredentialAssertion) (*PasskeyOptions, error) {
+	raw, err := json.Marshal(a.Response)
+	if err != nil {
+		return nil, fmt.Errorf("encode the passkey options: %w", err)
+	}
+	out := &PasskeyOptions{}
+	if err := json.Unmarshal(raw, &out.PublicKey); err != nil {
+		return nil, fmt.Errorf("encode the passkey options: %w", err)
+	}
+	return out, nil
+}
+
+// Proof is what confirms a confirmation: a code, or the answer of a
+// device to the options of a confirmation by passkey.
+type Proof struct {
+	Code    string
+	Passkey []byte
 }
 
 // Start starts the confirmation of an operation of the user: purpose, its
@@ -306,7 +366,16 @@ func (s Service) Start(ctx context.Context, userHK string, p Purpose, digest []b
 	var session *string
 	var code string
 	contact := available[st.Effective]
-	if st.Effective != MethodTOTP {
+	if st.Effective == MethodPasskey {
+		options, err := s.Passkeys.BeginAssertion(ctx, userHK, passkeyScope(c.ID))
+		if err != nil {
+			return Challenge{}, fmt.Errorf("begin the passkey: %w", err)
+		}
+		if c.Passkey, err = optionsOf(options); err != nil {
+			return Challenge{}, err
+		}
+	}
+	if st.Effective.sendsCode() {
 		issued, err := s.Codes.Issue(ctx, contact.value, client)
 		if errors.Is(err, otp.ErrTooManyRequests) || errors.Is(err, otp.ErrTooManyAttempts) {
 			return Challenge{}, fmt.Errorf("%w: %w", ErrTooManyAttempts, err)
@@ -396,11 +465,11 @@ func (s Service) load(ctx context.Context, tx *sql.Tx, userHK, id string) (store
 	return c, nil
 }
 
-// Confirm checks the user's code of the confirmation id, and records
-// origin, the audit event of the request, with the outcome. A wrong code
-// counts against the confirmation: after MaxAttempts, it can no longer be
-// confirmed.
-func (s Service) Confirm(ctx context.Context, userHK, id, code string, origin audit.Event) error {
+// Confirm checks the user's proof of the confirmation id, a code or a
+// passkey's answer, and records origin, the audit event of the request,
+// with the outcome. A wrong proof counts against the confirmation: after
+// MaxAttempts, it can no longer be confirmed.
+func (s Service) Confirm(ctx context.Context, userHK, id string, proof Proof, origin audit.Event) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -423,7 +492,7 @@ func (s Service) Confirm(ctx context.Context, userHK, id, code string, origin au
 	event.Action, event.TargetType, event.TargetID = audit.ActionUserOperationConfirm, audit.TargetOperationConfirmation, id
 	event.Changes = &audit.Changes{After: map[string]interface{}{"purpose": c.purpose, "method": c.method, "amount": c.details.Amount, "destination": c.details.Destination}}
 
-	wrong, err := s.check(ctx, userHK, c, code)
+	wrong, err := s.check(ctx, userHK, c, proof)
 	if err != nil {
 		return err
 	}
@@ -462,15 +531,32 @@ func (s Service) Confirm(ctx context.Context, userHK, id, code string, origin au
 	return tx.Commit()
 }
 
-// check checks code with the confirmation's method. It returns a wrong
-// code as wrong, ErrInvalidCode or ErrTooManyAttempts, and any other
+// check checks the proof with the confirmation's method. It returns a
+// wrong proof as wrong, ErrInvalidCode or ErrTooManyAttempts, and any other
 // failure as err.
-func (s Service) check(ctx context.Context, userHK string, c stored, code string) (wrong, err error) {
-	if Method(c.method) == MethodTOTP {
+func (s Service) check(ctx context.Context, userHK string, c stored, proof Proof) (wrong, err error) {
+	switch Method(c.method) {
+	case MethodPasskey:
+		if s.Passkeys == nil || len(proof.Passkey) == 0 {
+			return ErrInvalidCode, nil
+		}
+		err := s.Passkeys.FinishAssertion(ctx, userHK, passkeyScope(c.id), proof.Passkey)
+		switch {
+		case err == nil:
+			return nil, nil
+		case errors.Is(err, passkey.ErrInvalid), errors.Is(err, passkey.ErrNoCeremony), errors.Is(err, passkey.ErrCloned):
+			// The ceremony is taken by the attempt: a new one needs
+			// Resend, which begins it again.
+			return ErrInvalidCode, nil
+		case errors.Is(err, passkey.ErrDisabled), errors.Is(err, passkey.ErrNoPasskey):
+			return nil, ErrMethodUnavailable
+		}
+		return nil, err
+	case MethodTOTP:
 		if s.Authenticator == nil {
 			return nil, ErrMethodUnavailable
 		}
-		err := s.Authenticator.Verify(ctx, userHK, code)
+		err := s.Authenticator.Verify(ctx, userHK, proof.Code)
 		var locked *userauth.LockedError
 		switch {
 		case err == nil:
@@ -487,7 +573,7 @@ func (s Service) check(ctx context.Context, userHK string, c stored, code string
 	if s.Codes == nil || !c.session.Valid {
 		return nil, ErrMethodUnavailable
 	}
-	_, err = s.Codes.Verify(ctx, c.session.String, code)
+	_, err = s.Codes.Verify(ctx, c.session.String, proof.Code)
 	switch {
 	case err == nil:
 		return nil, nil
@@ -500,8 +586,9 @@ func (s Service) check(ctx context.Context, userHK string, c stored, code string
 }
 
 // Resend sends a new code of an SMS or email confirmation that is not
-// confirmed yet, and gives it a new lifetime. The code store's limits
-// bound how often. An authenticator confirmation has nothing to send.
+// confirmed yet, or begins a new passkey ceremony of a confirmation by
+// passkey, and gives it a new lifetime. The code store's limits bound how
+// often codes go out. An authenticator confirmation has nothing to send.
 func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challenge, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -519,6 +606,8 @@ func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challen
 		return Challenge{}, ErrTooManyAttempts
 	case Method(c.method) == MethodTOTP:
 		return Challenge{}, ErrMethodUnavailable
+	case Method(c.method) == MethodPasskey:
+		return s.restartPasskey(ctx, tx, userHK, c)
 	}
 	available, err := s.available(ctx, userHK)
 	if err != nil {
@@ -548,6 +637,33 @@ func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challen
 		return Challenge{}, err
 	}
 	return out, s.send(ctx, Purpose(c.purpose), contact, issued.Code, c.details)
+}
+
+// restartPasskey begins a new passkey ceremony of the confirmation c, whose
+// previous one an attempt took, and gives the confirmation a new lifetime.
+func (s Service) restartPasskey(ctx context.Context, tx *sql.Tx, userHK string, c stored) (Challenge, error) {
+	if s.Passkeys == nil {
+		return Challenge{}, ErrMethodUnavailable
+	}
+	options, err := s.Passkeys.BeginAssertion(ctx, userHK, passkeyScope(c.id))
+	if errors.Is(err, passkey.ErrDisabled) || errors.Is(err, passkey.ErrNoPasskey) {
+		return Challenge{}, ErrMethodUnavailable
+	}
+	if err != nil {
+		return Challenge{}, fmt.Errorf("begin the passkey: %w", err)
+	}
+	out := Challenge{ID: c.id, Method: MethodPasskey, Details: c.details}
+	if out.Passkey, err = optionsOf(options); err != nil {
+		return Challenge{}, err
+	}
+	if err := tx.QueryRowContext(ctx, `UPDATE operation_confirmations SET expires_at = NOW() + make_interval(secs => $2)
+		WHERE id = $1 RETURNING expires_at`, c.id, s.ttl().Seconds()).Scan(&out.ExpiresAt); err != nil {
+		return Challenge{}, fmt.Errorf("renew the confirmation: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.OperationConfirmations, "id = $1", c.id); err != nil {
+		return Challenge{}, err
+	}
+	return out, tx.Commit()
 }
 
 // Consume uses the confirmation id for an operation of the user, in tx,

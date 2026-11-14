@@ -435,9 +435,17 @@ definitions:
         allOf:
         - $ref: '#/definitions/confirm.Method'
         enum:
+        - passkey
         - totp
         - sms
         - email
+      passkey:
+        allOf:
+        - $ref: '#/definitions/confirm.PasskeyOptions'
+        description: |-
+          Passkey are the options for navigator.credentials.get of a
+          confirmation by passkey, under publicKey. The device's answer goes to
+          POST /user/confirmations/{id} as passkey.
       sent_to:
         description: SentTo is the contact that an SMS or email code went to, masked.
         example: 091*****567
@@ -456,14 +464,23 @@ definitions:
     type: object
   confirm.Method:
     enum:
+    - passkey
     - totp
     - sms
     - email
     type: string
     x-enum-varnames:
+    - MethodPasskey
     - MethodTOTP
     - MethodSMS
     - MethodEmail
+  confirm.PasskeyOptions:
+    properties:
+      publicKey:
+        additionalProperties: {}
+        description: PublicKey holds the options, as the WebAuthn API defines them.
+        type: object
+    type: object
   confirm.Settings:
     properties:
       available:
@@ -479,6 +496,7 @@ definitions:
           while it is available, or else the first available of totp, sms,
           and email. Absent when none is available.
         enum:
+        - passkey
         - totp
         - sms
         - email
@@ -487,6 +505,7 @@ definitions:
         - $ref: '#/definitions/confirm.Method'
         description: Method is the method the user chose; absent when they chose none.
         enum:
+        - passkey
         - totp
         - sms
         - email
@@ -2515,8 +2534,14 @@ definitions:
   user.ConfirmRequest:
     properties:
       code:
+        description: Code is the code of an SMS, email, or authenticator confirmation.
         example: "482913"
         type: string
+      passkey:
+        description: |-
+          Passkey is the answer of the device to the options of a
+          confirmation by passkey (#373). It replaces the code.
+        type: object
     type: object
   user.ConfirmationMethodRequest:
     properties:
@@ -2524,6 +2549,7 @@ definitions:
         allOf:
         - $ref: '#/definitions/confirm.Method'
         enum:
+        - passkey
         - totp
         - sms
         - email
