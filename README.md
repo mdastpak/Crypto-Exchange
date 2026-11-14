@@ -388,6 +388,24 @@ Work is organized into milestones. Each milestone has a tracking epic with order
 | [M3 - Phase 2: Spot trading](https://github.com/mdastpak/Crypto-Exchange/milestone/4) | Order gateway, matching engine, order book data, margin | [#86](https://github.com/mdastpak/Crypto-Exchange/issues/86) |
 | [M4 - Phase 3: Derivatives](https://github.com/mdastpak/Crypto-Exchange/milestone/5) | Perpetual futures and options | [#87](https://github.com/mdastpak/Crypto-Exchange/issues/87) |
 
+### Order of work and scope freeze
+
+Recorded on 2026-11-14 for [#310](https://github.com/mdastpak/Crypto-Exchange/issues/310). The money path decides whether the product exists, and its decisions should shape the features around it, not the other way round.
+
+**Done first:** the composition root [#48](https://github.com/mdastpak/Crypto-Exchange/issues/48), observability [#50](https://github.com/mdastpak/Crypto-Exchange/issues/50), the one table of assets [#309](https://github.com/mdastpak/Crypto-Exchange/issues/309), exact amounts [#314](https://github.com/mdastpak/Crypto-Exchange/issues/314), the ledger [#60](https://github.com/mdastpak/Crypto-Exchange/issues/60), verification levels [#157](https://github.com/mdastpak/Crypto-Exchange/issues/157), withdrawal destinations [#160](https://github.com/mdastpak/Crypto-Exchange/issues/160), and the confirmation of withdrawals [#161](https://github.com/mdastpak/Crypto-Exchange/issues/161).
+
+**Next, in order:**
+
+1. The asset and market registry on `currencies` [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57).
+2. Prices: the aggregator [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) and the price cache [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59).
+3. OTC: firm quotes [#61](https://github.com/mdastpak/Crypto-Exchange/issues/61) and their execution [#62](https://github.com/mdastpak/Crypto-Exchange/issues/62).
+4. Settlement [#67](https://github.com/mdastpak/Crypto-Exchange/issues/67), custody on TRON [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68) and Bitcoin [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69), and the withdrawal workflow [#70](https://github.com/mdastpak/Crypto-Exchange/issues/70).
+5. KYC [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72) and AML with sanctions screening [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73).
+
+**Scope freeze.** Until a user can deposit test funds, get a quote, execute it, and withdraw on a testnet, no new peripheral feature starts: no new market-data source, no new site or i18n feature, and no new admin convenience. Bugs, security fixes, and review findings continue.
+
+**Definition of done.** A milestone closes when its epic's acceptance criteria work end to end, not when its issues are closed. For M2 [#85](https://github.com/mdastpak/Crypto-Exchange/issues/85), that is the testnet run above.
+
 Issues are labeled by `type:`, `priority:` (P0 to P3), and `feature:`. [CONTRIBUTING.md](CONTRIBUTING.md#labels-and-milestones) explains the labels.
 
 ## Contributing
