@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/agreements"
 	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
@@ -152,4 +153,11 @@ type AntiPhishingStore interface {
 	Set(ctx context.Context, userHK, phrase string, origin audit.Event) error
 	Remove(ctx context.Context, userHK string, origin audit.Event) error
 	antiphishing.Reader
+}
+
+// AgreementStore reads and records which legal documents a user accepted
+// (#316): agreements.Store.
+type AgreementStore interface {
+	Missing(ctx context.Context, userHK string) ([]agreements.Document, error)
+	Accept(ctx context.Context, userHK string, accept map[string]string, origin agreements.Origin) error
 }

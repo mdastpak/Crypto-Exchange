@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/dberr"
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
@@ -78,6 +79,8 @@ type PublicHandler struct {
 	// TOTP checks the authenticator apps, a second step that a user can
 	// prove instead of the password.
 	TOTP AuthenticatorStore
+	// GeoIP finds the country of a sign-up (#316). Nil knows none.
+	GeoIP *geoip.Resolver
 	// Passkeys checks the passkeys, another second step that a user can
 	// prove instead of the password.
 	Passkeys PasskeyVerifier
@@ -115,6 +118,11 @@ type OTPRequest struct {
 type VerifyOTPRequest struct {
 	UUID string `json:"uuid"`
 	OTP  string `json:"otp"`
+	// Accept is, for a contact without an account, the versions of the
+	// legal documents that its holder accepted, by kind. A client that
+	// does not know them leaves it out, and gets 428 signup_terms_required
+	// with the documents.
+	Accept map[string]string `json:"accept,omitempty" example:"terms:2026-11,privacy:2026-11"`
 }
 
 // @Summary Request a sign-in code
@@ -211,6 +219,7 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse
 // @Failure 409 {object} models.APIResponse{info=SessionLimitInfo} "session_limit_reached: the user has the most active sessions allowed"
+// @Failure 428 {object} models.APIResponse{info=SignUpTermsInfo} "signup_terms_required: the contact has no account, and one is created with the accepted legal documents; see POST /public/auth/sign-up"
 // @Failure 429 {object} models.APIResponse
 // @Failure 503 {object} models.APIResponse "identity_unavailable: the mobile number is due for a check against the national ID of its account, and the provider cannot answer now"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
@@ -262,7 +271,25 @@ func (h *PublicHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	userHK, err := h.checkOrCreateUser(ctx, audit.FromRequest(c), contactType, contact)
+	h.finishSignIn(c, ctx, contactType, contact, h.signUpOf(c, req.Accept), attempt)
+}
+
+// finishSignIn signs in the holder of a contact whose code was right, to
+// its account or to a new one, and answers. signUp is what a new account
+// needs. attempt is the audit event of a refusal.
+func (h *PublicHandler) finishSignIn(c *gin.Context, ctx context.Context, contactType, contact string, signUp signUpInfo, attempt audit.Event) {
+	userHK, err := h.checkOrCreateUser(ctx, audit.FromRequest(c), contactType, contact, signUp)
+	if errors.Is(err, errTermsRequired) {
+		// The code was right and the contact has no account: one is
+		// created only once its holder accepted the documents (#316).
+		h.askSignUpTerms(c, ctx, contactType, contact, attempt)
+		return
+	}
+	if errors.Is(err, errSignUpCountry) {
+		h.noteSignIn(ctx, attempt, audit.Denied, codeSignUpCountry)
+		helpers.SendError(c, http.StatusForbidden, codeSignUpCountry, i18n.M("SIGN_UP_COUNTRY_UNSUPPORTED"), nil)
+		return
+	}
 	if errors.Is(err, errAccountUnavailable) || errors.Is(err, errAdminAccount) {
 		// The code was right, so the refusal is the account's.
 		attempt.ActorType, attempt.ActorID = h.contactOwner(ctx, contactType, contact)
@@ -374,6 +401,8 @@ var (
 	errAccountFrozen       = signin.ErrAccountFrozen
 	errIdentityUnavailable = signin.ErrIdentityUnavailable
 	errAdminAccount        = signin.ErrAdminAccount
+	errTermsRequired       = signin.ErrTermsRequired
+	errSignUpCountry       = signin.ErrSignUpCountry
 )
 
 // codeIdentityUnavailable is the code of the refusal of a mobile number
@@ -383,11 +412,11 @@ const codeIdentityUnavailable = "identity_unavailable"
 // checkOrCreateUser returns the user that owns a contact, and creates one
 // when none does; see signin.Accounts.FindOrCreate. origin holds the
 // request's fields for the audit event of a new user.
-func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
+func (h *PublicHandler) checkOrCreateUser(ctx context.Context, origin audit.Event, contactType, contact string, signUp signUpInfo) (uuid.UUID, error) {
 	if h.Accounts == nil {
 		return uuid.Nil, errors.New("sign-in is not available")
 	}
-	return h.Accounts.FindOrCreate(ctx, origin, contactType, contact)
+	return h.Accounts.FindOrCreate(ctx, origin, contactType, contact, signUp)
 }
 
 // @Summary Refresh the access token

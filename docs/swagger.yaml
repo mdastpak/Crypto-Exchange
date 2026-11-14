@@ -308,6 +308,21 @@ definitions:
       user_agent:
         type: string
     type: object
+  agreements.Document:
+    properties:
+      kind:
+        description: Kind names the document, such as "terms" or "privacy".
+        example: terms
+        type: string
+      url:
+        description: URL is where the client shows it.
+        example: https://example.com/legal/terms
+        type: string
+      version:
+        description: Version is its current version.
+        example: 2026-11
+        type: string
+    type: object
   antiphishing.Status:
     properties:
       change_reason:
@@ -2058,6 +2073,36 @@ definitions:
           $ref: '#/definitions/auth.SessionInfo'
         type: array
     type: object
+  public.SignUpRequest:
+    properties:
+      accept:
+        additionalProperties:
+          type: string
+        description: Accept are the versions that the holder accepted, by kind.
+        example:
+          privacy: 2026-11
+          terms: 2026-11
+        type: object
+      challenge:
+        type: string
+    type: object
+  public.SignUpTermsInfo:
+    properties:
+      challenge:
+        description: Challenge creates the account with POST /public/auth/sign-up.
+        type: string
+      documents:
+        description: |-
+          Documents are the documents to show and accept, in their current
+          versions.
+        items:
+          $ref: '#/definitions/agreements.Document'
+        type: array
+      expires_in:
+        description: ExpiresIn is how long the challenge can be used, in seconds.
+        example: 600
+        type: integer
+    type: object
   public.SiteChoice:
     properties:
       locale:
@@ -2145,6 +2190,18 @@ definitions:
     type: object
   public.VerifyOTPRequest:
     properties:
+      accept:
+        additionalProperties:
+          type: string
+        description: |-
+          Accept is, for a contact without an account, the versions of the
+          legal documents that its holder accepted, by kind. A client that
+          does not know them leaves it out, and gets 428 signup_terms_required
+          with the documents.
+        example:
+          privacy: 2026-11
+          terms: 2026-11
+        type: object
       otp:
         type: string
       uuid:
@@ -2546,6 +2603,19 @@ definitions:
       status:
         type: string
     type: object
+  user.AcceptAgreementsRequest:
+    properties:
+      accept:
+        additionalProperties:
+          type: string
+        description: |-
+          Accept are the versions that the user accepted, by kind. It must
+          have the current version of every required document.
+        example:
+          privacy: 2026-11
+          terms: 2026-11
+        type: object
+    type: object
   user.AddPasskeyRequest:
     properties:
       credential:
@@ -2557,6 +2627,22 @@ definitions:
         description: Name is what the user calls the passkey, such as the device.
         example: iPhone
         type: string
+    type: object
+  user.AgreementsInfo:
+    properties:
+      documents:
+        description: Documents are the required documents in their current versions.
+        items:
+          $ref: '#/definitions/agreements.Document'
+        type: array
+      pending:
+        description: |-
+          Pending are those whose current version the user has not accepted.
+          While it is not empty, the changes of the user answer 403
+          terms_update_required.
+        items:
+          $ref: '#/definitions/agreements.Document'
+        type: array
     type: object
   user.AntiPhishingCodeRequest:
     properties:
@@ -6402,6 +6488,16 @@ paths:
                 info:
                   $ref: '#/definitions/public.SessionLimitInfo'
               type: object
+        "428":
+          description: 'signup_terms_required: the contact has no account, and one
+            is created with the accepted legal documents; see POST /public/auth/sign-up'
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/public.SignUpTermsInfo'
+              type: object
         "429":
           description: Too Many Requests
           schema:
@@ -6852,6 +6948,70 @@ paths:
       summary: End a session to sign in past the session limit
       tags:
       - sign-in
+  /api/v1/public/auth/sign-up:
+    post:
+      consumes:
+      - application/json
+      description: 'A correct code for a contact without an account answers 428 signup_terms_required,
+        with the legal documents in their current versions and a challenge. This route
+        creates the account once its holder accepted them: accept has the version
+        of each document by kind. The acceptance is stored with its time, address,
+        user agent, and country. The answer is that of a sign-in. The challenge works
+        for ten minutes, until an account is created with it; an acceptance that misses
+        a document or names another version answers 428 signup_terms_required again,
+        with the same challenge. 403 signup_country_unsupported: the country of the
+        request is in legal.signup.blocked_countries.'
+      parameters:
+      - description: The challenge and the accepted versions
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/public.SignUpRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The access token. The refresh token is set as an HttpOnly cookie.
+          headers:
+            Set-Cookie:
+              description: The refresh token, HttpOnly
+              type: string
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/models.AccessTokenInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: challenge_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: signup_country_unsupported, or the account cannot sign in
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "428":
+          description: signup_terms_required
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/public.SignUpTermsInfo'
+              type: object
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Create an account with the accepted documents
+      tags:
+      - sign-in
   /api/v1/public/currencies:
     get:
       description: The approved currencies, oldest first by default, a page at a time.
@@ -7193,6 +7353,91 @@ paths:
       summary: Show the status of the exchange
       tags:
       - system
+  /api/v1/user/agreements:
+    get:
+      description: The documents that legal.documents requires, in their current versions,
+        and those of them that the user has not accepted yet. While any is pending,
+        every change of the user but POST /user/agreements, signing out, and ending
+        sessions answers 403 terms_update_required.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.AgreementsInfo'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the legal documents of the user
+      tags:
+      - user-agreements
+    post:
+      consumes:
+      - application/json
+      description: Records that the user accepted the current version of every required
+        document, with the time, the address, the user agent, and the country of the
+        request. accept has the version of each document by kind; one that misses
+        a document or names another version answers 409 terms_update_required with
+        the pending documents, and records nothing. A version that the user already
+        accepted keeps its first record.
+      parameters:
+      - description: The accepted versions
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.AcceptAgreementsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.AgreementsInfo'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: terms_update_required
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.AgreementsInfo'
+              type: object
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Accept the legal documents
+      tags:
+      - user-agreements
   /api/v1/user/anti-phishing-code:
     delete:
       description: 'Removes the anti-phishing code: emails show none from then on.

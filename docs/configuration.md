@@ -370,6 +370,15 @@ Writing to the database is not enough to create an administrator: changing `user
 | `recovery.steps` | both | The identity steps of the strict mode: `national_id`, the owner sends the national ID again, and `mobile_ownership`, the provider confirms that a proved mobile number belongs to it, which needs `identity.mobile_ownership.provider`. Empty means both. |
 | `second_factor.step_up_minutes` | `5` | From 1 to 60. How long a sign-in with the second factor, or `POST /user/step-up`, lets a session run those operations. |
 
+### `legal`
+
+The legal documents that users accept, and who may sign up ([#316](https://github.com/mdastpak/Crypto-Exchange/issues/316)). See [Sign-up and the legal documents](api.md#sign-up-and-the-legal-documents).
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `documents` | empty | The required documents: a list of `kind` (lower-case letters, digits, and underscores, such as `terms`), `version` (up to 32 letters, digits, dots, dashes, and underscores), and an optional `url` where the client shows the document. An account is created only with an acceptance of the current version of each, and changing a version closes the changes of every user until they accept it. Empty asks nothing. The texts differ by region, so each release lists its own. |
+| `signup.blocked_countries` | empty | The ISO 3166-1 alpha-2 codes, in upper case, of the countries whose visitors cannot create an account. It needs [`geoip`](#geoip); a request whose country is not known is not refused. |
+
 ### `identity`
 
 The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) asks a KYC provider whether an Iranian mobile number belongs to a national ID, as the Shahkar service of the Communications Regulatory Authority answers it. See [Mobile ownership](api.md#mobile-ownership).
@@ -747,6 +756,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SECURITY_PASSWORD_MIN_LENGTH` | `security.password.min_length` |
 | `SECURITY_PASSWORD_MAX_FAILURES` | `security.password.max_failures` |
 | `SECURITY_PASSWORD_LOCK_MINUTES` | `security.password.lock_minutes` |
+| `LEGAL_SIGNUP_BLOCKED_COUNTRIES` | `legal.signup.blocked_countries`, separated by commas |
 | `SECURITY_PASSKEYS_RP_ID` | `security.passkeys.rp_id` |
 | `SECURITY_PASSKEYS_RP_NAME` | `security.passkeys.rp_name` |
 | `SECURITY_PASSKEYS_ORIGINS` | `security.passkeys.origins`, separated by commas |

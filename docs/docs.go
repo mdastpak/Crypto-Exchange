@@ -5571,6 +5571,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/public/auth/sign-up": {
+            "post": {
+                "description": "A correct code for a contact without an account answers 428 signup_terms_required, with the legal documents in their current versions and a challenge. This route creates the account once its holder accepted them: accept has the version of each document by kind. The acceptance is stored with its time, address, user agent, and country. The answer is that of a sign-in. The challenge works for ten minutes, until an account is created with it; an acceptance that misses a document or names another version answers 428 signup_terms_required again, with the same challenge. 403 signup_country_unsupported: the country of the request is in legal.signup.blocked_countries.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sign-in"
+                ],
+                "summary": "Create an account with the accepted documents",
+                "parameters": [
+                    {
+                        "description": "The challenge and the accepted versions",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/public.SignUpRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The access token. The refresh token is set as an HttpOnly cookie.",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/models.AccessTokenInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "headers": {
+                            "Set-Cookie": {
+                                "type": "string",
+                                "description": "The refresh token, HttpOnly"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "challenge_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "signup_country_unsupported, or the account cannot sign in",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "428": {
+                        "description": "signup_terms_required",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SignUpTermsInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/auth/{uuid}": {
             "post": {
                 "description": "Returns an access token, and sets the refresh token in the HttpOnly refresh_token cookie.",
@@ -5670,6 +5764,24 @@ const docTemplate = `{
                                     "properties": {
                                         "info": {
                                             "$ref": "#/definitions/public.SessionLimitInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "428": {
+                        "description": "signup_terms_required: the contact has no account, and one is created with the accepted legal documents; see POST /public/auth/sign-up",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/public.SignUpTermsInfo"
                                         }
                                     }
                                 }
@@ -6166,6 +6278,140 @@ const docTemplate = `{
                                     "properties": {
                                         "info": {
                                             "$ref": "#/definitions/platform.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/agreements": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The documents that legal.documents requires, in their current versions, and those of them that the user has not accepted yet. While any is pending, every change of the user but POST /user/agreements, signing out, and ending sessions answers 403 terms_update_required.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-agreements"
+                ],
+                "summary": "List the legal documents of the user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.AgreementsInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records that the user accepted the current version of every required document, with the time, the address, the user agent, and the country of the request. accept has the version of each document by kind; one that misses a document or names another version answers 409 terms_update_required with the pending documents, and records nothing. A version that the user already accepted keeps its first record.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-agreements"
+                ],
+                "summary": "Accept the legal documents",
+                "parameters": [
+                    {
+                        "description": "The accepted versions",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.AcceptAgreementsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.AgreementsInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "terms_update_required",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.AgreementsInfo"
                                         }
                                     }
                                 }
@@ -9381,6 +9627,26 @@ const docTemplate = `{
                 }
             }
         },
+        "agreements.Document": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "description": "Kind names the document, such as \"terms\" or \"privacy\".",
+                    "type": "string",
+                    "example": "terms"
+                },
+                "url": {
+                    "description": "URL is where the client shows it.",
+                    "type": "string",
+                    "example": "https://example.com/legal/terms"
+                },
+                "version": {
+                    "description": "Version is its current version.",
+                    "type": "string",
+                    "example": "2026-11"
+                }
+            }
+        },
         "antiphishing.Status": {
             "type": "object",
             "properties": {
@@ -11743,6 +12009,46 @@ const docTemplate = `{
                 }
             }
         },
+        "public.SignUpRequest": {
+            "type": "object",
+            "properties": {
+                "accept": {
+                    "description": "Accept are the versions that the holder accepted, by kind.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "example": {
+                        "privacy": "2026-11",
+                        "terms": "2026-11"
+                    }
+                },
+                "challenge": {
+                    "type": "string"
+                }
+            }
+        },
+        "public.SignUpTermsInfo": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "description": "Challenge creates the account with POST /public/auth/sign-up.",
+                    "type": "string"
+                },
+                "documents": {
+                    "description": "Documents are the documents to show and accept, in their current\nversions.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agreements.Document"
+                    }
+                },
+                "expires_in": {
+                    "description": "ExpiresIn is how long the challenge can be used, in seconds.",
+                    "type": "integer",
+                    "example": 600
+                }
+            }
+        },
         "public.SiteChoice": {
             "type": "object",
             "properties": {
@@ -11861,6 +12167,17 @@ const docTemplate = `{
         "public.VerifyOTPRequest": {
             "type": "object",
             "properties": {
+                "accept": {
+                    "description": "Accept is, for a contact without an account, the versions of the\nlegal documents that its holder accepted, by kind. A client that\ndoes not know them leaves it out, and gets 428 signup_terms_required\nwith the documents.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "example": {
+                        "privacy": "2026-11",
+                        "terms": "2026-11"
+                    }
+                },
                 "otp": {
                     "type": "string"
                 },
@@ -12404,6 +12721,22 @@ const docTemplate = `{
                 }
             }
         },
+        "user.AcceptAgreementsRequest": {
+            "type": "object",
+            "properties": {
+                "accept": {
+                    "description": "Accept are the versions that the user accepted, by kind. It must\nhave the current version of every required document.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "example": {
+                        "privacy": "2026-11",
+                        "terms": "2026-11"
+                    }
+                }
+            }
+        },
         "user.AddPasskeyRequest": {
             "type": "object",
             "properties": {
@@ -12415,6 +12748,25 @@ const docTemplate = `{
                     "description": "Name is what the user calls the passkey, such as the device.",
                     "type": "string",
                     "example": "iPhone"
+                }
+            }
+        },
+        "user.AgreementsInfo": {
+            "type": "object",
+            "properties": {
+                "documents": {
+                    "description": "Documents are the required documents in their current versions.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agreements.Document"
+                    }
+                },
+                "pending": {
+                    "description": "Pending are those whose current version the user has not accepted.\nWhile it is not empty, the changes of the user answer 403\nterms_update_required.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/agreements.Document"
+                    }
                 }
             }
         },

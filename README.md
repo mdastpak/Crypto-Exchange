@@ -306,6 +306,7 @@ config/                 Configuration files: the example and Compose configurati
                         AML rules (not loaded yet)
 docs/                   Generated Swagger files and project documentation
 internal/adminauth/     Administrator accounts and authenticator (TOTP) enrollment
+internal/agreements/    Legal documents: the versions each user accepted, sign-up countries
 internal/app/           The composition root of the server: wiring, routes, lifecycle,
                         and the end-to-end tests
 internal/antiphishing/  The anti-phishing codes that emails show, and the reminders to change them

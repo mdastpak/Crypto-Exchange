@@ -255,6 +255,9 @@ func run() error {
 	if geoIP != nil {
 		handlers.System.GeoIP = geoIP
 	}
+	// The country of a sign-up and of an acceptance of the legal
+	// documents (#316).
+	handlers.Public.GeoIP, handlers.User.GeoIP = geoIP, geoIP
 	if geoIPWorker != nil {
 		workers = append(workers, *geoIPWorker)
 	}
@@ -1172,6 +1175,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.POST("/auth/second-step", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStep)
 		publicGroup.POST("/auth/second-step/passkey", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SecondStepPasskeyOptions)
 		publicGroup.POST("/auth/password-reset", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ResetPassword)
+		publicGroup.POST("/auth/sign-up", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.SignUp)
 		publicGroup.POST("/auth/recovery", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.Recover)
 		publicGroup.POST("/auth/recovery/complete", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.CompleteRecovery)
 		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ReplaceSession)
@@ -1260,6 +1264,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// The rest closes during a maintenance, and its changes during a
 		// read-only lockdown.
 		activeGroup.Use(service, gate.Writes())
+		// A new version of a legal document closes the changes of a user
+		// until they accept it (#316). Accepting is registered first.
+		activeGroup.GET("/agreements", ih.User.GetAgreements)
+		activeGroup.POST("/agreements", ih.User.AcceptAgreements)
+		activeGroup.Use(ih.User.RequireAgreements())
 		profileChanges := gate.Require(platform.FeatureProfileChanges)
 		activeGroup.GET("/profile", ih.User.GetProfile)
 		activeGroup.PATCH("/profile", profileChanges, ih.User.UpdateProfile)

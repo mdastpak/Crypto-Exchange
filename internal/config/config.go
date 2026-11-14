@@ -286,6 +286,9 @@ type Configuration struct {
 	} `yaml:"otp"`
 
 	Notifications NotificationsConfig `yaml:"notifications"`
+	// Legal configures the documents that users accept, and who may sign
+	// up (#316).
+	Legal LegalConfig `yaml:"legal"`
 
 	Admin struct {
 		// SignInMinResponseMS is the least time an answer to an admin
@@ -2356,4 +2359,28 @@ func (c *Configuration) SiteOrigins() []string {
 		}
 	}
 	return origins
+}
+
+// LegalConfig is the legal section: the documents that a user must accept,
+// and the countries that cannot sign up (#316).
+type LegalConfig struct {
+	// Documents are the required documents in their current versions. An
+	// account is created only with an acceptance of each, and a user
+	// accepts a new version before their next change. Empty asks nothing.
+	Documents []LegalDocument `yaml:"documents"`
+	SignUp    struct {
+		// BlockedCountries are the ISO 3166-1 alpha-2 codes of the
+		// countries whose visitors, by GeoIP, cannot create an account.
+		BlockedCountries []string `yaml:"blocked_countries"`
+	} `yaml:"signup"`
+}
+
+// LegalDocument is a required document.
+type LegalDocument struct {
+	// Kind names the document: "terms", "privacy", and so on.
+	Kind string `yaml:"kind"`
+	// Version is the current version. Changing it asks every user again.
+	Version string `yaml:"version"`
+	// URL is where the client shows the document.
+	URL string `yaml:"url"`
 }

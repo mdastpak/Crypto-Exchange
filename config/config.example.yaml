@@ -770,3 +770,20 @@ rate_limits:
   auth:            # Sign-in, per client IP and route
     login_attempts_per_minute: 5   # Code verifications
     otp_requests_per_hour: 10      # Code requests
+
+# The legal documents that users accept, and who may sign up.
+legal:
+  # An account is created only with an acceptance of the current version
+  # of each document, and a new version asks every user again. Each
+  # release lists the documents of its region. Empty asks nothing.
+  documents: []
+  #  - kind: terms
+  #    version: "2026-11"
+  #    url: https://example.com/legal/terms
+  #  - kind: privacy
+  #    version: "2026-11"
+  #    url: https://example.com/legal/privacy
+  signup:
+    # ISO 3166-1 alpha-2 codes of the countries whose visitors cannot
+    # create an account. Needs geoip.
+    blocked_countries: []

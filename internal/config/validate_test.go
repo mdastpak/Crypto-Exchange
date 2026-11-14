@@ -624,3 +624,23 @@ func TestValidate_Passkeys(t *testing.T) {
 	assert.Contains(t, problemsOf("release", "example.com", "https://example.com.evil.test"), "subdomain")
 	assert.Contains(t, problemsOf("release", "example.com", "https://app.example.com/path"), "not an origin")
 }
+
+func TestValidate_Legal(t *testing.T) {
+	problemsOf := func(countries []string, docs ...LegalDocument) string {
+		c := Configuration{}
+		c.Legal.Documents, c.Legal.SignUp.BlockedCountries = docs, countries
+		p := &problems{}
+		legalProblems(p, &c)
+		return strings.Join(*p, "\n")
+	}
+	assert.Empty(t, problemsOf(nil))
+	assert.Empty(t, problemsOf([]string{"KP", "IR"},
+		LegalDocument{Kind: "terms", Version: "2026-11", URL: "https://example.com/legal/terms"},
+		LegalDocument{Kind: "privacy", Version: "v3"}))
+	assert.Contains(t, problemsOf(nil, LegalDocument{Kind: "Terms", Version: "1"}), "lower-case")
+	assert.Contains(t, problemsOf(nil, LegalDocument{Kind: "terms"}), "version")
+	assert.Contains(t, problemsOf(nil, LegalDocument{Kind: "terms", Version: "1"}, LegalDocument{Kind: "terms", Version: "2"}), "twice")
+	assert.Contains(t, problemsOf(nil, LegalDocument{Kind: "terms", Version: "1", URL: "legal/terms"}), "not an http or https URL")
+	assert.Contains(t, problemsOf([]string{"ir"}), "ISO 3166-1")
+	assert.Contains(t, problemsOf([]string{"IRN"}), "ISO 3166-1")
+}
