@@ -285,6 +285,17 @@ func run() error {
 		workers = append(workers, worker{"row seal verifier", verifier.Stop})
 		workers = append(workers, useFieldEncryption(services.Postgres.DB, handlers.DataKeys))
 	}
+	// Stops the workers and the WebSocket event consumer, which start below,
+	// before the services close when startup fails after them. Otherwise
+	// shutdown has stopped them, and stopping them again does nothing.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout())
+		defer cancel()
+		for _, w := range workers {
+			_ = w.stop(ctx)
+		}
+		_ = handlers.Socket.Shutdown(ctx)
+	}()
 	// After the row seals, so that what it adds is sealed (#57).
 	added, err := syncAssets(context.Background(), services.Postgres.DB, &config.Config)
 	if err != nil {
@@ -300,17 +311,6 @@ func run() error {
 		}
 		relay.Nudge()
 	}
-	// Stops the workers and the WebSocket event consumer, which start below,
-	// before the services close when startup fails after them. Otherwise
-	// shutdown has stopped them, and stopping them again does nothing.
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout())
-		defer cancel()
-		for _, w := range workers {
-			_ = w.stop(ctx)
-		}
-		_ = handlers.Socket.Shutdown(ctx)
-	}()
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
