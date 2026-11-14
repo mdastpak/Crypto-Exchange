@@ -14,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/domain/currency"
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -129,6 +130,7 @@ func TestNetworkRoutes_RunWithoutInfrastructure(t *testing.T) {
 		&currencies.Invalid{Problems: []assetregistry.Problem{{Field: "fee_asset", Text: "fee_asset is ..."}}}: {http.StatusBadRequest, "validation_failed"},
 		currencies.ErrContractFixed: {http.StatusConflict, codeNetworkContractFixed},
 		currencies.ErrContractTaken: {http.StatusConflict, codeContractTaken},
+		rowseal.ErrUnverified:       {http.StatusConflict, codeRowUnverified},
 		currencies.ErrUnrecorded:    {http.StatusInternalServerError, ""},
 	} {
 		store.err = err
@@ -180,6 +182,15 @@ func TestMarketRoutes_RunWithoutInfrastructure(t *testing.T) {
 	status, resp = serveRegistry(t, h, http.MethodGet, "/markets/BTC/DOGE", "")
 	assert.Equal(t, http.StatusNotFound, status)
 	assert.Equal(t, codeMarketNotFound, resp["code"])
+
+	store.err = rowseal.ErrUnverified
+	for _, path := range []string{"/markets", "/markets/BTC/USDT"} {
+		status, resp = serveRegistry(t, h, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusConflict, status, path)
+		assert.Equal(t, codeRowUnverified, resp["code"], path)
+	}
+	_, resp = serveRegistry(t, h, http.MethodPut, "/markets/BTC/USDT", btcMarket)
+	assert.Equal(t, codeRowUnverified, resp["code"], "a market changed in SQL is not written over")
 
 	store.err = errors.New("database down")
 	status, _ = serveRegistry(t, h, http.MethodGet, "/markets", "")

@@ -21,6 +21,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
@@ -399,21 +400,16 @@ func (c *Catalog) warn(format string, args ...interface{}) {
 	log.Printf(format, args...)
 }
 
-// publicNetworks reads the networks of the currency c as JSON objects of
-// models.CurrencyNetwork, in the query of the list, so that a currency and
-// its networks are read together (#57). NULL for none.
-const publicNetworks = `(SELECT json_agg(json_build_object(
-		'network', n.network, 'contract_address', COALESCE(n.contract_address, ''), 'decimals', n.decimals,
-		'deposit_enabled', n.deposit_enabled, 'withdrawal_enabled', n.withdrawal_enabled,
-		'min_deposit', n.min_deposit::text, 'min_withdrawal', n.min_withdrawal::text,
-		'max_withdrawal', n.max_withdrawal::text, 'withdrawal_fee', n.withdrawal_fee::text,
-		'fee_currency', COALESCE(f.info->>'symbol', ''), 'requires_tag', n.requires_tag,
-		'explorer_url', COALESCE(n.explorer_url, '')) ORDER BY n.network)
-	FROM currency_networks n LEFT JOIN currencies f ON f.hk = n.fee_currency_hk WHERE n.currency_hk = c.hk)`
-
 func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, error) {
-	rows, err := c.db.QueryContext(ctx,
-		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+publicNetworks+`, `+DetailColumns+` FROM currencies c
+	// The currencies and their networks are read in one snapshot, so that a
+	// network goes with the currency as it was.
+	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx,
+		`SELECT c.id, c.hk, c.status, c.info, c.created_at, c.updated_at, `+DetailColumns+` FROM currencies c
 		WHERE c.status = 'approved' AND c.deleted_at IS NULL ORDER BY c.id`)
 	if err != nil {
 		return nil, err
@@ -423,23 +419,14 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 	list := make([]models.Currency, 0)
 	for rows.Next() {
 		var currency models.Currency
-		var info, networks []byte
+		var info []byte
 		var created, updated sql.NullTime
 		var lifecycle DetailScan
-		if err := rows.Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated, &networks},
-			lifecycle.Dest()...)...); err != nil {
+		if err := rows.Scan(append([]any{&currency.ID, &currency.HK, &currency.Status, &info, &created, &updated}, lifecycle.Dest()...)...); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(info, &currency.Info); err != nil {
 			return nil, fmt.Errorf("currency %s: %w", currency.HK, err)
-		}
-		if networks != nil {
-			if err := json.Unmarshal(networks, &currency.Networks); err != nil {
-				return nil, fmt.Errorf("the networks of currency %s: %w", currency.HK, err)
-			}
-			for i := range currency.Networks {
-				normalizeAmounts(&currency.Networks[i])
-			}
 		}
 		var err error
 		if err = lifecycle.Apply(&currency); err != nil {
@@ -449,7 +436,52 @@ func (c *Catalog) loadFromDatabase(ctx context.Context) ([]models.Currency, erro
 		currency.UpdatedAt = timestamp(updated)
 		list = append(list, currency)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	networks, err := publicNetworks(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].Networks = networks[list[i].HK]
+	}
+	return list, nil
+}
+
+// publicNetworks reads the networks of the public currencies, by the hk of
+// their currency and by name (#57). A network that fails its seal is left
+// out in enforce mode (#139): users would deposit to a contract that
+// nobody set.
+func publicNetworks(ctx context.Context, tx *sql.Tx) (map[string][]models.CurrencyNetwork, error) {
+	//nolint:gosec // G202: the columns are constants of this package and rowseal; the values are arguments.
+	rows, err := tx.QueryContext(ctx, `SELECT n.currency_hk::text, n.network, COALESCE(n.contract_address, ''), n.decimals,
+			n.deposit_enabled, n.withdrawal_enabled, n.min_deposit::text, n.min_withdrawal::text, n.max_withdrawal::text,
+			n.withdrawal_fee::text, COALESCE(f.info->>'symbol', ''), n.requires_tag, COALESCE(n.explorer_url, ''),
+			`+rowseal.CurrencyNetworks.Fields("n")+`
+		FROM currency_networks n JOIN currencies c ON c.hk = n.currency_hk LEFT JOIN currencies f ON f.hk = n.fee_currency_hk
+		WHERE c.status = 'approved' AND c.deleted_at IS NULL ORDER BY n.currency_hk, n.network`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byCurrency := map[string][]models.CurrencyNetwork{}
+	for rows.Next() {
+		var hk string
+		var n models.CurrencyNetwork
+		sealed := rowseal.CurrencyNetworks.NewRow()
+		if err := rows.Scan(append([]any{&hk, &n.Network, &n.ContractAddress, &n.Decimals, &n.DepositEnabled, &n.WithdrawalEnabled,
+			&n.MinDeposit, &n.MinWithdrawal, &n.MaxWithdrawal, &n.WithdrawalFee, &n.FeeCurrency, &n.RequiresTag, &n.ExplorerURL},
+			sealed.Dest()...)...); err != nil {
+			return nil, err
+		}
+		if rowseal.Check(ctx, rowseal.CurrencyNetworks, sealed) != nil {
+			continue
+		}
+		normalizeAmounts(&n)
+		byCurrency[hk] = append(byCurrency[hk], n)
+	}
+	return byCurrency, rows.Err()
 }
 
 // normalizeAmounts trims the amounts of a network.

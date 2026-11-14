@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
 // PublicMarket is a market as users see it (#57): the pair, whether it
@@ -100,9 +102,10 @@ func (l *MarketList) List(ctx context.Context) ([]PublicMarket, error) {
 }
 
 func loadPublicMarkets(ctx context.Context, db *sql.DB) ([]PublicMarket, error) {
+	//nolint:gosec // G202: the columns are constants of this package and rowseal; the values are arguments.
 	rows, err := db.QueryContext(ctx, `SELECT b.info->>'symbol', q.info->>'symbol', b.hk, q.hk, m.status::text,
 			m.min_order_size::text, m.max_order_size::text, m.min_notional::text, m.tick_size::text, m.lot_size::text,
-			m.maker_fee_bps, m.taker_fee_bps
+			m.maker_fee_bps, m.taker_fee_bps, `+rowseal.Markets.Fields("m")+`
 		FROM markets m JOIN currencies b ON b.hk = m.base_currency_hk JOIN currencies q ON q.hk = m.quote_currency_hk
 		WHERE m.deleted_at IS NULL AND m.status IN ('ACTIVE', 'MAINTENANCE', 'SUSPENDED')
 			AND b.status = 'approved' AND b.deleted_at IS NULL AND q.status = 'approved' AND q.deleted_at IS NULL
@@ -114,9 +117,15 @@ func loadPublicMarkets(ctx context.Context, db *sql.DB) ([]PublicMarket, error) 
 	list := []PublicMarket{}
 	for rows.Next() {
 		var m PublicMarket
-		if err := rows.Scan(&m.Base, &m.Quote, &m.BaseHK, &m.QuoteHK, &m.Status, &m.MinOrderSize, &m.MaxOrderSize,
-			&m.MinNotional, &m.TickSize, &m.LotSize, &m.MakerFeeBPS, &m.TakerFeeBPS); err != nil {
+		sealed := rowseal.Markets.NewRow()
+		if err := rows.Scan(append([]any{&m.Base, &m.Quote, &m.BaseHK, &m.QuoteHK, &m.Status, &m.MinOrderSize, &m.MaxOrderSize,
+			&m.MinNotional, &m.TickSize, &m.LotSize, &m.MakerFeeBPS, &m.TakerFeeBPS}, sealed.Dest()...)...); err != nil {
 			return nil, err
+		}
+		// A market changed in SQL, opened or made free, is left out in
+		// enforce mode (#139).
+		if rowseal.Check(ctx, rowseal.Markets, sealed) != nil {
+			continue
 		}
 		m.Symbol = m.Base + "/" + m.Quote
 		for _, amount := range []*string{&m.MinOrderSize, &m.MaxOrderSize, &m.MinNotional, &m.TickSize, &m.LotSize} {

@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Row seals for the networks of the currencies and for the markets ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). Custody will credit deposits by the contract of a network, so a contract swapped in SQL for another token's must not be acted on.
+  - Migration 28 adds the seal columns to `currency_networks` and `markets`, and `id` to `currency_networks` for its seals.
+  - Every write seals its row: the admin routes and `admin assets import`.
+  - In `enforce` mode, a row changed in SQL is left out of the public currency list and of `GET /public/markets`. The admin lists answer `409 row_unverified`, and no write goes over it until its finding is resolved.
+  - **Before deploying in `enforce` mode, set `report`** until the verifier has sealed the rows written before: see [Modes](docs/data-protection.md#modes).
 - The registry of networks and markets ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)), on the currencies of [#309](https://github.com/mdastpak/Crypto-Exchange/issues/309).
   - `GET /admin/currencies/{hk}/networks` and `PUT /admin/currencies/{hk}/networks/{network}` read and write how a currency moves on each network, and `GET /admin/markets` and `GET`/`PUT /admin/markets/{base}/{quote}` the markets. The writes are sensitive routes, audited as `currency.network_set` and `market.set`.
   - They share the checks of `config/assets.yaml`, now `assetregistry.CheckNetwork` and `CheckMarket`, and the writes of `admin assets import`.

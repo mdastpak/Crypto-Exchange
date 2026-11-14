@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -104,6 +105,7 @@ func invalidFields(invalid *currencies.Invalid) fieldErrors {
 // @Failure 400 {object} models.APIResponse
 // @Failure 401 {object} models.APIResponse
 // @Failure 404 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "row_unverified: a row fails its seal (#139)"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/currencies/{hk}/networks [get]
 func (h *AdminHandler) ListNetworks(c *gin.Context) {
@@ -118,6 +120,8 @@ func (h *AdminHandler) ListNetworks(c *gin.Context) {
 	switch {
 	case errors.Is(err, currencies.ErrNotFound):
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("CURRENCY_NOT_FOUND"), nil)
+	case errors.Is(err, rowseal.ErrUnverified):
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 	case err != nil:
 		log.Printf("Failed to list the networks of currency %s: %v", hk, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("NETWORKS_RETRIEVAL_FAILED"), nil)
@@ -141,7 +145,7 @@ func (h *AdminHandler) ListNetworks(c *gin.Context) {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "step_up_required"
 // @Failure 404 {object} models.APIResponse
-// @Failure 409 {object} models.APIResponse "network_contract_fixed or contract_taken"
+// @Failure 409 {object} models.APIResponse "network_contract_fixed, contract_taken, or row_unverified: the network fails its seal"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/currencies/{hk}/networks/{network} [put]
 func (h *AdminHandler) SetNetwork(c *gin.Context) {
@@ -190,6 +194,9 @@ func (h *AdminHandler) SetNetwork(c *gin.Context) {
 	case errors.Is(err, currencies.ErrContractTaken):
 		helpers.SendError(c, http.StatusConflict, codeContractTaken, i18n.M("CONTRACT_TAKEN"), nil)
 		return
+	case errors.Is(err, rowseal.ErrUnverified):
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
+		return
 	case err != nil:
 		sendRegistryWriteError(c, err, "network of currency "+hk, i18n.M("NETWORK_SET_FAILED"))
 		return
@@ -211,12 +218,17 @@ func (h *AdminHandler) SetNetwork(c *gin.Context) {
 // @Security BearerAuth
 // @Success 200 {object} models.APIResponse{info=[]market.Market}
 // @Failure 401 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "row_unverified: a row fails its seal (#139)"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/markets [get]
 func (h *AdminHandler) ListMarkets(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	list, err := h.Registry.Markets(ctx)
+	if errors.Is(err, rowseal.ErrUnverified) {
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
+		return
+	}
 	if err != nil {
 		log.Printf("Failed to list the markets: %v", err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("MARKETS_RETRIEVAL_FAILED"), nil)
@@ -234,6 +246,7 @@ func (h *AdminHandler) ListMarkets(c *gin.Context) {
 // @Success 200 {object} models.APIResponse{info=market.Market}
 // @Failure 401 {object} models.APIResponse
 // @Failure 404 {object} models.APIResponse "market_not_found"
+// @Failure 409 {object} models.APIResponse "row_unverified: a row fails its seal (#139)"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/markets/{base}/{quote} [get]
 func (h *AdminHandler) GetMarket(c *gin.Context) {
@@ -244,6 +257,8 @@ func (h *AdminHandler) GetMarket(c *gin.Context) {
 	switch {
 	case errors.Is(err, currencies.ErrMarketNotFound):
 		helpers.SendError(c, http.StatusNotFound, codeMarketNotFound, i18n.M("MARKET_NOT_FOUND"), nil)
+	case errors.Is(err, rowseal.ErrUnverified):
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 	case err != nil:
 		log.Printf("Failed to read the market %s/%s: %v", base, quote, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("MARKETS_RETRIEVAL_FAILED"), nil)
@@ -266,6 +281,7 @@ func (h *AdminHandler) GetMarket(c *gin.Context) {
 // @Failure 400 {object} models.APIResponse "validation_failed"
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "step_up_required"
+// @Failure 409 {object} models.APIResponse "row_unverified: a row fails its seal (#139)"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/markets/{base}/{quote} [put]
 func (h *AdminHandler) SetMarket(c *gin.Context) {
@@ -297,6 +313,9 @@ func (h *AdminHandler) SetMarket(c *gin.Context) {
 	switch {
 	case errors.As(err, &invalid):
 		sendValidationErrors(c, invalidFields(invalid))
+		return
+	case errors.Is(err, rowseal.ErrUnverified):
+		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 		return
 	case err != nil:
 		sendRegistryWriteError(c, err, "market "+m.Base+"/"+m.Quote, i18n.M("MARKET_SET_FAILED"))

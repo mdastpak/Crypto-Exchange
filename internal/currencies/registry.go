@@ -12,6 +12,7 @@ import (
 	domain "github.com/mdastpak/crypto-exchange/internal/domain/currency"
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -72,19 +73,25 @@ func writeNetwork(ctx context.Context, tx *sql.Tx, hk string, n assetregistry.Ne
 		"withdrawal_fee": n.WithdrawalFee, "fee_currency_hk": feeHK, "requires_tag": n.RequiresTag, "explorer_url": n.ExplorerURL,
 	}
 	var stored storedNetwork
+	sealed := rowseal.CurrencyNetworks.NewRow()
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(contract_address, ''), decimals, custody_mode::text, deposit_enabled, withdrawal_enabled,
 			min_deposit::text, min_withdrawal::text, max_withdrawal::text, withdrawal_fee::text, COALESCE(fee_currency_hk::text, ''),
-			requires_tag, COALESCE(explorer_url, '')
+			requires_tag, COALESCE(explorer_url, ''), `+rowseal.CurrencyNetworks.Fields("")+`
 		FROM currency_networks WHERE currency_hk = $1 AND network = $2 FOR UPDATE`, hk, n.Network).
-		Scan(&stored.contract, &stored.decimals, &stored.custodyMode, &stored.depositEnabled, &stored.withdrawalEnabled,
+		Scan(append([]any{&stored.contract, &stored.decimals, &stored.custodyMode, &stored.depositEnabled, &stored.withdrawalEnabled,
 			&stored.minDeposit, &stored.minWithdrawal, &stored.maxWithdrawal, &stored.withdrawalFee, &stored.feeHK,
-			&stored.requiresTag, &stored.explorerURL)
+			&stored.requiresTag, &stored.explorerURL}, sealed.Dest()...)...)
 	found := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return rowUnchanged, err
 	}
 	var changes *audit.Changes
 	if found {
+		// A network changed in SQL is not written over: the write would
+		// seal what nobody checked (#139). Its finding is resolved first.
+		if err := rowseal.Check(ctx, rowseal.CurrencyNetworks, sealed); err != nil {
+			return rowUnchanged, err
+		}
 		if fixed && (stored.contract != n.ContractAddress || stored.decimals != decimals) {
 			return rowUnchanged, ErrContractFixed
 		}
@@ -112,6 +119,9 @@ func writeNetwork(ctx context.Context, tx *sql.Tx, hk string, n assetregistry.Ne
 	if err != nil {
 		return rowUnchanged, err
 	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyNetworks, "currency_hk = $1 AND network = $2", hk, n.Network); err != nil {
+		return rowUnchanged, err
+	}
 	result := rowUpdated
 	if !found {
 		result, changes = rowCreated, &audit.Changes{After: after}
@@ -137,10 +147,11 @@ func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetreg
 	var id string
 	var status, minOrder, maxOrder, minNotional, tick, lot string
 	var maker, taker int
+	sealed := rowseal.Markets.NewRow()
 	err := tx.QueryRowContext(ctx, `SELECT id, status::text, min_order_size::text, max_order_size::text, min_notional::text,
-			tick_size::text, lot_size::text, maker_fee_bps, taker_fee_bps
+			tick_size::text, lot_size::text, maker_fee_bps, taker_fee_bps, `+rowseal.Markets.Fields("")+`
 		FROM markets WHERE base_currency_hk = $1 AND quote_currency_hk = $2 FOR UPDATE`, base, quote).
-		Scan(&id, &status, &minOrder, &maxOrder, &minNotional, &tick, &lot, &maker, &taker)
+		Scan(append([]any{&id, &status, &minOrder, &maxOrder, &minNotional, &tick, &lot, &maker, &taker}, sealed.Dest()...)...)
 	found := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", rowUnchanged, err
@@ -148,6 +159,10 @@ func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetreg
 	changes := &audit.Changes{After: after}
 	result := rowCreated
 	if found {
+		// A market changed in SQL is not written over (#139).
+		if err := rowseal.Check(ctx, rowseal.Markets, sealed); err != nil {
+			return "", rowUnchanged, err
+		}
 		changes = changedValues(map[string]interface{}{
 			"base": m.Base, "quote": m.Quote, "status": status, "min_order_size": minOrder, "max_order_size": maxOrder,
 			"min_notional": minNotional, "tick_size": tick, "lot_size": lot, "maker_fee_bps": maker, "taker_fee_bps": taker,
@@ -169,6 +184,9 @@ func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetreg
 			m.MakerFeeBPS, m.TakerFeeBPS).Scan(&id)
 	}
 	if err != nil {
+		return "", rowUnchanged, err
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Markets, "id = $1", id); err != nil {
 		return "", rowUnchanged, err
 	}
 	e := audit.Of(origin, audit.ActionMarketSet, audit.TargetMarket, id)
@@ -270,15 +288,24 @@ func (s Store) Networks(ctx context.Context, hk string) ([]domain.Network, error
 	if !exists {
 		return nil, ErrNotFound
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+networkColumns+` FROM currency_networks WHERE currency_hk = $1 ORDER BY network`, hk)
+	//nolint:gosec // G202: the columns are constants of this package and rowseal; the values are arguments.
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+networkColumns+`, `+rowseal.CurrencyNetworks.Fields("n")+`
+		FROM currency_networks n WHERE n.currency_hk = $1 ORDER BY n.network`, hk)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	list := []domain.Network{}
 	for rows.Next() {
-		n, err := scanNetwork(rows.Scan)
+		sealed := rowseal.CurrencyNetworks.NewRow()
+		n, err := scanNetwork(func(dest ...any) error { return rows.Scan(append(dest, sealed.Dest()...)...) })
 		if err != nil {
+			return nil, err
+		}
+		// In enforce mode, a network changed in SQL makes the list
+		// rowseal.ErrUnverified, as the other admin views of sealed rows
+		// do; its finding names it.
+		if err := rowseal.Check(ctx, rowseal.CurrencyNetworks, sealed); err != nil {
 			return nil, err
 		}
 		list = append(list, n)
@@ -330,11 +357,18 @@ func (s Store) SetMarket(ctx context.Context, m assetregistry.Market, origin aud
 	return written, tx.Commit()
 }
 
-// marketQuery reads markets with the symbols of their currencies.
-const marketQuery = `SELECT m.id, m.base_currency_hk, m.quote_currency_hk, b.info->>'symbol', q.info->>'symbol', m.status::text,
+// marketColumns and marketFrom read markets with the symbols of their
+// currencies.
+const (
+	marketColumns = `m.id, m.base_currency_hk, m.quote_currency_hk, b.info->>'symbol', q.info->>'symbol', m.status::text,
 	m.min_order_size, m.max_order_size, m.min_notional, m.tick_size, m.lot_size, m.maker_fee_bps, m.taker_fee_bps,
-	m.max_position_size, m.max_leverage, m.market_maker_fee_bps, m.price_band_bps, m.created_at, m.updated_at
-	FROM markets m JOIN currencies b ON b.hk = m.base_currency_hk JOIN currencies q ON q.hk = m.quote_currency_hk`
+	m.max_position_size, m.max_leverage, m.market_maker_fee_bps, m.price_band_bps, m.created_at, m.updated_at`
+	marketFrom  = ` FROM markets m JOIN currencies b ON b.hk = m.base_currency_hk JOIN currencies q ON q.hk = m.quote_currency_hk`
+	marketQuery = `SELECT ` + marketColumns + marketFrom
+)
+
+// sealedMarketQuery also reads the seal of each market.
+var sealedMarketQuery = `SELECT ` + marketColumns + `, ` + rowseal.Markets.Fields("m") + marketFrom
 
 func scanMarket(scan func(...any) error) (market.Market, error) {
 	var m market.Market
@@ -346,9 +380,22 @@ func scanMarket(scan func(...any) error) (market.Market, error) {
 	return m, err
 }
 
-// Markets returns the markets that are not deleted, by symbol.
+// scanSealedMarket reads a row of sealedMarketQuery and checks its seal: a
+// market changed in SQL returns rowseal.ErrUnverified in enforce mode.
+func scanSealedMarket(ctx context.Context, scan func(...any) error) (market.Market, error) {
+	sealed := rowseal.Markets.NewRow()
+	m, err := scanMarket(func(dest ...any) error { return scan(append(dest, sealed.Dest()...)...) })
+	if err != nil {
+		return m, err
+	}
+	return m, rowseal.Check(ctx, rowseal.Markets, sealed)
+}
+
+// Markets returns the markets that are not deleted, by symbol. In enforce
+// mode, a market that fails its seal makes it rowseal.ErrUnverified, as
+// the other admin views of sealed rows do; its finding names it.
 func (s Store) Markets(ctx context.Context) ([]market.Market, error) {
-	rows, err := s.DB.QueryContext(ctx, marketQuery+` WHERE m.deleted_at IS NULL
+	rows, err := s.DB.QueryContext(ctx, sealedMarketQuery+` WHERE m.deleted_at IS NULL
 		ORDER BY b.info->>'symbol', q.info->>'symbol'`)
 	if err != nil {
 		return nil, err
@@ -356,7 +403,7 @@ func (s Store) Markets(ctx context.Context) ([]market.Market, error) {
 	defer rows.Close()
 	list := []market.Market{}
 	for rows.Next() {
-		m, err := scanMarket(rows.Scan)
+		m, err := scanSealedMarket(ctx, rows.Scan)
 		if err != nil {
 			return nil, err
 		}
@@ -366,9 +413,10 @@ func (s Store) Markets(ctx context.Context) ([]market.Market, error) {
 }
 
 // Market returns the market of the currencies base and quote, named by
-// symbol, or ErrMarketNotFound.
+// symbol, or ErrMarketNotFound, or rowseal.ErrUnverified for one that fails
+// its seal in enforce mode.
 func (s Store) Market(ctx context.Context, base, quote string) (market.Market, error) {
-	m, err := scanMarket(s.DB.QueryRowContext(ctx, marketQuery+` WHERE m.deleted_at IS NULL
+	m, err := scanSealedMarket(ctx, s.DB.QueryRowContext(ctx, sealedMarketQuery+` WHERE m.deleted_at IS NULL
 		AND b.info->>'symbol' = $1 AND b.deleted_at IS NULL AND q.info->>'symbol' = $2 AND q.deleted_at IS NULL`, base, quote).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, ErrMarketNotFound

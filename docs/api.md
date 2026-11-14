@@ -890,6 +890,8 @@ How a currency moves on each network is a row of its own ([#309](https://github.
 
 Response `201` for a new network and `200` otherwise, with the network. Other errors: `400 validation_failed` with the problems by field, and `404` for an unknown or deleted currency. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `currency.network_set` with the fields that changed. A change to a public currency drops the cached list, so users see it at once. `admin assets import` works on PostgreSQL alone, so its changes reach the public list within `redis.currency_cache_ttl_seconds`, as other changes made outside the API do.
 
+Networks and markets are [sealed](data-protection.md#row-seals): every write seals its row, and a row changed in SQL, such as a contract swapped for another token's, is not acted on. In `enforce` mode, the public currency list leaves out such a network and `GET /public/markets` such a market; the admin lists and every write over the row answer `409 row_unverified` until its [integrity finding](data-protection.md#integrity-findings) is resolved.
+
 ## Markets
 
 A market is a pair of two currencies with its rules ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)).
@@ -920,7 +922,7 @@ Amounts are decimal strings, and `max_order_size` of `"0"` is no maximum. Fees a
 
 ### `GET /admin/markets` and `GET /admin/markets/{base}/{quote}` (admin)
 
-The markets that are not deleted, of any status, with every rule: also `max_position_size`, `max_leverage`, `market_maker_fee_bps`, and `price_band_bps`. A market is named by the symbols of its currencies. `404 market_not_found`.
+The markets that are not deleted, of any status, with every rule: also `max_position_size`, `max_leverage`, `market_maker_fee_bps`, and `price_band_bps`. A market is named by the symbols of its currencies. `404 market_not_found`, and `409 row_unverified` for a market that fails its seal in `enforce` mode.
 
 ### `PUT /admin/markets/{base}/{quote}` (admin)
 

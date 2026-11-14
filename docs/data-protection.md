@@ -95,6 +95,8 @@ A row seal is an HMAC-SHA-256, with the current `row-mac` key, over the protecte
 | `user_confirmation_methods` | `method` ([#161](https://github.com/mdastpak/Crypto-Exchange/issues/161)) | every read of the method a user chose to confirm withdrawals: a choice changed in SQL is ignored |
 | `user_anti_phishing_codes` | `phrase_enc`, `set_at`, `removed_at` ([#375](https://github.com/mdastpak/Crypto-Exchange/issues/375)) | every email that would show the code, the settings, and the reminders: a code copied from another user or changed in SQL is not shown, and an age moved to put off the reminders fails too. The use count and the reminder times change with every email and are not sealed: changed in SQL, they only move a reminder. |
 | `sms_routing` | `mode`, `provider_order`, `updated_by` ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) | every read of the routing of SMS by an instance: an order changed in SQL, to send the codes through one provider, is ignored, and the auto mode applies |
+| `currency_networks` | `currency_hk`, `network`, `contract_address`, `decimals`, `custody_mode`, `deposit_enabled`, `withdrawal_enabled`, the limits and `withdrawal_fee`, `fee_currency_hk`, `requires_tag`, `explorer_url` ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) | the public currency list, which leaves out a network that fails in `enforce` mode, the admin list, and every write, which refuses to write over one: a contract swapped in SQL for another token's is never shown to users nor sealed by a later change. The table gained `id` for its seals; its key is `(currency_hk, network)`. |
+| `markets` | the currencies, `status`, the order sizes, tick and lot sizes, the fees, the risk limits, and `deleted_at` ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) | `GET /public/markets`, which leaves out a market that fails in `enforce` mode, the admin views, and every write: a market opened or made free in SQL is not acted on |
 
 Columns that the backend writes on its own often, such as `sessions.last_used_at`, are not sealed. Each of the tables has three columns for it: `row_version`, which every sealing write increments, `row_seal`, and `seal_key_version`, the version of the `row-mac` key. The MAC covers the table, the key, the version, and each column in a canonical, length-prefixed text, with times in UTC, so a seal does not depend on the session settings of the database, and a seal cannot be copied to another row or column.
 
@@ -151,10 +153,11 @@ Rows are sealed only when the server has data keys (`keys.provider` set). To rol
 2. The verifier (below) seals every row that has no valid seal yet, and resolves its finding as `report_mode`. Wait until every instance runs the release and one verifier pass has finished after that: `admin row-seals findings` shows no open finding.
 3. Set `enforce` and roll it out.
 
-A release that seals another table needs the same steps. Migrations 13 and 14 seal more tables from then on, and leave their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys them, until the verifier has sealed those rows. Otherwise, in `enforce` mode:
+A release that seals another table needs the same steps. Migrations 13, 14, and 28 seal more tables from then on, and leave their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys them, until the verifier has sealed those rows. Otherwise, in `enforce` mode:
 
 - migration 13: every authenticator turned on before it stops proving codes, and every open recovery is refused;
-- migration 14: every admin session of before answers `401`, every user with a restriction counts as frozen, a recovery code resets nothing, and every instance closes its fail-closed features once its controls are stale.
+- migration 14: every admin session of before answers `401`, every user with a restriction counts as frozen, a recovery code resets nothing, and every instance closes its fail-closed features once its controls are stale;
+- migration 28 ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)): the public currency list shows no network and `GET /public/markets` no market, the admin lists of networks and markets answer `409 row_unverified`, and no network or market can be changed, by the admin routes or by `admin assets import`.
 
 Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns.
 
