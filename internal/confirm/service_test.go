@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -19,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
