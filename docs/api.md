@@ -888,7 +888,7 @@ How a currency moves on each network is a row of its own ([#309](https://github.
 
 **The contract and the decimals of a network do not change once it exists:** `409 network_contract_fixed`. Deposits are read by the contract, so a new one would credit another token as this currency, and new decimals would scale every amount on the network. A token that moved to a new contract is a [migration](#currency-migrations) of the currency. The reviewed registry file can still change them. To stop a network, close its deposits and withdrawals.
 
-Response `201` for a new network and `200` otherwise, with the network. Other errors: `400 validation_failed` with the problems by field, and `404` for an unknown or deleted currency. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `currency.network_set` with the fields that changed. A change to a public currency drops the cached list, so users see it at once.
+Response `201` for a new network and `200` otherwise, with the network. Other errors: `400 validation_failed` with the problems by field, and `404` for an unknown or deleted currency. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `currency.network_set` with the fields that changed. A change to a public currency drops the cached list, so users see it at once. `admin assets import` works on PostgreSQL alone, so its changes reach the public list within `redis.currency_cache_ttl_seconds`, as other changes made outside the API do.
 
 ## Markets
 
