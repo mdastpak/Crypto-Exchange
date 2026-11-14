@@ -16,6 +16,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
+	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
@@ -81,6 +82,15 @@ type ConfirmationService interface {
 	Resend(ctx context.Context, userHK, id, client string) (confirm.Challenge, error)
 }
 
+// WithdrawalService runs the withdrawals of a user (#70):
+// withdrawals.Service.
+type WithdrawalService interface {
+	Request(ctx context.Context, userHK string, r withdrawals.Request, client string, origin audit.Event) (withdrawals.Outcome, error)
+	List(ctx context.Context, userHK string, before *time.Time, limit int) ([]withdrawals.Withdrawal, error)
+	Get(ctx context.Context, userHK, id string) (withdrawals.Withdrawal, error)
+	Cancel(ctx context.Context, userHK, id string, origin audit.Event) (withdrawals.Withdrawal, error)
+}
+
 // CodeStore issues and checks the codes of contact changes: *otp.Store.
 type CodeStore interface {
 	Issue(ctx context.Context, contact, client string) (otp.Issued, error)
@@ -137,6 +147,7 @@ var (
 	_ FavoriteStore       = favorites.Store{}
 	_ RestrictionReader   = restrictions.Store{}
 	_ VerificationReader  = verification.Store{}
+	_ WithdrawalService   = withdrawals.Service{}
 	_ DestinationStore    = destinations.Store{}
 	_ ConfirmationService = confirm.Service{}
 	_ CodeStore           = (*otp.Store)(nil)

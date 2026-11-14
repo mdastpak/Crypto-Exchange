@@ -47,6 +47,10 @@ type UserHandler struct {
 	// Confirmations confirms withdrawals with the second factor (#161). The
 	// server sets it, with the delivery of the codes.
 	Confirmations ConfirmationService
+	// Withdrawals runs the withdrawals of the user (#70). The server sets
+	// it, with the confirmations; without it, the routes answer
+	// withdrawals_unavailable.
+	Withdrawals WithdrawalService
 	// AntiPhishing keeps the anti-phishing code of the user (#375), which
 	// the emails to their verified contacts show.
 	AntiPhishing AntiPhishingStore

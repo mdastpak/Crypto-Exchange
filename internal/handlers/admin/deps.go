@@ -19,6 +19,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
 )
 
 // The dependencies of the admin routes (#48). The handler holds each one as
@@ -44,6 +45,14 @@ type RegistryStore interface {
 	Markets(ctx context.Context) ([]market.Market, error)
 	Market(ctx context.Context, base, quote string) (market.Market, error)
 	SetMarket(ctx context.Context, m assetregistry.Market, origin audit.Event) (currencies.MarketWritten, error)
+}
+
+// WithdrawalReviews are the withdrawals that administrators review (#70):
+// withdrawals.Service.
+type WithdrawalReviews interface {
+	Review(ctx context.Context, status withdrawals.Status, limit int) ([]withdrawals.Withdrawal, error)
+	Approve(ctx context.Context, id, adminHK string, origin audit.Event) (withdrawals.Withdrawal, error)
+	Reject(ctx context.Context, id, adminHK, reason string, origin audit.Event) (withdrawals.Withdrawal, error)
 }
 
 // CatalogCache is the cached list of public currencies, which a change

@@ -462,3 +462,40 @@ func (s Store) Market(ctx context.Context, base, quote string) (market.Market, e
 	}
 	return m, err
 }
+
+// ErrNetworkNotFound answers a network that the currency does not move on.
+var ErrNetworkNotFound = errors.New("network not found")
+
+// NetworkOf returns the network name of the currency hk for an operation
+// that relies on it, such as a withdrawal (#70), in q. A network that fails
+// its seal returns rowseal.ErrUnverified in enforce mode. With lock, q is
+// a transaction, and the row is share-locked until it ends, so that the
+// network does not change under the operation.
+func NetworkOf(ctx context.Context, q queryer, hk, name string, lock bool) (domain.Network, error) {
+	query := `SELECT ` + networkColumns + `, ` + rowseal.CurrencyNetworks.Fields("n") + `
+		FROM currency_networks n WHERE n.currency_hk = $1 AND n.network = $2`
+	if lock {
+		query += ` FOR SHARE`
+	}
+	sealed := rowseal.CurrencyNetworks.NewRow()
+	n, err := scanNetwork(func(dest ...any) error {
+		return q.QueryRowContext(ctx, query, hk, name).Scan(append(dest, sealed.Dest()...)...)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return n, ErrNetworkNotFound
+	}
+	if err != nil {
+		return n, err
+	}
+	return n, rowseal.Check(ctx, rowseal.CurrencyNetworks, sealed)
+}
+
+// Detail returns the currency hk, deleted or not, with its version and
+// lifecycle, in q: a transaction, or the database.
+func Detail(ctx context.Context, q queryer, hk string) (models.Currency, error) {
+	cur, err := scanDetail(q.QueryRowContext(ctx, detailQuery+` WHERE c.hk = $1`, hk).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cur, ErrNotFound
+	}
+	return cur, err
+}

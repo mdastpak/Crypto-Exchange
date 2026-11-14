@@ -41,8 +41,8 @@ var goEnums = map[string][]string{
 	"custody_provider_type": values(custody.CustodyProviderInternal, custody.CustodyProviderBTC, custody.CustodyProviderEVM, custody.CustodyProviderSolana, custody.CustodyProviderFiat),
 	"deposit_status_type":   values(custody.DepositStatusDetected, custody.DepositStatusConfirming, custody.DepositStatusConfirmed, custody.DepositStatusCredited, custody.DepositStatusFailed),
 	"fee_level":             values(custody.FeeLevelSlow, custody.FeeLevelNormal, custody.FeeLevelFast, custody.FeeLevelCustom),
-	"withdrawal_status_type": values(custody.WithdrawalStatusPending, custody.WithdrawalStatusBroadcast, custody.WithdrawalStatusConfirming, custody.WithdrawalStatusCompleted,
-		custody.WithdrawalStatusFailed, custody.WithdrawalStatusCancelled, custody.WithdrawalStatusRejected),
+	// withdrawal_status_type left with the table of the baseline (#70): a
+	// withdrawal's status is text with a CHECK, internal/withdrawals.
 	"settlement_type": values(custody.SettlementTypeTrade, custody.SettlementTypeWithdrawal, custody.SettlementTypeDeposit, custody.SettlementTypeTransfer,
 		custody.SettlementTypeFee, custody.SettlementTypeFunding, custody.SettlementTypeLiquidation),
 	"settlement_status": values(custody.SettlementStatusPending, custody.SettlementStatusProcessing, custody.SettlementStatusCompleted, custody.SettlementStatusFailed, custody.SettlementStatusCancelled),

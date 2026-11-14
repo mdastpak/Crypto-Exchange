@@ -1,6 +1,11 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"github.com/shopspring/decimal"
+)
 
 // Providers of identity.bank_ownership.provider. The providers' APIs, such
 // as Jibit's and Finnotech's, are added as their contracts arrive.
@@ -42,6 +47,10 @@ type WithdrawalsConfig struct {
 	// which could be anyone's.
 	FiatDestinationWaitHours   *int `yaml:"fiat_destination_wait_hours"`
 	CryptoDestinationWaitHours *int `yaml:"crypto_destination_wait_hours"`
+	// ReviewAbove holds, by currency symbol, the amount from which a
+	// withdrawal waits for an administrator before it is paid (#70). A
+	// currency left out is never held for review.
+	ReviewAbove map[string]string `yaml:"review_above"`
 }
 
 // The defaults of the withdrawal destinations.
@@ -97,6 +106,14 @@ func (c *Configuration) withdrawalProblems(p *problems) {
 	} {
 		if hours != nil && (*hours < 0 || *hours > MaxDestinationWaitHours) {
 			p.add(key, "is %d; it must be from 0 to %d", *hours, MaxDestinationWaitHours)
+		}
+	}
+	for symbol, amount := range w.ReviewAbove {
+		if symbol == "" || strings.ToUpper(symbol) != symbol {
+			p.add("withdrawals.review_above", "has %q; the keys are currency symbols, upper case", symbol)
+		}
+		if d, err := decimal.NewFromString(amount); err != nil || !d.IsPositive() {
+			p.add("withdrawals.review_above."+symbol, "is %q; it must be a positive decimal", amount)
 		}
 	}
 }

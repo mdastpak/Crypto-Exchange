@@ -244,13 +244,21 @@ var (
 		text("max_position_size"), text("max_leverage"), text("market_maker_fee_bps"), text("price_band_bps"),
 		timestamptz("deleted_at"),
 	}}
+	// Withdrawals covers a withdrawal of a user (#70): whose it is, what,
+	// where, how much, its status, and who reviewed it. A withdrawal sent to
+	// another destination, raised, or approved in SQL is not paid.
+	Withdrawals = &Table{Name: "withdrawals", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("currency_hk"), text("network"), text("destination_id"), text("amount"), text("fee"),
+		text("status"), text("confirmation_id"), text("reviewed_by"), timestamptz("reviewed_at"),
+		timestamptz("completed_at"), timestamptz("cancelled_at"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
-	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets,
+	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

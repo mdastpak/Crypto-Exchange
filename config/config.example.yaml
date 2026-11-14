@@ -534,6 +534,11 @@ withdrawals:
   max_destinations: 20
   fiat_destination_wait_hours: 0     # The user's own accounts wait for nothing
   crypto_destination_wait_hours: 24  # A new address is usable after this long
+  # By currency symbol, the amount from which a withdrawal waits for an
+  # administrator before it is paid (#70). A currency left out is never held.
+  review_above: {}
+  #   USDT: "10000"
+  #   IRR: "5000000000"
 
 # The asset registry (#57): the currencies, their networks, and the markets.
 # An empty registry_path is the registry built into the release
