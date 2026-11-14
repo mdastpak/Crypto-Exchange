@@ -1168,11 +1168,12 @@ Every withdrawal, through the panel or the API, is confirmed with a code of the 
 
 **Methods.** The user confirms with one of these:
 
+- `passkey`: one of their passkeys (`POST /user/passkeys`, [#373](https://github.com/mdastpak/Crypto-Exchange/issues/373)). It is the one method that resists phishing: the device signs only for the exchange's own domain. A confirmation by passkey returns `passkey`, the options for `navigator.credentials.get`. Its ceremony is bound to the confirmation, so the device's answer to one confirmation's challenge confirms no other. The device cannot show what it confirms, so the app shows `details` beside its prompt.
 - `totp`: a code of their authenticator app (`POST /user/totp`). Each code is accepted once, and wrong codes lock it for a while.
 - `sms`: a code sent to their verified mobile number. It is offered only when the SMS provider has a withdrawal template (`notifications.sms.kavenegar.withdrawal_template`).
 - `email`: a code sent to their verified email address.
 
-The user chooses the method. Until they do, or while the chosen one is unavailable, confirmations use the first of `totp`, `sms`, and `email` that is available. A user who has none answers `409 confirmation_method_required` when a withdrawal starts.
+The user chooses the method. Until they do, or while the chosen one is unavailable, confirmations use the first of `passkey`, `totp`, `sms`, and `email` that is available. A user who has none answers `409 confirmation_method_required` when a withdrawal starts.
 
 **Bound to the operation.**
 
@@ -1200,7 +1201,7 @@ The user chooses the method. Until they do, or while the chosen one is unavailab
 
 ### `POST /user/confirmations/{id}`
 
-The code of a confirmation, as `{"code": "482913"}`, in ASCII, Persian, or Arabic digits. The answer is `200` when it is right. The other answers are:
+The proof of a confirmation. It is a code, as `{"code": "482913"}`, in ASCII, Persian, or Arabic digits. For a confirmation by passkey, it is the device's answer, as `{"passkey": { … }}`. An attempt takes the passkey ceremony, so after a wrong answer, `/resend` begins a new one. The answer is `200` when the proof is right. The other answers are:
 
 - `403 confirmation_code_invalid`;
 - `429 confirmation_locked`;
@@ -1211,7 +1212,7 @@ It has the limits of a sign-in. The withdrawal workflow ([#70](https://github.co
 
 ### `POST /user/confirmations/{id}/resend`
 
-Sends a new code of an SMS or email confirmation, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`).
+Sends a new code of an SMS or email confirmation, or begins a new ceremony of a confirmation by passkey and returns its options, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`).
 
 ## Maintenance and lockdowns
 

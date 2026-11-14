@@ -10,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/redistest"
@@ -17,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,9 +143,9 @@ func TestService_AnSMSCodeConfirmsItsWithdrawalOnce(t *testing.T) {
 	assert.Equal(t, Details{Amount: "100 USDT", Destination: "TR7NHq...gjLj6t"}, c.Details)
 
 	require.ErrorIs(t, f.consume(alice, c.ID, digest), ErrNotConfirmed, "not before the code")
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, "000000", audit.Event{}), ErrInvalidCode)
-	require.NoError(t, f.Confirm(ctx, alice, c.ID, sent.Code, audit.Event{}))
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, sent.Code, audit.Event{}), ErrAlreadyConfirmed)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "000000"}, audit.Event{}), ErrInvalidCode)
+	require.NoError(t, f.Confirm(ctx, alice, c.ID, Proof{Code: sent.Code}, audit.Event{}))
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: sent.Code}, audit.Event{}), ErrAlreadyConfirmed)
 
 	// Bound to its operation: another amount or destination is refused.
 	require.ErrorIs(t, f.consume(alice, c.ID, withdrawal("1000", "dest-1")), ErrMismatch)
@@ -173,10 +175,10 @@ func TestService_WrongCodesEndTheConfirmation(t *testing.T) {
 	assert.Equal(t, MethodEmail, c.Method)
 	code := f.sender.last().Code
 
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, "111111", audit.Event{}), ErrInvalidCode)
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, "222222", audit.Event{}), ErrInvalidCode)
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, "333333", audit.Event{}), ErrTooManyAttempts)
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, code, audit.Event{}), ErrTooManyAttempts, "even the right code, after too many wrong ones")
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "111111"}, audit.Event{}), ErrInvalidCode)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "222222"}, audit.Event{}), ErrInvalidCode)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "333333"}, audit.Event{}), ErrTooManyAttempts)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: code}, audit.Event{}), ErrTooManyAttempts, "even the right code, after too many wrong ones")
 	_, err = f.Resend(ctx, alice, c.ID, "client")
 	require.ErrorIs(t, err, ErrTooManyAttempts)
 }
@@ -208,15 +210,15 @@ func TestService_TheAuthenticatorAndTheChosenMethod(t *testing.T) {
 	assert.Empty(t, c.SentTo, "nothing is sent")
 	_, err = f.Resend(ctx, alice, c.ID, "client")
 	require.ErrorIs(t, err, ErrMethodUnavailable)
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, "000000", audit.Event{}), ErrInvalidCode)
-	require.NoError(t, f.Confirm(ctx, alice, c.ID, "654321", audit.Event{}))
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "000000"}, audit.Event{}), ErrInvalidCode)
+	require.NoError(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "654321"}, audit.Event{}))
 	require.NoError(t, f.consume(alice, c.ID, digest))
 
 	// A locked authenticator ends the confirmation's attempts.
 	c, err = f.Start(ctx, alice, PurposeWithdrawal, digest, Details{Amount: "5 USDT", Destination: "T..."}, "client")
 	require.NoError(t, err)
 	f.auth.locked = true
-	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, "654321", audit.Event{}), ErrTooManyAttempts)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "654321"}, audit.Event{}), ErrTooManyAttempts)
 
 	// When the chosen method goes away, the next available one is used.
 	f.auth.enabled, f.auth.locked = false, false
@@ -258,13 +260,13 @@ func TestService_ExpiryAndSeals(t *testing.T) {
 		require.NoError(t, rowseal.Reseal(ctx, f.DB, rowseal.OperationConfirmations, "id = $1", id))
 	}
 	backdate(expiring.ID, "expires_at")
-	require.ErrorIs(t, f.Confirm(ctx, alice, expiring.ID, f.sender.last().Code, audit.Event{}), ErrExpired)
+	require.ErrorIs(t, f.Confirm(ctx, alice, expiring.ID, Proof{Code: f.sender.last().Code}, audit.Event{}), ErrExpired)
 
 	// A new code gives it a new lifetime.
 	renewed, err := f.Resend(ctx, alice, expiring.ID, "client")
 	require.NoError(t, err)
 	assert.True(t, renewed.ExpiresAt.After(time.Now()))
-	require.NoError(t, f.Confirm(ctx, alice, expiring.ID, f.sender.last().Code, audit.Event{}))
+	require.NoError(t, f.Confirm(ctx, alice, expiring.ID, Proof{Code: f.sender.last().Code}, audit.Event{}))
 
 	// Confirmed too long ago to be consumed.
 	backdate(expiring.ID, "confirmed_at")
@@ -311,4 +313,70 @@ func TestDetails_FitShortTemplateParameters(t *testing.T) {
 	assert.False(t, Details{Amount: "100 USDT"}.valid(), "a destination is required")
 	assert.False(t, Details{Amount: "123456789012345678901 USDT", Destination: "T..."}.valid(), "at most 25 characters")
 	assert.Equal(t, "1 BTC to bc1q...xyz", Details{Amount: "1 BTC", Destination: "bc1q...xyz"}.String())
+}
+
+// passkeys keeps one ceremony per scope, as the passkey service does, and
+// accepts one answer.
+type passkeys struct {
+	count  int
+	accept string
+	begun  map[string]bool
+}
+
+func (p *passkeys) Enabled() bool                              { return true }
+func (p *passkeys) Count(context.Context, string) (int, error) { return p.count, nil }
+func (p *passkeys) BeginAssertion(_ context.Context, _, scope string) (*protocol.CredentialAssertion, error) {
+	if p.count == 0 {
+		return nil, passkey.ErrNoPasskey
+	}
+	p.begun[scope] = true
+	return &protocol.CredentialAssertion{Response: protocol.PublicKeyCredentialRequestOptions{Challenge: []byte(scope)}}, nil
+}
+
+func (p *passkeys) FinishAssertion(_ context.Context, _, scope string, response []byte) error {
+	if !p.begun[scope] {
+		return passkey.ErrNoCeremony
+	}
+	delete(p.begun, scope)
+	if string(response) != p.accept {
+		return passkey.ErrInvalid
+	}
+	return nil
+}
+
+func TestService_APasskeyConfirmsItsOwnCeremony(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	keys := &passkeys{count: 1, accept: `{"signed":true}`, begun: map[string]bool{}}
+	f.Passkeys, f.MaxAttempts = keys, 5
+	alice := f.user(usertest.User{Email: "alice@example.com"})
+	digest := withdrawal("9", "d")
+
+	st, err := f.Settings(ctx, alice)
+	require.NoError(t, err)
+	assert.Equal(t, []Method{MethodPasskey, MethodEmail}, st.Available)
+	assert.Equal(t, MethodPasskey, st.Effective, "a passkey first, as it resists phishing")
+
+	sent := len(f.sender.sent)
+	c, err := f.Start(ctx, alice, PurposeWithdrawal, digest, Details{Amount: "9 USDT", Destination: "T..."}, "client")
+	require.NoError(t, err)
+	assert.Equal(t, MethodPasskey, c.Method)
+	require.NotNil(t, c.Passkey, "the options for the device")
+	assert.Len(t, f.sender.sent, sent, "nothing is sent")
+
+	// A wrong answer takes the ceremony; the right one then needs a new one.
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Passkey: []byte(`{"signed":false}`)}, audit.Event{}), ErrInvalidCode)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Passkey: []byte(keys.accept)}, audit.Event{}), ErrInvalidCode)
+	require.ErrorIs(t, f.Confirm(ctx, alice, c.ID, Proof{Code: "123456"}, audit.Event{}), ErrInvalidCode, "a code does not confirm a passkey confirmation")
+	renewed, err := f.Resend(ctx, alice, c.ID, "client")
+	require.NoError(t, err)
+	require.NotNil(t, renewed.Passkey)
+	require.NoError(t, f.Confirm(ctx, alice, c.ID, Proof{Passkey: []byte(keys.accept)}, audit.Event{}))
+	require.NoError(t, f.consume(alice, c.ID, digest))
+
+	// Without a passkey, the method is not offered.
+	keys.count = 0
+	st, err = f.Settings(ctx, alice)
+	require.NoError(t, err)
+	assert.Equal(t, []Method{MethodEmail}, st.Available)
 }

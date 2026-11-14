@@ -1,7 +1,8 @@
 // Package confirm confirms operations with the user's second factor (#161).
-// Every withdrawal is confirmed with a code before it runs: a code sent by
-// SMS, a code sent by email, or a code of the user's authenticator app, as
-// the user chooses.
+// Every withdrawal is confirmed before it runs, as the user chooses: with
+// one of their passkeys (#373), with a code of their authenticator app, or
+// with a code sent by SMS or email. A passkey is the one method that
+// resists phishing: the device signs only for the exchange's own domain.
 //
 // A confirmation is bound to its operation. The operation's digest, the
 // SHA-256 of what it does (Digest), is stored with the confirmation, and
@@ -34,15 +35,21 @@ import (
 type Method string
 
 // The methods, in the order that a user who chose none is offered them:
-// the authenticator first, as it needs no delivery.
+// the passkey first, as it resists phishing, then the authenticator, as it
+// needs no delivery.
 const (
-	MethodTOTP  Method = "totp"
-	MethodSMS   Method = "sms"
-	MethodEmail Method = "email"
+	MethodPasskey Method = "passkey"
+	MethodTOTP    Method = "totp"
+	MethodSMS     Method = "sms"
+	MethodEmail   Method = "email"
 )
 
 // Methods are the methods.
-var Methods = []Method{MethodTOTP, MethodSMS, MethodEmail}
+var Methods = []Method{MethodPasskey, MethodTOTP, MethodSMS, MethodEmail}
+
+// sendsCode reports whether a confirmation of m sends a code: by SMS or
+// email. A passkey and an authenticator app have nothing to send.
+func (m Method) sendsCode() bool { return m == MethodSMS || m == MethodEmail }
 
 // Valid reports whether m is a method.
 func (m Method) Valid() bool { return slices.Contains(Methods, m) }

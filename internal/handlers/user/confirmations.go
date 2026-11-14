@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -29,12 +30,16 @@ const (
 
 // ConfirmationMethodRequest chooses how withdrawals are confirmed.
 type ConfirmationMethodRequest struct {
-	Method confirm.Method `json:"method" enums:"totp,sms,email" example:"totp"`
+	Method confirm.Method `json:"method" enums:"passkey,totp,sms,email" example:"totp"`
 }
 
 // ConfirmRequest is the code of a confirmation.
 type ConfirmRequest struct {
-	Code string `json:"code" example:"482913"`
+	// Code is the code of an SMS, email, or authenticator confirmation.
+	Code string `json:"code,omitempty" example:"482913"`
+	// Passkey is the answer of the device to the options of a
+	// confirmation by passkey (#373). It replaces the code.
+	Passkey json.RawMessage `json:"passkey,omitempty" swaggertype:"object"`
 }
 
 func (h *UserHandler) confirmationsCaller(c *gin.Context) (string, bool) {
@@ -145,13 +150,14 @@ func (h *UserHandler) ConfirmOperation(c *gin.Context) {
 		return
 	}
 	var req ConfirmRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.Code == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Code == "" && len(req.Passkey) == 0) {
 		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_INPUT"), nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
 	defer cancel()
-	if err := h.Confirmations.Confirm(ctx, userHK, c.Param("id"), req.Code, audit.FromRequest(c)); err != nil {
+	proof := confirm.Proof{Code: req.Code, Passkey: req.Passkey}
+	if err := h.Confirmations.Confirm(ctx, userHK, c.Param("id"), proof, audit.FromRequest(c)); err != nil {
 		sendConfirmationError(c, userHK, err)
 		return
 	}

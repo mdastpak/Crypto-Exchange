@@ -98,3 +98,70 @@ func TestUserConfirmations_ACodeConfirmsItsWithdrawal(t *testing.T) {
 	events := auditEvents(t, env.db, audit.ActionUserOperationConfirm)
 	require.Len(t, events, 3, "a wrong code and two right ones")
 }
+
+// challengeOfConfirmation returns the WebAuthn challenge of a confirmation
+// by passkey, from its options.
+func challengeOfConfirmation(t *testing.T, c confirm.Challenge) string {
+	t.Helper()
+	require.NotNil(t, c.Passkey)
+	raw, err := json.Marshal(c.Passkey)
+	require.NoError(t, err)
+	var info map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &info))
+	return challengeOfOptions(t, info)
+}
+
+// TestUserConfirmations_APasskeyConfirmsItsOwnWithdrawal confirms a
+// withdrawal with a passkey (#373), through a virtual authenticator: the
+// device's answer to one confirmation's challenge does not confirm another.
+func TestUserConfirmations_APasskeyConfirmsItsOwnWithdrawal(t *testing.T) {
+	env := newE2EEnv(t, withPasskeys)
+	ctx := context.Background()
+	token, userID := env.signedInUser(t, "passkey-confirm@example.com")
+	service, ok := env.handlers.User.Confirmations.(confirm.Service)
+	require.True(t, ok)
+	env.setPassword(t, token, testPassword)
+	status, _ := env.post(t, stepUpRoute, map[string]string{"password": testPassword}, token)
+	require.Equal(t, http.StatusOK, status)
+	device := newTestAuthenticator(t)
+	env.addPasskey(t, token, device, "Laptop")
+
+	status, raw := env.call(t, http.MethodGet, "/api/v1/user/confirmation-method", nil, token)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var settings struct {
+		Info confirm.Settings `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &settings))
+	assert.Equal(t, confirm.MethodPasskey, settings.Info.Effective, "a passkey first")
+
+	digest := confirm.Digest(confirm.PurposeWithdrawal, "50", "USDT", "destination")
+	details := confirm.Details{Amount: "50 USDT", Destination: "TR7NHq...gjLj6t"}
+	first, err := service.Start(ctx, userID, confirm.PurposeWithdrawal, digest, details, "client")
+	require.NoError(t, err)
+	second, err := service.Start(ctx, userID, confirm.PurposeWithdrawal, digest, details, "client")
+	require.NoError(t, err)
+
+	// The answer to the first challenge, sent for the second confirmation.
+	answer := device.get(t, challengeOfConfirmation(t, first))
+	status, resp := env.post(t, "/api/v1/user/confirmations/"+second.ID, map[string]interface{}{"passkey": answer}, token)
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Equal(t, "confirmation_code_invalid", resp.Code)
+
+	status, resp = env.post(t, "/api/v1/user/confirmations/"+first.ID, map[string]interface{}{"passkey": answer}, token)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	tx, err := env.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, service.Consume(ctx, tx, userID, first.ID, confirm.PurposeWithdrawal, digest))
+	require.NoError(t, tx.Commit())
+
+	// The second needs a new ceremony, whose answer confirms it.
+	status, raw = env.call(t, http.MethodPost, "/api/v1/user/confirmations/"+second.ID+"/resend", nil, token)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var renewed struct {
+		Info confirm.Challenge `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &renewed))
+	status, resp = env.post(t, "/api/v1/user/confirmations/"+second.ID,
+		map[string]interface{}{"passkey": device.get(t, challengeOfConfirmation(t, renewed.Info))}, token)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+}

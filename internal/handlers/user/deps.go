@@ -75,7 +75,7 @@ type DestinationStore interface {
 type ConfirmationService interface {
 	Settings(ctx context.Context, userHK string) (confirm.Settings, error)
 	SetMethod(ctx context.Context, userHK string, m confirm.Method, origin audit.Event) error
-	Confirm(ctx context.Context, userHK, id, code string, origin audit.Event) error
+	Confirm(ctx context.Context, userHK, id string, proof confirm.Proof, origin audit.Event) error
 	Resend(ctx context.Context, userHK, id, client string) (confirm.Challenge, error)
 }
 

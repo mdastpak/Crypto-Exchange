@@ -9358,6 +9358,7 @@ const docTemplate = `{
                 },
                 "method": {
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
@@ -9365,6 +9366,14 @@ const docTemplate = `{
                     "allOf": [
                         {
                             "$ref": "#/definitions/confirm.Method"
+                        }
+                    ]
+                },
+                "passkey": {
+                    "description": "Passkey are the options for navigator.credentials.get of a\nconfirmation by passkey, under publicKey. The device's answer goes to\nPOST /user/confirmations/{id} as passkey.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.PasskeyOptions"
                         }
                     ]
                 },
@@ -9393,15 +9402,27 @@ const docTemplate = `{
         "confirm.Method": {
             "type": "string",
             "enum": [
+                "passkey",
                 "totp",
                 "sms",
                 "email"
             ],
             "x-enum-varnames": [
+                "MethodPasskey",
                 "MethodTOTP",
                 "MethodSMS",
                 "MethodEmail"
             ]
+        },
+        "confirm.PasskeyOptions": {
+            "type": "object",
+            "properties": {
+                "publicKey": {
+                    "description": "PublicKey holds the options, as the WebAuthn API defines them.",
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
         },
         "confirm.Settings": {
             "type": "object",
@@ -9416,6 +9437,7 @@ const docTemplate = `{
                 "effective": {
                     "description": "Effective is the method that confirmations use: the chosen one\nwhile it is available, or else the first available of totp, sms,\nand email. Absent when none is available.",
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
@@ -9429,6 +9451,7 @@ const docTemplate = `{
                 "method": {
                     "description": "Method is the method the user chose; absent when they chose none.",
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
@@ -12173,8 +12196,13 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "code": {
+                    "description": "Code is the code of an SMS, email, or authenticator confirmation.",
                     "type": "string",
                     "example": "482913"
+                },
+                "passkey": {
+                    "description": "Passkey is the answer of the device to the options of a\nconfirmation by passkey (#373). It replaces the code.",
+                    "type": "object"
                 }
             }
         },
@@ -12183,6 +12211,7 @@ const docTemplate = `{
             "properties": {
                 "method": {
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"

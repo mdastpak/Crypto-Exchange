@@ -9351,6 +9351,7 @@
                 },
                 "method": {
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
@@ -9358,6 +9359,14 @@
                     "allOf": [
                         {
                             "$ref": "#/definitions/confirm.Method"
+                        }
+                    ]
+                },
+                "passkey": {
+                    "description": "Passkey are the options for navigator.credentials.get of a\nconfirmation by passkey, under publicKey. The device's answer goes to\nPOST /user/confirmations/{id} as passkey.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.PasskeyOptions"
                         }
                     ]
                 },
@@ -9386,15 +9395,27 @@
         "confirm.Method": {
             "type": "string",
             "enum": [
+                "passkey",
                 "totp",
                 "sms",
                 "email"
             ],
             "x-enum-varnames": [
+                "MethodPasskey",
                 "MethodTOTP",
                 "MethodSMS",
                 "MethodEmail"
             ]
+        },
+        "confirm.PasskeyOptions": {
+            "type": "object",
+            "properties": {
+                "publicKey": {
+                    "description": "PublicKey holds the options, as the WebAuthn API defines them.",
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
         },
         "confirm.Settings": {
             "type": "object",
@@ -9409,6 +9430,7 @@
                 "effective": {
                     "description": "Effective is the method that confirmations use: the chosen one\nwhile it is available, or else the first available of totp, sms,\nand email. Absent when none is available.",
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
@@ -9422,6 +9444,7 @@
                 "method": {
                     "description": "Method is the method the user chose; absent when they chose none.",
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
@@ -12166,8 +12189,13 @@
             "type": "object",
             "properties": {
                 "code": {
+                    "description": "Code is the code of an SMS, email, or authenticator confirmation.",
                     "type": "string",
                     "example": "482913"
+                },
+                "passkey": {
+                    "description": "Passkey is the answer of the device to the options of a\nconfirmation by passkey (#373). It replaces the code.",
+                    "type": "object"
                 }
             }
         },
@@ -12176,6 +12204,7 @@
             "properties": {
                 "method": {
                     "enum": [
+                        "passkey",
                         "totp",
                         "sms",
                         "email"
