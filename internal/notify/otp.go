@@ -19,7 +19,22 @@ type OTPMessage struct {
 	Contact       string // the raw address; never log it
 	MaskedContact string // safe to log
 	Code          string // never log it outside development
+	// Purpose is what the code is for: empty for a sign-in, or
+	// PurposeWithdrawal for the confirmation of a withdrawal (#161), which
+	// is sent with a message of its own, so that a code that moves funds
+	// cannot pass for a sign-in code.
+	Purpose string
+	// Details describe what a confirmation code confirms, such as
+	// "100 USDT to TR7NHq...gjLj6t", for the message. Never a full number.
+	Details string
+	// Amount and Destination are Details in two parts, such as "100 USDT"
+	// and "TR7NHq...gjLj6t", each at most 25 characters, for templates
+	// whose parameters are short (#371).
+	Amount, Destination string
 }
+
+// PurposeWithdrawal is the purpose of a code that confirms a withdrawal.
+const PurposeWithdrawal = "withdrawal"
 
 // OTPSender delivers sign-in codes.
 type OTPSender interface {
@@ -50,7 +65,11 @@ type DevLogSender struct {
 func (DevLogSender) Supports(contactType string) bool { return knownContactType(contactType) }
 
 func (s DevLogSender) SendOTP(ctx context.Context, msg OTPMessage) error {
-	s.Logger.Printf("DEVELOPMENT ONLY: sign-in code for %s %s: %s", msg.ContactType, msg.MaskedContact, msg.Code)
+	what := "sign-in code"
+	if msg.Purpose == PurposeWithdrawal {
+		what = "withdrawal confirmation code (" + msg.Details + ")"
+	}
+	s.Logger.Printf("DEVELOPMENT ONLY: %s for %s %s: %s", what, msg.ContactType, msg.MaskedContact, msg.Code)
 	return nil
 }
 

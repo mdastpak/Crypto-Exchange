@@ -6181,6 +6181,298 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/confirmation-method": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "How the withdrawals of the signed-in user are confirmed: the method they chose, the one that confirmations use (the chosen one while it is available, or else the first of totp, sms, and email that is), and the ones available. totp needs an authenticator app (POST /user/totp), sms a verified mobile number and the SMS template of withdrawals, and email a verified email address.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Get my confirmation method",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/confirm.Settings"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "confirmations_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chooses totp, sms, or email for the confirmations of withdrawals. The method must be available (409 confirmation_method_unavailable), and the change needs a fresh proof of the second factor (403 step_up_required). Audited.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Choose my confirmation method",
+                "parameters": [
+                    {
+                        "description": "The method",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.ConfirmationMethodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/confirm.Settings"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "confirmation_method_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/confirmations/{id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks the code of a confirmation: the code sent by SMS or email, or a code of the authenticator app. The confirmation is bound to its operation, so the code confirms that withdrawal and no other, once. A wrong code answers 403 confirmation_code_invalid; after five, or when the code store or the authenticator locks, 429 confirmation_locked. A confirmation lasts as long as a code. The codes are never logged or audited.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Confirm an operation with its code",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The id of the confirmation",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.ConfirmRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "confirmation_code_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "confirmation_expired or confirmation_already_confirmed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "confirmation_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/confirmations/{id}/resend": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends a new code of a confirmation by SMS or email, which also gives it a new lifetime. The limits of the codes apply (429 confirmation_locked). A confirmation by the authenticator app has nothing to send (409 confirmation_method_unavailable).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-withdrawals"
+                ],
+                "summary": "Send a new confirmation code",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The id of the confirmation",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/confirm.Challenge"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "confirmation_already_confirmed or confirmation_method_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "confirmation_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/contacts": {
             "get": {
                 "security": [
@@ -9046,6 +9338,109 @@ const docTemplate = `{
                 }
             }
         },
+        "confirm.Challenge": {
+            "type": "object",
+            "properties": {
+                "details": {
+                    "description": "Details are what the code confirms.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.Details"
+                        }
+                    ]
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "method": {
+                    "enum": [
+                        "totp",
+                        "sms",
+                        "email"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.Method"
+                        }
+                    ]
+                },
+                "sent_to": {
+                    "description": "SentTo is the contact that an SMS or email code went to, masked.",
+                    "type": "string",
+                    "example": "091*****567"
+                }
+            }
+        },
+        "confirm.Details": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the amount with its currency, such as \"100 USDT\".",
+                    "type": "string",
+                    "example": "100 USDT"
+                },
+                "destination": {
+                    "description": "Destination is where it goes, masked, such as \"TR7NHq...gjLj6t\".",
+                    "type": "string",
+                    "example": "TR7NHq...gjLj6t"
+                }
+            }
+        },
+        "confirm.Method": {
+            "type": "string",
+            "enum": [
+                "totp",
+                "sms",
+                "email"
+            ],
+            "x-enum-varnames": [
+                "MethodTOTP",
+                "MethodSMS",
+                "MethodEmail"
+            ]
+        },
+        "confirm.Settings": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "Available are the methods the user can use now.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/confirm.Method"
+                    }
+                },
+                "effective": {
+                    "description": "Effective is the method that confirmations use: the chosen one\nwhile it is available, or else the first available of totp, sms,\nand email. Absent when none is available.",
+                    "enum": [
+                        "totp",
+                        "sms",
+                        "email"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.Method"
+                        }
+                    ]
+                },
+                "method": {
+                    "description": "Method is the method the user chose; absent when they chose none.",
+                    "enum": [
+                        "totp",
+                        "sms",
+                        "email"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.Method"
+                        }
+                    ]
+                }
+            }
+        },
         "currencies.Lifecycle": {
             "type": "string",
             "enum": [
@@ -11771,6 +12166,33 @@ const docTemplate = `{
                     "description": "Name is what the user calls the passkey, such as the device.",
                     "type": "string",
                     "example": "iPhone"
+                }
+            }
+        },
+        "user.ConfirmRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "482913"
+                }
+            }
+        },
+        "user.ConfirmationMethodRequest": {
+            "type": "object",
+            "properties": {
+                "method": {
+                    "enum": [
+                        "totp",
+                        "sms",
+                        "email"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/confirm.Method"
+                        }
+                    ],
+                    "example": "totp"
                 }
             }
         },

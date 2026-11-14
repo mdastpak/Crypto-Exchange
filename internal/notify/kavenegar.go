@@ -20,8 +20,11 @@ import (
 type KavenegarDeliverer struct {
 	apiKey   string
 	template string
-	baseURL  string
-	client   *http.Client
+	// withdrawalTemplate is the template of the codes that confirm a
+	// withdrawal (#161); empty is none, and such codes are refused.
+	withdrawalTemplate string
+	baseURL            string
+	client             *http.Client
 }
 
 // NewKavenegarDeliverer validates cfg and returns a deliverer for it.
@@ -41,10 +44,11 @@ func NewKavenegarDeliverer(cfg config.KavenegarConfig) (*KavenegarDeliverer, err
 		timeout = 10 * time.Second
 	}
 	return &KavenegarDeliverer{
-		apiKey:   cfg.APIKey,
-		template: cfg.OTPTemplate,
-		baseURL:  strings.TrimRight(cfg.BaseURL, "/"),
-		client:   &http.Client{Timeout: timeout},
+		apiKey:             cfg.APIKey,
+		template:           cfg.OTPTemplate,
+		withdrawalTemplate: cfg.WithdrawalTemplate,
+		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
+		client:             &http.Client{Timeout: timeout},
 	}, nil
 }
 
@@ -78,6 +82,16 @@ func (k *KavenegarDeliverer) Deliver(ctx context.Context, msg OTPMessage) error 
 	form.Set("receptor", msg.Contact)
 	form.Set("token", msg.Code)
 	form.Set("template", k.template)
+	if msg.Purpose == PurposeWithdrawal {
+		// A code that confirms a withdrawal never goes out with the
+		// sign-in text (#161). %token10 may hold spaces, so it carries
+		// what the code confirms.
+		if k.withdrawalTemplate == "" {
+			return permanent(errors.New("kavenegar: no withdrawal_template for the codes that confirm withdrawals"))
+		}
+		form.Set("template", k.withdrawalTemplate)
+		form.Set("token10", msg.Details)
+	}
 
 	// The API key is part of the path, so no error below may include the URL.
 	endpoint := k.baseURL + "/v1/" + url.PathEscape(k.apiKey) + "/verify/lookup.json"

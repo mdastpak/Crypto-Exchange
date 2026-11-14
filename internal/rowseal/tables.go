@@ -202,12 +202,25 @@ var (
 		text("bank"), text("network"), sealedBytes("memo_enc"), text("verified_by"),
 		timestamptz("usable_from"), timestamptz("removed_at"),
 	}}
+	// OperationConfirmations covers what a confirmation confirms, how, and
+	// whether it was confirmed and consumed (#161): one marked confirmed in
+	// SQL runs nothing.
+	OperationConfirmations = &Table{Name: "operation_confirmations", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("purpose"), sealedBytes("digest"), text("method"), secret("code_session"),
+		text("failed_attempts"), timestamptz("expires_at"), timestamptz("confirmed_at"), timestamptz("consumed_at"),
+	}}
+	// UserConfirmationMethods covers the method a user chose to confirm
+	// withdrawals (#161): one changed in SQL is ignored.
+	UserConfirmationMethods = &Table{Name: "user_confirmation_methods", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		text("method"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
+	OperationConfirmations, UserConfirmationMethods,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

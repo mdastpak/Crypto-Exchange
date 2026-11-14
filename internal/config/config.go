@@ -784,6 +784,20 @@ type EmailConfig struct {
 	// emails. They can use {{.Code}} and {{.TTLSeconds}}.
 	OTPSubject string `yaml:"otp_subject"`
 	OTPBody    string `yaml:"otp_body"`
+	// WithdrawalSubject and WithdrawalBody are the templates of the codes
+	// that confirm a withdrawal (#161). They can use {{.Code}},
+	// {{.TTLSeconds}}, and {{.Details}}, what the code confirms, such as
+	// "100 USDT to TR7NHq...gjLj6t". A withdrawal code never goes out with
+	// the sign-in text, so that it cannot pass for one.
+	WithdrawalSubject string `yaml:"withdrawal_subject"`
+	WithdrawalBody    string `yaml:"withdrawal_body"`
+	// HTMLTemplates chooses the HTML part of the emails, beside the text:
+	// "en" (the default) or "fa" for the templates in config/email, "none"
+	// for text only, or a directory with otp.html and withdrawal.html,
+	// Go html/template templates that can use {{.Code}}, {{.TTLSeconds}},
+	// {{.Sender}}, and, for withdrawals, {{.Amount}}, {{.Destination}},
+	// and {{.Details}}.
+	HTMLTemplates string `yaml:"html_templates"`
 }
 
 // SMSConfig selects and configures the SMS provider. SMS is disabled when
@@ -801,8 +815,13 @@ type KavenegarConfig struct {
 	// panel. Its %token placeholder receives the sign-in code, so the
 	// message text and its language are defined in the panel.
 	OTPTemplate string `yaml:"otp_template"`
-	BaseURL     string `yaml:"base_url"`
-	Timeout     int    `yaml:"timeout_seconds"`
+	// WithdrawalTemplate is the verify template of the codes that confirm
+	// a withdrawal (#161): %token receives the code, and %token10 what it
+	// confirms, such as "100 USDT to TR7NHq...gjLj6t". Without it, codes
+	// that confirm withdrawals are not sent by SMS.
+	WithdrawalTemplate string `yaml:"withdrawal_template"`
+	BaseURL            string `yaml:"base_url"`
+	Timeout            int    `yaml:"timeout_seconds"`
 }
 
 // PriceProviderConfig holds configuration for a price data provider
@@ -1905,6 +1924,9 @@ const (
 	DefaultOTPEmailSubject = "Your sign-in code"
 	DefaultOTPEmailBody    = "Your sign-in code is {{.Code}}. It expires in {{.TTLSeconds}} seconds.\n\n" +
 		"If you did not request this code, you can ignore this email. Never share it with anyone.\n"
+	DefaultWithdrawalEmailSubject = "Confirm your withdrawal"
+	DefaultWithdrawalEmailBody    = "Your code to confirm the withdrawal of {{.Details}} is {{.Code}}. It expires in {{.TTLSeconds}} seconds.\n\n" +
+		"If you did not request this withdrawal, do not enter or share the code: sign in, change your password, and contact support.\n"
 	DefaultKavenegarBaseURL = "https://api.kavenegar.com"
 )
 
@@ -1920,6 +1942,12 @@ func setNotificationDefaults(n *NotificationsConfig) {
 	}
 	if n.Email.OTPBody == "" {
 		n.Email.OTPBody = DefaultOTPEmailBody
+	}
+	if n.Email.WithdrawalSubject == "" {
+		n.Email.WithdrawalSubject = DefaultWithdrawalEmailSubject
+	}
+	if n.Email.WithdrawalBody == "" {
+		n.Email.WithdrawalBody = DefaultWithdrawalEmailBody
 	}
 	if n.SMS.Kavenegar.BaseURL == "" {
 		n.SMS.Kavenegar.BaseURL = DefaultKavenegarBaseURL

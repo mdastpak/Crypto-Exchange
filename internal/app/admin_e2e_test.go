@@ -251,6 +251,7 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	sender := &capturingSender{}
 	handlers.Public.OTPSender = sender
 	handlers.User.OTPSender = sender
+	useConfirmationSender(handlers, sender)
 	require.NoError(t, configureAdminSignIn(handlers, services, sender))
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
 	watcher, err := startPlatform(services, handlers)

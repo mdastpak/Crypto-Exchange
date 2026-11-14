@@ -116,6 +116,13 @@ const (
 	// with the provider's reference.
 	ActionUserDestinationAdd    = "user.withdrawal_destination_add"
 	ActionUserDestinationRemove = "user.withdrawal_destination_remove"
+	// A user choosing how withdrawals are confirmed (#161): SMS, email, or
+	// the authenticator app. The target is the user.
+	ActionUserConfirmationMethodSet = "user.confirmation_method_set"
+	// A user confirming an operation, such as a withdrawal, with a code
+	// (#161). The target is the confirmation; a wrong code is a failure.
+	// The event never holds the code.
+	ActionUserOperationConfirm = "user.operation_confirm"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"
@@ -197,6 +204,9 @@ const (
 	// TargetWithdrawalDestination is a withdrawal destination of a user
 	// (#160), by its id.
 	TargetWithdrawalDestination = "withdrawal_destination"
+	// TargetOperationConfirmation is a confirmation of an operation with
+	// the second factor (#161), by its id.
+	TargetOperationConfirmation = "operation_confirmation"
 	// TargetAdminSession is an administrator's session (#308), by the
 	// session ID of its token.
 	TargetAdminSession = "admin_session"

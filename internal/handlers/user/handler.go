@@ -41,6 +41,9 @@ type UserHandler struct {
 	// The server sets the provider that checks the owner of a card, an
 	// IBAN, or an account, and the keys that read the national IDs.
 	Destinations DestinationStore
+	// Confirmations confirms withdrawals with the second factor (#161). The
+	// server sets it, with the delivery of the codes.
+	Confirmations ConfirmationService
 	// Redis holds the pending contact changes, which any instance confirms.
 	Redis redis.UniversalClient
 	// Sessions lists and ends the sessions of the signed-in user (#193).

@@ -38,4 +38,6 @@ const (
 	Socket
 	// MarketData is the database of internal/handlers/marketdata.
 	MarketData
+	// Confirm is the database of internal/confirm.
+	Confirm
 )

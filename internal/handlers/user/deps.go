@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
@@ -50,8 +51,17 @@ type FavoriteStore interface {
 
 // RestrictionReader reads the restrictions and the security hold of a
 // user: restrictions.Store.
+type RestrictionReader interface {
+	Active(ctx context.Context, userHK string) ([]restrictions.Restriction, error)
+	SecurityHold(ctx context.Context, userHK string) (*time.Time, error)
+}
+
 // VerificationReader reads the verification level of a user, what it
 // allows, and their withdrawal limits (#157): verification.Store.
+type VerificationReader interface {
+	Summary(ctx context.Context, userHK string) (verification.Summary, error)
+}
+
 // DestinationStore keeps the withdrawal destinations of users (#160):
 // destinations.Store.
 type DestinationStore interface {
@@ -60,13 +70,13 @@ type DestinationStore interface {
 	Remove(ctx context.Context, userHK, id string, origin audit.Event) error
 }
 
-type VerificationReader interface {
-	Summary(ctx context.Context, userHK string) (verification.Summary, error)
-}
-
-type RestrictionReader interface {
-	Active(ctx context.Context, userHK string) ([]restrictions.Restriction, error)
-	SecurityHold(ctx context.Context, userHK string) (*time.Time, error)
+// ConfirmationService confirms operations with the second factor (#161):
+// confirm.Service.
+type ConfirmationService interface {
+	Settings(ctx context.Context, userHK string) (confirm.Settings, error)
+	SetMethod(ctx context.Context, userHK string, m confirm.Method, origin audit.Event) error
+	Confirm(ctx context.Context, userHK, id, code string, origin audit.Event) error
+	Resend(ctx context.Context, userHK, id, client string) (confirm.Challenge, error)
 }
 
 // CodeStore issues and checks the codes of contact changes: *otp.Store.
@@ -120,15 +130,16 @@ type Guard interface {
 
 // The implementations of the server.
 var (
-	_ Store              = (*DBStore)(nil)
-	_ AuditLog           = audit.Log{}
-	_ FavoriteStore      = favorites.Store{}
-	_ RestrictionReader  = restrictions.Store{}
-	_ VerificationReader = verification.Store{}
-	_ DestinationStore   = destinations.Store{}
-	_ CodeStore          = (*otp.Store)(nil)
-	_ PasswordStore      = (*userauth.Passwords)(nil)
-	_ AuthenticatorStore = (*userauth.TOTP)(nil)
-	_ PasskeyStore       = (*passkey.Service)(nil)
-	_ Guard              = (*userauth.Guard)(nil)
+	_ Store               = (*DBStore)(nil)
+	_ AuditLog            = audit.Log{}
+	_ FavoriteStore       = favorites.Store{}
+	_ RestrictionReader   = restrictions.Store{}
+	_ VerificationReader  = verification.Store{}
+	_ DestinationStore    = destinations.Store{}
+	_ ConfirmationService = confirm.Service{}
+	_ CodeStore           = (*otp.Store)(nil)
+	_ PasswordStore       = (*userauth.Passwords)(nil)
+	_ AuthenticatorStore  = (*userauth.TOTP)(nil)
+	_ PasskeyStore        = (*passkey.Service)(nil)
+	_ Guard               = (*userauth.Guard)(nil)
 )
