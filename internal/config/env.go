@@ -227,6 +227,7 @@ var envVars = []EnvVar{
 	intVar("SECURITY_CHANGE_HOLD_HOURS", "security.change_hold_hours", func(c *Configuration) *int { return &c.Security.ChangeHoldHours }),
 	intVar("SECURITY_PASSWORD_MIN_LENGTH", "security.password.min_length", func(c *Configuration) *int { return &c.Security.Password.MinLength }),
 	intVar("SECURITY_PASSWORD_MAX_FAILURES", "security.password.max_failures", func(c *Configuration) *int { return &c.Security.Password.MaxFailures }),
+	listVar("LEGAL_SIGNUP_BLOCKED_COUNTRIES", "legal.signup.blocked_countries", func(c *Configuration) *[]string { return &c.Legal.SignUp.BlockedCountries }),
 	stringVar("SECURITY_PASSKEYS_RP_ID", "security.passkeys.rp_id", func(c *Configuration) *string { return &c.Security.Passkeys.RPID }),
 	stringVar("SECURITY_PASSKEYS_RP_NAME", "security.passkeys.rp_name", func(c *Configuration) *string { return &c.Security.Passkeys.RPName }),
 	listVar("SECURITY_PASSKEYS_ORIGINS", "security.passkeys.origins", func(c *Configuration) *[]string { return &c.Security.Passkeys.Origins }),

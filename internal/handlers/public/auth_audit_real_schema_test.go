@@ -26,7 +26,7 @@ type sessionFixture struct {
 func newSessionFixture(t *testing.T) sessionFixture {
 	t.Helper()
 	handler, conn, _ := setupRealSchemaHandler(t)
-	hk, err := handler.checkOrCreateUser(context.Background(), audit.Event{}, "email", "audited-session@example.com")
+	hk, err := handler.checkOrCreateUser(context.Background(), audit.Event{}, "email", "audited-session@example.com", signUpInfo{})
 	require.NoError(t, err)
 	f := sessionFixture{store: auth.NewPostgresSessionStore(conn), conn: conn, userID: hk.String()}
 	f.session = auth.Session{
@@ -157,9 +157,9 @@ func TestCreateUser_RealSchema_RecordsTheNewUser(t *testing.T) {
 	ctx := context.Background()
 	origin := audit.Event{RequestID: "req-1", IP: "203.0.113.9"}
 
-	hk, err := handler.checkOrCreateUser(ctx, origin, "email", "recorded@example.com")
+	hk, err := handler.checkOrCreateUser(ctx, origin, "email", "recorded@example.com", signUpInfo{})
 	require.NoError(t, err)
-	_, err = handler.checkOrCreateUser(ctx, origin, "email", "recorded@example.com")
+	_, err = handler.checkOrCreateUser(ctx, origin, "email", "recorded@example.com", signUpInfo{})
 	require.NoError(t, err)
 
 	var actorType, actorID, targetType, targetID, requestID, ip string

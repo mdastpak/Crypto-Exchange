@@ -180,8 +180,15 @@ func TestWorker_Broker_RecordsUndeliveredCodesWithoutSecrets(t *testing.T) {
 	msg, ok := getMessage(t, topology.opts.DeadLetterQueue, 10*time.Second)
 	require.True(t, ok, "the undelivered code must be recorded on the dead-letter queue")
 	calls.Wait()
-	assert.NotContains(t, string(msg.Body), testSMSMessage.Code)
-	assert.NotContains(t, string(msg.Body), testSMSMessage.Contact)
+	// The time of the failure is left out: its nanoseconds can hold the
+	// six digits of the code by chance.
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(msg.Body, &fields))
+	delete(fields, "failed_at")
+	body, err := json.Marshal(fields)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), testSMSMessage.Code)
+	assert.NotContains(t, string(body), testSMSMessage.Contact)
 	var record deadLetter
 	require.NoError(t, json.Unmarshal(msg.Body, &record))
 	assert.Equal(t, reasonRetriesExhausted, record.Reason)

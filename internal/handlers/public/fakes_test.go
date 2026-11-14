@@ -32,7 +32,7 @@ func (f fakeCodes) Verify(context.Context, string, string) (string, error) { ret
 // fakeAccounts is an Accounts whose sign-in returns err.
 type fakeAccounts struct{ err error }
 
-func (f fakeAccounts) FindOrCreate(context.Context, audit.Event, string, string) (uuid.UUID, error) {
+func (f fakeAccounts) FindOrCreate(context.Context, audit.Event, string, string, signin.SignUp) (uuid.UUID, error) {
 	return uuid.Nil, f.err
 }
 func (f fakeAccounts) Owner(context.Context, string, string) (string, string) {

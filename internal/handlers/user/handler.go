@@ -4,12 +4,14 @@ import (
 	"log"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/agreements"
 	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
+	"github.com/mdastpak/crypto-exchange/internal/geoip"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/models"
@@ -52,6 +54,12 @@ type UserHandler struct {
 	Redis redis.UniversalClient
 	// Sessions lists and ends the sessions of the signed-in user (#193).
 	Sessions auth.SessionManager
+	// Agreements records the legal documents that the user accepted
+	// (#316). Without it, the documents are not asked.
+	Agreements AgreementStore
+	// GeoIP finds the country of an acceptance of the legal documents
+	// (#316). Nil knows none.
+	GeoIP *geoip.Resolver
 	// ContactOTP issues and checks the codes of contact changes (#199), in
 	// their own namespace, so that they cannot sign in.
 	ContactOTP CodeStore
@@ -86,6 +94,7 @@ func NewHandler(is *models.InfraServices) *UserHandler {
 		h.Favorites = favorites.Store{DB: is.Postgres.DB}
 		h.Restrictions = restrictions.Store{DB: is.Postgres.DB}
 		h.AntiPhishing = antiphishing.Store{DB: is.Postgres.DB, Rotation: antiphishing.NewRotation(is.Settings().AntiPhishing.Rotation)}
+		h.Agreements = agreements.Store{DB: is.Postgres.DB, Config: is.Settings()}
 		if policy, err := verification.NewPolicy(is.Settings().Verification); err != nil {
 			log.Printf("The verification levels are unavailable: %v", err)
 		} else {

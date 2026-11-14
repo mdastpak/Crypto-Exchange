@@ -41,7 +41,19 @@ Follow [Getting started](README.md#getting-started) in the README. [docs/configu
 2. Make focused commits. Keep refactoring separate from behavior changes.
 3. Open a pull request against `main` and fill in the template. Link the issue with a closing keyword, for example `Fixes #8`.
 4. Address review feedback with new commits. Avoid force-pushing after a review has started.
-5. A maintainer merges the pull request once the checks pass and it has been approved.
+5. A maintainer merges the pull request once the checks pass and it has been approved. See [Review policy](#review-policy).
+
+## Review policy
+
+Most of the code of this repository is written by an AI agent, which also writes its tests and documentation, so blind spots can be shared by all three. A second look, independent of the author, is what finds them ([#311](https://github.com/mdastpak/Crypto-Exchange/issues/311)).
+
+- **Security-relevant paths have code owners.** [`.github/CODEOWNERS`](.github/CODEOWNERS) lists them: authentication, sign-in, sessions, and second factors; keys, row seals, and the audit log; the ledger, withdrawal destinations and confirmations, and verification levels; platform controls, restrictions, and middleware; migrations, database roles, and configuration validation; the Dockerfile and the workflows. A pull request that changes one of them needs the approval of a code owner, and fills in the **Security review** section of the template.
+- **The reviewer is not the author.** The approval comes from a person, or from a review that does not share the author's context: a separate reviewer session, or a review tool run on the diff alone. A review by the same session that wrote the change does not count.
+- **Pull requests stay reviewable.** The **Pull request size** check warns above 800 changed lines of non-generated code. Generated files (the OpenAPI document), `go.sum`, test data, and the CHANGELOG do not count. Split larger work into steps that can each be reviewed and merged, as an epic is split into issues; when a change cannot be split, say why in the description.
+- **Stale pull requests are closed or finished.** A pull request without activity for two weeks is either finished or closed with a note.
+- **The whole repository is audited regularly.** Periodic audits of the whole repository found defects that per-PR review missed; their findings are filed as issues with the `audit` label.
+
+The branch protection of `main` enforces the first rule when "Require review from Code Owners" is on, and the second when a reviewer's check is a required status check; both are settings of the repository, not of its files.
 
 ## Commit messages
 
@@ -114,6 +126,7 @@ Nothing is deployed before version 1.0, so there is nobody to stay compatible wi
 - [ ] Documentation (README, `docs/`, Swagger annotations) is updated when behavior or configuration changes, and the OpenAPI document is regenerated when a route or its annotations change (see [API documentation](#api-documentation)).
 - [ ] No secrets, keys, or personal data are included.
 - [ ] All text is in English.
+- [ ] A change to a path of `.github/CODEOWNERS` has the **Security review** section of the template filled in.
 
 ## API documentation
 

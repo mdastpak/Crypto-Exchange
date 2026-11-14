@@ -14,6 +14,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/agreements"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
@@ -42,6 +43,12 @@ var (
 	ErrIdentityUnavailable = errors.New("the mobile ownership cannot be checked now")
 	// ErrAdminAccount reports an administrator account at user sign-in.
 	ErrAdminAccount = errors.New("administrators cannot use user sign-in")
+	// ErrTermsRequired refuses a new account whose holder has not accepted
+	// the required legal documents (#316).
+	ErrTermsRequired = errors.New("the required documents are not accepted")
+	// ErrSignUpCountry refuses a new account from a country that
+	// legal.signup.blocked_countries lists (#316).
+	ErrSignUpCountry = errors.New("sign-up is not offered in the country of the request")
 	// errUserAlreadyExists reports that another request created a user with
 	// the same contact between the lookup and the insert.
 	errUserAlreadyExists = errors.New("user with this contact already exists")
@@ -151,17 +158,27 @@ func (a *Accounts) Owner(ctx context.Context, contactType, contact string) (stri
 	return audit.ActorUser, o.hk.String()
 }
 
+// SignUp is what a new account needs from its request (#316).
+type SignUp struct {
+	// Accept are the versions of the legal documents that the holder
+	// accepted, by kind.
+	Accept map[string]string
+	// Country is the country of the request, or "".
+	Country string
+}
+
 // FindOrCreate returns the user that owns a contact, and creates one when
 // none does. origin holds the request's fields for the audit event of a new
-// user.
-func (a *Accounts) FindOrCreate(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
-	return a.signIn(ctx, origin, contactType, contact, true)
+// user, and signUp what the new account needs: ErrTermsRequired or
+// ErrSignUpCountry refuse it, and nothing is created.
+func (a *Accounts) FindOrCreate(ctx context.Context, origin audit.Event, contactType, contact string, signUp SignUp) (uuid.UUID, error) {
+	return a.signIn(ctx, origin, contactType, contact, true, signUp)
 }
 
 // signIn is FindOrCreate. recheck says whether the ownership of a mobile
 // number may still be checked: once the number was taken off an account
 // that no longer owns it, the sign-in continues without it.
-func (a *Accounts) signIn(ctx context.Context, origin audit.Event, contactType, contact string, recheck bool) (uuid.UUID, error) {
+func (a *Accounts) signIn(ctx context.Context, origin audit.Event, contactType, contact string, recheck bool, signUp SignUp) (uuid.UUID, error) {
 	if !SignInContactTypes[contactType] {
 		return uuid.Nil, fmt.Errorf("unsupported contact type: %s", contactType)
 	}
@@ -170,7 +187,7 @@ func (a *Accounts) signIn(ctx context.Context, origin audit.Event, contactType, 
 
 	err := find()
 	if errors.Is(err, sql.ErrNoRows) {
-		userHK, createErr := a.create(ctx, origin, contactType, contact)
+		userHK, createErr := a.create(ctx, origin, contactType, contact, signUp)
 		if !errors.Is(createErr, errUserAlreadyExists) {
 			return userHK, createErr
 		}
@@ -204,7 +221,7 @@ func (a *Accounts) signIn(ctx context.Context, origin audit.Event, contactType, 
 		if moved {
 			// The number no longer reaches that account: whoever holds it
 			// now signs in as for an unknown number, to a new account.
-			return a.signIn(ctx, origin, contactType, contact, false)
+			return a.signIn(ctx, origin, contactType, contact, false, signUp)
 		}
 	}
 	return o.hk, nil
@@ -276,7 +293,16 @@ func (a *Accounts) recheckOwnership(ctx context.Context, origin audit.Event, own
 // create creates an active user with its first contact, and records its
 // creation, in one transaction. The contact is verified: users are created
 // after a correct sign-in code, which proves control of it.
-func (a *Accounts) create(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error) {
+func (a *Accounts) create(ctx context.Context, origin audit.Event, contactType, contact string, signUp SignUp) (uuid.UUID, error) {
+	// Who may sign up, and with which documents accepted (#316). Both are
+	// checked before anything is written.
+	legal := a.settings().Legal
+	if agreements.SignUpBlocked(legal, signUp.Country) {
+		return uuid.Nil, ErrSignUpCountry
+	}
+	if !agreements.Covers(legal, signUp.Accept) {
+		return uuid.Nil, ErrTermsRequired
+	}
 	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("start the transaction: %w", err)
@@ -305,6 +331,12 @@ func (a *Accounts) create(ctx context.Context, origin audit.Event, contactType, 
 			return uuid.Nil, errUserAlreadyExists
 		}
 		log.Printf("Failed to insert the contact of a new user: %v", err)
+		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
+	}
+	// The account exists only together with the record of what its
+	// holder accepted.
+	if err := agreements.Record(ctx, tx, legal, userHK.String(), signUp.Accept, agreements.Origin{Country: signUp.Country, Event: origin}); err != nil {
+		log.Printf("Failed to record the agreements of a new user: %v", err)
 		return uuid.Nil, fmt.Errorf("failed to create user. please try again")
 	}
 	created := origin

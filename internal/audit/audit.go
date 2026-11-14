@@ -127,6 +127,10 @@ const (
 	// target is the user; the event never holds the phrase.
 	ActionUserAntiPhishingCodeSet    = "user.anti_phishing_code_set"
 	ActionUserAntiPhishingCodeRemove = "user.anti_phishing_code_remove"
+	// ActionUserAgreementAccept is a user accepting a version of a legal
+	// document (#316), at sign-up or later. The target is the user, and
+	// the changes name the document, its version, and the country.
+	ActionUserAgreementAccept = "user.agreement.accept"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"

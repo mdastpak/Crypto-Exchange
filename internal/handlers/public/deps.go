@@ -24,7 +24,7 @@ import (
 // Accounts finds the account of a sign-in, creates it for a new contact,
 // and reads what the second step and a recovery need: *signin.Accounts.
 type Accounts interface {
-	FindOrCreate(ctx context.Context, origin audit.Event, contactType, contact string) (uuid.UUID, error)
+	FindOrCreate(ctx context.Context, origin audit.Event, contactType, contact string, signUp signin.SignUp) (uuid.UUID, error)
 	Owner(ctx context.Context, contactType, contact string) (actorType, hk string)
 	CanSignIn(ctx context.Context, userHK uuid.UUID) (allowed, frozen bool, err error)
 	ContactID(ctx context.Context, userHK uuid.UUID, contactType, contact string) (int64, error)
