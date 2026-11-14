@@ -68,6 +68,11 @@ An error response contains only a fixed message for each error. Internal details
 | `destination_exists`, `destination_taken`, `destination_limit_reached` | `409` | The [withdrawal destination](#withdrawal-destinations) is in the user's list already, is another user's card, IBAN, or account, or the list is full |
 | `national_id_required` | `409` | A card, an IBAN, or an account needs the user's verified national ID first |
 | `ownership_check_unavailable`, `destinations_unavailable` | `503` | The owner of a card, an IBAN, or an account cannot be checked now, or the destinations are unavailable |
+| `confirmation_code_invalid` | `403` | The code of a [withdrawal confirmation](#withdrawal-confirmations) is wrong |
+| `confirmation_locked` | `429` | Too many wrong codes of a confirmation, or too many codes requested |
+| `confirmation_expired`, `confirmation_already_confirmed` | `409` | The confirmation is past its time, or was confirmed already |
+| `confirmation_method_unavailable`, `confirmation_method_required` | `409` | The user cannot use that method now, or has no method to confirm withdrawals with |
+| `confirmations_unavailable` | `503` | The confirmations are not available now |
 | `use_admin_sign_in` | `403` | An administrator used the user sign-in |
 | `not_found` | `404` | No such resource, or a hidden one, or no such route |
 | `method_not_allowed` | `405` | The path exists with other methods |
@@ -1156,6 +1161,57 @@ The refusals are listed above. There are three more:
 ### `DELETE /user/withdrawal-destinations/{id}`
 
 Removes the destination: no withdrawal can use it afterwards. It answers `404` for a destination that is not in the user's list.
+
+## Withdrawal confirmations
+
+Every withdrawal, through the panel or the API, is confirmed with a code of the user's second factor before it runs ([#161](https://github.com/mdastpak/Crypto-Exchange/issues/161)). An API key alone never moves funds out.
+
+**Methods.** The user confirms with one of these:
+
+- `totp`: a code of their authenticator app (`POST /user/totp`). Each code is accepted once, and wrong codes lock it for a while.
+- `sms`: a code sent to their verified mobile number. It is offered only when the SMS provider has a withdrawal template (`notifications.sms.kavenegar.withdrawal_template`).
+- `email`: a code sent to their verified email address.
+
+The user chooses the method. Until they do, or while the chosen one is unavailable, confirmations use the first of `totp`, `sms`, and `email` that is available. A user who has none answers `409 confirmation_method_required` when a withdrawal starts.
+
+**Bound to the operation.**
+
+- When a withdrawal starts, the server records a confirmation with the digest of the withdrawal: a SHA-256 of its amount, currency, and destination.
+- It sends the code with a message that says what it confirms, such as `100 USDT to TR7NHq...gjLj6t`. The message never uses the sign-in text, so a withdrawal code cannot pass for a sign-in code.
+- The withdrawal consumes the confirmation, in its own transaction, only with the same digest. So a code confirms that withdrawal and no other, once.
+
+**Limits.**
+
+- Wrong codes: after five, the confirmation can no longer be confirmed (`429 confirmation_locked`). The code store and the authenticator also apply their own limits per contact and per code.
+- Lifetime: a confirmation lasts as long as a code (`otp.auth.ttl`) for its code, and as long again, once confirmed, for its withdrawal to run (`409 confirmation_expired`).
+- Separate namespace: the codes have a namespace of their own in the code store, so a confirmation code cannot sign in, and a sign-in code cannot confirm.
+
+**Protection.** The confirmations are sealed rows: one marked confirmed in SQL runs nothing, and its finding is recorded ([data protection](data-protection.md#row-seals)). A code goes only to a contact whose row matches its seal. Each confirmation, right or wrong, is audited as `user.operation_confirm`, without the code. A change of the method is audited as `user.confirmation_method_set`.
+
+### `GET /user/confirmation-method` and `PUT /user/confirmation-method`
+
+`GET` returns three fields:
+
+- `method`: the one the user chose, absent when none;
+- `effective`: the one confirmations use;
+- `available`: the methods the user can use now.
+
+`PUT` with `{"method": "totp"}` chooses a method. The method must be available, or the answer is `409 confirmation_method_unavailable`. The change needs a fresh proof of the second factor (`403 step_up_required`).
+
+### `POST /user/confirmations/{id}`
+
+The code of a confirmation, as `{"code": "482913"}`, in ASCII, Persian, or Arabic digits. The answer is `200` when it is right. The other answers are:
+
+- `403 confirmation_code_invalid`;
+- `429 confirmation_locked`;
+- `409 confirmation_expired` or `confirmation_already_confirmed`;
+- `404` for a confirmation that is not the user's.
+
+It has the limits of a sign-in. The withdrawal workflow ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) returns the `id` of the confirmation when a withdrawal starts, and runs the withdrawal once it is confirmed.
+
+### `POST /user/confirmations/{id}/resend`
+
+Sends a new code of an SMS or email confirmation, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`).
 
 ## Maintenance and lockdowns
 

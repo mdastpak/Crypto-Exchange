@@ -30,6 +30,10 @@ type otpJob struct {
 	Contact       string    `json:"contact"`
 	MaskedContact string    `json:"masked_contact"`
 	Code          string    `json:"code"`
+	Purpose       string    `json:"purpose,omitempty"`
+	Details       string    `json:"details,omitempty"`
+	Amount        string    `json:"amount,omitempty"`
+	Destination   string    `json:"destination,omitempty"`
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 
@@ -50,6 +54,10 @@ func (j otpJob) message() OTPMessage {
 		Contact:       j.Contact,
 		MaskedContact: j.MaskedContact,
 		Code:          j.Code,
+		Purpose:       j.Purpose,
+		Details:       j.Details,
+		Amount:        j.Amount,
+		Destination:   j.Destination,
 	}
 }
 
@@ -115,6 +123,10 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 		Contact:       msg.Contact,
 		MaskedContact: msg.MaskedContact,
 		Code:          msg.Code,
+		Purpose:       msg.Purpose,
+		Details:       msg.Details,
+		Amount:        msg.Amount,
+		Destination:   msg.Destination,
 	}
 	publishing := amqp.Publishing{
 		ContentType: "application/json",

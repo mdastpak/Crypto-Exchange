@@ -3,12 +3,16 @@ package notify
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/textproto"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -166,13 +170,13 @@ func TestEmailDeliverer_SendsTheCode(t *testing.T) {
 	subject, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
 	require.NoError(t, err)
 	assert.Equal(t, "Sign-in code — 482913 ✓", subject, "non-ASCII subjects are encoded")
-	assert.Equal(t, `text/plain; charset="utf-8"`, msg.Header.Get("Content-Type"))
 	assert.NotEmpty(t, msg.Header.Get("Message-ID"))
 	assert.NotEmpty(t, msg.Header.Get("Date"))
 
-	body, err := io.ReadAll(quotedprintable.NewReader(msg.Body))
-	require.NoError(t, err)
-	assert.Contains(t, string(body), "Your sign-in code is 482913. It expires in 90 seconds.")
+	text, html := emailParts(t, msg)
+	assert.Contains(t, text, "Your sign-in code is 482913. It expires in 90 seconds.")
+	assert.Contains(t, html, "482913", "the HTML part carries the code too")
+	assert.Contains(t, html, `lang="en"`)
 
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -277,4 +281,116 @@ func TestIsLocalHost(t *testing.T) {
 	for _, host := range []string{"smtp.example.com", "10.0.0.5", "localhost.example.com", ""} {
 		assert.False(t, isLocalHost(host), host)
 	}
+}
+
+// TestEmailDeliverer_WithdrawalCodesHaveTheirOwnText checks that a code
+// that confirms a withdrawal is sent with the withdrawal text and what it
+// confirms (#161), not with the sign-in text.
+func TestEmailDeliverer_WithdrawalCodesHaveTheirOwnText(t *testing.T) {
+	server := startFakeSMTPServer(t, "")
+	d := newTestEmailDeliverer(t, server.emailConfig())
+	withdrawal := testEmailMessage
+	withdrawal.Purpose, withdrawal.Details = PurposeWithdrawal, "100 USDT to TR7NHq...gjLj6t"
+	withdrawal.Amount, withdrawal.Destination = "100 USDT", "TR7NHq...gjLj6t"
+	require.NoError(t, d.Deliver(context.Background(), withdrawal))
+
+	received := server.received()
+	require.Len(t, received, 1)
+	msg, err := mail.ReadMessage(strings.NewReader(received[0].data))
+	require.NoError(t, err)
+	assert.Equal(t, "Confirm your withdrawal", msg.Header.Get("Subject"))
+	text, html := emailParts(t, msg)
+	assert.Contains(t, text, "Your code to confirm the withdrawal of 100 USDT to TR7NHq...gjLj6t is 482913.")
+	assert.NotContains(t, text, "sign-in")
+	assert.Contains(t, html, "Confirm your withdrawal")
+	assert.Contains(t, html, "100 USDT")
+	assert.Contains(t, html, "TR7NHq...gjLj6t")
+	assert.NotContains(t, html, "sign-in code")
+
+	cfg := server.emailConfig()
+	cfg.WithdrawalBody = "{{.Unknown}}"
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	assert.Error(t, err, "a withdrawal template that fails stops the server at startup")
+}
+
+// emailParts returns the text and the HTML of a message: its body when it
+// is text only, or its two alternatives.
+func emailParts(t *testing.T, msg *mail.Message) (text, html string) {
+	t.Helper()
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	if mediaType == "text/plain" {
+		body, err := io.ReadAll(quotedprintable.NewReader(msg.Body))
+		require.NoError(t, err)
+		return string(body), ""
+	}
+	require.Equal(t, "multipart/alternative", mediaType)
+	reader := multipart.NewReader(msg.Body, params["boundary"])
+	for {
+		part, err := reader.NextRawPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		assert.Equal(t, "quoted-printable", part.Header.Get("Content-Transfer-Encoding"))
+		body, err := io.ReadAll(quotedprintable.NewReader(part))
+		require.NoError(t, err)
+		switch part.Header.Get("Content-Type") {
+		case `text/plain; charset="utf-8"`:
+			text = string(body)
+		case `text/html; charset="utf-8"`:
+			html = string(body)
+		}
+	}
+	require.NotEmpty(t, text, "a client without HTML has the text")
+	return text, html
+}
+
+// TestEmailDeliverer_HTMLTemplates checks the HTML templates of each
+// language, that they escape what they print, and that "none" sends text
+// only.
+func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
+	server := startFakeSMTPServer(t, "")
+	send := func(setting string, msg OTPMessage) (string, string) {
+		t.Helper()
+		cfg := server.emailConfig()
+		cfg.HTMLTemplates = setting
+		d := newTestEmailDeliverer(t, cfg)
+		require.NoError(t, d.Deliver(context.Background(), msg))
+		received := server.received()
+		parsed, err := mail.ReadMessage(strings.NewReader(received[len(received)-1].data))
+		require.NoError(t, err)
+		return emailParts(t, parsed)
+	}
+	withdrawal := testEmailMessage
+	withdrawal.Purpose, withdrawal.Amount, withdrawal.Destination = PurposeWithdrawal, "100 USDT", "<b>TR7</b>"
+	withdrawal.Details = withdrawal.Amount + " to " + withdrawal.Destination
+
+	_, html := send(HTMLTemplatesFA, withdrawal)
+	assert.Contains(t, html, `dir="rtl"`)
+	assert.Contains(t, html, "تأیید برداشت")
+	assert.Contains(t, html, "&lt;b&gt;TR7&lt;/b&gt;", "what the template prints is escaped")
+	assert.NotContains(t, html, "<b>TR7</b>")
+	_, html = send(HTMLTemplatesFA, testEmailMessage)
+	assert.Contains(t, html, "کد ورود شما")
+
+	text, html := send(HTMLTemplatesNone, testEmailMessage)
+	assert.Empty(t, html, "none sends text only")
+	assert.Contains(t, text, "482913")
+
+	// A directory of the operator's own templates.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Sender}}: {{.Code}}</p>`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}}</p>`), 0o600))
+	_, html = send(dir, testEmailMessage)
+	assert.Contains(t, html, "<p>Exchange: 482913</p>", "the sender is the name of the from address")
+
+	cfg := server.emailConfig()
+	cfg.HTMLTemplates = filepath.Join(dir, "missing")
+	_, err := NewEmailDeliverer(cfg, time.Minute)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Nope}}</p>`), 0o600))
+	cfg.HTMLTemplates = dir
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	require.Error(t, err, "a template that fails stops the server at startup")
 }

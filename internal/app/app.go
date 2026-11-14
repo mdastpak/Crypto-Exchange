@@ -26,6 +26,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
@@ -294,6 +295,7 @@ func run() error {
 	}()
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
+	useConfirmationSender(handlers, otpSender)
 	if err := configureIdentity(handlers); err != nil {
 		return fmt.Errorf("failed to configure the identity checks: %w", err)
 	}
@@ -615,7 +617,11 @@ func useDataKeysForOTP(h *InfraHandlers) {
 	}
 	// The handlers hold their stores as interfaces (#48); the stores of
 	// the server are *otp.Store.
-	for _, store := range []any{h.Public.OTP, h.User.ContactOTP, h.Admin.OTP} {
+	stores := []any{h.Public.OTP, h.User.ContactOTP, h.Admin.OTP}
+	if service, ok := h.User.Confirmations.(confirm.Service); ok {
+		stores = append(stores, service.Codes)
+	}
+	for _, store := range stores {
 		if s, ok := store.(*otp.Store); ok && s != nil {
 			s.UseDataKeys(h.DataKeys)
 		}
@@ -743,6 +749,15 @@ func configureIdentity(h *InfraHandlers) error {
 		}
 	}
 	return configureDestinations(h)
+}
+
+// useConfirmationSender gives the confirmations of withdrawals (#161) the
+// delivery of their codes by SMS and email.
+func useConfirmationSender(h *InfraHandlers, sender notify.OTPSender) {
+	if service, ok := h.User.Confirmations.(confirm.Service); ok {
+		service.Sender = sender
+		h.User.Confirmations = service
+	}
 }
 
 // configureDestinations sets the provider that checks the owner of a
@@ -1021,6 +1036,17 @@ func initializeHandlers(services *models.InfraServices) *InfraHandlers {
 	// The authenticator apps; useDataKeysForOTP gives them the keys.
 	totpStore := &userauth.TOTP{DB: services.Postgres.DB, Passwords: passwords, Issuer: config.Config.Exchange.Name}
 	userHandler.TOTP, publicHandler.TOTP = totpStore, totpStore
+	// The confirmations of withdrawals (#161): codes of their own
+	// namespace, so that a confirmation code cannot sign in and a sign-in
+	// code cannot confirm. Run gives them the delivery of the codes.
+	if services.Redis != nil {
+		settings := otp.SettingsOf(&config.Config)
+		settings.Namespace = confirm.Namespace
+		userHandler.Confirmations = confirm.Service{DB: services.Postgres.DB,
+			Codes:             otp.NewStore(services.Redis.Client, settings),
+			Authenticator:     totpStore,
+			SMSForWithdrawals: config.Config.Notifications.SMS.Kavenegar.WithdrawalTemplate != "" || config.Config.OTP.Auth.DevLogCodes}
+	}
 	// The passkeys of users. Without security.passkeys.rp_id the service
 	// is disabled, and its routes say so.
 	passkeys, err := passkey.New(services.Postgres.DB, services.Redis.Client, passkeyConfig())
@@ -1255,6 +1281,13 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/withdrawal-destinations", ih.User.ListDestinations)
 		activeGroup.POST("/withdrawal-destinations", gate.Require(platform.FeatureWithdrawals), ih.User.RequireSecondFactor(true), ih.User.AddDestination)
 		activeGroup.DELETE("/withdrawal-destinations/:id", ih.User.RequireSecondFactor(true), ih.User.RemoveDestination)
+		// The confirmations of withdrawals with the second factor (#161).
+		// Choosing the method needs a fresh proof of it; a code has the
+		// limits of a sign-in, and a new code those of a code request.
+		activeGroup.GET("/confirmation-method", ih.User.GetConfirmationMethod)
+		activeGroup.PUT("/confirmation-method", profileChanges, ih.User.RequireSecondFactor(true), ih.User.SetConfirmationMethod)
+		activeGroup.POST("/confirmations/:id", rl.AuthRateLimit(middleware.AuthLogin), ih.User.ConfirmOperation)
+		activeGroup.POST("/confirmations/:id/resend", rl.AuthRateLimit(middleware.AuthOTP), ih.User.ResendConfirmation)
 		activeGroup.GET("/favorites", ih.User.ListFavorites)
 		activeGroup.PUT("/favorites/order", ih.User.ReorderFavorites)
 		activeGroup.PUT("/favorites/currencies/:hk", ih.User.AddFavoriteCurrency)

@@ -142,3 +142,28 @@ func TestKavenegarDeliverer_HonorsTheContext(t *testing.T) {
 	assert.NotContains(t, err.Error(), testKavenegarKey)
 	assert.Empty(t, requests())
 }
+
+// TestKavenegarDeliverer_WithdrawalCodesHaveTheirOwnTemplate checks that a
+// code that confirms a withdrawal goes out with its own template and what
+// it confirms (#161), and never with the sign-in template.
+func TestKavenegarDeliverer_WithdrawalCodesHaveTheirOwnTemplate(t *testing.T) {
+	server, requests := fakeKavenegar(t, http.StatusOK, `{"return":{"status":200,"message":"OK"}}`)
+	withdrawal := testSMSMessage
+	withdrawal.Purpose, withdrawal.Details = PurposeWithdrawal, "100 USDT to TR7NHq...gjLj6t"
+
+	k := newTestKavenegar(t, server.URL)
+	err := k.Deliver(context.Background(), withdrawal)
+	require.Error(t, err, "without a withdrawal template, the code is not sent with the sign-in one")
+	assert.True(t, IsPermanent(err))
+	assert.Empty(t, requests())
+
+	k, err = NewKavenegarDeliverer(config.KavenegarConfig{APIKey: testKavenegarKey, OTPTemplate: "signin",
+		WithdrawalTemplate: "withdraw", BaseURL: server.URL, Timeout: 5})
+	require.NoError(t, err)
+	require.NoError(t, k.Deliver(context.Background(), withdrawal))
+	got := requests()
+	require.Len(t, got, 1)
+	assert.Equal(t, "withdraw", got[0].form.Get("template"))
+	assert.Equal(t, "482913", got[0].form.Get("token"))
+	assert.Equal(t, "100 USDT to TR7NHq...gjLj6t", got[0].form.Get("token10"))
+}

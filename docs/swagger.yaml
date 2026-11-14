@@ -420,6 +420,77 @@ definitions:
           page.
         type: string
     type: object
+  confirm.Challenge:
+    properties:
+      details:
+        allOf:
+        - $ref: '#/definitions/confirm.Details'
+        description: Details are what the code confirms.
+      expires_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      method:
+        allOf:
+        - $ref: '#/definitions/confirm.Method'
+        enum:
+        - totp
+        - sms
+        - email
+      sent_to:
+        description: SentTo is the contact that an SMS or email code went to, masked.
+        example: 091*****567
+        type: string
+    type: object
+  confirm.Details:
+    properties:
+      amount:
+        description: Amount is the amount with its currency, such as "100 USDT".
+        example: 100 USDT
+        type: string
+      destination:
+        description: Destination is where it goes, masked, such as "TR7NHq...gjLj6t".
+        example: TR7NHq...gjLj6t
+        type: string
+    type: object
+  confirm.Method:
+    enum:
+    - totp
+    - sms
+    - email
+    type: string
+    x-enum-varnames:
+    - MethodTOTP
+    - MethodSMS
+    - MethodEmail
+  confirm.Settings:
+    properties:
+      available:
+        description: Available are the methods the user can use now.
+        items:
+          $ref: '#/definitions/confirm.Method'
+        type: array
+      effective:
+        allOf:
+        - $ref: '#/definitions/confirm.Method'
+        description: |-
+          Effective is the method that confirmations use: the chosen one
+          while it is available, or else the first available of totp, sms,
+          and email. Absent when none is available.
+        enum:
+        - totp
+        - sms
+        - email
+      method:
+        allOf:
+        - $ref: '#/definitions/confirm.Method'
+        description: Method is the method the user chose; absent when they chose none.
+        enum:
+        - totp
+        - sms
+        - email
+    type: object
   currencies.Lifecycle:
     enum:
     - active
@@ -2440,6 +2511,23 @@ definitions:
         description: Name is what the user calls the passkey, such as the device.
         example: iPhone
         type: string
+    type: object
+  user.ConfirmRequest:
+    properties:
+      code:
+        example: "482913"
+        type: string
+    type: object
+  user.ConfirmationMethodRequest:
+    properties:
+      method:
+        allOf:
+        - $ref: '#/definitions/confirm.Method'
+        enum:
+        - totp
+        - sms
+        - email
+        example: totp
     type: object
   user.Contact:
     properties:
@@ -7043,6 +7131,198 @@ paths:
       summary: Show the status of the exchange
       tags:
       - system
+  /api/v1/user/confirmation-method:
+    get:
+      description: 'How the withdrawals of the signed-in user are confirmed: the method
+        they chose, the one that confirmations use (the chosen one while it is available,
+        or else the first of totp, sms, and email that is), and the ones available.
+        totp needs an authenticator app (POST /user/totp), sms a verified mobile number
+        and the SMS template of withdrawals, and email a verified email address.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/confirm.Settings'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: confirmations_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get my confirmation method
+      tags:
+      - user-security
+    put:
+      consumes:
+      - application/json
+      description: Chooses totp, sms, or email for the confirmations of withdrawals.
+        The method must be available (409 confirmation_method_unavailable), and the
+        change needs a fresh proof of the second factor (403 step_up_required). Audited.
+      parameters:
+      - description: The method
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ConfirmationMethodRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/confirm.Settings'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: confirmation_method_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Choose my confirmation method
+      tags:
+      - user-security
+  /api/v1/user/confirmations/{id}:
+    post:
+      consumes:
+      - application/json
+      description: 'Checks the code of a confirmation: the code sent by SMS or email,
+        or a code of the authenticator app. The confirmation is bound to its operation,
+        so the code confirms that withdrawal and no other, once. A wrong code answers
+        403 confirmation_code_invalid; after five, or when the code store or the authenticator
+        locks, 429 confirmation_locked. A confirmation lasts as long as a code. The
+        codes are never logged or audited.'
+      parameters:
+      - description: The id of the confirmation
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ConfirmRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: confirmation_code_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: confirmation_expired or confirmation_already_confirmed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: confirmation_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Confirm an operation with its code
+      tags:
+      - user-withdrawals
+  /api/v1/user/confirmations/{id}/resend:
+    post:
+      description: Sends a new code of a confirmation by SMS or email, which also
+        gives it a new lifetime. The limits of the codes apply (429 confirmation_locked).
+        A confirmation by the authenticator app has nothing to send (409 confirmation_method_unavailable).
+      parameters:
+      - description: The id of the confirmation
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/confirm.Challenge'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: confirmation_already_confirmed or confirmation_method_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: confirmation_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Send a new confirmation code
+      tags:
+      - user-withdrawals
   /api/v1/user/contacts:
     get:
       description: The verified email address and mobile number of the signed-in user,

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"mime"
-	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -28,6 +27,12 @@ type EmailDeliverer struct {
 	from    *mail.Address
 	subject *template.Template
 	body    *template.Template
+	// withdrawalSubject and withdrawalBody render the codes that confirm a
+	// withdrawal (#161).
+	withdrawalSubject *template.Template
+	withdrawalBody    *template.Template
+	// html renders the HTML part beside the text; nil is text only.
+	html    *htmlTemplates
 	codeTTL time.Duration
 	timeout time.Duration
 	now     func() time.Time
@@ -39,6 +44,11 @@ type EmailDeliverer struct {
 type emailData struct {
 	Code       string
 	TTLSeconds int
+	// Details is what a withdrawal code confirms; empty for a sign-in.
+	// Amount and Destination are its two parts.
+	Details, Amount, Destination string
+	// Sender is the name of the sender address, such as the exchange's.
+	Sender string
 }
 
 // NewEmailDeliverer validates cfg and returns a deliverer for it. codeTTL is
@@ -54,53 +64,76 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	if err != nil {
 		return nil, fmt.Errorf("invalid from address: %w", err)
 	}
-	subject, err := template.New("otp_subject").Parse(cfg.OTPSubject)
-	if err != nil {
-		return nil, fmt.Errorf("invalid otp_subject: %w", err)
-	}
-	body, err := template.New("otp_body").Parse(cfg.OTPBody)
-	if err != nil {
-		return nil, fmt.Errorf("invalid otp_body: %w", err)
+	templates := map[string]**template.Template{}
+	d := &EmailDeliverer{cfg: cfg, from: from, codeTTL: codeTTL, now: time.Now, plaintextAllowed: isLocalHost}
+	templates["otp_subject"], templates["otp_body"] = &d.subject, &d.body
+	templates["withdrawal_subject"], templates["withdrawal_body"] = &d.withdrawalSubject, &d.withdrawalBody
+	for name, text := range map[string]string{
+		"otp_subject": cfg.OTPSubject, "otp_body": cfg.OTPBody,
+		"withdrawal_subject": orDefault(cfg.WithdrawalSubject, config.DefaultWithdrawalEmailSubject),
+		"withdrawal_body":    orDefault(cfg.WithdrawalBody, config.DefaultWithdrawalEmailBody),
+	} {
+		t, err := template.New(name).Parse(text)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s: %w", name, err)
+		}
+		*templates[name] = t
 	}
 
-	timeout := time.Duration(cfg.Timeout) * time.Second
-	if timeout <= 0 {
-		timeout = 10 * time.Second
+	d.timeout = time.Duration(cfg.Timeout) * time.Second
+	if d.timeout <= 0 {
+		d.timeout = 10 * time.Second
 	}
-	d := &EmailDeliverer{
-		cfg:     cfg,
-		from:    from,
-		subject: subject,
-		body:    body,
-		codeTTL: codeTTL,
-		timeout: timeout,
-		now:     time.Now,
-
-		plaintextAllowed: isLocalHost,
+	if d.html, err = loadHTMLTemplates(cfg.HTMLTemplates); err != nil {
+		return nil, err
 	}
 	// Render once, so that a template that fails, for example by using an
 	// unknown field, stops the server at startup instead of every delivery.
-	if _, _, err := d.render("000000"); err != nil {
-		return nil, err
+	for _, purpose := range []string{"", PurposeWithdrawal} {
+		sample := OTPMessage{Code: "000000", Purpose: purpose, Details: "1 USDT to T...0000", Amount: "1 USDT", Destination: "T...0000"}
+		if _, _, _, err := d.render(sample); err != nil {
+			return nil, err
+		}
 	}
 	return d, nil
 }
 
-func (d *EmailDeliverer) render(code string) (subject, body string, err error) {
-	data := emailData{Code: code, TTLSeconds: int(d.codeTTL / time.Second)}
+func orDefault(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+// render returns the subject, the text, and the HTML of msg; the HTML is
+// empty without HTML templates.
+func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err error) {
+	sender := d.from.Name
+	if sender == "" {
+		sender = d.from.Address
+	}
+	data := emailData{Code: msg.Code, TTLSeconds: int(d.codeTTL / time.Second), Details: msg.Details,
+		Amount: msg.Amount, Destination: msg.Destination, Sender: sender}
+	subjectT, bodyT, names := d.subject, d.body, [2]string{"otp_subject", "otp_body"}
+	if msg.Purpose == PurposeWithdrawal {
+		subjectT, bodyT, names = d.withdrawalSubject, d.withdrawalBody, [2]string{"withdrawal_subject", "withdrawal_body"}
+	}
 	var buf bytes.Buffer
-	if err := d.subject.Execute(&buf, data); err != nil {
-		return "", "", fmt.Errorf("render otp_subject: %w", err)
+	if err := subjectT.Execute(&buf, data); err != nil {
+		return "", "", "", fmt.Errorf("render %s: %w", names[0], err)
 	}
 	subject = strings.TrimSpace(buf.String())
 	if strings.ContainsAny(subject, "\r\n") {
-		return "", "", errors.New("otp_subject must render to a single line")
+		return "", "", "", fmt.Errorf("%s must render to a single line", names[0])
 	}
 	buf.Reset()
-	if err := d.body.Execute(&buf, data); err != nil {
-		return "", "", fmt.Errorf("render otp_body: %w", err)
+	if err := bodyT.Execute(&buf, data); err != nil {
+		return "", "", "", fmt.Errorf("render %s: %w", names[1], err)
 	}
-	return subject, buf.String(), nil
+	if html, err = d.html.render(msg, data); err != nil {
+		return "", "", "", err
+	}
+	return subject, buf.String(), html, nil
 }
 
 // Deliver sends the code to the email address in msg.Contact.
@@ -110,11 +143,11 @@ func (d *EmailDeliverer) Deliver(ctx context.Context, msg OTPMessage) error {
 		// The parse error repeats the address, which must not reach the log.
 		return permanent(errors.New("invalid recipient address"))
 	}
-	subject, body, err := d.render(msg.Code)
+	subject, body, html, err := d.render(msg)
 	if err != nil {
 		return permanent(err)
 	}
-	message, err := d.buildMessage(to, subject, body)
+	message, err := d.buildMessage(to, subject, body, html)
 	if err != nil {
 		return permanent(err)
 	}
@@ -124,8 +157,15 @@ func (d *EmailDeliverer) Deliver(ctx context.Context, msg OTPMessage) error {
 // buildMessage returns a plain-text UTF-8 message. The subject is encoded as
 // an RFC 2047 encoded word and the body as quoted-printable, so templates can
 // use any language.
-func (d *EmailDeliverer) buildMessage(to *mail.Address, subject, body string) ([]byte, error) {
+// buildMessage builds the message: the text alone, or the text and the HTML
+// as alternatives, so that a client without HTML shows the text.
+func (d *EmailDeliverer) buildMessage(to *mail.Address, subject, text, html string) ([]byte, error) {
 	messageID, err := newMessageID(d.from.Address)
+	if err != nil {
+		return nil, err
+	}
+	var body bytes.Buffer
+	contentType, err := writeBody(&body, text, html)
 	if err != nil {
 		return nil, err
 	}
@@ -140,17 +180,12 @@ func (d *EmailDeliverer) buildMessage(to *mail.Address, subject, body string) ([
 	header("Date", d.now().Format(time.RFC1123Z))
 	header("Message-ID", messageID)
 	header("MIME-Version", "1.0")
-	header("Content-Type", `text/plain; charset="utf-8"`)
-	header("Content-Transfer-Encoding", "quoted-printable")
+	header("Content-Type", contentType)
+	if html == "" {
+		header("Content-Transfer-Encoding", "quoted-printable")
+	}
 	buf.WriteString("\r\n")
-
-	qp := quotedprintable.NewWriter(&buf)
-	if _, err := qp.Write([]byte(body)); err != nil {
-		return nil, err
-	}
-	if err := qp.Close(); err != nil {
-		return nil, err
-	}
+	buf.Write(body.Bytes())
 	return buf.Bytes(), nil
 }
 
