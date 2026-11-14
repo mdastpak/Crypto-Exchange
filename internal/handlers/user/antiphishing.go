@@ -62,7 +62,7 @@ func (h *UserHandler) GetAntiPhishingCode(c *gin.Context) {
 	defer cancel()
 	st, err := h.AntiPhishing.Status(ctx, userHK)
 	if err != nil {
-		sendAntiPhishingError(c, userHK, err, "FAILED_TO_READ_SECURITY_SETTINGS")
+		sendAntiPhishingError(c, userHK, err, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"))
 		return
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("ANTI_PHISHING_CODE_RETRIEVED"), st)
@@ -99,12 +99,12 @@ func (h *UserHandler) SetAntiPhishingCode(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
 	defer cancel()
 	if err := h.AntiPhishing.Set(ctx, userHK, req.Code, audit.FromRequest(c)); err != nil {
-		sendAntiPhishingError(c, userHK, err, "FAILED_TO_SAVE_ANTI_PHISHING_CODE")
+		sendAntiPhishingError(c, userHK, err, i18n.M("FAILED_TO_SAVE_ANTI_PHISHING_CODE"))
 		return
 	}
 	st, err := h.AntiPhishing.Status(ctx, userHK)
 	if err != nil {
-		sendAntiPhishingError(c, userHK, err, "FAILED_TO_READ_SECURITY_SETTINGS")
+		sendAntiPhishingError(c, userHK, err, i18n.M("FAILED_TO_READ_SECURITY_SETTINGS"))
 		return
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("ANTI_PHISHING_CODE_SET"), st)
@@ -133,7 +133,7 @@ func (h *UserHandler) RemoveAntiPhishingCode(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
 	defer cancel()
 	if err := h.AntiPhishing.Remove(ctx, userHK, audit.FromRequest(c)); err != nil {
-		sendAntiPhishingError(c, userHK, err, "FAILED_TO_SAVE_ANTI_PHISHING_CODE")
+		sendAntiPhishingError(c, userHK, err, i18n.M("FAILED_TO_SAVE_ANTI_PHISHING_CODE"))
 		return
 	}
 	helpers.SendResponse(c, http.StatusOK, i18n.M("ANTI_PHISHING_CODE_REMOVED"), nil)
@@ -141,7 +141,7 @@ func (h *UserHandler) RemoveAntiPhishingCode(c *gin.Context) {
 
 // sendAntiPhishingError answers a failed request on the anti-phishing
 // code; failed is the message of an unexpected failure.
-func sendAntiPhishingError(c *gin.Context, userHK string, err error, failed i18n.Key) {
+func sendAntiPhishingError(c *gin.Context, userHK string, err error, failed i18n.Message) {
 	switch {
 	case errors.Is(err, antiphishing.ErrInvalid):
 		helpers.SendError(c, http.StatusBadRequest, CodeAntiPhishingCodeInvalid, i18n.M("ANTI_PHISHING_CODE_INVALID"), nil)
@@ -153,6 +153,6 @@ func sendAntiPhishingError(c *gin.Context, userHK string, err error, failed i18n
 		helpers.SendError(c, http.StatusServiceUnavailable, codeAntiPhishingUnavailable, i18n.M("ANTI_PHISHING_UNAVAILABLE"), nil)
 	default:
 		log.Printf("Failed to handle the anti-phishing code of user %s: %v", userHK, err)
-		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M(failed), nil)
+		helpers.SendResponse(c, http.StatusInternalServerError, failed, nil)
 	}
 }
