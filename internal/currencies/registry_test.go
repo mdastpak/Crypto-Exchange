@@ -396,3 +396,68 @@ func symbolsOf(markets []PublicMarket) []string {
 	}
 	return symbols
 }
+
+// TestSync_AddsOnlyWhatIsMissing checks assets.auto_sync (#57): the sync
+// adds what the database lacks, and leaves what exists as administrators
+// left it, even a row that fails its seal; what it cannot add is noted,
+// never an error.
+func TestSync_AddsOnlyWhatIsMissing(t *testing.T) {
+	ctx := context.Background()
+	db := pgtest.Migrated(t, testDBName)
+	sealtest.Use(t, db, rowseal.ModeEnforce)
+	store := Store{DB: db}
+	reg := registryFile(t)
+
+	report, err := store.Sync(ctx, reg, importOrigin)
+	require.NoError(t, err)
+	assert.Len(t, report.Created, len(reg.Assets), "an empty database gets everything")
+	assert.Equal(t, len(reg.Markets), report.Markets.Created)
+	assert.Empty(t, report.Notes)
+
+	// What administrators change afterwards.
+	usdt := hkOf(t, db, "USDT")
+	n := usdtOnTron()
+	n.WithdrawalFee, n.WithdrawalEnabled = "9", false
+	_, err = store.SetNetwork(ctx, usdt, n, 6, importOrigin)
+	require.NoError(t, err)
+	m := btcUSDT()
+	m.Status = market.MarketStatusSuspended
+	_, err = store.SetMarket(ctx, m, importOrigin)
+	require.NoError(t, err)
+	_, err = store.Delete(ctx, hkOf(t, db, "USDC"), nil, importOrigin)
+	require.NoError(t, err)
+	// And a network changed in SQL.
+	_, err = db.Exec(`UPDATE currency_networks SET withdrawal_fee = 0 WHERE network = 'ethereum' AND currency_hk = $1`, usdt)
+	require.NoError(t, err)
+
+	// The file of a later release: a new market, and an asset that only a
+	// delisting reaches.
+	reg = registryFile(t)
+	reg.Markets = append(reg.Markets, assetregistry.Market{Base: "ETH", Quote: "TRX", Status: market.MarketStatusInactive,
+		MinOrderSize: "0.01", MaxOrderSize: "0", MinNotional: "1", TickSize: "0.01", LotSize: "0.01", MakerFeeBPS: 10, TakerFeeBPS: 20})
+	old := reg.Assets[3]
+	old.Symbol, old.Name, old.FaName, old.Status = "OLDBTC", "Old Bitcoin", "Old Bitcoin", "DELISTED"
+	reg.Assets = append(reg.Assets, old)
+
+	events := count(t, db, `SELECT COUNT(*) FROM audit_events`)
+	report, err = store.Sync(ctx, reg, importOrigin)
+	require.NoError(t, err, "nothing it cannot add stops it")
+	assert.Empty(t, report.Created)
+	assert.Equal(t, ImportCounts{Created: 1, Unchanged: len(reg.Markets) - 1}, report.Markets)
+	assert.Zero(t, report.Networks.Created)
+	assert.Len(t, report.Notes, 2)
+	assert.Contains(t, report.Notes[0], "USDC: left out", "its symbol stays with the deleted currency")
+	assert.Contains(t, report.Notes[1], "OLDBTC: left out")
+	assert.Equal(t, events+1, count(t, db, `SELECT COUNT(*) FROM audit_events`), "only the new market is written")
+
+	var fee, status string
+	require.NoError(t, db.QueryRow(`SELECT withdrawal_fee::text FROM currency_networks WHERE currency_hk = $1 AND network = 'tron'`, usdt).
+		Scan(&fee))
+	assert.Equal(t, "9", fee, "the administrators' change stays")
+	require.NoError(t, db.QueryRow(`SELECT status::text FROM markets WHERE base_currency_hk = $1 AND quote_currency_hk = $2`,
+		hkOf(t, db, "BTC"), usdt).Scan(&status))
+	assert.Equal(t, "SUSPENDED", status)
+	assert.Equal(t, 1, count(t, db, `SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'USDC'`), "no second USDC")
+	assert.Zero(t, count(t, db, `SELECT COUNT(*) FROM currencies WHERE info->>'symbol' = 'OLDBTC'`),
+		"no currency that only a delisting reaches")
+}

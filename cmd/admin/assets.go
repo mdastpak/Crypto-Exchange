@@ -33,7 +33,7 @@ func parseAssetArgs(cmd command, args []string, stderr io.Writer) (command, erro
 	}
 	sub := flag.NewFlagSet("assets import", flag.ContinueOnError)
 	sub.SetOutput(stderr)
-	sub.StringVar(&cmd.assets.file, "file", "", "Registry file; assets.registry_path when left out")
+	sub.StringVar(&cmd.assets.file, "file", "", "Registry file; assets.registry_path, or the registry built into this release, when left out")
 	sub.BoolVar(&cmd.assets.dryRun, "dry-run", false, "Report the changes without making them")
 	if err := sub.Parse(args[1:]); err != nil {
 		return command{}, err
@@ -64,14 +64,13 @@ func runAssets(cmd command, stdout, stderr io.Writer) int {
 
 // executeAssets imports the registry file into the currencies (#309).
 func executeAssets(ctx context.Context, database *sql.DB, cmd command, stdout io.Writer) error {
+	// The file named, or assets.registry_path, or the registry built into
+	// this release (#57), as in a container without the repository's files.
 	path := cmd.assets.file
 	if path == "" {
 		path = config.Config.Assets.RegistryPath
 	}
-	if path == "" {
-		return errors.New("name the registry file with -file, or set assets.registry_path")
-	}
-	reg, err := assetregistry.Load(path)
+	reg, source, err := assetregistry.LoadOrBuiltIn(path)
 	if err != nil {
 		return err
 	}
@@ -88,7 +87,7 @@ func executeAssets(ctx context.Context, database *sql.DB, cmd command, stdout io
 	if cmd.assets.dryRun {
 		verb = "Dry run, nothing written:"
 	}
-	fmt.Fprintf(stdout, "%s %s.\n", verb, path)
+	fmt.Fprintf(stdout, "%s %s.\n", verb, source)
 	fmt.Fprintf(stdout, "Currencies: %d created (%s), %d existing (%s).\n",
 		len(report.Created), strings.Join(report.Created, ", "), len(report.Existing), strings.Join(report.Existing, ", "))
 	fmt.Fprintf(stdout, "Networks: %d created, %d updated, %d unchanged.\n",

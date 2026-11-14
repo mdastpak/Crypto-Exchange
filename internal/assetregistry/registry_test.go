@@ -1,9 +1,12 @@
 package assetregistry
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	files "github.com/mdastpak/crypto-exchange/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,4 +207,21 @@ func TestParse_ReportsEveryProblem(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown type "MEME"`)
 	assert.Contains(t, err.Error(), "tick_size must be positive")
+}
+
+func TestLoadOrBuiltIn_ReadsTheRegistryOfTheRelease(t *testing.T) {
+	file, err := os.ReadFile("../../config/assets.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, string(file), string(files.AssetRegistry), "the release carries the repository's file")
+
+	builtIn, source, err := LoadOrBuiltIn("")
+	require.NoError(t, err)
+	assert.Equal(t, "the registry built into this release", source)
+	fromFile, source, err := LoadOrBuiltIn("../../config/assets.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, "../../config/assets.yaml", source)
+	assert.Equal(t, fromFile, builtIn)
+
+	_, _, err = LoadOrBuiltIn("no-such-registry.yaml")
+	require.Error(t, err, "a file named that is missing is an error, never the built-in one")
 }

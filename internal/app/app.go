@@ -285,6 +285,21 @@ func run() error {
 		workers = append(workers, worker{"row seal verifier", verifier.Stop})
 		workers = append(workers, useFieldEncryption(services.Postgres.DB, handlers.DataKeys))
 	}
+	// After the row seals, so that what it adds is sealed (#57).
+	added, err := syncAssets(context.Background(), services.Postgres.DB, &config.Config)
+	if err != nil {
+		return err
+	}
+	if added {
+		// The new currencies' events are in the outbox; the networks of the
+		// public list are not.
+		if catalog := handlers.Catalog; catalog != nil {
+			if err := catalog.Invalidate(context.Background()); err != nil {
+				log.Printf("Error dropping the cached currency list after the asset sync; it expires on its own: %v", err)
+			}
+		}
+		relay.Nudge()
+	}
 	// Stops the workers and the WebSocket event consumer, which start below,
 	// before the services close when startup fails after them. Otherwise
 	// shutdown has stopped them, and stopping them again does nothing.

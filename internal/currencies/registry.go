@@ -61,11 +61,26 @@ const (
 	rowUpdated
 )
 
+// rowRule is what a write does with a row that exists.
+type rowRule int
+
+const (
+	// replaceRow writes the values given: the import of the reviewed
+	// registry file, and the admin routes of markets.
+	replaceRow rowRule = iota
+	// fixContract writes the values given but refuses, with
+	// ErrContractFixed, a new contract or new decimals of a network: the
+	// admin routes of networks.
+	fixContract
+	// keepRow leaves the row as it is: the sync at startup
+	// (assets.auto_sync), which only adds what is missing, so that it never
+	// undoes what administrators changed.
+	keepRow
+)
+
 // writeNetwork writes the network n of the currency hk, with decimals and
-// the currency of its fee, and records its audit event. With fixed, a
-// change of the contract or the decimals of a network that exists is
-// refused with ErrContractFixed.
-func writeNetwork(ctx context.Context, tx *sql.Tx, hk string, n assetregistry.Network, decimals int, feeHK string, origin audit.Event, fixed bool) (writeResult, error) {
+// the currency of its fee, by rule, and records its audit event.
+func writeNetwork(ctx context.Context, tx *sql.Tx, hk string, n assetregistry.Network, decimals int, feeHK string, origin audit.Event, rule rowRule) (writeResult, error) {
 	after := map[string]interface{}{
 		"network": n.Network, "contract_address": n.ContractAddress, "decimals": decimals,
 		"custody_mode": string(n.CustodyMode), "deposit_enabled": n.DepositEnabled, "withdrawal_enabled": n.WithdrawalEnabled,
@@ -86,13 +101,16 @@ func writeNetwork(ctx context.Context, tx *sql.Tx, hk string, n assetregistry.Ne
 		return rowUnchanged, err
 	}
 	var changes *audit.Changes
+	if found && rule == keepRow {
+		return rowUnchanged, nil
+	}
 	if found {
 		// A network changed in SQL is not written over: the write would
 		// seal what nobody checked (#139). Its finding is resolved first.
 		if err := rowseal.Check(ctx, rowseal.CurrencyNetworks, sealed); err != nil {
 			return rowUnchanged, err
 		}
-		if fixed && (stored.contract != n.ContractAddress || stored.decimals != decimals) {
+		if rule == fixContract && (stored.contract != n.ContractAddress || stored.decimals != decimals) {
 			return rowUnchanged, ErrContractFixed
 		}
 		changes = changedValues(stored.fields(n.Network), after)
@@ -100,23 +118,32 @@ func writeNetwork(ctx context.Context, tx *sql.Tx, hk string, n assetregistry.Ne
 			return rowUnchanged, nil
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO currency_networks (currency_hk, network, contract_address, decimals, custody_mode,
-			deposit_enabled, withdrawal_enabled, min_deposit, min_withdrawal, max_withdrawal, withdrawal_fee, fee_currency_hk,
-			requires_tag, explorer_url)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5::settlement_mode, $6, $7, $8::numeric, $9::numeric, $10::numeric, $11::numeric,
-			NULLIF($12, '')::uuid, $13, NULLIF($14, ''))
-		ON CONFLICT (currency_hk, network) DO UPDATE SET contract_address = EXCLUDED.contract_address, decimals = EXCLUDED.decimals,
+	// A network that another transaction adds meanwhile is a conflict: the
+	// sync leaves it as that one wrote it.
+	conflict := `DO UPDATE SET contract_address = EXCLUDED.contract_address, decimals = EXCLUDED.decimals,
 			custody_mode = EXCLUDED.custody_mode, deposit_enabled = EXCLUDED.deposit_enabled,
 			withdrawal_enabled = EXCLUDED.withdrawal_enabled, min_deposit = EXCLUDED.min_deposit,
 			min_withdrawal = EXCLUDED.min_withdrawal, max_withdrawal = EXCLUDED.max_withdrawal,
 			withdrawal_fee = EXCLUDED.withdrawal_fee, fee_currency_hk = EXCLUDED.fee_currency_hk,
-			requires_tag = EXCLUDED.requires_tag, explorer_url = EXCLUDED.explorer_url`,
+			requires_tag = EXCLUDED.requires_tag, explorer_url = EXCLUDED.explorer_url`
+	if rule == keepRow {
+		conflict = `DO NOTHING`
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO currency_networks (currency_hk, network, contract_address, decimals, custody_mode,
+			deposit_enabled, withdrawal_enabled, min_deposit, min_withdrawal, max_withdrawal, withdrawal_fee, fee_currency_hk,
+			requires_tag, explorer_url)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5::settlement_mode, $6, $7, $8::numeric, $9::numeric, $10::numeric, $11::numeric,
+			NULLIF($12, '')::uuid, $13, NULLIF($14, ''))
+		ON CONFLICT (currency_hk, network) `+conflict,
 		hk, n.Network, n.ContractAddress, decimals, string(n.CustodyMode), n.DepositEnabled, n.WithdrawalEnabled,
 		n.MinDepositOrZero(), n.MinWithdrawal, n.MaxWithdrawal, n.WithdrawalFee, feeHK, n.RequiresTag, n.ExplorerURL)
 	if isConstraint(err, "currency_networks_contract") {
 		return rowUnchanged, ErrContractTaken
 	}
 	if err != nil {
+		return rowUnchanged, err
+	}
+	if written, err := res.RowsAffected(); err != nil || written == 0 {
 		return rowUnchanged, err
 	}
 	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyNetworks, "currency_hk = $1 AND network = $2", hk, n.Network); err != nil {
@@ -138,7 +165,7 @@ func isConstraint(err error, name string) bool {
 
 // writeMarket writes the market m of the currencies base and quote, and
 // records its audit event. It returns the ID of the market.
-func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetregistry.Market, origin audit.Event) (string, writeResult, error) {
+func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetregistry.Market, origin audit.Event, rule rowRule) (string, writeResult, error) {
 	after := map[string]interface{}{
 		"base": m.Base, "quote": m.Quote, "status": string(m.Status), "min_order_size": m.MinOrderSize,
 		"max_order_size": m.MaxOrderSize, "min_notional": m.MinNotional, "tick_size": m.TickSize, "lot_size": m.LotSize,
@@ -158,6 +185,9 @@ func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetreg
 	}
 	changes := &audit.Changes{After: after}
 	result := rowCreated
+	if found && rule == keepRow {
+		return id, rowUnchanged, nil
+	}
 	if found {
 		// A market changed in SQL is not written over (#139).
 		if err := rowseal.Check(ctx, rowseal.Markets, sealed); err != nil {
@@ -177,11 +207,20 @@ func writeMarket(ctx context.Context, tx *sql.Tx, base, quote string, m assetreg
 			m.MakerFeeBPS, m.TakerFeeBPS)
 		result = rowUpdated
 	} else {
+		// The sync leaves a market that another transaction adds meanwhile
+		// as that one wrote it.
+		conflict := ""
+		if rule == keepRow {
+			conflict = ` ON CONFLICT (base_currency_hk, quote_currency_hk) DO NOTHING`
+		}
 		err = tx.QueryRowContext(ctx, `INSERT INTO markets (base_currency_hk, quote_currency_hk, status, min_order_size,
 				max_order_size, min_notional, tick_size, lot_size, maker_fee_bps, taker_fee_bps)
-			VALUES ($1, $2, $3::market_status, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9, $10)
+			VALUES ($1, $2, $3::market_status, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9, $10)`+conflict+`
 			RETURNING id`, base, quote, string(m.Status), m.MinOrderSize, m.MaxOrderSize, m.MinNotional, m.TickSize, m.LotSize,
 			m.MakerFeeBPS, m.TakerFeeBPS).Scan(&id)
+		if rule == keepRow && errors.Is(err, sql.ErrNoRows) {
+			return "", rowUnchanged, nil
+		}
 	}
 	if err != nil {
 		return "", rowUnchanged, err
@@ -243,7 +282,7 @@ func (s Store) SetNetwork(ctx context.Context, hk string, n assetregistry.Networ
 	if len(problems) > 0 {
 		return NetworkWritten{}, &Invalid{Problems: problems}
 	}
-	result, err := writeNetwork(ctx, tx, hk, n, decimals, feeHK, origin, true)
+	result, err := writeNetwork(ctx, tx, hk, n, decimals, feeHK, origin, fixContract)
 	if err != nil {
 		return NetworkWritten{}, err
 	}
@@ -346,7 +385,7 @@ func (s Store) SetMarket(ctx context.Context, m assetregistry.Market, origin aud
 	if len(problems) > 0 {
 		return MarketWritten{}, &Invalid{Problems: problems}
 	}
-	id, result, err := writeMarket(ctx, tx, hks["base"], hks["quote"], m, origin)
+	id, result, err := writeMarket(ctx, tx, hks["base"], hks["quote"], m, origin, replaceRow)
 	if err != nil {
 		return MarketWritten{}, err
 	}

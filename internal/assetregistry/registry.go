@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 
+	files "github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 
@@ -112,6 +113,21 @@ var (
 	custodyModes  = []shared.SettlementMode{shared.SettlementModeOffChain, shared.SettlementModeOnChain}
 	marketStatus  = []market.MarketStatus{market.MarketStatusActive, market.MarketStatusInactive, market.MarketStatusMaintenance, market.MarketStatusSuspended, market.MarketStatusDelisted}
 )
+
+// LoadOrBuiltIn reads the registry file at path, or, when path is empty, the
+// registry built into this release (config.AssetRegistry, #57). It returns
+// the registry and what it read, for messages.
+func LoadOrBuiltIn(path string) (*Registry, string, error) {
+	if path == "" {
+		registry, err := Parse(files.AssetRegistry)
+		if err != nil {
+			return nil, "", fmt.Errorf("the registry built into this release: %w", err)
+		}
+		return registry, "the registry built into this release", nil
+	}
+	registry, err := Load(path)
+	return registry, path, err
+}
 
 // Load reads and checks the registry file at path, which comes from the
 // configuration (assets.registry_path).

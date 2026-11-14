@@ -855,7 +855,7 @@ The history of a currency, each change with its fields before and after, is in t
 
 ### Networks
 
-How a currency moves on each network is a row of its own ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309), [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)): USDT is one currency and one balance, with a network on `tron` and one on `ethereum`, each with its contract, decimals, and limits. `admin assets import` loads them from `config/assets.yaml`; these routes read and change them one at a time, with the same checks.
+How a currency moves on each network is a row of its own ([#309](https://github.com/mdastpak/Crypto-Exchange/issues/309), [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)): USDT is one currency and one balance, with a network on `tron` and one on `ethereum`, each with its contract, decimals, and limits. `admin assets import` loads them from `config/assets.yaml`, and [`assets.auto_sync`](configuration.md#assets) adds the missing ones at startup; these routes read and change them one at a time, with the same checks.
 
 `GET /admin/currencies/{hk}/networks` (admin) lists them, by name, with `custody_mode` and `fee_currency_hk`. `404` for an unknown currency.
 

@@ -146,8 +146,9 @@ Row seals (see docs/data-protection.md#row-seals):
 
 Assets (see docs/architecture.md#the-asset-registry):
   assets import [-file path] [-dry-run]
-                   Load the registry file (assets.registry_path) into the currencies, their networks,
-                   and the markets, through its checks. A currency that exists keeps its fields;
+                   Load the registry file (-file, assets.registry_path, or the one built into this
+                   release) into the currencies, their networks, and the markets, through its
+                   checks. A currency that exists keeps its fields;
                    -dry-run reports the changes without making them.
 
 Ledger (see docs/architecture.md#the-ledger):
