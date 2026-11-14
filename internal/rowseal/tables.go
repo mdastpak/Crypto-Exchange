@@ -214,13 +214,20 @@ var (
 	UserConfirmationMethods = &Table{Name: "user_confirmation_methods", Key: "user_hk", KeyType: "uuid", Columns: []Column{
 		text("method"),
 	}}
+	// AntiPhishingCodes covers the anti-phishing code of a user (#375),
+	// encrypted: one changed or swapped in SQL is not shown, and its set_at,
+	// from which its age counts. Its use count and reminder times are not
+	// sealed: every email changes the count.
+	AntiPhishingCodes = &Table{Name: "user_anti_phishing_codes", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		sealedBytes("phrase_enc"), timestamptz("set_at"), timestamptz("removed_at"),
+	}}
 )
 
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
-	OperationConfirmations, UserConfirmationMethods,
+	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

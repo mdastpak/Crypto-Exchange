@@ -380,17 +380,98 @@ func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
 
 	// A directory of the operator's own templates.
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Sender}}: {{.Code}}</p>`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}}</p>`), 0o600))
-	_, html = send(dir, testEmailMessage)
-	assert.Contains(t, html, "<p>Exchange: 482913</p>", "the sender is the name of the from address")
-
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Sender}}: {{.Code}} {{.AntiPhishingCode}}</p>`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}} {{.AntiPhishingCode}}</p>`), 0o600))
+	// Without the reminder's template, the directory is refused (#375).
 	cfg := server.emailConfig()
-	cfg.HTMLTemplates = filepath.Join(dir, "missing")
+	cfg.HTMLTemplates = dir
 	_, err := NewEmailDeliverer(cfg, time.Minute)
+	require.ErrorContains(t, err, "anti_phishing_reminder.html")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "anti_phishing_reminder.html"), []byte(`<p>{{.Uses}} {{.AntiPhishingCode}}</p>`), 0o600))
+	_, html = send(dir, testEmailMessage)
+	assert.Contains(t, html, "<p>Exchange: 482913 </p>", "the sender is the name of the from address")
+
+	cfg.HTMLTemplates = filepath.Join(dir, "missing")
+	_, err = NewEmailDeliverer(cfg, time.Minute)
 	require.Error(t, err)
+	// An HTML template that does not show the anti-phishing code (#375).
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}}</p>`), 0o600))
+	cfg.HTMLTemplates = dir
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	require.ErrorContains(t, err, "withdrawal.html must show {{.AntiPhishingCode}}")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Nope}}</p>`), 0o600))
 	cfg.HTMLTemplates = dir
 	_, err = NewEmailDeliverer(cfg, time.Minute)
 	require.Error(t, err, "a template that fails stops the server at startup")
+}
+
+// TestEmailDeliverer_ShowsTheAntiPhishingCode checks that every email to a
+// user who has an anti-phishing code shows it (#375): in the HTML of each
+// language, escaped, and in the text, on the first line when the text
+// template does not show it.
+func TestEmailDeliverer_ShowsTheAntiPhishingCode(t *testing.T) {
+	server := startFakeSMTPServer(t, "")
+	send := func(setting string, msg OTPMessage) (string, string) {
+		t.Helper()
+		cfg := server.emailConfig()
+		cfg.HTMLTemplates = setting
+		d := newTestEmailDeliverer(t, cfg)
+		require.NoError(t, d.Deliver(context.Background(), msg))
+		received := server.received()
+		parsed, err := mail.ReadMessage(strings.NewReader(received[len(received)-1].data))
+		require.NoError(t, err)
+		return emailParts(t, parsed)
+	}
+	signIn := testEmailMessage
+	signIn.AntiPhishingCode = "blue-falcon"
+	withdrawal := signIn
+	withdrawal.Purpose, withdrawal.Amount, withdrawal.Destination = PurposeWithdrawal, "1 USDT", "T...0000"
+	withdrawal.Details = "1 USDT to T...0000"
+
+	for _, lang := range []string{HTMLTemplatesEN, HTMLTemplatesFA} {
+		for _, msg := range []OTPMessage{signIn, withdrawal} {
+			text, html := send(lang, msg)
+			assert.True(t, strings.HasPrefix(text, "Anti-phishing code / کد ضدفیشینگ: blue-falcon\n"), "%s %s: %q", lang, msg.Purpose, text)
+			assert.Contains(t, html, "<b>blue-falcon</b>", "%s %s", lang, msg.Purpose)
+		}
+	}
+
+	// Escaped in the HTML, though the phrase never holds markup.
+	tricky := signIn
+	tricky.AntiPhishingCode = "<i>x</i>"
+	_, html := send(HTMLTemplatesEN, tricky)
+	assert.Contains(t, html, "&lt;i&gt;x&lt;/i&gt;")
+
+	// Without a code, nothing is added.
+	text, html := send(HTMLTemplatesEN, testEmailMessage)
+	assert.NotContains(t, text, "Anti-phishing")
+	assert.NotContains(t, html, "anti-phishing")
+}
+
+// TestEmailDeliverer_SendsTheAntiPhishingReminder checks the reminder to
+// change the anti-phishing code (#375): its own subject and text, with the
+// code, its uses, and its age, in the HTML of each language, and no link.
+func TestEmailDeliverer_SendsTheAntiPhishingReminder(t *testing.T) {
+	server := startFakeSMTPServer(t, "")
+	reminder := OTPMessage{ContactType: ContactEmail, Contact: "user@example.com", MaskedContact: "use*****@example.com",
+		Purpose: PurposeAntiPhishingReminder, AntiPhishingCode: "blue-falcon", Uses: 212, AgeDays: 190}
+	for lang, title := range map[string]string{HTMLTemplatesEN: "Time to change your anti-phishing code", HTMLTemplatesFA: "زمان تغییر کد ضدفیشینگ"} {
+		cfg := server.emailConfig()
+		cfg.HTMLTemplates = lang
+		d := newTestEmailDeliverer(t, cfg)
+		require.NoError(t, d.Deliver(context.Background(), reminder))
+		received := server.received()
+		parsed, err := mail.ReadMessage(strings.NewReader(received[len(received)-1].data))
+		require.NoError(t, err)
+		subject, err := new(mime.WordDecoder).DecodeHeader(parsed.Header.Get("Subject"))
+		require.NoError(t, err)
+		assert.Equal(t, "Time to change your anti-phishing code", subject)
+		text, html := emailParts(t, parsed)
+		assert.Contains(t, text, "Your anti-phishing code blue-falcon was set 190 days ago, and 212 emails from us have shown it.")
+		assert.Contains(t, html, title)
+		assert.Contains(t, html, "<b>blue-falcon</b>")
+		assert.Contains(t, html, "212")
+		assert.Contains(t, html, "190")
+		assert.NotContains(t, html, "href", "%s: a reminder has no link", lang)
+	}
 }

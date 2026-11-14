@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,11 @@ type KavenegarDeliverer struct {
 	// withdrawalTemplate is the template of the codes that confirm a
 	// withdrawal (#161); empty is none, and such codes are refused.
 	withdrawalTemplate string
-	baseURL            string
-	client             *http.Client
+	// reminderTemplate is the template of the reminder to change the
+	// anti-phishing code (#375); empty is none, and reminders are refused.
+	reminderTemplate string
+	baseURL          string
+	client           *http.Client
 }
 
 // NewKavenegarDeliverer validates cfg and returns a deliverer for it.
@@ -47,6 +51,7 @@ func NewKavenegarDeliverer(cfg config.KavenegarConfig) (*KavenegarDeliverer, err
 		apiKey:             cfg.APIKey,
 		template:           cfg.OTPTemplate,
 		withdrawalTemplate: cfg.WithdrawalTemplate,
+		reminderTemplate:   cfg.AntiPhishingReminderTemplate,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
 		client:             &http.Client{Timeout: timeout},
 	}, nil
@@ -82,7 +87,8 @@ func (k *KavenegarDeliverer) Deliver(ctx context.Context, msg OTPMessage) error 
 	form.Set("receptor", msg.Contact)
 	form.Set("token", msg.Code)
 	form.Set("template", k.template)
-	if msg.Purpose == PurposeWithdrawal {
+	switch msg.Purpose {
+	case PurposeWithdrawal:
 		// A code that confirms a withdrawal never goes out with the
 		// sign-in text (#161). %token10 may hold spaces, so it carries
 		// what the code confirms.
@@ -91,6 +97,14 @@ func (k *KavenegarDeliverer) Deliver(ctx context.Context, msg OTPMessage) error 
 		}
 		form.Set("template", k.withdrawalTemplate)
 		form.Set("token10", msg.Details)
+	case PurposeAntiPhishingReminder:
+		// The reminder carries no code: %token is the number of emails
+		// that have shown the anti-phishing code, never the code itself.
+		if k.reminderTemplate == "" {
+			return permanent(errors.New("kavenegar: no anti_phishing_reminder_template for the reminders"))
+		}
+		form.Set("template", k.reminderTemplate)
+		form.Set("token", strconv.FormatInt(msg.Uses, 10))
 	}
 
 	// The API key is part of the path, so no error below may include the URL.

@@ -308,6 +308,33 @@ definitions:
       user_agent:
         type: string
     type: object
+  antiphishing.Status:
+    properties:
+      change_reason:
+        enum:
+        - age
+        - uses
+        type: string
+      change_suggested:
+        description: |-
+          ChangeSuggested is whether the exchange suggests a new code, for
+          ChangeReason: "age", the code is old, or "uses", many emails have
+          shown it.
+        type: boolean
+      hint:
+        description: Hint is the start of the code; the whole code is in every email.
+        example: bl***
+        type: string
+      set:
+        description: Set is whether the user has a code.
+        type: boolean
+      set_at:
+        description: SetAt is when the code was set.
+        type: string
+      shown_count:
+        description: ShownCount is the number of emails that have shown the code.
+        type: integer
+    type: object
   audit.Changes:
     properties:
       after:
@@ -2530,6 +2557,15 @@ definitions:
         description: Name is what the user calls the passkey, such as the device.
         example: iPhone
         type: string
+    type: object
+  user.AntiPhishingCodeRequest:
+    properties:
+      code:
+        description: Code is 4 to 20 letters, digits, spaces, or hyphens, of any script.
+        example: blue falcon 7
+        type: string
+    required:
+    - code
     type: object
   user.ConfirmRequest:
     properties:
@@ -7157,6 +7193,136 @@ paths:
       summary: Show the status of the exchange
       tags:
       - system
+  /api/v1/user/anti-phishing-code:
+    delete:
+      description: 'Removes the anti-phishing code: emails show none from then on.
+        404 anti_phishing_code_not_set without one. The removal needs a fresh proof
+        of the second factor (403 step_up_required). Audited.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: anti_phishing_code_not_set
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: anti_phishing_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Remove my anti-phishing code
+      tags:
+      - user-security
+    get:
+      description: 'Whether the signed-in user has an anti-phishing code, its first
+        characters (the whole code is in every email, never in the API, so that a
+        stolen session cannot copy it into a phishing email), when it was set, how
+        many emails have shown it, and whether a change is suggested: change_reason
+        "age" once it is anti_phishing.rotation.max_age_days old, "uses" once max_uses
+        emails have shown it.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/antiphishing.Status'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: anti_phishing_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get my anti-phishing code
+      tags:
+      - user-security
+    put:
+      consumes:
+      - application/json
+      description: 'Sets or changes the code that every email from the exchange to
+        the user''s verified contacts shows: an email without it is not from the exchange.
+        It is 4 to 20 letters, digits, spaces, or hyphens (400 anti_phishing_code_invalid),
+        and not the current code (409 anti_phishing_code_same). A new code starts
+        with no uses. The change needs a fresh proof of the second factor (403 step_up_required).
+        Audited, without the code.'
+      parameters:
+      - description: The code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.AntiPhishingCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/antiphishing.Status'
+              type: object
+        "400":
+          description: anti_phishing_code_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: anti_phishing_code_same
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: anti_phishing_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Set my anti-phishing code
+      tags:
+      - user-security
   /api/v1/user/confirmation-method:
     get:
       description: 'How the withdrawals of the signed-in user are confirmed: the method

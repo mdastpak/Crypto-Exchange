@@ -5,13 +5,13 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -44,22 +44,10 @@ var (
 	errAccountUnavailable = errors.New("account is not available")
 )
 
-// maskContact hides most of a contact, like the sign-in logs do: the first
-// three characters stay visible, with the domain of an email address or the
-// last three digits of a mobile number.
+// maskContact hides most of a contact, like the sign-in logs do:
+// notify.MaskContact.
 func maskContact(contactType, value string) string {
-	const hidden = "*****"
-	if contactType == "email" {
-		at := strings.LastIndex(value, "@")
-		if at <= 0 {
-			return hidden
-		}
-		return value[:min(3, at)] + hidden + value[at:]
-	}
-	if len(value) <= 6 {
-		return hidden
-	}
-	return value[:3] + hidden + value[len(value)-3:]
+	return notify.MaskContact(contactType, value)
 }
 
 // callerID returns the user that the access token names. There is no user ID

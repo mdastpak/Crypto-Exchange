@@ -123,6 +123,10 @@ const (
 	// (#161). The target is the confirmation; a wrong code is a failure.
 	// The event never holds the code.
 	ActionUserOperationConfirm = "user.operation_confirm"
+	// A user setting or removing their anti-phishing code (#375). The
+	// target is the user; the event never holds the phrase.
+	ActionUserAntiPhishingCodeSet    = "user.anti_phishing_code_set"
+	ActionUserAntiPhishingCodeRemove = "user.anti_phishing_code_remove"
 	// ActionUserStepUp is a session proving the second factor again, for
 	// the operations that it protects (#307).
 	ActionUserStepUp = "user.step_up"

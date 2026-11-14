@@ -103,3 +103,25 @@ func TestQueueSender_ReportsPublishFailures(t *testing.T) {
 	require.True(t, ok, "the request is answered with 503, not 500 (#232)")
 	assert.Equal(t, dberr.CodeDeliveryUnavailable, answer.Code)
 }
+
+// TestQueueSender_NoticesKeepLonger checks that a message without a code,
+// such as the reminder to change the anti-phishing code (#375), waits a
+// day for a worker, not the lifetime of a code.
+func TestQueueSender_NoticesKeepLonger(t *testing.T) {
+	publisher := &recordingPublisher{}
+	sender := NewQueueSender(publisher, "notifications", emailOnlyChannels(), 90*time.Second)
+	now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	sender.now = func() time.Time { return now }
+
+	reminder := OTPMessage{ContactType: ContactEmail, Contact: "alice@example.com", MaskedContact: "ali*****@example.com",
+		Purpose: PurposeAntiPhishingReminder, AntiPhishingCode: "blue-falcon", Uses: 212, AgeDays: 190}
+	require.NoError(t, sender.SendOTP(context.Background(), reminder))
+
+	published := publisher.messages()
+	require.Len(t, published, 1)
+	assert.Equal(t, "86400000", published[0].msg.Expiration)
+	var job otpJob
+	require.NoError(t, json.Unmarshal(published[0].msg.Body, &job))
+	assert.Equal(t, now.Add(NoticeTTL), job.ExpiresAt)
+	assert.Equal(t, reminder, job.message(), "the reminder reaches the worker whole")
+}

@@ -475,6 +475,9 @@ type Configuration struct {
 	// (#157).
 	Verification VerificationConfig `yaml:"verification"`
 
+	// AntiPhishing configures the anti-phishing codes of users (#375).
+	AntiPhishing AntiPhishingConfig `yaml:"anti_phishing"`
+
 	// Withdrawals configures the withdrawal destinations of users (#160).
 	Withdrawals WithdrawalsConfig `yaml:"withdrawals"`
 
@@ -791,12 +794,20 @@ type EmailConfig struct {
 	// the sign-in text, so that it cannot pass for one.
 	WithdrawalSubject string `yaml:"withdrawal_subject"`
 	WithdrawalBody    string `yaml:"withdrawal_body"`
+	// AntiPhishingReminderSubject and AntiPhishingReminderBody are the
+	// templates of the reminder to change the anti-phishing code (#375).
+	// They can use {{.AntiPhishingCode}}, {{.Uses}}, the emails that have
+	// shown it, and {{.AgeDays}}, its age in days.
+	AntiPhishingReminderSubject string `yaml:"anti_phishing_reminder_subject"`
+	AntiPhishingReminderBody    string `yaml:"anti_phishing_reminder_body"`
 	// HTMLTemplates chooses the HTML part of the emails, beside the text:
 	// "en" (the default) or "fa" for the templates in config/email, "none"
-	// for text only, or a directory with otp.html and withdrawal.html,
-	// Go html/template templates that can use {{.Code}}, {{.TTLSeconds}},
-	// {{.Sender}}, and, for withdrawals, {{.Amount}}, {{.Destination}},
-	// and {{.Details}}.
+	// for text only, or a directory with otp.html, withdrawal.html, and
+	// anti_phishing_reminder.html, Go html/template templates that can use
+	// {{.Code}}, {{.TTLSeconds}}, {{.Sender}}, {{.AntiPhishingCode}}, and,
+	// for withdrawals, {{.Amount}}, {{.Destination}}, and {{.Details}}, and
+	// for the reminder, {{.Uses}} and {{.AgeDays}}. Each must show
+	// {{.AntiPhishingCode}} (#375).
 	HTMLTemplates string `yaml:"html_templates"`
 }
 
@@ -820,8 +831,13 @@ type KavenegarConfig struct {
 	// confirms, such as "100 USDT to TR7NHq...gjLj6t". Without it, codes
 	// that confirm withdrawals are not sent by SMS.
 	WithdrawalTemplate string `yaml:"withdrawal_template"`
-	BaseURL            string `yaml:"base_url"`
-	Timeout            int    `yaml:"timeout_seconds"`
+	// AntiPhishingReminderTemplate is the verify template of the reminder
+	// to change the anti-phishing code (#375): %token receives the number
+	// of emails that have shown the code. Without it, the reminder is not
+	// sent by SMS.
+	AntiPhishingReminderTemplate string `yaml:"anti_phishing_reminder_template"`
+	BaseURL                      string `yaml:"base_url"`
+	Timeout                      int    `yaml:"timeout_seconds"`
 }
 
 // PriceProviderConfig holds configuration for a price data provider
@@ -1739,6 +1755,7 @@ func setDefaults() {
 		}
 	}
 	Config.applyVerificationDefaults()
+	Config.applyAntiPhishingDefaults()
 
 	if Config.MarketData.Mode == "" {
 		Config.MarketData.Mode = MarketDataModeDryRun
@@ -1927,6 +1944,11 @@ const (
 	DefaultWithdrawalEmailSubject = "Confirm your withdrawal"
 	DefaultWithdrawalEmailBody    = "Your code to confirm the withdrawal of {{.Details}} is {{.Code}}. It expires in {{.TTLSeconds}} seconds.\n\n" +
 		"If you did not request this withdrawal, do not enter or share the code: sign in, change your password, and contact support.\n"
+	DefaultAntiPhishingReminderSubject = "Time to change your anti-phishing code"
+	DefaultAntiPhishingReminderBody    = "Your anti-phishing code {{.AntiPhishingCode}} was set {{.AgeDays}} days ago, " +
+		"and {{.Uses}} emails from us have shown it.\n\n" +
+		"The more emails show it, the more places it can be seen. Sign in to the exchange yourself, not through a link, " +
+		"and choose a new code in the security settings.\n"
 	DefaultKavenegarBaseURL = "https://api.kavenegar.com"
 )
 
@@ -1948,6 +1970,12 @@ func setNotificationDefaults(n *NotificationsConfig) {
 	}
 	if n.Email.WithdrawalBody == "" {
 		n.Email.WithdrawalBody = DefaultWithdrawalEmailBody
+	}
+	if n.Email.AntiPhishingReminderSubject == "" {
+		n.Email.AntiPhishingReminderSubject = DefaultAntiPhishingReminderSubject
+	}
+	if n.Email.AntiPhishingReminderBody == "" {
+		n.Email.AntiPhishingReminderBody = DefaultAntiPhishingReminderBody
 	}
 	if n.SMS.Kavenegar.BaseURL == "" {
 		n.SMS.Kavenegar.BaseURL = DefaultKavenegarBaseURL

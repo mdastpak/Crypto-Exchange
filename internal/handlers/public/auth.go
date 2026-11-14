@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
@@ -45,6 +46,9 @@ type PublicHandler struct {
 	// Accounts finds and creates the accounts of the sign-ins. Without it,
 	// sign-in is unavailable.
 	Accounts Accounts
+	// AntiPhishing reads the anti-phishing code that the sign-in code of a
+	// user's account shows (#375). Nil shows none.
+	AntiPhishing antiphishing.Reader
 	// Audit records the events of the sign-ins.
 	Audit AuditLog
 	// Redis holds the challenges of the second step and of the session
@@ -179,6 +183,9 @@ func (h *PublicHandler) RequestOTP(c *gin.Context) {
 		Contact:       req.Username,
 		MaskedContact: maskedContact,
 		Code:          issued.Code,
+		// Only a verified email of a user's account shows the code: it
+		// reaches the owner, whoever asked for it.
+		AntiPhishingCode: h.antiPhishingCode(ctx, event.ActorType, event.ActorID, contactType, req.Username),
 	})
 	if err != nil {
 		log.Printf("Failed to send the sign-in code to %s %s: %v", contactType, maskedContact, err)
@@ -335,6 +342,21 @@ func (h *PublicHandler) noteSignIn(ctx context.Context, event audit.Event, outco
 	if err := h.Audit.Record(ctx, event); err != nil {
 		log.Printf("Failed to record the audit event %s (%s): %v", event.Action, outcome, err)
 	}
+}
+
+// antiPhishingCode returns the anti-phishing code of a user's account, for
+// a sign-in code to a verified email of the account (#375), or "" for none.
+// An account that cannot be read shows none: the code still goes out.
+func (h *PublicHandler) antiPhishingCode(ctx context.Context, actorType, userHK, contactType, contact string) string {
+	if h.AntiPhishing == nil || actorType != audit.ActorUser {
+		return ""
+	}
+	phrase, err := h.AntiPhishing.ShowTo(ctx, userHK, contactType, contact)
+	if err != nil {
+		log.Printf("Failed to read the anti-phishing code of user %s for a sign-in code: %v", userHK, err)
+		return ""
+	}
+	return phrase
 }
 
 // contactOwner returns the actor type and hk of the account that owns a

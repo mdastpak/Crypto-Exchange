@@ -1214,6 +1214,23 @@ It has the limits of a sign-in. The withdrawal workflow ([#70](https://github.co
 
 Sends a new code of an SMS or email confirmation, or begins a new ceremony of a confirmation by passkey and returns its options, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`).
 
+## Anti-phishing code
+
+A user may set an anti-phishing code: a phrase of their own that every email from the exchange to their verified contacts shows ([#375](https://github.com/mdastpak/Crypto-Exchange/issues/375)). This covers the codes of sign-ins, contact changes, and withdrawal confirmations, and the reminders. An email without it, or with another, is not from the exchange. In the HTML, the code is in a box under the sender's name. In the text, it is where the template puts it, or else on the first line.
+
+- **Only verified contacts.** The code goes only to a verified email of the account whose row matches its seal. An address that a contact change is adding never gets it: a hijacked session that adds its own address would otherwise learn the code and copy it into its phishing. SMS never carries it. Emails of administrators carry none.
+- **Never in the API.** `GET` returns only its first two characters (`hint`). The whole code is in every email, so a stolen session cannot read it to copy into a phishing email.
+- **Protected.** It is stored encrypted only, bound to its user, and the row is sealed: a code copied or changed in SQL is not shown ([data protection](data-protection.md)). Setting and removing it are audited as `user.anti_phishing_code_set` and `user.anti_phishing_code_remove`, never with the code.
+- **Rotation.** Each email that shows the code counts a use. Once the code is `anti_phishing.rotation.max_age_days` old, or `max_uses` emails have shown it, the exchange suggests a new one. `change_suggested` and `change_reason` (`age` or `uses`) say so, and a reminder goes by email and SMS with the number of emails, again every `reminder_interval_days` until the code changes. The reminder has no link: the user opens the exchange themselves ([configuration](configuration.md#anti_phishing)).
+
+### `GET /user/anti-phishing-code`
+
+Returns `set`, `hint`, `set_at`, `shown_count`, `change_suggested`, and `change_reason`.
+
+### `PUT /user/anti-phishing-code` and `DELETE /user/anti-phishing-code`
+
+`PUT` with `{"code": "blue falcon 7"}` sets or changes the code. A code is 4 to 20 letters, digits, spaces, or hyphens, of any script, Persian among them; runs of spaces become one. Anything else answers `400 anti_phishing_code_invalid`, and the current code answers `409 anti_phishing_code_same`. A new code starts with no uses. `DELETE` removes it (`404 anti_phishing_code_not_set` without one). Both need a fresh proof of the second factor for a user who has one (`403 step_up_required`), and are closed by the `profile_changes` lockdown.
+
 ## Maintenance and lockdowns
 
 Administrators take the whole service, or one feature, out of users' reach for planned maintenance or in an incident ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). A control is one of:

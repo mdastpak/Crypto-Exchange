@@ -162,7 +162,7 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		AccountRecoveries.Name: "user_hk",
 		SessionStepUps.Name:    "(SELECT s.user_id FROM sessions s WHERE s.id = session_step_ups.session_id)",
 		AdminSessions.Name:     "admin_id", UserRestrictions.Name: "user_hk", UserRecoveryCodes.Name: "user_hk",
-		PlatformControls.Name: "NULL", Balances.Name: "user_id", WithdrawalDestinations.Name: "user_hk", OperationConfirmations.Name: "user_hk", UserConfirmationMethods.Name: "user_hk",
+		PlatformControls.Name: "NULL", Balances.Name: "user_id", WithdrawalDestinations.Name: "user_hk", OperationConfirmations.Name: "user_hk", UserConfirmationMethods.Name: "user_hk", AntiPhishingCodes.Name: "user_hk",
 	}[t.Name]
 	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)

@@ -180,6 +180,10 @@ func TestValidateServer_Rules(t *testing.T) {
 			c.Withdrawals.FiatDestinationWaitHours = &wait
 		}, "withdrawals.fiat_destination_wait_hours is -1; it must be from 0 to 720"},
 
+		// The reminders to change the anti-phishing code (#375).
+		"no reminder interval": {func(c *Configuration) { c.AntiPhishing.Rotation.ReminderIntervalDays = -1 }, "anti_phishing.rotation.reminder_interval_days is -1; it must be at least 1"},
+		"no check interval":    {func(c *Configuration) { c.AntiPhishing.Rotation.CheckIntervalMinutes = -5 }, "anti_phishing.rotation.check_interval_minutes is -5; it must be at least 1"},
+
 		// TLS files, in every mode.
 		"TLS without files": {func(c *Configuration) { c.Server.TLS.Enabled = true }, "server.tls.enabled (SERVER_TLS_ENABLED) is true, but server.tls.cert_file (SERVER_TLS_CERT_FILE) and server.tls.key_file (SERVER_TLS_KEY_FILE) must both be set"},
 	} {

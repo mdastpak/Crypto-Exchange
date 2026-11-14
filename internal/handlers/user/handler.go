@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/config"
@@ -44,6 +45,9 @@ type UserHandler struct {
 	// Confirmations confirms withdrawals with the second factor (#161). The
 	// server sets it, with the delivery of the codes.
 	Confirmations ConfirmationService
+	// AntiPhishing keeps the anti-phishing code of the user (#375), which
+	// the emails to their verified contacts show.
+	AntiPhishing AntiPhishingStore
 	// Redis holds the pending contact changes, which any instance confirms.
 	Redis redis.UniversalClient
 	// Sessions lists and ends the sessions of the signed-in user (#193).
@@ -81,6 +85,7 @@ func NewHandler(is *models.InfraServices) *UserHandler {
 		h.Audit = audit.Log{DB: is.Postgres.DB}
 		h.Favorites = favorites.Store{DB: is.Postgres.DB}
 		h.Restrictions = restrictions.Store{DB: is.Postgres.DB}
+		h.AntiPhishing = antiphishing.Store{DB: is.Postgres.DB, Rotation: antiphishing.NewRotation(is.Settings().AntiPhishing.Rotation)}
 		if policy, err := verification.NewPolicy(is.Settings().Verification); err != nil {
 			log.Printf("The verification levels are unavailable: %v", err)
 		} else {

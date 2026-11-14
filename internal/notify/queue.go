@@ -18,23 +18,32 @@ import (
 // otpJobType identifies sign-in code jobs on the notifications exchange.
 const otpJobType = "otp"
 
+// NoticeTTL is how long a queued message without a code, such as a
+// reminder, waits for a worker before it is dropped.
+const NoticeTTL = 24 * time.Hour
+
 // otpJob is a queued sign-in code. It carries the code and the raw contact,
 // so it is only ever written to the broker, never to a log or to the
 // dead-letter queue.
 type otpJob struct {
 	// ID identifies the job, so that a worker can tell a job that the
 	// broker hands out again from a new one (#232).
-	ID            string    `json:"id,omitempty"`
-	Type          string    `json:"type"`
-	ContactType   string    `json:"contact_type"`
-	Contact       string    `json:"contact"`
-	MaskedContact string    `json:"masked_contact"`
-	Code          string    `json:"code"`
-	Purpose       string    `json:"purpose,omitempty"`
-	Details       string    `json:"details,omitempty"`
-	Amount        string    `json:"amount,omitempty"`
-	Destination   string    `json:"destination,omitempty"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	ID            string `json:"id,omitempty"`
+	Type          string `json:"type"`
+	ContactType   string `json:"contact_type"`
+	Contact       string `json:"contact"`
+	MaskedContact string `json:"masked_contact"`
+	Code          string `json:"code"`
+	Purpose       string `json:"purpose,omitempty"`
+	Details       string `json:"details,omitempty"`
+	Amount        string `json:"amount,omitempty"`
+	Destination   string `json:"destination,omitempty"`
+	// AntiPhishingCode is personal data like the contact: the queue is
+	// internal, and the job is never logged.
+	AntiPhishingCode string    `json:"anti_phishing_code,omitempty"`
+	Uses             int64     `json:"uses,omitempty"`
+	AgeDays          int       `json:"age_days,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 // deliveryID is the key of the job in the delivery log: its ID, or, for a
@@ -50,14 +59,17 @@ func (j otpJob) deliveryID(body []byte) string {
 
 func (j otpJob) message() OTPMessage {
 	return OTPMessage{
-		ContactType:   j.ContactType,
-		Contact:       j.Contact,
-		MaskedContact: j.MaskedContact,
-		Code:          j.Code,
-		Purpose:       j.Purpose,
-		Details:       j.Details,
-		Amount:        j.Amount,
-		Destination:   j.Destination,
+		ContactType:      j.ContactType,
+		Contact:          j.Contact,
+		MaskedContact:    j.MaskedContact,
+		Code:             j.Code,
+		Purpose:          j.Purpose,
+		Details:          j.Details,
+		Amount:           j.Amount,
+		Destination:      j.Destination,
+		AntiPhishingCode: j.AntiPhishingCode,
+		Uses:             j.Uses,
+		AgeDays:          j.AgeDays,
 	}
 }
 
@@ -117,16 +129,19 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 
 	now := s.now()
 	job := otpJob{
-		ID:            uuid.NewString(),
-		Type:          otpJobType,
-		ContactType:   msg.ContactType,
-		Contact:       msg.Contact,
-		MaskedContact: msg.MaskedContact,
-		Code:          msg.Code,
-		Purpose:       msg.Purpose,
-		Details:       msg.Details,
-		Amount:        msg.Amount,
-		Destination:   msg.Destination,
+		ID:               uuid.NewString(),
+		Type:             otpJobType,
+		ContactType:      msg.ContactType,
+		Contact:          msg.Contact,
+		MaskedContact:    msg.MaskedContact,
+		Code:             msg.Code,
+		Purpose:          msg.Purpose,
+		Details:          msg.Details,
+		Amount:           msg.Amount,
+		Destination:      msg.Destination,
+		AntiPhishingCode: msg.AntiPhishingCode,
+		Uses:             msg.Uses,
+		AgeDays:          msg.AgeDays,
 	}
 	publishing := amqp.Publishing{
 		ContentType: "application/json",
@@ -139,10 +154,16 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 		DeliveryMode: amqp.Transient,
 		Timestamp:    now,
 	}
-	if s.codeTTL > 0 {
-		job.ExpiresAt = now.Add(s.codeTTL)
+	ttl := s.codeTTL
+	if msg.Code == "" {
+		// A message without a code, such as a reminder, keeps longer: a
+		// worker that is away for a while still delivers it.
+		ttl = NoticeTTL
+	}
+	if ttl > 0 {
+		job.ExpiresAt = now.Add(ttl)
 		// The broker drops the job if no worker takes it before the code expires.
-		publishing.Expiration = strconv.FormatInt(s.codeTTL.Milliseconds(), 10)
+		publishing.Expiration = strconv.FormatInt(ttl.Milliseconds(), 10)
 	}
 
 	body, err := json.Marshal(job)

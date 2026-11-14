@@ -6181,6 +6181,199 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/anti-phishing-code": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Whether the signed-in user has an anti-phishing code, its first characters (the whole code is in every email, never in the API, so that a stolen session cannot copy it into a phishing email), when it was set, how many emails have shown it, and whether a change is suggested: change_reason \"age\" once it is anti_phishing.rotation.max_age_days old, \"uses\" once max_uses emails have shown it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Get my anti-phishing code",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/antiphishing.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "anti_phishing_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets or changes the code that every email from the exchange to the user's verified contacts shows: an email without it is not from the exchange. It is 4 to 20 letters, digits, spaces, or hyphens (400 anti_phishing_code_invalid), and not the current code (409 anti_phishing_code_same). A new code starts with no uses. The change needs a fresh proof of the second factor (403 step_up_required). Audited, without the code.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Set my anti-phishing code",
+                "parameters": [
+                    {
+                        "description": "The code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.AntiPhishingCodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/antiphishing.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "anti_phishing_code_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "anti_phishing_code_same",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "anti_phishing_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the anti-phishing code: emails show none from then on. 404 anti_phishing_code_not_set without one. The removal needs a fresh proof of the second factor (403 step_up_required). Audited.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Remove my anti-phishing code",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "anti_phishing_code_not_set",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "anti_phishing_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/confirmation-method": {
             "get": {
                 "security": [
@@ -9188,6 +9381,39 @@ const docTemplate = `{
                 }
             }
         },
+        "antiphishing.Status": {
+            "type": "object",
+            "properties": {
+                "change_reason": {
+                    "type": "string",
+                    "enum": [
+                        "age",
+                        "uses"
+                    ]
+                },
+                "change_suggested": {
+                    "description": "ChangeSuggested is whether the exchange suggests a new code, for\nChangeReason: \"age\", the code is old, or \"uses\", many emails have\nshown it.",
+                    "type": "boolean"
+                },
+                "hint": {
+                    "description": "Hint is the start of the code; the whole code is in every email.",
+                    "type": "string",
+                    "example": "bl***"
+                },
+                "set": {
+                    "description": "Set is whether the user has a code.",
+                    "type": "boolean"
+                },
+                "set_at": {
+                    "description": "SetAt is when the code was set.",
+                    "type": "string"
+                },
+                "shown_count": {
+                    "description": "ShownCount is the number of emails that have shown the code.",
+                    "type": "integer"
+                }
+            }
+        },
         "audit.Changes": {
             "type": "object",
             "properties": {
@@ -12189,6 +12415,19 @@ const docTemplate = `{
                     "description": "Name is what the user calls the passkey, such as the device.",
                     "type": "string",
                     "example": "iPhone"
+                }
+            }
+        },
+        "user.AntiPhishingCodeRequest": {
+            "type": "object",
+            "required": [
+                "code"
+            ],
+            "properties": {
+                "code": {
+                    "description": "Code is 4 to 20 letters, digits, spaces, or hyphens, of any script.",
+                    "type": "string",
+                    "example": "blue falcon 7"
                 }
             }
         },
