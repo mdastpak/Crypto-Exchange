@@ -21,7 +21,7 @@ func get(t *testing.T, h http.Handler, path string) (int, string) {
 }
 
 func TestProbes(t *testing.T) {
-	p := &probes{}
+	p := &probes{view: newViewAccess("", false)}
 	h := p.handler()
 	code, body := get(t, h, "/system/live")
 	assert.Equal(t, http.StatusOK, code)
@@ -72,4 +72,35 @@ func TestServe_StopsOnTheSignal(t *testing.T) {
 		t.Fatal("serve did not stop")
 	}
 	assert.True(t, p.draining.Load())
+}
+
+// TestView_NeedsTheToken checks the operators' view of #454: with a token,
+// /prices and /providers answer 401 without it; in release mode without a
+// token they are off; the probes and the metrics stay open.
+func TestView_NeedsTheToken(t *testing.T) {
+	request := func(h http.Handler, path, auth string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		if auth != "" {
+			r.Header.Set("Authorization", auth)
+		}
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for _, release := range []bool{false, true} {
+		h := (&probes{view: newViewAccess("s3cret-token", release)}).handler()
+		for _, path := range []string{"/prices", "/providers"} {
+			assert.Equal(t, http.StatusUnauthorized, request(h, path, ""), path)
+			assert.Equal(t, http.StatusUnauthorized, request(h, path, "Bearer wrong"), path)
+			assert.Equal(t, http.StatusUnauthorized, request(h, path, "s3cret-token"), "%s: a bearer token only", path)
+			assert.Equal(t, http.StatusOK, request(h, path, "Bearer s3cret-token"), path)
+		}
+		for _, path := range []string{"/system/live", "/system/ready", "/metrics"} {
+			assert.Equal(t, http.StatusOK, request(h, path, ""), path)
+		}
+	}
+	off := (&probes{view: newViewAccess("", true)}).handler()
+	assert.Equal(t, http.StatusNotFound, request(off, "/prices", ""), "off in release mode without a token")
+	assert.Equal(t, http.StatusNotFound, request(off, "/providers", "Bearer anything"))
+	assert.Equal(t, http.StatusOK, request(off, "/system/ready", ""))
 }

@@ -52,8 +52,16 @@ func (c *Configuration) priceAggregatorProblems(p *problems) {
 	if a.OutlierFloorBPS != nil && (*a.OutlierFloorBPS < 0 || *a.OutlierFloorBPS > 10_000) {
 		p.add("price_aggregator.outlier_floor_bps", "is %d; it must be between 0 and 10000", *a.OutlierFloorBPS)
 	}
-	if a.MinProviders < 1 {
+	release := c.Server.Mode == "release"
+	switch {
+	case a.MinProviders < 1:
 		p.add("price_aggregator.min_providers", "is %d; it must be at least 1", a.MinProviders)
+	case release && a.MinProviders < 2:
+		// One venue would set the reference price on its own (#454).
+		p.add("price_aggregator.min_providers", "is %d; release mode needs at least 2, and 3 for a market that quotes real money", a.MinProviders)
+	}
+	if release {
+		listenHostProblems(p, "price_aggregator.health_addr", a.HealthAddr)
 	}
 	if a.StaleThreshold < 1 {
 		p.add("price_aggregator.stale_threshold_ms", "is %d; it must be above 0", a.StaleThreshold)
@@ -143,6 +151,10 @@ func (c *Configuration) priceAggregatorProblems(p *problems) {
 			*p = append(*p, "publish_to_redis needs: "+strings.Join(missing, ", "))
 		}
 		c.redisModeProblems(p)
+		clientTLSProblems(p, "redis", c.Redis.Host, c.Redis.TLS, release)
+		if release {
+			c.redisReleaseProblems(p)
+		}
 	}
 	if a.PublishToRabbitMQ {
 		if !a.PublishToRedis {
@@ -165,6 +177,10 @@ func (c *Configuration) priceAggregatorProblems(p *problems) {
 		}
 		if len(missing) > 0 {
 			*p = append(*p, "publish_to_rabbitmq needs: "+strings.Join(missing, ", "))
+		}
+		clientTLSProblems(p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
+		if release {
+			c.rabbitMQReleaseProblems(p)
 		}
 	}
 }

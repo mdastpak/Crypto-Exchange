@@ -262,6 +262,7 @@ var envVars = []EnvVar{
 	stringVar("I18N_DEFAULT_LOCALE", "i18n.default_locale", func(c *Configuration) *string { return &c.I18n.DefaultLocale }),
 	listVar("I18N_LOCALES", "i18n.locales", func(c *Configuration) *[]string { return &c.I18n.Locales }),
 	pathVar("PRICE_AGGREGATOR_SIGNING_KEY", "price_aggregator.signing_key", func(c *Configuration) *KeyPath { return &c.PriceAggregator.SigningKey }),
+	stringVar("PRICE_AGGREGATOR_ADMIN_TOKEN", "price_aggregator.admin_token", func(c *Configuration) *string { return &c.PriceAggregator.AdminToken }),
 	listVar("PRICE_VERIFY_KEYS", "price.verify_keys", func(c *Configuration) *[]string { return &c.Price.VerifyKeys }),
 	stringVar("PRICE_SIGNATURES", "price.signatures", func(c *Configuration) *string { return &c.Price.Signatures }),
 	intVar("PRICE_OVERRIDES_MAX_DEVIATION_BPS", "price.overrides.max_deviation_bps", func(c *Configuration) *int { return &c.Price.Overrides.MaxDeviationBPS }),

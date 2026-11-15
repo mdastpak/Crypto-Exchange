@@ -15,15 +15,19 @@ go run ./cmd/price-aggregator -config config/config.local.yaml
 
 The Docker image holds it as `/app/price-aggregator`; run it with `--entrypoint /app/price-aggregator`. It reads the same configuration file as the server, and needs only the [`price_aggregator`](configuration.md#price_aggregator) section, with `market_data.egress.proxy_url` for a provider reached through a proxy. It needs no database; to publish, it needs Redis and RabbitMQ.
 
-It answers on `price_aggregator.health_addr` (`:8082`), an internal address that must not be reachable from the public network:
+It answers on `price_aggregator.health_addr` (`:8082`), an internal address that must not be reachable from the public network. Release mode needs it to name a host, such as `127.0.0.1:8082` or the private address of the pod, never every interface ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)):
 
 | Route | What |
 | --- | --- |
 | `GET /system/live` | `200` while the process runs. |
 | `GET /system/ready` | `200`, and `503` once it stops. |
 | `GET /metrics` | The [metrics](#metrics). |
-| `GET /prices` | The prices of the last interval, for operators. |
-| `GET /providers` | The state of each provider: stream open, REST fallback on, last tick, lag, reconnections, last error. |
+| `GET /prices` | The prices of the last interval, for operators. Needs `price_aggregator.admin_token`. |
+| `GET /providers` | The state of each provider: stream open, REST fallback on, last tick, lag, reconnections, last error. Needs `price_aggregator.admin_token`. |
+
+The probes and the metrics are open on that address. `/prices` and `/providers` need the bearer token `price_aggregator.admin_token` when it is set, and answer `401` without it. Without a token, release mode turns them off (`404`), and development leaves them open.
+
+In release mode, the aggregator refuses to start with the settings of Redis and RabbitMQ that the server refuses: no Redis password, the `guest` account, or a connection without TLS that is not acknowledged as a private network. See [Release mode](configuration.md#release-mode).
 
 ## Several replicas
 
@@ -51,7 +55,7 @@ Every `aggregation_interval_ms` (100 ms), for each market:
 
 1. The **fresh** providers are those whose last book is at most `stale_threshold_ms` old, or the provider's own `stale_threshold_ms`. A book's time is the provider's, unless the provider gives none or its clock is ahead of ours; then it is the time of receipt.
 2. The **outliers** are rejected by the median absolute deviation (MAD) of the fresh providers' mids: a mid further from their median than `outlier_threshold_mad` MADs is out, unless it is within `outlier_floor_bps` of the median, so that providers that agree to the tick are not rejected for noise when the MAD is zero. Of two providers, neither is an outlier: each is as far from their median.
-3. The **quorum**: with at least `min_providers` providers left, the price is `live`. Below it, the price is `stale`. It keeps the figures of its last live price, with that price's time in `updated`, and must not be served as current. A market with no live price yet is stale with zero figures.
+3. The **quorum**: with at least `min_providers` providers left, the price is `live`. Release mode needs at least 2, so that one venue never sets the price alone; use 3 for a market that quotes real money, because of two providers neither is an outlier, and the median moves halfway towards a wrong one. Below it, the price is `stale`. It keeps the figures of its last live price, with that price's time in `updated`, and must not be served as current. A market with no live price yet is stale with zero figures.
 4. The figures of a live price:
    - `bid` and `ask`: the best bid and the best ask of the providers. They may cross when the venues disagree.
    - `mid`: the median of the providers' mids, the reference price.

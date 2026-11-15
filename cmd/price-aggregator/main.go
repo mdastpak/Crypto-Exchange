@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -68,7 +70,16 @@ func run() error {
 		return fmt.Errorf("invalid configuration:\n%v", err)
 	}
 
-	p := &probes{}
+	a := config.Config.PriceAggregator
+	p := &probes{view: newViewAccess(a.AdminToken, config.Config.Server.Mode == "release")}
+	switch {
+	case a.AdminToken != "":
+		log.Println("GET /prices and GET /providers need price_aggregator.admin_token")
+	case p.view.open:
+		log.Printf("WARNING: price_aggregator.admin_token is not set: GET /prices and GET /providers on %s are open to every client", a.HealthAddr)
+	default:
+		log.Println("price_aggregator.admin_token is not set: GET /prices and GET /providers are off in release mode")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var wg sync.WaitGroup
@@ -180,6 +191,39 @@ func serve(ctx context.Context, srv *http.Server, p *probes) error {
 type probes struct {
 	service  *price.Service
 	draining atomic.Bool
+	// view guards the operators' view of the prices (#454).
+	view viewAccess
+}
+
+// viewAccess is who may read GET /prices and GET /providers: the holders of
+// token when it is set; otherwise everyone when open, as in development,
+// and no one in release mode. The probes and the metrics stay open.
+type viewAccess struct {
+	token string
+	open  bool
+}
+
+// newViewAccess returns the access of the view under the configuration.
+func newViewAccess(token string, release bool) viewAccess {
+	return viewAccess{token: token, open: token == "" && !release}
+}
+
+// allows reports whether r may read the view, and answers it when not.
+func (v viewAccess) allows(w http.ResponseWriter, r *http.Request) bool {
+	if v.token != "" {
+		given, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if ok && subtle.ConstantTimeCompare([]byte(given), []byte(v.token)) == 1 {
+			return true
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="price-aggregator"`)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"status": "unauthorized"})
+		return false
+	}
+	if v.open {
+		return true
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"status": "disabled; set price_aggregator.admin_token"})
+	return false
 }
 
 func (p *probes) handler() http.Handler {
@@ -196,6 +240,9 @@ func (p *probes) handler() http.Handler {
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("GET /prices", func(w http.ResponseWriter, r *http.Request) {
+		if !p.view.allows(w, r) {
+			return
+		}
 		prices := []price.Price{}
 		if p.service != nil && p.service.Prices() != nil {
 			prices = p.service.Prices()
@@ -203,6 +250,9 @@ func (p *probes) handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"prices": prices})
 	})
 	mux.HandleFunc("GET /providers", func(w http.ResponseWriter, r *http.Request) {
+		if !p.view.allows(w, r) {
+			return
+		}
 		health := []price.Health{}
 		if p.service != nil {
 			health = p.service.Health()

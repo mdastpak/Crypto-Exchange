@@ -184,6 +184,9 @@ func TestValidatePriceAggregator_ReleaseNeedsTheSigningKey(t *testing.T) {
 	assert.NoError(t, ValidatePriceAggregator(), "unsigned outside release mode")
 
 	Config.Server.Mode = "release"
+	Config.PriceAggregator.HealthAddr = "127.0.0.1:8082"
+	Config.Redis.Password = "a-password"
+	Config.Redis.TLS.Enabled = true
 	err := ValidatePriceAggregator()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "price_aggregator.signing_key (PRICE_AGGREGATOR_SIGNING_KEY) is not set")
@@ -196,5 +199,96 @@ func TestValidatePriceAggregator_ReleaseNeedsTheSigningKey(t *testing.T) {
 	key := filepath.Join(t.TempDir(), "price-signing.pem")
 	require.NoError(t, os.WriteFile(key, []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600))
 	Config.PriceAggregator.SigningKey = KeyPath(key)
+	assert.NoError(t, ValidatePriceAggregator())
+}
+
+// secureReleaseAggregator is a release aggregator that publishes to Redis
+// and RabbitMQ with settings that pass every release check.
+func secureReleaseAggregator(t *testing.T) Configuration {
+	t.Helper()
+	c := validPriceAggregator()
+	c.Server.Mode = "release"
+	a := &c.PriceAggregator
+	a.HealthAddr = "10.0.3.7:8082"
+	a.MinProviders = 2
+	a.PublishToRedis, a.PublishToRabbitMQ = true, true
+	key := filepath.Join(t.TempDir(), "price-signing.pem")
+	require.NoError(t, os.WriteFile(key, []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600))
+	a.SigningKey = KeyPath(key)
+	c.Redis.Host, c.Redis.Port, c.Redis.Password = "redis", "6379", "a-redis-password"
+	c.Redis.DurableWrites.TimeoutMs = 100
+	c.RabbitMQ.Host, c.RabbitMQ.Username, c.RabbitMQ.Password = "rabbitmq", "prices", "a-rabbit-password"
+	c.RabbitMQ.Exchanges.PriceUpdates = "price_updates"
+	c.Redis.TLS.Enabled, c.RabbitMQ.TLS.PrivateNetwork = true, true
+	return c
+}
+
+// TestValidatePriceAggregator_ReleaseChecks runs the release checks of
+// #454 one rule at a time, from a secure release configuration.
+func TestValidatePriceAggregator_ReleaseChecks(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+	Config = secureReleaseAggregator(t)
+	require.NoError(t, ValidatePriceAggregator())
+
+	for name, tc := range map[string]struct {
+		change func(c *Configuration)
+		want   string
+	}{
+		"no Redis password": {func(c *Configuration) { c.Redis.Password = "" },
+			"redis.password (REDIS_PASSWORD) is empty; release mode needs Redis to require a password"},
+		"the guest user": {func(c *Configuration) { c.RabbitMQ.Username = "guest" },
+			"rabbitmq.username (RABBITMQ_USER) and rabbitmq.password (RABBITMQ_PASSWORD) use the default guest account"},
+		"the guest password": {func(c *Configuration) { c.RabbitMQ.Password = "guest" },
+			"use the default guest account"},
+		"every interface": {func(c *Configuration) { c.PriceAggregator.HealthAddr = ":8082" },
+			"price_aggregator.health_addr is \":8082\", which listens on every interface"},
+		"0.0.0.0": {func(c *Configuration) { c.PriceAggregator.HealthAddr = "0.0.0.0:8082" },
+			"which listens on every interface"},
+		"[::]": {func(c *Configuration) { c.PriceAggregator.HealthAddr = "[::]:8082" },
+			"which listens on every interface"},
+		"Redis without TLS": {func(c *Configuration) { c.Redis.TLS.Enabled = false },
+			"redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis"},
+		"RabbitMQ without TLS": {func(c *Configuration) { c.RabbitMQ.TLS.PrivateNetwork = false },
+			"rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq"},
+		"a quorum of one": {func(c *Configuration) { c.PriceAggregator.MinProviders = 1 },
+			"price_aggregator.min_providers is 1; release mode needs at least 2"},
+	} {
+		Config = secureReleaseAggregator(t)
+		tc.change(&Config)
+		err := ValidatePriceAggregator()
+		if assert.Error(t, err, name) {
+			assert.Contains(t, err.Error(), tc.want, name)
+		}
+	}
+
+	// A host name and localhost are hosts.
+	for _, addr := range []string{"127.0.0.1:8082", "localhost:8082", "price-aggregator.internal:8082", "[fd00::7]:8082"} {
+		Config = secureReleaseAggregator(t)
+		Config.PriceAggregator.HealthAddr = addr
+		assert.NoError(t, ValidatePriceAggregator(), addr)
+	}
+
+	// The same Redis and RabbitMQ settings are refused by the server with
+	// the same messages.
+	var server problems
+	Config = secureReleaseAggregator(t)
+	Config.Redis.Password, Config.RabbitMQ.Username = "", "guest"
+	Config.Redis.TLS.Enabled = false
+	Config.releaseProblems(&server)
+	clientTLSProblems(&server, "redis", Config.Redis.Host, Config.Redis.TLS, true)
+	var agg problems
+	Config.priceAggregatorProblems(&agg)
+	for _, line := range agg {
+		assert.Contains(t, server, line)
+	}
+	assert.Len(t, agg, 3)
+
+	// Development settings still start.
+	Config = secureReleaseAggregator(t)
+	Config.Server.Mode = "debug"
+	Config.PriceAggregator.HealthAddr, Config.PriceAggregator.MinProviders = ":8082", 1
+	Config.Redis.Password, Config.RabbitMQ.Username, Config.RabbitMQ.Password = "", "guest", "guest"
+	Config.Redis.TLS.Enabled, Config.RabbitMQ.TLS.PrivateNetwork = false, false
 	assert.NoError(t, ValidatePriceAggregator())
 }
