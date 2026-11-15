@@ -599,6 +599,35 @@ What each [verification level](api.md#verification-levels) of a user may do ([#1
 
 The default rial limit of level 1, 100 million tomans a day, is a placeholder: set it to the limit that applies to the exchange. Level 2 has no limit of the exchange by default: the payouts of a rial withdrawal follow the transfer limits of the banks and the payment providers, and are split into several transfers when one cannot carry the amount ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70), [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74)). A currency's own limits per network, `min_withdrawal` and `max_withdrawal` in the [asset registry](#settings-reserved-for-roadmap-features), apply as well.
 
+### `otc`
+
+The [OTC quotes](api.md#otc-quotes) ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)). Every instance reads the same file, so set them the same on each one.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `quote_ttl_seconds` | `8` | From 5 to 10. How long a quote is firm. |
+| `quotes_per_second` | `5` | At least 1. The quote requests of each user, per second, over every instance. |
+| `burst` | `10` | At least 1. The requests a user may send at once. |
+| `markets` | none | The quoted markets, by symbol such as `BTC/USDT`. A market without an entry is not quoted, so without entries there are no quotes. |
+
+Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin_bps + risk_premium_bps + slippage))`, plus for a buy and minus for a sell. Every part is in basis points of the reference, from 0 to 5000, and their sum must stay under 5000, so that a sell has a positive price.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `reference` | the market | The market of the [price engine](price-engine.md) whose price is the reference. |
+| `reference_multiplier` | `1` | Converts the reference to the quote currency: `10` for a rial market whose reference is in tomans, such as `USDT/IRR` from `USDT/IRT`. |
+| `spread_bps` | `0` | The whole spread; each side takes half. |
+| `hedge_cost_bps` | `0` | What covering the trade on the hedging venue costs: its taker fee and the transfer fees. |
+| `hedge_cost_fixed` | `0` | A fixed hedge cost per quote, in the quote currency, spread over the notional: it weighs less on a larger quote. |
+| `margin_bps` | `0` | The margin over the hedge cost. |
+| `margin_bands` | none | `min_quantity` and `margin_bps` from a quantity on, in the base currency, in increasing quantity. |
+| `min_margin_bps` | `0` | No quote has a margin under it: a lower margin, of a band or `margin_bps`, is widened to it, so that no quote is given at a loss. |
+| `risk_premium_bps` | `0` | Volatility, and inventory far from its target. |
+| `slippage_k`, `liquidity` | none | The slippage is `sqrt(slippage_k × quantity / liquidity)`, a fraction of the reference, with `liquidity` in the base currency. Unset is no slippage. |
+| `max_slippage_bps` | `0` | A quantity whose slippage would be above it is refused with `quote_too_large`. `0` is no bound. |
+
+Each quote records its parts, so that the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) knows the margin of every trade. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
+
 ### `anti_phishing`
 
 The [anti-phishing code](api.md#anti-phishing-code) of users ([#375](https://github.com/mdastpak/Crypto-Exchange/issues/375)), which every email to their verified contacts shows. The more emails show a code, and the longer it lives, the more places it can be seen, so the exchange suggests a new one: `GET /user/anti-phishing-code` says so, and a reminder goes by email, which shows the code like every email, and by SMS, which never does, with the number of emails that have shown it. The reminder comes again every `reminder_interval_days` until the code changes.

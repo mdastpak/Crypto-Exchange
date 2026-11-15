@@ -196,6 +196,27 @@ var (
 		Help:    "Time from the newest provider tick of a price to its send to the WebSocket clients.",
 		Buckets: []float64{.005, .01, .025, .05, .1, .15, .2, .25, .5, 1, 2.5, 5},
 	})
+	// OTCQuotes counts the quote requests (#61), by market and outcome:
+	// quoted, or the code of the refusal. A market that is not quoted is
+	// "other", so that a client cannot add labels.
+	OTCQuotes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "otc_quotes_total",
+		Help: "OTC quote requests, by market and outcome: quoted, or the code of the refusal.",
+	}, []string{"market", "outcome"})
+	// OTCQuoteDuration is the time to price and store a quote.
+	OTCQuoteDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "otc_quote_duration_seconds",
+		Help:    "Time to answer an OTC quote request.",
+		Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1},
+	})
+	// OTCQuotedMargin is the margin of the quotes given, in basis points,
+	// by market and side: with the realized margin of the execution (#62),
+	// it shows whether the quotes earn what they should.
+	OTCQuotedMargin = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "otc_quoted_margin_bps",
+		Help:    "Margin of the OTC quotes given, in basis points of the reference, by market and side.",
+		Buckets: []float64{0, 5, 10, 20, 30, 50, 75, 100, 150, 200, 500},
+	}, []string{"market", "side"})
 )
 
 func init() {
@@ -207,6 +228,7 @@ func init() {
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
 		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
 		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceDelivery,
+		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin,
 	)
 }
 

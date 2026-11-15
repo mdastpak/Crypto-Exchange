@@ -118,6 +118,7 @@ Nothing is deployed before version 1.0, so there is nobody to stay compatible wi
 - Unit tests must not depend on external services.
 - Integration tests need local PostgreSQL, Redis, and RabbitMQ instances. See [Testing](README.md#testing). Each package uses databases of its own, so `go test ./...` runs packages in parallel: give a new package its own `testdb_` database and the next Redis database from `internal/testutil/redistest`.
 - Run the race detector for concurrent code: `go test -race ./...`. The race detector needs cgo, so it is not available on every development machine.
+- The load tests check their targets when they run alone, as the CI's load test step runs them: `LOAD_TESTS=1 go test -count=1 -p 1 -run 'TestAggregator_Load|TestService_LoadTest' ./internal/price/ ./internal/otc/`. Within `go test ./...`, where other packages share the machine and the databases, the OTC load test runs at a lower rate with a larger budget.
 - Use the scenario catalog in [docs/testing/test-scenarios.md](docs/testing/test-scenarios.md) as the specification for expected behavior, and reference its scenario IDs (for example `A-27`) in test names or comments.
 
 ## Pull request checklist

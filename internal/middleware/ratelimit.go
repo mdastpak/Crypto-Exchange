@@ -85,6 +85,15 @@ func (rl *RateLimiter) TradingRateLimit() gin.HandlerFunc {
 	return rl.tokenBucketMiddleware("trading", cfg.OrdersPerSecond, cfg.Burst, denies(cfg.OnError), rl.getUserID)
 }
 
+// OTCQuoteRateLimit limits the OTC quote requests of each signed-in user
+// (#61), with otc.quotes_per_second and otc.burst. A quote is useless
+// without Redis, which holds it, so the limit fails closed. It must run
+// after the authentication middleware.
+func (rl *RateLimiter) OTCQuoteRateLimit() gin.HandlerFunc {
+	cfg := rl.cfg.OTC
+	return rl.tokenBucketMiddleware("otc_quote", cfg.QuotesPerSecond, cfg.Burst, true, rl.getUserID)
+}
+
 // Authentication limits, for AuthRateLimit.
 const (
 	// AuthLogin limits sign-in code verifications, per minute.

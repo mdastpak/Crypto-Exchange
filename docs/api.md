@@ -94,6 +94,12 @@ An error response contains only a fixed message for each error. Internal details
 | `price_override_exists` | `409` | The market already has a [price override](#reference-prices) in force |
 | `price_override_not_found` | `404` | No price override has this id |
 | `price_override_ended` | `409` | The price override already ended or expired |
+| `otc_unavailable` | `503` | The server gives no [OTC quotes](#otc-quotes): it has no reference prices or no verification levels |
+| `otc_market_unavailable` | `404` | The market has no OTC quotes: it is not in `otc.markets`, or not a public market |
+| `market_inactive` | `409` | The market is paused, in maintenance or suspended |
+| `quantity_below_minimum`, `quantity_above_maximum`, `notional_below_minimum` | `400` | The [quote](#otc-quotes) is outside a size rule of the market; `info.limit` is the bound |
+| `quote_too_large` | `400` | The quantity would move the price more than the market quotes |
+| `otc_quote_failed` | `500` | The quote could not be priced or stored |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
 | `second_factor_required` | `403` | The operation moves funds, and the user has not set an [account password](#second-factor-and-step-up) yet |
 | `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
@@ -987,6 +993,49 @@ The overrides, newest first: `?in_force=true` for those in force only, and `limi
 ### `POST /admin/price-overrides/{id}/end` (admin)
 
 Ends an override before its expiry: the market takes the engine's price again. `404 price_override_not_found`, `409 price_override_ended` for one that already ended or expired. A sensitive route. Audited as `price.override_end`.
+
+## OTC quotes
+
+A firm price for a buy or a sell, which the user may take until it expires ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)); the execution that takes it is [#62](https://github.com/mdastpak/Crypto-Exchange/issues/62).
+
+### `POST /user/otc/quote`
+
+```json
+{ "market": "BTC/USDT", "side": "buy", "quantity": "0.5" }
+```
+
+`side` is `buy` or `sell`, of the base currency. Exactly one of `quantity`, in the base currency, rounded down to the lot size, and `quote_amount`, in the quote currency: the most lots whose total stays within it. `sub_account_id` binds the quote to a sub-account; without it, the quote is of the main account. Response `201`:
+
+```json
+{
+  "id": "6f1c…",
+  "market": "BTC/USDT",
+  "side": "buy",
+  "quantity": "0.5",
+  "price": "65325",
+  "total": "32662.5",
+  "fee": "65.33",
+  "fee_bps": 20,
+  "fee_currency": "USDT",
+  "created_at": "2026-11-15T17:00:00Z",
+  "expires_at": "2026-11-15T17:00:08Z"
+}
+```
+
+The price is the [reference price](#reference-prices) raised for a buy, and lowered for a sell, by half the spread, the hedge cost, the margin, the risk premium, and a slippage that grows with the square root of the quantity, all set per market in [`otc.markets`](configuration.md#otc). It is rounded to the tick size against the user: up for a buy, down for a sell. The fee is the taker fee of the market, in the quote currency, apart from the price: a buy pays `total + fee`, a sell receives `total − fee`.
+
+The quote is firm for `otc.quote_ttl_seconds`, 5 to 10 seconds. It is stored in Redis until then, bound to the user and the sub-account, and signed with an HMAC: only that account can take it, once, and a quote changed in Redis is refused.
+
+Refusals:
+
+- `404 otc_market_unavailable`, and `409 market_inactive` for a paused market.
+- `404 price_unavailable` while the reference price is stale: the quote never guesses a price.
+- `400` `quantity_below_minimum`, `quantity_above_maximum`, `notional_below_minimum`, or `quote_too_large`, with `info.limit`.
+- `403 verification_required` below the level of `trade_otc`, `account_frozen`, `operation_restricted`, or `asset_restricted` for a restriction of either currency, and `currency_operation_disabled` when a currency cannot be bought or sold now.
+- `409 insufficient_balance` when the available balance of the currency the user gives is under the total and the fee of a buy, or the quantity of a sell. It is a pre-check: the execution checks again.
+- `429` above `otc.quotes_per_second` per user, counted in Redis over every instance. The limit fails closed: without Redis there is no quote to give.
+
+The route closes with the `trading` feature (`503 feature_locked`).
 
 ## Market data
 

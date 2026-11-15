@@ -324,6 +324,9 @@ func run() error {
 	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
 		return err
 	}
+	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config); err != nil {
+		return err
+	}
 	payouts, err := startPayouts(handlers, services.Postgres.DB, &config.Config)
 	if err != nil {
 		return err
@@ -1377,6 +1380,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/withdrawals", ih.User.ListWithdrawals)
 		activeGroup.GET("/withdrawals/:id", ih.User.GetWithdrawal)
 		activeGroup.POST("/withdrawals/:id/cancel", ih.User.CancelWithdrawal)
+		// The OTC quotes (#61), with a limit of their own per user, on top
+		// of the trading limit of every user route.
+		activeGroup.POST("/otc/quote", gate.Require(platform.FeatureTrading), rl.OTCQuoteRateLimit(), ih.User.RequestQuote)
 		// The anti-phishing code that the emails show (#375). Changing it
 		// needs a fresh proof of the second factor.
 		activeGroup.GET("/anti-phishing-code", ih.User.GetAntiPhishingCode)

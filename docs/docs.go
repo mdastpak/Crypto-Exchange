@@ -9305,6 +9305,105 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/otc/quote": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A firm price for a buy or a sell of the market, valid until expires_at (otc.quote_ttl_seconds, 5 to 10 seconds), for the signed-in user (and sub-account) only. The price is the reference price of the price engine raised for a buy, and lowered for a sell, by half the spread, the hedge cost, the margin, the risk premium, and a slippage that grows with the square root of the quantity; it is rounded to the tick size against the user. The fee is the taker fee of the market, in the quote currency, apart from the price: a buy pays total + fee, a sell receives total − fee. The quote is refused while the price is stale, the market does not trade, or the user's level, restrictions, currencies, or balance do not allow the trade; the balance is a pre-check, and the execution checks again. Limited per user by otc.quotes_per_second.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-otc"
+                ],
+                "summary": "Request an OTC quote",
+                "parameters": [
+                    {
+                        "description": "The request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.quoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/otc.Quote"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed, quantity_below_minimum, quantity_above_maximum, notional_below_minimum, or quote_too_large",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "verification_required, account_frozen, operation_restricted, asset_restricted, security_hold, or currency_operation_disabled",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "otc_market_unavailable, or price_unavailable: the reference price is stale",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "market_inactive or insufficient_balance",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many quote requests",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "otc_unavailable or feature_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/passkey-registration": {
             "post": {
                 "security": [
@@ -14251,6 +14350,78 @@ const docTemplate = `{
                 }
             }
         },
+        "otc.Quote": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "string",
+                    "example": "65"
+                },
+                "fee_bps": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "fee_currency": {
+                    "description": "FeeCurrency is the quote currency.",
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "price": {
+                    "type": "string",
+                    "example": "65000.12"
+                },
+                "quantity": {
+                    "description": "Quantity is in the base currency, and Price, Total, and Fee in the\nquote currency. Total is Quantity × Price. A buy pays Total + Fee,\nand a sell receives Total − Fee.",
+                    "type": "string",
+                    "example": "0.5"
+                },
+                "side": {
+                    "enum": [
+                        "buy",
+                        "sell"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/otc.Side"
+                        }
+                    ],
+                    "example": "buy"
+                },
+                "sub_account_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "total": {
+                    "type": "string",
+                    "example": "32500.06"
+                }
+            }
+        },
+        "otc.Side": {
+            "type": "string",
+            "enum": [
+                "buy",
+                "sell"
+            ],
+            "x-enum-varnames": [
+                "SideBuy",
+                "SideSell"
+            ]
+        },
         "passkey.Options": {
             "type": "object",
             "properties": {
@@ -16158,6 +16329,38 @@ const docTemplate = `{
                         "system"
                     ],
                     "example": "dark"
+                }
+            }
+        },
+        "user.quoteRequest": {
+            "type": "object",
+            "properties": {
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "quantity": {
+                    "description": "Quantity is rounded down to the lot size of the market.",
+                    "type": "string",
+                    "example": "0.5"
+                },
+                "quote_amount": {
+                    "description": "QuoteAmount buys or sells the most lots whose total stays within it.",
+                    "type": "string",
+                    "example": "1000"
+                },
+                "side": {
+                    "type": "string",
+                    "enum": [
+                        "buy",
+                        "sell"
+                    ],
+                    "example": "buy"
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID binds the quote to a sub-account of the user; empty is\nthe main account.",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

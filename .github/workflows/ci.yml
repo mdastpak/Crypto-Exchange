@@ -135,6 +135,17 @@ jobs:
           set -o pipefail
           go test -race -timeout 20m -count=1 -v -covermode=atomic -coverprofile=coverage.out ./... 2>&1 | tee test.log
 
+      # The load tests against their targets (#58, #61), alone and without
+      # the race detector, which slows the code ten times or more: in the
+      # run above, other packages share the machine, and the tests have a
+      # larger budget.
+      - name: Load tests
+        env:
+          LOAD_TESTS: "1"
+        run: |
+          set -o pipefail
+          go test -count=1 -p 1 -v -run 'TestAggregator_Load|TestService_LoadTest' ./internal/price/ ./internal/otc/ 2>&1 | tee -a test.log
+
       # Tests skip themselves when a service is unreachable, which would turn
       # a broken service container into a green check.
       - name: Check that no test was skipped for a missing service

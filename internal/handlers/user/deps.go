@@ -11,6 +11,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
+	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
@@ -25,6 +26,11 @@ import (
 // The dependencies of the user routes (#48). The handler holds each one as
 // an interface of what it uses, so that a test builds it with fakes;
 // NewHandler and the composition root give it the stores of the database.
+
+// QuoteService gives the OTC quotes (#61): *otc.Service.
+type QuoteService interface {
+	Quote(ctx context.Context, req otc.Request) (otc.Quote, error)
+}
 
 // Store is the database of the routes: the contacts and their changes, the
 // national ID, and the profile: *DBStore.

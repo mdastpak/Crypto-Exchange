@@ -51,6 +51,9 @@ type UserHandler struct {
 	// it, with the confirmations; without it, the routes answer
 	// withdrawals_unavailable.
 	Withdrawals WithdrawalService
+	// Quotes gives the OTC quotes (#61). The server sets it; without it,
+	// the route answers otc_unavailable.
+	Quotes QuoteService
 	// AntiPhishing keeps the anti-phishing code of the user (#375), which
 	// the emails to their verified contacts show.
 	AntiPhishing AntiPhishingStore
