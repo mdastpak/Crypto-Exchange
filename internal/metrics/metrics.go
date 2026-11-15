@@ -196,6 +196,13 @@ var (
 		Name: "price_signature_failures_total",
 		Help: "Prices read from Redis and refused for their signature, by reason: unsigned, unknown_key, malformed, bad_signature.",
 	}, []string{"reason"})
+	// ConversionFailures counts the forced conversions of balances that
+	// failed and were held for a retry (#452), by kind (currency_migration
+	// or currency_delisting) and code.
+	ConversionFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "currency_conversion_failures_total",
+		Help: "Forced conversions of balances that failed and were held for a retry, by kind and code.",
+	}, []string{"kind", "code"})
 	// PriceDelivery is the time from a price's newest tick to its send to
 	// the WebSocket clients of an instance (#59).
 	PriceDelivery = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -234,7 +241,7 @@ func init() {
 		LedgerMismatches, LedgerImbalancedCurrencies, LedgerAccountProblems, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
 		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
-		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceSignatureFailures, PriceDelivery,
+		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceSignatureFailures, PriceDelivery, ConversionFailures,
 		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin,
 	)
 }

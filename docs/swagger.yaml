@@ -31,6 +31,11 @@ definitions:
           $ref: '#/definitions/platform.Control'
         type: array
     type: object
+  admin.ConversionRetry:
+    properties:
+      balances:
+        type: integer
+    type: object
   admin.CreateControlRequest:
     properties:
       allow_networks:
@@ -1041,6 +1046,16 @@ definitions:
       available:
         example: "1200"
         type: string
+      blocked:
+        description: |-
+          Blocked are the balances whose conversion failed, held for a retry
+          (#452), and BlockedCodes how many failed with each code, such as
+          row_unverified. delisted waits until they too are converted.
+        type: integer
+      blocked_codes:
+        additionalProperties:
+          type: integer
+        type: object
       conversions:
         description: |-
           Conversions are the balances converted, Converted what left them,
@@ -3153,6 +3168,17 @@ definitions:
     type: object
   rebrand.SourceProgress:
     properties:
+      blocked:
+        description: |-
+          Blocked are the balances of the source whose conversion failed, held
+          for a retry (#452), and BlockedCodes how many failed with each code,
+          such as row_unverified. The migration completes only once they too
+          are converted.
+        type: integer
+      blocked_codes:
+        additionalProperties:
+          type: integer
+        type: object
       conversions:
         description: |-
           Conversions are the balances converted, Converted what left them,
@@ -5393,6 +5419,62 @@ paths:
       summary: Show the notices of a delisting
       tags:
       - admin currencies
+  /api/v1/admin/currencies/{hk}/delistings/{id}/retry:
+    post:
+      description: 'Makes the balances of the delisting of this currency whose conversion
+        failed, which are held with a backoff (#452), due now: the next run of the
+        scheduler converts them, such as after the re-seal of a balance. Answers how
+        many. Audited as currency.conversion_retry.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The delisting's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.ConversionRetry'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Retry the held conversions of a delisting
+      tags:
+      - admin currencies
   /api/v1/admin/currencies/{hk}/delistings/{id}/settlement:
     get:
       description: 'The settlement of the balances of the currency: before frozen,
@@ -5400,7 +5482,8 @@ paths:
         and pending), and, at a fixed price, the estimate of what they would be credited;
         from frozen on, the recorded price with its source and time, and from the
         ledger the conversions made, what they converted, what was credited, and the
-        dust kept.'
+        dust kept. blocked counts the balances whose conversion failed, held for a
+        retry with a backoff, by code in blocked_codes (#452).'
       parameters:
       - description: The currency's UUID
         format: uuid
@@ -5636,7 +5719,8 @@ paths:
         sum as remaining), and from the ledger the conversions made, what they converted,
         what the target received, and the dust kept. A forced migration completes
         only once no holder is left: its locked funds and pending deposits convert
-        once they are available.'
+        once they are available. blocked counts the balances whose conversion failed,
+        held for a retry with a backoff, by code in blocked_codes (#452).'
       parameters:
       - description: The target's UUID
         format: uuid
@@ -5685,6 +5769,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Show the progress of a migration's conversion
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/migrations/{id}/retry:
+    post:
+      description: 'Makes the balances of the forced migration into this currency
+        whose conversion failed, which are held with a backoff (#452), due now: the
+        next run of the scheduler converts them, such as after the re-seal of a balance.
+        Answers how many. Audited as currency.conversion_retry.'
+      parameters:
+      - description: The target's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The migration's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.ConversionRetry'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Retry the held conversions of a migration
       tags:
       - admin currencies
   /api/v1/admin/currencies/{hk}/networks:

@@ -255,6 +255,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- One balance that cannot convert no longer stops a forced migration or a delisting settlement for every holder ([#452](https://github.com/mdastpak/Crypto-Exchange/issues/452)). See [Held conversions](docs/architecture.md#held-conversions).
+  - A balance whose conversion fails is held in `currency_conversion_holds` (migration 40) with a stable code and a retry after a minute, doubling to an hour; the claim skips it, so the others convert. A conversion releases its hold. The completion and `delisted` still wait for every balance.
+  - `currency_conversion_failures_total{kind, code}` counts the failures, and the progress and settlement reports show `blocked` and `blocked_codes`.
+  - `POST /admin/currencies/{hk}/migrations/{id}/retry` and `POST /admin/currencies/{hk}/delistings/{id}/retry` retry the held balances now, audited as `currency.conversion_retry`.
 - The withdrawal limits and the review thresholds follow their currency, and fail closed ([#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)). Both were looked up by the current symbol only, and a symbol without an entry meant no limit and no review, so a renamed, migrated, or new currency had neither.
   - An entry of `verification.withdrawal_limits` or `withdrawals.review_above` names the currency that has, or had, the symbol: the previous symbols in `currency_symbols`, until released, count, the current one's entry first. `GET /user/verification` shows the limit under the current symbol.
   - The key `"*"` holds a default for every currency without an entry, per level for the limits.

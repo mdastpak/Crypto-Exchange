@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/convhold"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/price"
@@ -221,32 +222,59 @@ func recordPrice(ctx context.Context, db *sql.DB, st starting, value decimal.Dec
 func SettleHoldings(ctx context.Context, db *sql.DB, limit int) (int, error) {
 	settled := 0
 	// The delistings that fail their seal in this run (#451): their
-	// balances wait, and the others convert.
+	// balances wait, and the others convert. A balance that fails to
+	// convert is held (#452), and counts toward the limit.
 	skip := []string{}
-	for settled < limit {
-		ok, refused, err := settleOne(ctx, db, skip)
+	for tried := 0; tried < limit; {
+		out, refused, err := settleOne(ctx, db, skip)
 		if err != nil {
 			return settled, err
 		}
-		if refused != "" {
+		switch out {
+		case outcomeNone:
+			return settled, nil
+		case outcomeRefused:
 			skip = append(skip, refused)
 			continue
+		case outcomeSettled:
+			settled++
 		}
-		if !ok {
-			break
-		}
-		settled++
+		tried++
 	}
 	return settled, nil
 }
 
-// settleOne converts one balance of a delisting that is not in skip. A
-// delisting that fails its seal converts nothing: settleOne returns it, and
-// its finding is recorded.
-func settleOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, error) {
+// The outcomes of the settlement of one balance.
+type outcome int
+
+const (
+	// outcomeNone is no balance left to claim.
+	outcomeNone outcome = iota
+	// outcomeSettled is a balance converted.
+	outcomeSettled
+	// outcomeHeld is a balance whose conversion failed, held for a retry.
+	outcomeHeld
+	// outcomeRefused is a delisting that fails its seal.
+	outcomeRefused
+)
+
+// claimed is a balance that a settlement claimed.
+type claimed struct {
+	delistingHK, source, target, rate, balanceID, user string
+	sub                                                sql.NullString
+	available                                          shared.Decimal
+	version                                            int
+}
+
+// settleOne converts one balance of a delisting that is not in skip, the
+// lowest that is not held (#452). A delisting that fails its seal converts
+// nothing: settleOne returns it, and its finding is recorded. A balance
+// whose conversion fails is held, so that the next claim takes the next
+// one.
+func settleOne(ctx context.Context, db *sql.DB, skip []string) (outcome, string, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to start a settlement: %w", err)
+		return outcomeNone, "", fmt.Errorf("failed to start a settlement: %w", err)
 	}
 	defer tx.Rollback()
 	// The balance of the frozen currency first, then the ledger takes the
@@ -255,10 +283,7 @@ func settleOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, er
 	// locks balances. The sealed row of the delisting is read in the same
 	// statement as the price and the settlement currency, so the seal is
 	// checked against the values that convert.
-	var delistingHK, source, target, rate, balanceID, user string
-	var sub sql.NullString
-	var available shared.Decimal
-	var version int
+	var c claimed
 	sealed := rowseal.CurrencyDelistings.NewRow()
 	err = tx.QueryRowContext(ctx, `
 		SELECT d.hk, d.currency_hk, d.settlement_currency_hk, d.settlement_price::text, b.id, b.user_id, b.sub_account_id,
@@ -267,45 +292,71 @@ func settleOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, er
 		JOIN currency_delistings d ON d.currency_hk = b.currency_hk
 		WHERE d.status = 'scheduled' AND d.settlement = 'convert' AND d.settlement_price IS NOT NULL AND b.available::numeric > 0
 		  AND NOT (d.hk::text = ANY(string_to_array($1, ',')))
+		  AND `+fmt.Sprintf(convhold.Skip, convhold.KindDelisting, "d.hk", "b.id")+`
 		ORDER BY b.id
 		FOR NO KEY UPDATE OF b SKIP LOCKED LIMIT 1`, strings.Join(skip, ",")).
-		Scan(append([]any{&delistingHK, &source, &target, &rate, &balanceID, &user, &sub, &available, &version}, sealed.Dest()...)...)
+		Scan(append([]any{&c.delistingHK, &c.source, &c.target, &c.rate, &c.balanceID, &c.user, &c.sub, &c.available, &c.version},
+			sealed.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, "", nil
+		return outcomeNone, "", nil
 	}
 	if err != nil {
-		return false, "", fmt.Errorf("failed to claim a balance: %w", err)
+		return outcomeNone, "", fmt.Errorf("failed to claim a balance: %w", err)
 	}
 	if err := rowseal.Require(ctx, rowseal.CurrencyDelistings, sealed); err != nil {
-		log.Printf("SECURITY: delisting %s converts nothing until its finding is resolved: %v", delistingHK, err)
-		return false, delistingHK, nil
+		log.Printf("SECURITY: delisting %s converts nothing until its finding is resolved: %v", c.delistingHK, err)
+		return outcomeRefused, c.delistingHK, nil
 	}
+	if err := settle(ctx, tx, c); err != nil {
+		_ = tx.Rollback()
+		// A cancelled context is not the balance's failure.
+		if ctx.Err() != nil {
+			return outcomeNone, "", err
+		}
+		if _, herr := convhold.Hold(ctx, db, convhold.KindDelisting, c.delistingHK, c.balanceID, c.source, err); herr != nil {
+			return outcomeNone, "", fmt.Errorf("%w (while settling: %w)", herr, err)
+		}
+		return outcomeHeld, "", nil
+	}
+	if err := convhold.Release(ctx, tx, convhold.KindDelisting, c.delistingHK, c.balanceID); err != nil {
+		return outcomeNone, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return outcomeNone, "", fmt.Errorf("failed to commit a settlement: %w", err)
+	}
+	return outcomeSettled, "", nil
+}
+
+// settle converts the claimed balance c in tx.
+func settle(ctx context.Context, tx *sql.Tx, c claimed) error {
+	delistingHK, source, target, rate, balanceID, user := c.delistingHK, c.source, c.target, c.rate, c.balanceID, c.user
+	sub, available, version := c.sub, c.available, c.version
 	r, err := decimal.NewFromString(rate)
 	if err != nil {
-		return false, "", fmt.Errorf("the settlement price of delisting %s: %w", delistingHK, err)
+		return fmt.Errorf("the settlement price of delisting %s: %w", delistingHK, err)
 	}
 	var a ledger.Account
 	if a.UserHK, err = shared.UUIDFromString(user); err != nil {
-		return false, "", err
+		return err
 	}
 	if sub.Valid {
 		id, err := shared.UUIDFromString(sub.String)
 		if err != nil {
-			return false, "", err
+			return err
 		}
 		a.SubAccountID = &id
 	}
 	from, err := shared.UUIDFromString(source)
 	if err != nil {
-		return false, "", err
+		return err
 	}
 	into, err := shared.UUIDFromString(target)
 	if err != nil {
-		return false, "", err
+		return err
 	}
 	precision, err := ledger.Precision(ctx, tx, target)
 	if err != nil {
-		return false, "", err
+		return err
 	}
 	credit, dust := ledger.Split(available.Decimal(), r, precision)
 	key := fmt.Sprintf("%s:%s:%s:v%d", RefDelisting, delistingHK, balanceID, version)
@@ -314,12 +365,9 @@ func settleOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, er
 		To:   ledger.Amount{Currency: into, Value: shared.Decimal(credit)},
 		Dust: shared.Decimal(dust),
 	}, ledger.Ref{Type: RefDelisting, ID: delistingHK}); err != nil {
-		return false, "", fmt.Errorf("failed to settle balance %s: %w", balanceID, err)
+		return fmt.Errorf("failed to settle balance %s: %w", balanceID, err)
 	}
-	if err := tx.Commit(); err != nil {
-		return false, "", fmt.Errorf("failed to commit a settlement: %w", err)
-	}
-	return true, "", nil
+	return nil
 }
 
 // SettlementReport is how far the settlement of a delisting has gone, and
@@ -352,6 +400,11 @@ type SettlementReport struct {
 	// nothing until an administrator reviews its integrity finding and
 	// re-seals it.
 	Unverified bool `json:"unverified,omitempty"`
+	// Blocked are the balances whose conversion failed, held for a retry
+	// (#452), and BlockedCodes how many failed with each code, such as
+	// row_unverified. delisted waits until they too are converted.
+	Blocked      int            `json:"blocked"`
+	BlockedCodes map[string]int `json:"blocked_codes,omitempty"`
 }
 
 // Report returns the settlement of a delisting of a currency, or
@@ -398,6 +451,12 @@ func Report(ctx context.Context, db *sql.DB, currencyHK, hk string) (SettlementR
 		return SettlementReport{}, fmt.Errorf("failed to read the settlement: %w", err)
 	}
 	r.Unverified = rowseal.Require(ctx, rowseal.CurrencyDelistings, sealed) != nil
+	blocked, err := convhold.Summary(ctx, db, convhold.KindDelisting, hk)
+	if err != nil {
+		return SettlementReport{}, err
+	}
+	b := blocked[currencyHK]
+	r.Blocked, r.BlockedCodes = b.Balances, b.Codes
 	switch {
 	case recorded.Valid:
 		r.Price, r.PriceRecorded = &recorded.String, true
@@ -413,4 +472,19 @@ func Report(ctx context.Context, db *sql.DB, currencyHK, hk string) (SettlementR
 		}
 	}
 	return r, nil
+}
+
+// Retry makes the balances of a delisting of currencyHK whose conversion
+// failed due now (#452), such as after a re-seal, and returns how many, or
+// ErrNotFound. The next run of the scheduler converts them.
+func Retry(ctx context.Context, db *sql.DB, currencyHK, hk string, origin audit.Event) (int, error) {
+	var ok bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM currency_delistings WHERE hk = $1::uuid AND currency_hk = $2::uuid)`,
+		hk, currencyHK).Scan(&ok); err != nil {
+		return 0, fmt.Errorf("failed to read the delisting: %w", err)
+	}
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return convhold.Retry(ctx, db, convhold.KindDelisting, hk, currencyHK, origin)
 }

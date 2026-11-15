@@ -33,6 +33,10 @@ var adminRoutes = map[string]admin.RouteClass{
 	"POST /currencies/:hk/delistings/:id/cancel":      admin.RouteSensitive,
 	"PUT /currencies/:hk/capabilities/:capability":    admin.RouteSensitive,
 	"DELETE /currencies/:hk/capabilities/:capability": admin.RouteSensitive,
+	// Retrying now the balances whose forced conversion failed (#452):
+	// they convert at the sealed ratio or price, as the scheduler would.
+	"POST /currencies/:hk/migrations/:id/retry": admin.RouteChange,
+	"POST /currencies/:hk/delistings/:id/retry": admin.RouteChange,
 
 	// How a currency moves on a network, and the markets (#57): the
 	// contracts that deposits are read by, the limits and fees of

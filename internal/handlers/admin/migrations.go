@@ -190,7 +190,7 @@ type MigrationProgress struct {
 }
 
 // @Summary Show the progress of a migration's conversion
-// @Description For each source of the migration into this currency: the balances of the source that are left (holders, with their available, locked, and pending sum as remaining), and from the ledger the conversions made, what they converted, what the target received, and the dust kept. A forced migration completes only once no holder is left: its locked funds and pending deposits convert once they are available.
+// @Description For each source of the migration into this currency: the balances of the source that are left (holders, with their available, locked, and pending sum as remaining), and from the ledger the conversions made, what they converted, what the target received, and the dust kept. A forced migration completes only once no holder is left: its locked funds and pending deposits convert once they are available. blocked counts the balances whose conversion failed, held for a retry with a backoff, by code in blocked_codes (#452).
 // @Tags admin currencies
 // @Produce json
 // @Security BearerAuth
@@ -224,5 +224,53 @@ func (h *AdminHandler) GetMigrationProgress(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_MIGRATION_PROGRESS"), nil)
 	default:
 		helpers.SendResponse(c, http.StatusOK, i18n.M("MIGRATION_PROGRESS_RETRIEVED"), MigrationProgress{Sources: sources})
+	}
+}
+
+// ConversionRetry is how many held balances a retry made due.
+type ConversionRetry struct {
+	Balances int `json:"balances"`
+}
+
+// @Summary Retry the held conversions of a migration
+// @Description Makes the balances of the forced migration into this currency whose conversion failed, which are held with a backoff (#452), due now: the next run of the scheduler converts them, such as after the re-seal of a balance. Answers how many. Audited as currency.conversion_retry.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The target's UUID" format(uuid)
+// @Param id path string true "The migration's id" format(uuid)
+// @Success 200 {object} models.APIResponse{info=ConversionRetry}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk}/migrations/{id}/retry [post]
+func (h *AdminHandler) RetryMigrationConversions(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	hk, ok := currencyParam(c)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_MIGRATION_ID"), nil)
+		return
+	}
+	origin, _, ok := restrictionOrigin(c)
+	if !ok {
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
+		return
+	}
+	n, err := h.Rebrands.Retry(ctx, hk, id.String(), origin)
+	switch {
+	case errors.Is(err, rebrand.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("MIGRATION_NOT_FOUND"), nil)
+	case err != nil:
+		log.Printf("Failed to retry the conversions of the migration %s: %v", id, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RETRY_CONVERSIONS"), nil)
+	default:
+		helpers.SendResponse(c, http.StatusOK, i18n.M("CONVERSIONS_RETRIED"), ConversionRetry{Balances: n})
 	}
 }

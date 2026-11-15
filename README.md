@@ -328,6 +328,7 @@ internal/confirm/       Confirmations of withdrawals with a code bound to the op
 internal/contact/       Normalizing and identifying the contacts and codes users type
 internal/contactclaim/  Moving a contact off an account that no longer owns it: claims and
                         recycled mobile numbers
+internal/convhold/      The held balances of forced conversions: backoff and retry of one that fails
 internal/crypto/        Field encryption of personal data, and blind indexes for lookups (field)
 internal/currencies/    The public currency catalog: Redis cache with a PostgreSQL fallback
 internal/db/            PostgreSQL and Redis clients, SQL migrations

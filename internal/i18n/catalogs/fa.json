@@ -69,6 +69,8 @@
   "CONTROL_NOT_FOUND": "کنترل یافت نشد.",
   "CONTROL_VERSION_CONFLICT": "کنترل از آن نسخه به بعد تغییر کرده است؛ دوباره آن را بخوانید و تلاش کنید.",
   "CONVERSIONS_UNAVAILABLE": "تبدیل در حال حاضر در دسترس نیست.",
+  "FAILED_TO_RETRY_CONVERSIONS": "تلاش دوباره برای تبدیل‌های نگه‌داشته‌شده ناموفق بود.",
+  "CONVERSIONS_RETRIED": "تبدیل‌های نگه‌داشته‌شده اکنون دوباره انجام می‌شوند.",
   "CURRENCIES_RETRIEVED_SUCCESSFULLY": "فهرست ارزها دریافت شد.",
   "CURRENCIES_UNAVAILABLE": "فهرست ارزها موقتاً در دسترس نیست.",
   "CURRENCY_ALREADY_DELISTING": "این ارز پیش‌تر در حال حذف از فهرست است یا حذف شده است.",

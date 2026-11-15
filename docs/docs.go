@@ -1368,6 +1368,91 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/currencies/{hk}/delistings/{id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Makes the balances of the delisting of this currency whose conversion failed, which are held with a backoff (#452), due now: the next run of the scheduler converts them, such as after the re-seal of a balance. Answers how many. Audited as currency.conversion_retry.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Retry the held conversions of a delisting",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The delisting's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.ConversionRetry"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/currencies/{hk}/delistings/{id}/settlement": {
             "get": {
                 "security": [
@@ -1375,7 +1460,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "The settlement of the balances of the currency: before frozen, a preview of the holders and their remaining balances (available, locked, and pending), and, at a fixed price, the estimate of what they would be credited; from frozen on, the recorded price with its source and time, and from the ledger the conversions made, what they converted, what was credited, and the dust kept.",
+                "description": "The settlement of the balances of the currency: before frozen, a preview of the holders and their remaining balances (available, locked, and pending), and, at a fixed price, the estimate of what they would be credited; from frozen on, the recorded price with its source and time, and from the ledger the conversions made, what they converted, what was credited, and the dust kept. blocked counts the balances whose conversion failed, held for a retry with a backoff, by code in blocked_codes (#452).",
                 "produces": [
                     "application/json"
                 ],
@@ -1720,7 +1805,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "For each source of the migration into this currency: the balances of the source that are left (holders, with their available, locked, and pending sum as remaining), and from the ledger the conversions made, what they converted, what the target received, and the dust kept. A forced migration completes only once no holder is left: its locked funds and pending deposits convert once they are available.",
+                "description": "For each source of the migration into this currency: the balances of the source that are left (holders, with their available, locked, and pending sum as remaining), and from the ledger the conversions made, what they converted, what the target received, and the dust kept. A forced migration completes only once no holder is left: its locked funds and pending deposits convert once they are available. blocked counts the balances whose conversion failed, held for a retry with a backoff, by code in blocked_codes (#452).",
                 "produces": [
                     "application/json"
                 ],
@@ -1759,6 +1844,91 @@ const docTemplate = `{
                                     "properties": {
                                         "info": {
                                             "$ref": "#/definitions/admin.MigrationProgress"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/migrations/{id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Makes the balances of the forced migration into this currency whose conversion failed, which are held with a backoff (#452), due now: the next run of the scheduler converts them, such as after the re-seal of a balance. Answers how many. Audited as currency.conversion_retry.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Retry the held conversions of a migration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The target's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The migration's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.ConversionRetry"
                                         }
                                     }
                                 }
@@ -11796,6 +11966,14 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.ConversionRetry": {
+            "type": "object",
+            "properties": {
+                "balances": {
+                    "type": "integer"
+                }
+            }
+        },
         "admin.CreateControlRequest": {
             "type": "object",
             "properties": {
@@ -13128,6 +13306,16 @@ const docTemplate = `{
                 "available": {
                     "type": "string",
                     "example": "1200"
+                },
+                "blocked": {
+                    "description": "Blocked are the balances whose conversion failed, held for a retry\n(#452), and BlockedCodes how many failed with each code, such as\nrow_unverified. delisted waits until they too are converted.",
+                    "type": "integer"
+                },
+                "blocked_codes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
                 },
                 "conversions": {
                     "description": "Conversions are the balances converted, Converted what left them,\nCredited what the settlement currency received, and Dust what the\nexchange kept.",
@@ -15913,6 +16101,16 @@ const docTemplate = `{
         "rebrand.SourceProgress": {
             "type": "object",
             "properties": {
+                "blocked": {
+                    "description": "Blocked are the balances of the source whose conversion failed, held\nfor a retry (#452), and BlockedCodes how many failed with each code,\nsuch as row_unverified. The migration completes only once they too\nare converted.",
+                    "type": "integer"
+                },
+                "blocked_codes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
                 "conversions": {
                     "description": "Conversions are the balances converted, Converted what left them,\nCredited what the target received, and Dust what the exchange kept.",
                     "type": "integer"

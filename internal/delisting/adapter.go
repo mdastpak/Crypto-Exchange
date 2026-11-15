@@ -45,3 +45,8 @@ func (s Store) Report(ctx context.Context, currencyHK, hk string) (SettlementRep
 func (s Store) Notices(ctx context.Context, currencyHK, hk string) ([]NoticeReport, error) {
 	return Notices(ctx, s.DB, currencyHK, hk)
 }
+
+// Retry is Retry on s.DB.
+func (s Store) Retry(ctx context.Context, currencyHK, hk string, origin audit.Event) (int, error) {
+	return Retry(ctx, s.DB, currencyHK, hk, origin)
+}

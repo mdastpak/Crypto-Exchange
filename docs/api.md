@@ -1181,7 +1181,11 @@ Cancels a migration into `hk` before it converts: the phases that are left do no
 
 ### `GET /admin/currencies/{hk}/migrations/{id}/progress` (admin)
 
-For each source of the migration into `hk`: `holders`, the balances of the source that are left, and `remaining`, their sum, available, locked, and pending; and from the ledger `conversions`, the balances converted, `converted`, what left them, `credited`, what the target received, and `dust`. `unverified: true` marks a migration that fails its [seal](data-protection.md#row-seals): nothing converts and no phase applies until an administrator reviews its integrity finding ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)). `404` for a migration that is not into `hk`.
+For each source of the migration into `hk`: `holders`, the balances of the source that are left, and `remaining`, their sum, available, locked, and pending; and from the ledger `conversions`, the balances converted, `converted`, what left them, `credited`, what the target received, and `dust`. `unverified: true` marks a migration that fails its [seal](data-protection.md#row-seals): nothing converts and no phase applies until an administrator reviews its integrity finding ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)). `blocked` counts the balances of the source whose conversion failed, [held for a retry](architecture.md#held-conversions) with a backoff, and `blocked_codes` how many failed with each code, such as `row_unverified` ([#452](https://github.com/mdastpak/Crypto-Exchange/issues/452)); the migration completes only once they too convert. `404` for a migration that is not into `hk`.
+
+### `POST /admin/currencies/{hk}/migrations/{id}/retry` (admin)
+
+Makes the held balances of the migration into `hk` due now, such as after the re-seal of a balance: the next run of the scheduler converts them ([#452](https://github.com/mdastpak/Crypto-Exchange/issues/452)). Response `200` with `balances`, how many. `404` for a migration that is not into `hk`. Audited as `currency.conversion_retry`.
 
 ### `POST /user/currency-migrations/{id}/convert` (user)
 
@@ -1273,7 +1277,11 @@ Cancels a delisting before `frozen`: the steps that are left do not apply, and t
 
 ### `GET /admin/currencies/{hk}/delistings/{id}/settlement` (admin)
 
-The settlement of the delisting: `holders`, the balances of the currency that are left, `remaining`, their sum, available, locked, and pending, and `available`; `price`, the recorded price (`price_recorded`, with `price_detail` and `priced_at`) or, before it, the fixed price of the plan, and `estimated`, what `remaining` would be credited at it; and from the ledger `conversions`, `converted`, `credited`, and `dust`. Before `frozen`, it is the preview of the settlement. `unverified: true` marks a delisting that fails its [seal](data-protection.md#row-seals): no price is recorded and nothing converts until an administrator reviews its integrity finding ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)). `404` for a delisting that is not of `hk`.
+The settlement of the delisting: `holders`, the balances of the currency that are left, `remaining`, their sum, available, locked, and pending, and `available`; `price`, the recorded price (`price_recorded`, with `price_detail` and `priced_at`) or, before it, the fixed price of the plan, and `estimated`, what `remaining` would be credited at it; and from the ledger `conversions`, `converted`, `credited`, and `dust`. Before `frozen`, it is the preview of the settlement. `unverified: true` marks a delisting that fails its [seal](data-protection.md#row-seals): no price is recorded and nothing converts until an administrator reviews its integrity finding ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)). `blocked` counts the balances whose conversion failed, [held for a retry](architecture.md#held-conversions) with a backoff, and `blocked_codes` how many failed with each code ([#452](https://github.com/mdastpak/Crypto-Exchange/issues/452)); `delisted` waits until they too convert. `404` for a delisting that is not of `hk`.
+
+### `POST /admin/currencies/{hk}/delistings/{id}/retry` (admin)
+
+Makes the held balances of the delisting of `hk` due now, such as after the re-seal of a balance: the next run of the scheduler converts them ([#452](https://github.com/mdastpak/Crypto-Exchange/issues/452)). Response `200` with `balances`, how many. `404` for a delisting that is not of `hk`. Audited as `currency.conversion_retry`.
 
 ### `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` (admin)
 

@@ -305,7 +305,7 @@ func (h *AdminHandler) changeCapability(c *gin.Context, allowed *bool, note stri
 }
 
 // @Summary Show the settlement of a delisting
-// @Description The settlement of the balances of the currency: before frozen, a preview of the holders and their remaining balances (available, locked, and pending), and, at a fixed price, the estimate of what they would be credited; from frozen on, the recorded price with its source and time, and from the ledger the conversions made, what they converted, what was credited, and the dust kept.
+// @Description The settlement of the balances of the currency: before frozen, a preview of the holders and their remaining balances (available, locked, and pending), and, at a fixed price, the estimate of what they would be credited; from frozen on, the recorded price with its source and time, and from the ledger the conversions made, what they converted, what was credited, and the dust kept. blocked counts the balances whose conversion failed, held for a retry with a backoff, by code in blocked_codes (#452).
 // @Tags admin currencies
 // @Produce json
 // @Security BearerAuth
@@ -377,5 +377,48 @@ func (h *AdminHandler) GetDelistingNotices(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_DELISTING_NOTICES"), nil)
 	default:
 		helpers.SendResponse(c, http.StatusOK, i18n.M("DELISTING_NOTICES_RETRIEVED"), notices)
+	}
+}
+
+// @Summary Retry the held conversions of a delisting
+// @Description Makes the balances of the delisting of this currency whose conversion failed, which are held with a backoff (#452), due now: the next run of the scheduler converts them, such as after the re-seal of a balance. Answers how many. Audited as currency.conversion_retry.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Param id path string true "The delisting's id" format(uuid)
+// @Success 200 {object} models.APIResponse{info=ConversionRetry}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk}/delistings/{id}/retry [post]
+func (h *AdminHandler) RetryDelistingConversions(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	hk, ok := currencyParam(c)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_DELISTING_ID"), nil)
+		return
+	}
+	origin, _, ok := restrictionOrigin(c)
+	if !ok {
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
+		return
+	}
+	n, err := h.Delistings.Retry(ctx, hk, id.String(), origin)
+	switch {
+	case errors.Is(err, delisting.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("DELISTING_NOT_FOUND"), nil)
+	case err != nil:
+		log.Printf("Failed to retry the conversions of the delisting %s: %v", id, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_RETRY_CONVERSIONS"), nil)
+	default:
+		helpers.SendResponse(c, http.StatusOK, i18n.M("CONVERSIONS_RETRIED"), ConversionRetry{Balances: n})
 	}
 }
