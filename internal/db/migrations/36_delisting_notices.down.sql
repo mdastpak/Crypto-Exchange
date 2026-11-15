@@ -1,0 +1,2 @@
+DROP TABLE currency_delisting_notice_recipients;
+DROP TABLE currency_delisting_notices;

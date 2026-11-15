@@ -50,7 +50,49 @@ type OTPMessage struct {
 	// (PurposeDenied), the withdrawals that were cancelled, those that were
 	// being paid already, and the length of the security hold.
 	Cancelled, InProgress, HoldHours int
+	// Delisting is, in a notice of a delisting (PurposeDelistingNotice),
+	// what the notice says.
+	Delisting DelistingNotice
 }
+
+// DelistingNotice is what a notice of a delisting (#216) says: the
+// currency, the stage that it tells of, and what a holder must do by when.
+type DelistingNotice struct {
+	// Currency is the symbol of the currency, such as "ABC".
+	Currency string
+	// Stage is the lifecycle state that was reached, such as
+	// "deposits_disabled", or DelistingStageReminder for a reminder of the
+	// deadline, or DelistingStageCancelled when the delisting is cancelled
+	// and the currency is active again.
+	Stage string
+	// Deadline is when the currency is frozen, as "2006-01-02 15:04 UTC",
+	// after which what is left is settled; "" when it has passed or there
+	// is none. DaysLeft is the whole days until then.
+	Deadline string
+	DaysLeft int
+	// Holder reports that the user holds the currency.
+	Holder bool
+	// Settlement is what happens to the balances left at frozen: "convert"
+	// into SettlementCurrency, or "claim" within ClaimDays.
+	Settlement         string
+	SettlementCurrency string
+	ClaimDays          int
+}
+
+// deadlineDate is the date of the deadline of n, as 2006-01-02, for an SMS
+// template, or "-" when there is none: a parameter is never empty.
+func deadlineDate(n DelistingNotice) string {
+	if len(n.Deadline) < len("2006-01-02") {
+		return "-"
+	}
+	return n.Deadline[:len("2006-01-02")]
+}
+
+// The stages of a notice of a delisting that are not lifecycle states.
+const (
+	DelistingStageReminder  = "reminder"
+	DelistingStageCancelled = "cancelled"
+)
 
 // The purposes of a message other than a sign-in code.
 const (
@@ -64,6 +106,12 @@ const (
 	// used (#374): what it stopped, and how to reach support. It goes by
 	// email, and carries no code and no link.
 	PurposeDenied = "operation_denied"
+	// PurposeDelistingNotice is a notice of a delisting (#216): that a
+	// currency is being delisted, that a stage of it started, a reminder
+	// of the deadline, or that it was cancelled. It carries no code and no
+	// link. It goes by email to every user, and by SMS to those who hold
+	// the currency.
+	PurposeDelistingNotice = "delisting_notice"
 )
 
 // MaskContact hides most of a contact, as the sign-in logs do: the first
@@ -123,6 +171,10 @@ func (s DevLogSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 	case PurposeAntiPhishingReminder:
 		s.Logger.Printf("DEVELOPMENT ONLY: reminder to change the anti-phishing code for %s %s: shown in %d emails, %d days old",
 			msg.ContactType, msg.MaskedContact, msg.Uses, msg.AgeDays)
+		return nil
+	case PurposeDelistingNotice:
+		s.Logger.Printf("DEVELOPMENT ONLY: notice of the delisting of %s for %s %s: %s, deadline %q, holder %t",
+			msg.Delisting.Currency, msg.ContactType, msg.MaskedContact, msg.Delisting.Stage, msg.Delisting.Deadline, msg.Delisting.Holder)
 		return nil
 	case PurposeDenied:
 		s.Logger.Printf("DEVELOPMENT ONLY: notice of a denial for %s %s: %d withdrawals cancelled, %d being paid, a hold of %d hours",

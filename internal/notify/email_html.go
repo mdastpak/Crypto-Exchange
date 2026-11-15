@@ -25,9 +25,10 @@ const (
 // htmlTemplates are the HTML parts of the emails: of a sign-in code, of
 // a code that confirms a withdrawal (#161), of the reminder to change
 // the anti-phishing code (#375), and of the notice of a "this was not me"
-// link that was used (#374). Nil is text only.
+// link that was used (#374), and of the notices of a delisting (#216).
+// Nil is text only.
 type htmlTemplates struct {
-	otp, withdrawal, reminder, denied *htmltemplate.Template
+	otp, withdrawal, reminder, denied, delisting *htmltemplate.Template
 }
 
 // loadHTMLTemplates loads the HTML templates that setting names: the
@@ -64,6 +65,7 @@ func loadHTMLTemplates(setting string) (*htmlTemplates, error) {
 	}{
 		{"", &t.otp}, {PurposeWithdrawal, &t.withdrawal},
 		{PurposeAntiPhishingReminder, &t.reminder}, {PurposeDenied, &t.denied},
+		{PurposeDelistingNotice, &t.delisting},
 	} {
 		name, into := htmlTemplateName(tmpl.purpose), tmpl.into
 		text, err := fs.ReadFile(dir, name)
@@ -88,6 +90,8 @@ func htmlTemplateName(purpose string) string {
 		return "anti_phishing_reminder.html"
 	case PurposeDenied:
 		return "denied.html"
+	case PurposeDelistingNotice:
+		return "delisting_notice.html"
 	}
 	return "otp.html"
 }
@@ -105,6 +109,8 @@ func (t *htmlTemplates) render(msg OTPMessage, data emailData) (string, error) {
 		tmpl = t.reminder
 	case PurposeDenied:
 		tmpl = t.denied
+	case PurposeDelistingNotice:
+		tmpl = t.delisting
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

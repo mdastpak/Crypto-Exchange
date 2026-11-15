@@ -462,6 +462,8 @@ type Configuration struct {
 		// IntervalSeconds is how often the scheduler of each instance
 		// applies the steps of delistings that are due (#216).
 		IntervalSeconds int `yaml:"interval_seconds"`
+		// Notices are the notices of delistings to the users (#216).
+		Notices DelistingNotices `yaml:"notices"`
 	} `yaml:"delisting"`
 
 	// MarketData configures cmd/market-worker, which collects the global
@@ -847,16 +849,44 @@ type EmailConfig struct {
 	// already, and {{.HoldHours}}, the length of the security hold.
 	DeniedSubject string `yaml:"denied_subject"`
 	DeniedBody    string `yaml:"denied_body"`
+	// DelistingNoticeSubject and DelistingNoticeBody are the templates of
+	// the notices of a delisting (#216). They can use {{.Currency}}, the
+	// symbol; {{.Stage}}, the lifecycle state that was reached, or
+	// "reminder" or "cancelled"; {{.Deadline}} and {{.DaysLeft}}, when the
+	// currency is frozen; {{.Holder}}, whether the user holds it; and
+	// {{.Settlement}} ("convert" or "claim"), {{.SettlementCurrency}}, and
+	// {{.ClaimDays}}, what happens to the balances left.
+	DelistingNoticeSubject string `yaml:"delisting_notice_subject"`
+	DelistingNoticeBody    string `yaml:"delisting_notice_body"`
 	// HTMLTemplates chooses the HTML part of the emails, beside the text:
 	// "en" (the default) or "fa" for the templates in config/email, "none"
 	// for text only, or a directory with otp.html, withdrawal.html,
-	// anti_phishing_reminder.html, and denied.html, Go html/template
+	// anti_phishing_reminder.html, denied.html, and delisting_notice.html,
+	// Go html/template
 	// templates that can use the fields of the text templates and
 	// {{.Sender}}, and, for withdrawals, {{.Amount}} and {{.Destination}}.
 	// Each must show {{.AntiPhishingCode}} (#375), and withdrawal.html
 	// {{.DenyLink}} (#374).
 	HTMLTemplates string `yaml:"html_templates"`
 }
+
+// DelistingNotices configures the notices of delistings (#216): each stage
+// is told to every user, by email, and by SMS to those who hold the
+// currency, who are also reminded of the freeze.
+type DelistingNotices struct {
+	// Enabled sends the notices; true when unset.
+	Enabled *bool `yaml:"enabled"`
+	// ReminderDays are the days before the freeze that the holders are
+	// reminded on; unset is 30, 14, 7, 3, and 1, and [] is none.
+	ReminderDays []int `yaml:"reminder_days"`
+}
+
+// On reports whether the notices are sent.
+func (d DelistingNotices) On() bool { return d.Enabled == nil || *d.Enabled }
+
+// MaxDelistingReminderDays is the most days before the freeze that a
+// reminder may be.
+const MaxDelistingReminderDays = 365
 
 // SMSConfig selects and configures the SMS providers. SMS is disabled when
 // none is set.
@@ -897,10 +927,13 @@ func (s SMSConfig) ProviderNames() []string {
 }
 
 // HasTemplate reports whether a configured provider has a template for
-// purpose: "withdrawal" or "anti_phishing_reminder".
+// purpose: "withdrawal", "anti_phishing_reminder", or "delisting_notice".
 func (s SMSConfig) HasTemplate(purpose string) bool {
 	for _, name := range s.ProviderNames() {
 		switch {
+		case name == SMSProviderKavenegar && purpose == "delisting_notice" && s.Kavenegar.DelistingNoticeTemplate != "",
+			name == SMSProviderSMSIR && purpose == "delisting_notice" && s.SMSIR.DelistingNoticeTemplateID > 0:
+			return true
 		case name == SMSProviderKavenegar && purpose == "withdrawal" && s.Kavenegar.WithdrawalTemplate != "",
 			name == SMSProviderKavenegar && purpose == "anti_phishing_reminder" && s.Kavenegar.AntiPhishingReminderTemplate != "",
 			name == SMSProviderSMSIR && purpose == "withdrawal" && s.SMSIR.WithdrawalTemplateID > 0,
@@ -923,9 +956,14 @@ type SMSIRConfig struct {
 	WithdrawalTemplateID int `yaml:"withdrawal_template_id"`
 	// AntiPhishingReminderTemplateID is the template of the reminder to
 	// change the anti-phishing code (#375); 0 is none.
-	AntiPhishingReminderTemplateID int    `yaml:"anti_phishing_reminder_template_id"`
-	BaseURL                        string `yaml:"base_url"`
-	Timeout                        int    `yaml:"timeout_seconds"`
+	AntiPhishingReminderTemplateID int `yaml:"anti_phishing_reminder_template_id"`
+	// DelistingNoticeTemplateID is the template of the notices of a
+	// delisting (#216) to the users who hold the currency, with
+	// #CURRENCY#, its symbol, and #DATE#, the date it is frozen; 0 is
+	// none, and the notices go by email only.
+	DelistingNoticeTemplateID int    `yaml:"delisting_notice_template_id"`
+	BaseURL                   string `yaml:"base_url"`
+	Timeout                   int    `yaml:"timeout_seconds"`
 }
 
 // SMSFailoverConfig sets when a provider is passed over in the auto mode.
@@ -975,8 +1013,13 @@ type KavenegarConfig struct {
 	// of emails that have shown the code. Without it, the reminder is not
 	// sent by SMS.
 	AntiPhishingReminderTemplate string `yaml:"anti_phishing_reminder_template"`
-	BaseURL                      string `yaml:"base_url"`
-	Timeout                      int    `yaml:"timeout_seconds"`
+	// DelistingNoticeTemplate is the verify template of the notices of a
+	// delisting (#216) to the users who hold the currency: %token
+	// receives its symbol, and %token2 the date it is frozen, as
+	// 2006-01-02. Without it, the notices go by email only.
+	DelistingNoticeTemplate string `yaml:"delisting_notice_template"`
+	BaseURL                 string `yaml:"base_url"`
+	Timeout                 int    `yaml:"timeout_seconds"`
 }
 
 // PriceProviderConfig holds configuration for a price data provider
@@ -2140,6 +2183,22 @@ const (
 		"and {{.Uses}} emails from us have shown it.\n\n" +
 		"The more emails show it, the more places it can be seen. Sign in to the exchange yourself, not through a link, " +
 		"and choose a new code in the security settings.\n"
+	DefaultDelistingNoticeSubject = "{{if eq .Stage \"cancelled\"}}{{.Currency}} stays listed{{else}}{{.Currency}} is being delisted{{end}}"
+	DefaultDelistingNoticeBody    = "{{if eq .Stage \"cancelled\"}}The delisting of {{.Currency}} is cancelled: it is active again, and every operation is open.\n" +
+		"{{else}}{{if eq .Stage \"reminder\"}}{{.DaysLeft}} day(s) are left before {{.Currency}} is frozen.\n" +
+		"{{else if eq .Stage \"delist_announced\"}}{{.Currency}} is being delisted from the exchange, in stages.\n" +
+		"{{else if eq .Stage \"deposits_disabled\"}}Deposits of {{.Currency}} are now closed.\n" +
+		"{{else if eq .Stage \"sell_only\"}}{{.Currency}} can now only be sold, not bought.\n" +
+		"{{else if eq .Stage \"trading_halted\"}}Trading of {{.Currency}} is now halted.\n" +
+		"{{else if eq .Stage \"withdrawal_only\"}}{{.Currency}} can now only be withdrawn.\n" +
+		"{{else if eq .Stage \"frozen\"}}{{.Currency}} is now frozen: the balances left are being settled.\n" +
+		"{{else if eq .Stage \"delisted\"}}{{.Currency}} is now delisted.\n{{end}}" +
+		"{{if .Deadline}}\nIt is frozen on {{.Deadline}}{{if .DaysLeft}}, in {{.DaysLeft}} day(s){{end}}. " +
+		"Withdraw or sell it before then.\n{{end}}" +
+		"{{if eq .Settlement \"convert\"}}\nWhat is left at the freeze is converted into {{.SettlementCurrency}} at the settlement price.\n" +
+		"{{else if eq .Settlement \"claim\"}}\nWhat is left at the freeze is held for its owners to claim for {{.ClaimDays}} days.\n{{end}}" +
+		"{{if .Holder}}\nYou hold {{.Currency}}: this concerns your balance.\n{{end}}{{end}}" +
+		"\nOpen the exchange yourself, by its address or our app, for the details. This email has no link.\n"
 	DefaultKavenegarBaseURL = "https://api.kavenegar.com"
 	DefaultSMSIRBaseURL     = "https://api.sms.ir"
 )
@@ -2174,6 +2233,12 @@ func setNotificationDefaults(n *NotificationsConfig) {
 	}
 	if n.Email.DeniedBody == "" {
 		n.Email.DeniedBody = DefaultDeniedEmailBody
+	}
+	if n.Email.DelistingNoticeSubject == "" {
+		n.Email.DelistingNoticeSubject = DefaultDelistingNoticeSubject
+	}
+	if n.Email.DelistingNoticeBody == "" {
+		n.Email.DelistingNoticeBody = DefaultDelistingNoticeBody
 	}
 	if n.SMS.Kavenegar.BaseURL == "" {
 		n.SMS.Kavenegar.BaseURL = DefaultKavenegarBaseURL
