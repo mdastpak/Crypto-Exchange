@@ -603,65 +603,66 @@ markets:
   enable_market_orders: true
   enable_stop_orders: true
 
+# The price engine, cmd/price-aggregator (#58): the reference price of each
+# market from several providers. See docs/price-engine.md and
+# "price_aggregator" in docs/configuration.md.
 price_aggregator:
   enabled: true
+  health_addr: ":8082"         # Probes, metrics, and GET /prices; internal only
   providers:
+    # type websocket follows the stream, and reads the REST API while the
+    # stream is down; type rest reads the REST API every poll_ms.
     - name: "binance"
       enabled: true
       type: "websocket"
       ws_endpoint: "wss://stream.binance.com:9443/ws"
       rest_endpoint: "https://api.binance.com"
-      api_key: ""  # Set with BINANCE_API_KEY
-      api_secret: ""  # Set with BINANCE_API_SECRET
-      passphrase: ""
-      symbols:
-        - "btcusdt"
-        - "ethusdt"
-        - "trxusdt"
-        - "usdtusd"
-      rate_limit: 10
-      timeout_seconds: 10
+      symbols: ["BTC/USDT", "ETH/USDT", "TRX/USDT"]  # BASE/QUOTE
+      timeout_seconds: 5
+      reconnect_delay_seconds: 5   # The first wait is a tenth of it, doubling to 30 s
+      poll_ms: 5000
+    - name: "kraken"
+      enabled: true
+      type: "websocket"
+      ws_endpoint: "wss://ws.kraken.com/v2"
+      rest_endpoint: "https://api.kraken.com"
+      symbols: ["BTC/USDT", "ETH/USDT"]
+      timeout_seconds: 5
       reconnect_delay_seconds: 5
     - name: "coinbase"
       enabled: false
       type: "websocket"
       ws_endpoint: "wss://ws-feed.exchange.coinbase.com"
-      rest_endpoint: "https://api.exchange.coinbase.com"
-      api_key: ""
-      api_secret: ""
-      passphrase: ""
-      symbols:
-        - "BTC-USD"
-        - "ETH-USD"
-      rate_limit: 10
-      timeout_seconds: 10
+      rest_endpoint: "https://api.coinbase.com"
+      symbols: ["BTC/USDT", "ETH/USDT"]
+      timeout_seconds: 5
       reconnect_delay_seconds: 5
-    - name: "kraken"
+    - name: "okx"
+      enabled: true
+      type: "rest"
+      symbols: ["BTC/USDT", "ETH/USDT", "TRX/USDT"]
+      timeout_seconds: 5
+      poll_ms: 2000
+    # The rial reference (#61): the Iranian venues, through REST only, so
+    # with a longer staleness cutoff. Iran region only; they often answer
+    # only from Iran (egress: direct on a node there).
+    - name: "nobitex"
       enabled: false
-      type: "websocket"
-      ws_endpoint: "wss://ws.kraken.com"
-      rest_endpoint: "https://api.kraken.com"
-      symbols:
-        - "XBT/USD"
-        - "ETH/USD"
-      rate_limit: 5
-      timeout_seconds: 10
-      reconnect_delay_seconds: 10
-    - name: "bybit"
+      type: "rest"
+      symbols: ["USDT/IRT", "BTC/IRT"]
+      poll_ms: 5000
+      stale_threshold_ms: 30000
+    - name: "wallex"
       enabled: false
-      type: "websocket"
-      ws_endpoint: "wss://stream.bybit.com/v5/public/spot"
-      rest_endpoint: "https://api.bybit.com"
-      symbols:
-        - "BTCUSDT"
-        - "ETHUSDT"
-      rate_limit: 20
-      timeout_seconds: 10
-      reconnect_delay_seconds: 5
+      type: "rest"
+      symbols: ["USDT/IRT", "BTC/IRT"]
+      poll_ms: 5000
+      stale_threshold_ms: 30000
   aggregation_interval_ms: 100
-  vwap_windows_seconds: [1, 5, 60, 300]
-  outlier_threshold_mad: 3.0
-  min_providers: 2
+  vwap_windows_seconds: [1, 5, 60, 300]  # Also the TWAP windows
+  outlier_threshold_mad: 3.0   # Median absolute deviations from the median
+  outlier_floor_bps: 10        # No deviation under 0.1 % makes an outlier
+  min_providers: 2             # Quorum of a live price; below it, stale
   stale_threshold_ms: 5000
   publish_to_redis: true
   publish_to_rabbitmq: true

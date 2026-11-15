@@ -56,7 +56,7 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 | `notification_sms_fallbacks_total` | counter | `from`, `to`, `reason` | Messages sent through another provider than the first: `reason` `send` when the first failed to take it, `delivery` when it took it and did not deliver it. |
 | `notification_sms_delivery_reports_total` | counter | `provider`, `state` | Delivery reports of the messages sent: `delivered`, `failed`, `unknown` (no report by the last check, such as a sandbox message), `pending` (still on its way after the last check). |
 
-The registry also has the metrics of the Go runtime (`go_*`) and of the process (`process_*`).
+The registry also has the metrics of the Go runtime (`go_*`) and of the process (`process_*`). `cmd/price-aggregator` serves the [metrics of the price engine](price-engine.md#metrics) on its own address.
 
 ### Alerts
 

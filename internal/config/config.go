@@ -546,16 +546,26 @@ type Configuration struct {
 		EnableStopOrders   bool `yaml:"enable_stop_orders"`
 	} `yaml:"markets"`
 
+	// PriceAggregator configures the price engine, cmd/price-aggregator
+	// (#58); see docs/price-engine.md.
 	PriceAggregator struct {
 		Enabled             bool                  `yaml:"enabled"`
 		Providers           []PriceProviderConfig `yaml:"providers"`
 		AggregationInterval int                   `yaml:"aggregation_interval_ms"`
 		VWAPWindows         []int                 `yaml:"vwap_windows_seconds"`
-		OutlierThreshold    float64               `yaml:"outlier_threshold_mad"`
-		MinProviders        int                   `yaml:"min_providers"`
-		StaleThreshold      int                   `yaml:"stale_threshold_ms"`
-		PublishToRedis      bool                  `yaml:"publish_to_redis"`
-		PublishToRabbitMQ   bool                  `yaml:"publish_to_rabbitmq"`
+		// OutlierThreshold is the number of median absolute deviations
+		// past which a provider's mid is an outlier, and OutlierFloorBPS
+		// the smallest deviation from the median, in basis points, that
+		// makes one.
+		OutlierThreshold  float64 `yaml:"outlier_threshold_mad"`
+		OutlierFloorBPS   *int    `yaml:"outlier_floor_bps"`
+		MinProviders      int     `yaml:"min_providers"`
+		StaleThreshold    int     `yaml:"stale_threshold_ms"`
+		PublishToRedis    bool    `yaml:"publish_to_redis"`
+		PublishToRabbitMQ bool    `yaml:"publish_to_rabbitmq"`
+		// HealthAddr is the address of the probes, the metrics, and the
+		// operators' view of the prices of cmd/price-aggregator.
+		HealthAddr string `yaml:"health_addr"`
 	} `yaml:"price_aggregator"`
 
 	Custody struct {
@@ -960,19 +970,44 @@ type KavenegarConfig struct {
 
 // PriceProviderConfig holds configuration for a price data provider
 type PriceProviderConfig struct {
-	Name           string   `yaml:"name"`
-	Enabled        bool     `yaml:"enabled"`
-	Type           string   `yaml:"type"`
-	WSEndpoint     string   `yaml:"ws_endpoint"`
-	RESTEndpoint   string   `yaml:"rest_endpoint"`
-	APIKey         string   `yaml:"api_key"`
-	APISecret      string   `yaml:"api_secret"`
-	Passphrase     string   `yaml:"passphrase"`
+	Name         string `yaml:"name"`
+	Enabled      bool   `yaml:"enabled"`
+	Type         string `yaml:"type"`
+	WSEndpoint   string `yaml:"ws_endpoint"`
+	RESTEndpoint string `yaml:"rest_endpoint"`
+	APIKey       string `yaml:"api_key"`
+	APISecret    string `yaml:"api_secret"`
+	Passphrase   string `yaml:"passphrase"`
+	// Symbols are the markets it follows, BASE/QUOTE (or BASE-QUOTE).
 	Symbols        []string `yaml:"symbols"`
 	RateLimit      int      `yaml:"rate_limit"`
 	Timeout        int      `yaml:"timeout_seconds"`
 	ReconnectDelay int      `yaml:"reconnect_delay_seconds"`
+	// PollMs is the time between two reads of the REST API, while the
+	// stream is down or for a provider of type rest.
+	PollMs int `yaml:"poll_ms"`
+	// StaleThresholdMs overrides price_aggregator.stale_threshold_ms for
+	// this provider, such as a venue read only through REST.
+	StaleThresholdMs int `yaml:"stale_threshold_ms"`
+	// Egress is how this node reaches the provider: direct, or proxy
+	// through market_data.egress.proxy_url; empty takes
+	// market_data.egress.default.
+	Egress string `yaml:"egress"`
 }
+
+// The types of a price provider.
+const (
+	PriceProviderWebSocket = "websocket"
+	PriceProviderREST      = "rest"
+)
+
+// DefaultPriceAggregatorHealthAddr is the default address of the probes of
+// cmd/price-aggregator.
+const DefaultPriceAggregatorHealthAddr = ":8082"
+
+// DefaultPriceOutlierFloorBPS is the default of
+// price_aggregator.outlier_floor_bps.
+const DefaultPriceOutlierFloorBPS = 10
 
 // CustodyProviderConfig holds configuration for a custody provider
 type CustodyProviderConfig struct {
@@ -1997,6 +2032,13 @@ func setDefaults() {
 	}
 	if Config.PriceAggregator.StaleThreshold == 0 {
 		Config.PriceAggregator.StaleThreshold = 5000
+	}
+	if Config.PriceAggregator.OutlierFloorBPS == nil {
+		floor := DefaultPriceOutlierFloorBPS
+		Config.PriceAggregator.OutlierFloorBPS = &floor
+	}
+	if Config.PriceAggregator.HealthAddr == "" {
+		Config.PriceAggregator.HealthAddr = DefaultPriceAggregatorHealthAddr
 	}
 
 	if Config.Observability.Logging.Level == "" {

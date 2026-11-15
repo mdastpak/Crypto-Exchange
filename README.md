@@ -51,7 +51,8 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | Withdrawals | Implemented | A withdrawal is requested in two steps under one idempotency key: a confirmation of the second factor bound to the request (#161), then one transaction that checks the restrictions, the network, the destination, and the limits of the level, consumes the confirmation, and locks the amount and the fee in the ledger. Amounts from `withdrawals.review_above` wait for an administrator. It is paid by payouts planned before anything is sent: one on chain, or rials split across the bank rails within their limits and the destination's daily limits, over several days when needed. Each payout has its own idempotency key and is never sent twice; a paid one leaves the ledger, a failed one goes to the next rail or is released alone. Until the banks' APIs are added, an administrator pays each payout and records it ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). Withdrawals and payouts are sealed. See [withdrawals](docs/api.md#withdrawals). |
 | Anti-phishing code | Implemented | A phrase of the user's own that every email to their verified contacts shows, never an address that a change is adding, nor SMS (`GET`/`PUT`/`DELETE /user/anti-phishing-code`) ([#375](https://github.com/mdastpak/Crypto-Exchange/issues/375)). Stored encrypted and sealed; the API shows only its start. HTML templates must show it. Once it is old or many emails have shown it, the exchange suggests a new one, with reminders by email and SMS (`anti_phishing.rotation`). See [anti-phishing code](docs/api.md#anti-phishing-code). |
 | SMS providers | Implemented | Kavenegar and sms.ir in a configured order, with failover when a provider fails and delivery reports that send a message that did not reach the phone again through the next one ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)). Administrators see the health of each provider and switch between the automatic mode and a manual order (`GET`/`PUT /admin/notifications/sms`). See [SMS providers](docs/configuration.md#sms-providers). |
-| Price engine, OTC trading, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
+| Price engine | Partial | `cmd/price-aggregator` follows Binance, Coinbase, and Kraken by their streams, with their REST APIs while a stream is down, and OKX and the Iranian venues by REST, and computes a reference price per market every 100 ms: the best bid and ask, the median mid, VWAP and TWAP over windows, outliers rejected by MAD, and a quorum below which the price is stale ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). The distribution through Redis and RabbitMQ is [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59). See [docs/price-engine.md](docs/price-engine.md). |
+| OTC trading, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
 
 ## Architecture
@@ -304,6 +305,7 @@ The expected behavior of every tested flow is specified in the [test-scenario ca
 cmd/admin/              Operator command: administrators, data keys, outbox dead letters,
                         platform controls, backup and restore checks
 cmd/market-worker/      Worker of the global market data catalog (docs/market-data.md)
+cmd/price-aggregator/   Price engine: reference prices from several providers (docs/price-engine.md)
 cmd/server/             Application entry point; it calls internal/app
 config/                 Configuration files: the example and Compose configurations,
                         the local config.yaml (ignored), and the asset registry and
@@ -356,6 +358,7 @@ internal/pagination/    Keyset pagination with opaque cursors for list endpoints
 internal/passkey/       Passkeys of users: WebAuthn registration and proof, sealed credentials
 internal/passwordhash/  Argon2id hashes of account passwords, wired in by the server only
 internal/platform/      Maintenance and feature lockdowns: controls, watcher, route gate
+internal/price/         Price engine: provider streams with REST fallback, VWAP, TWAP, MAD outliers, quorum
 internal/redisutil/     Durable Redis writes, hash slots, and following cluster failovers
 internal/recovery/      Backup and restore checks: WAL archiving age, restored-database
                         verification

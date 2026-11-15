@@ -129,6 +129,55 @@ var (
 		Name: "notification_sms_delivery_reports_total",
 		Help: "Delivery reports of SMS, by provider and state.",
 	}, []string{"provider", "state"})
+	// PriceTicks counts the ticks that the price providers sent and the
+	// aggregator kept, by provider and kind (book or trade) (#58).
+	PriceTicks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_ticks_total",
+		Help: "Ticks of the price providers that the aggregator kept, by provider and kind.",
+	}, []string{"provider", "kind"})
+	// PriceTicksRejected counts the ticks that the aggregator rejected, by
+	// provider and reason.
+	PriceTicksRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_ticks_rejected_total",
+		Help: "Ticks of the price providers that the aggregator rejected, by provider and reason.",
+	}, []string{"provider", "reason"})
+	// PriceProviderLag is the delay of a provider's last tick that carried
+	// the provider's time, and PriceProviderAge the time since its last
+	// tick of any kind.
+	PriceProviderLag = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_lag_seconds",
+		Help: "Delay between a price provider's time of its last tick and its receipt.",
+	}, []string{"provider"})
+	PriceProviderAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_last_tick_age_seconds",
+		Help: "Time since the last tick of a price provider.",
+	}, []string{"provider"})
+	// PriceProviderConnected is 1 while a provider's stream is open, and
+	// PriceProviderFallback 1 while its REST API is read instead.
+	PriceProviderConnected = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_connected",
+		Help: "1 while the stream of a price provider is open.",
+	}, []string{"provider"})
+	PriceProviderFallback = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_rest_fallback",
+		Help: "1 while a price provider is read through its REST API.",
+	}, []string{"provider"})
+	// PriceAggregation is the time of one aggregation of every market.
+	PriceAggregation = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "price_aggregation_duration_seconds",
+		Help:    "Time of one aggregation of the prices of every market.",
+		Buckets: []float64{.0001, .00025, .0005, .001, .0025, .005, .01, .025, .05, .1},
+	})
+	// PriceMarketLive is 1 while a market's price is live, and
+	// PriceMarketSources the providers that make it.
+	PriceMarketLive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_market_live",
+		Help: "1 while the reference price of a market is live, 0 while it is stale.",
+	}, []string{"market"})
+	PriceMarketSources = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_market_sources",
+		Help: "Providers that make the reference price of a market.",
+	}, []string{"market"})
 )
 
 func init() {
@@ -138,6 +187,8 @@ func init() {
 		HTTPRequests, HTTPDuration, RateLimitRejections, PublishDuration, SealFindings,
 		LedgerMismatches, LedgerImbalancedCurrencies, LedgerAccountProblems, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
+		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
+		PriceAggregation, PriceMarketLive, PriceMarketSources,
 	)
 }
 

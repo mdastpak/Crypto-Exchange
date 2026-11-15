@@ -21,7 +21,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/server ./cmd/server && \
     CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/admin ./cmd/admin && \
-    CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/market-worker ./cmd/market-worker
+    CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/market-worker ./cmd/market-worker && \
+    CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags="-s -w" -o /out/price-aggregator ./cmd/price-aggregator
 
 # The runtime stage installs no packages: the base image already has the CA
 # certificates, and the timetzdata tag embeds the time zone database in the
@@ -33,12 +34,13 @@ RUN addgroup -g 10001 -S app && \
 
 WORKDIR /app
 
-# Only the binaries (the server, cmd/admin, and cmd/market-worker, which
-# runs with --entrypoint /app/market-worker) and the migrations, which the server reads from
+# Only the binaries (the server, cmd/admin, cmd/market-worker, which runs
+# with --entrypoint /app/market-worker, and cmd/price-aggregator, which runs
+# with --entrypoint /app/price-aggregator) and the migrations, which the server reads from
 # internal/db/migrations relative to /app. Configuration and keys are mounted
 # at runtime and never built into the image. Without a configuration file the
 # server falls back to the embedded example configuration.
-COPY --from=builder /out/server /out/admin /out/market-worker /app/
+COPY --from=builder /out/server /out/admin /out/market-worker /out/price-aggregator /app/
 COPY --from=builder /src/internal/db/migrations /app/internal/db/migrations
 
 USER 10001:10001
