@@ -204,6 +204,11 @@ const (
 	// target is the override.
 	ActionPriceOverrideSet = "price.override_set"
 	ActionPriceOverrideEnd = "price.override_end"
+	// An administrator setting an override beyond the bound of the live
+	// price, or without one, which waits for a second administrator, and
+	// the second administrator approving it (#453).
+	ActionPriceOverrideRequest = "price.override_request"
+	ActionPriceOverrideApprove = "price.override_approve"
 
 	// The commands of cmd/admin (#195). Their actor is the system, and the
 	// operator who ran them is named in the user agent; see Operator.

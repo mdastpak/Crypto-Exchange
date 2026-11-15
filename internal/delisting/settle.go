@@ -151,6 +151,11 @@ func (s Settler) price(ctx context.Context, st starting) (decimal.Decimal, strin
 	if err != nil {
 		return decimal.Zero, "", fmt.Errorf("the price of %s: %w", market, err)
 	}
+	// One administrator's override never fixes the rate of every holder
+	// (#453): only one that a second administrator approved.
+	if p.Status == price.StatusOverride && (p.Override == nil || !p.Override.Approved) {
+		return decimal.Zero, "", fmt.Errorf("the price of %s is an override that a second administrator did not approve", market)
+	}
 	value, how := p.Mid.Decimal(), "mid"
 	if st.source == PriceTWAP {
 		// The longest window, the steadiest price.
@@ -169,7 +174,11 @@ func (s Settler) price(ctx context.Context, st starting) (decimal.Decimal, strin
 	if !value.IsPositive() {
 		return decimal.Zero, "", fmt.Errorf("the price of %s is not positive", market)
 	}
-	return value, fmt.Sprintf("%s of %s (%s), %s", how, market, p.Status, p.At.UTC().Format(time.RFC3339)), nil
+	status := string(p.Status)
+	if p.Override != nil {
+		status += " " + p.Override.ID
+	}
+	return value, fmt.Sprintf("%s of %s (%s), %s", how, market, status, p.At.UTC().Format(time.RFC3339)), nil
 }
 
 func recordPrice(ctx context.Context, db *sql.DB, st starting, value decimal.Decimal, detail string, now time.Time) error {

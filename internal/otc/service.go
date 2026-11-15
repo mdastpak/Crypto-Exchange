@@ -187,6 +187,9 @@ func (s *Service) Quote(ctx context.Context, req Request) (q Quote, err error) {
 	if err != nil {
 		return Quote{}, err
 	}
+	if ref.Override != nil {
+		parts.OverrideID = ref.Override.ID
+	}
 	if err := checkSize(r, quantity, px); err != nil {
 		return Quote{}, err
 	}

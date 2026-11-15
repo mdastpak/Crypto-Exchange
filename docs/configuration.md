@@ -591,6 +591,8 @@ How the servers read the reference prices in Redis ([Integrity of the prices](pr
 | --- | --- | --- |
 | `verify_keys` | none; **required** in release mode | The PEM files of the Ed25519 public keys (PKIX) of the price aggregators. A price that none of them signed is refused as stale. Two keys allow a rotation. `PRICE_VERIFY_KEYS` overrides it, separated by commas. |
 | `signatures` | on with `verify_keys` or in release mode, off otherwise | `on` needs `verify_keys`; `off` trusts every price in Redis, with a warning, and release mode refuses it. `PRICE_SIGNATURES` overrides it. |
+| `overrides.max_deviation_bps` | `300` | The bound of an administrator's [price override](price-engine.md#overrides) against the live reference mid, in basis points, from 1 to 10000 ([#453](https://github.com/mdastpak/Crypto-Exchange/issues/453)). An override within it applies at once; one beyond it, or set while the market has no live price, waits for a second administrator. `PRICE_OVERRIDES_MAX_DEVIATION_BPS` overrides it. |
+| `overrides.approval_minutes` | `30` | How long an override beyond the bound waits for its approval, from 1 to 1440 minutes; it lapses unapproved after it. `PRICE_OVERRIDES_APPROVAL_MINUTES` overrides it. |
 
 ### `platform`
 
@@ -909,6 +911,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `PRICE_AGGREGATOR_SIGNING_KEY` | `price_aggregator.signing_key` |
 | `PRICE_VERIFY_KEYS` | `price.verify_keys` |
 | `PRICE_SIGNATURES` | `price.signatures` |
+| `PRICE_OVERRIDES_MAX_DEVIATION_BPS` | `price.overrides.max_deviation_bps` |
+| `PRICE_OVERRIDES_APPROVAL_MINUTES` | `price.overrides.approval_minutes` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `DELISTING_NOTICES_ENABLED` | `delisting.notices.enabled` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |

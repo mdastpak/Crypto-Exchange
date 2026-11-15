@@ -48,6 +48,9 @@ var adminRoutes = map[string]admin.RouteClass{
 	// engine's, which quotes use (#59), or ending it.
 	"POST /markets/:base/:quote/price-override": admin.RouteSensitive,
 	"POST /price-overrides/:id/end":             admin.RouteSensitive,
+	// Approving, as a second administrator, an override beyond the bound
+	// of the live price (#453).
+	"POST /price-overrides/:id/approve": admin.RouteSensitive,
 
 	// Letting a withdrawal held for review be paid, or refusing it (#70).
 	"POST /withdrawals/:id/approve": admin.RouteSensitive,

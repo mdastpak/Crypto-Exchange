@@ -264,6 +264,8 @@ var envVars = []EnvVar{
 	pathVar("PRICE_AGGREGATOR_SIGNING_KEY", "price_aggregator.signing_key", func(c *Configuration) *KeyPath { return &c.PriceAggregator.SigningKey }),
 	listVar("PRICE_VERIFY_KEYS", "price.verify_keys", func(c *Configuration) *[]string { return &c.Price.VerifyKeys }),
 	stringVar("PRICE_SIGNATURES", "price.signatures", func(c *Configuration) *string { return &c.Price.Signatures }),
+	intVar("PRICE_OVERRIDES_MAX_DEVIATION_BPS", "price.overrides.max_deviation_bps", func(c *Configuration) *int { return &c.Price.Overrides.MaxDeviationBPS }),
+	intVar("PRICE_OVERRIDES_APPROVAL_MINUTES", "price.overrides.approval_minutes", func(c *Configuration) *int { return &c.Price.Overrides.ApprovalMinutes }),
 	intVar("DELISTING_INTERVAL_SECONDS", "delisting.interval_seconds", func(c *Configuration) *int { return &c.Delisting.IntervalSeconds }),
 	optionalBoolVar("DELISTING_NOTICES_ENABLED", "delisting.notices.enabled", func(c *Configuration) **bool { return &c.Delisting.Notices.Enabled }),
 	intVar("PLATFORM_POLL_INTERVAL_MS", "platform.poll_interval_ms", func(c *Configuration) *int { return &c.Platform.PollIntervalMs }),

@@ -888,6 +888,46 @@ type PriceConfig struct {
 	// every price in Redis, outside release mode only. Unset is on with
 	// verify_keys and in release mode, and off otherwise, with a warning.
 	Signatures string `yaml:"signatures"`
+	// Overrides bounds the prices that administrators set (#453).
+	Overrides PriceOverridesConfig `yaml:"overrides"`
+}
+
+// PriceOverridesConfig bounds the prices that administrators set in place
+// of the price engine's (#453). An override whose mid is within
+// MaxDeviationBPS of the live reference mid applies at once; one beyond
+// it, or for a market without a live reference, waits for a second
+// administrator for ApprovalMinutes, and lapses otherwise.
+type PriceOverridesConfig struct {
+	// MaxDeviationBPS is the bound, in basis points of the reference mid:
+	// 1 to 10000, 300 (3%) when unset.
+	MaxDeviationBPS int `yaml:"max_deviation_bps"`
+	// ApprovalMinutes is how long an override waits for its approval: 1 to
+	// 1440, 30 when unset.
+	ApprovalMinutes int `yaml:"approval_minutes"`
+}
+
+// The defaults and bounds of price.overrides.
+const (
+	DefaultOverrideMaxDeviationBPS = 300
+	MaxOverrideDeviationBPS        = 10000
+	DefaultOverrideApprovalMinutes = 30
+	MaxOverrideApprovalMinutes     = 1440
+)
+
+// Deviation returns max_deviation_bps, or its default.
+func (o PriceOverridesConfig) Deviation() int {
+	if o.MaxDeviationBPS == 0 {
+		return DefaultOverrideMaxDeviationBPS
+	}
+	return o.MaxDeviationBPS
+}
+
+// ApprovalWindow returns approval_minutes, or its default, as a duration.
+func (o PriceOverridesConfig) ApprovalWindow() time.Duration {
+	if o.ApprovalMinutes == 0 {
+		return DefaultOverrideApprovalMinutes * time.Minute
+	}
+	return time.Duration(o.ApprovalMinutes) * time.Minute
 }
 
 // The values of price.signatures.

@@ -778,6 +778,12 @@ price:
   # Without them, outside release mode, the prices are read unverified.
   verify_keys: []              # Or set PRICE_VERIFY_KEYS, comma-separated
   signatures: ""               # on, or off outside release mode only
+  # An administrator's override within max_deviation_bps of the live mid
+  # applies at once; one beyond it, or with no live price, waits up to
+  # approval_minutes for a second administrator (#453).
+  overrides:
+    max_deviation_bps: 300     # Or set PRICE_OVERRIDES_MAX_DEVIATION_BPS
+    approval_minutes: 30       # Or set PRICE_OVERRIDES_APPROVAL_MINUTES
 
 custody:
   providers:

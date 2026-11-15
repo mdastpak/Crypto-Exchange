@@ -110,6 +110,9 @@ type Components struct {
 	// MarginWidened reports a margin that was below the minimum and was
 	// widened to it.
 	MarginWidened bool `json:"margin_widened,omitempty"`
+	// OverrideID is the administrator's price override that the reference
+	// was (#453), for the execution to record which one it traded on.
+	OverrideID string `json:"override_id,omitempty"`
 }
 
 // TotalBPS is the sum of the parts.

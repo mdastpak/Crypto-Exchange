@@ -1297,6 +1297,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.POST("/markets/:base/:quote/price-override", ih.Admin.SetPriceOverride)
 		adminGroup.GET("/price-overrides", ih.Admin.ListPriceOverrides)
 		adminGroup.POST("/price-overrides/:id/end", ih.Admin.EndPriceOverride)
+		adminGroup.POST("/price-overrides/:id/approve", ih.Admin.ApprovePriceOverride)
 		// The withdrawals held for review (#70).
 		adminGroup.GET("/withdrawals", ih.Admin.ListWithdrawals)
 		adminGroup.POST("/withdrawals/:id/approve", ih.Admin.ApproveWithdrawal)

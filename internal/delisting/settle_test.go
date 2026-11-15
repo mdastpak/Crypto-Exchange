@@ -191,6 +191,45 @@ func TestSettlement_WaitsForALiveReferencePrice(t *testing.T) {
 	assert.Equal(t, "delisted", lifecycle(t, db, coin).State)
 }
 
+// TestSettlement_TakesOnlyAnApprovedOverride (#453): an override that a
+// second administrator did not approve never fixes the rate of every
+// holder; an approved one does, and the detail names it.
+func TestSettlement_TakesOnlyAnApprovedOverride(t *testing.T) {
+	db := pgtest.Migrated(t, testDBName)
+	b := books{t: t, db: db}
+	symbol := sym("O")
+	coin, usdt := insertCurrency(t, db, symbol, "approved"), insertCurrency(t, db, sym("V"), "approved")
+	alice := b.user()
+	b.fund(alice, coin, "10")
+	start := time.Now()
+	_, _, err := delisting.Schedule(ctx, db, coin, convertPlan(start, usdt, ""), origin())
+	require.NoError(t, err)
+	var target string
+	require.NoError(t, db.QueryRow(`SELECT info->>'symbol' FROM currencies WHERE hk = $1`, usdt).Scan(&target))
+	market := symbol + "/" + target
+	twap := map[string]shared.Decimal{"300s": shared.MustNewDecimalFromString("3")}
+	prices := fakePrices{}
+	settler := delisting.Settler{Prices: prices}
+
+	for _, ref := range []*price.OverrideRef{nil, {ID: "o-unapproved"}} {
+		prices[market] = price.Price{Status: price.StatusOverride, Mid: shared.MustNewDecimalFromString("3"), At: time.Now(), TWAP: twap, Override: ref}
+		_, err = settler.Advance(ctx, db, start.Add(24*time.Hour), 100)
+		require.NoError(t, err)
+		assert.Nil(t, b.delisting(coin).SettlementPrice, "an unapproved override is no settlement price")
+		assert.Equal(t, [3]string{"10", "0", "0"}, b.balance(alice, coin))
+	}
+
+	prices[market] = price.Price{Status: price.StatusOverride, Mid: shared.MustNewDecimalFromString("3"), At: time.Now(), TWAP: twap,
+		Override: &price.OverrideRef{ID: "o-approved", Approved: true}}
+	_, err = settler.Advance(ctx, db, start.Add(24*time.Hour), 100)
+	require.NoError(t, err)
+	got := b.delisting(coin)
+	require.NotNil(t, got.SettlementPrice)
+	assert.Equal(t, "3", *got.SettlementPrice)
+	assert.Contains(t, got.SettlementPriceDetail, "(override o-approved)")
+	assert.Equal(t, [3]string{"30", "0", "0"}, b.balance(alice, usdt))
+}
+
 // TestSettlement_AClaimHoldsTheBalances keeps the balances of a delisting
 // for a claim, and delisted waits for them.
 func TestSettlement_AClaimHoldsTheBalances(t *testing.T) {

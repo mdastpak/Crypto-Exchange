@@ -370,6 +370,12 @@ var postgresTLSModes = []string{"require", "verify-ca", "verify-full"}
 // refuses off. Unset is on with verify_keys, and off without them outside
 // release mode.
 func (c *Configuration) priceSignatureProblems(p *problems, release bool) {
+	if v := c.Price.Overrides.MaxDeviationBPS; v < 0 || v > MaxOverrideDeviationBPS {
+		p.add("price.overrides.max_deviation_bps", "is %d; it must be from 1 to %d", v, MaxOverrideDeviationBPS)
+	}
+	if v := c.Price.Overrides.ApprovalMinutes; v < 0 || v > MaxOverrideApprovalMinutes {
+		p.add("price.overrides.approval_minutes", "is %d; it must be from 1 to %d", v, MaxOverrideApprovalMinutes)
+	}
 	switch c.Price.Signatures {
 	case "":
 		if len(c.Price.VerifyKeys) == 0 && release {

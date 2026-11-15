@@ -41,6 +41,8 @@ type Override struct {
 	Mid     shared.Decimal
 	Set     time.Time
 	Expires time.Time
+	// Approved is an override that a second administrator approved (#453).
+	Approved bool
 }
 
 // Overrides are the overrides in force: *priceoverride.Watcher.
@@ -104,6 +106,7 @@ func (r *Reader) Get(ctx context.Context, market string) (Price, error) {
 			return Price{
 				Market: market, Status: StatusOverride, Bid: o.Bid, Ask: o.Ask, Mid: o.Mid,
 				Sources: []string{"override"}, At: now.Truncate(time.Microsecond), Updated: o.Set,
+				Override: &OverrideRef{ID: o.ID, Approved: o.Approved},
 			}, nil
 		}
 	}
@@ -131,6 +134,9 @@ func (r *Reader) Get(ctx context.Context, market string) (Price, error) {
 			return Price{}, ErrUnverifiedPrice
 		}
 	}
+	// The signature does not cover the override, which no price in Redis
+	// is: a value that names one is never believed.
+	p.Override = nil
 	if p.Status != StatusLive || p.Market != market || !p.Mid.IsPositive() {
 		return Price{}, ErrStale
 	}
