@@ -451,6 +451,7 @@
   "WITHDRAWAL_CONFIRMATION_SENT": "برداشت را با کد تأیید کنید.",
   "WITHDRAWAL_FAILED": "برداشت انجام نشد.",
   "WITHDRAWAL_LIMIT_EXCEEDED": "این برداشت از سقف سطح احراز هویت شما بیشتر است. مقداری که اکنون می‌توانید برداشت کنید در info.remaining آمده است.",
+  "WITHDRAWAL_LIMIT_UNCONFIGURED": "برداشت این ارز در سطح احراز هویت شما هنوز ممکن نیست: سقفی برای آن تنظیم نشده است. لطفاً با پشتیبانی تماس بگیرید.",
   "WITHDRAWAL_NOT_CANCELLABLE": "این برداشت دیگر لغو نمی‌شود.",
   "WITHDRAWAL_NOT_FOUND": "برداشت یافت نشد.",
   "WITHDRAWAL_NOT_IN_REVIEW": "این برداشت در انتظار بررسی نیست.",

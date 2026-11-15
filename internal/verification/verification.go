@@ -98,12 +98,19 @@ type Limit struct {
 type Policy struct {
 	minLevel map[Action]Level
 	limits   map[string]map[Level]Limit
+	// limited are the levels that have a limit of some currency, or a
+	// default: at those, a currency without one is refused (#406).
+	limited map[Level]bool
 }
+
+// AnyCurrency is the key of the default withdrawal limits of each level,
+// for the currencies that have no entry of their own (#406).
+const AnyCurrency = config.AnyCurrency
 
 // NewPolicy returns the policy of the settings, which Load has validated
 // and given their defaults.
 func NewPolicy(c config.VerificationConfig) (Policy, error) {
-	p := Policy{minLevel: map[Action]Level{}, limits: map[string]map[Level]Limit{}}
+	p := Policy{minLevel: map[Action]Level{}, limits: map[string]map[Level]Limit{}, limited: map[Level]bool{}}
 	defaults := config.DefaultVerificationMinLevel()
 	for _, a := range Actions {
 		level, ok := c.MinLevel[string(a)]
@@ -127,6 +134,9 @@ func NewPolicy(c config.VerificationConfig) (Policy, error) {
 				return Policy{}, fmt.Errorf("verification.withdrawal_limits.%s.%d.per_transaction: %w", symbol, level, err)
 			}
 			p.limits[symbol][Level(level)] = Limit{Daily: daily, PerTransaction: perTx}
+			if daily != nil || perTx != nil {
+				p.limited[Level(level)] = true
+			}
 		}
 	}
 	return p, nil
@@ -156,8 +166,26 @@ func (p Policy) Allows(level Level, a Action) bool {
 	return ok && level >= required
 }
 
-// Limit returns the withdrawal limit of the currency symbol at level.
-func (p Policy) Limit(level Level, symbol string) Limit { return p.limits[symbol][level] }
+// Limit returns the withdrawal limit at level of the currency that has, or
+// had, symbols, its current symbol first (#406). The limits are configured
+// by symbol, and a symbol changes: a rename keeps the old one as a previous
+// symbol, so the entry of any symbol of the currency applies, the current
+// one's first. A currency without an entry takes the AnyCurrency default
+// of the level. ok is false when there is neither, at a level that limits
+// some currency: the currency has no limit that anyone chose, and its
+// withdrawals are refused rather than unlimited. A currency with an entry
+// but none at level has no limit at level, as configured.
+func (p Policy) Limit(level Level, symbols ...string) (limit Limit, ok bool) {
+	for _, symbol := range symbols {
+		if levels, found := p.limits[symbol]; found {
+			return levels[level], true
+		}
+	}
+	if l, found := p.limits[AnyCurrency][level]; found {
+		return l, true
+	}
+	return Limit{}, !p.limited[level]
+}
 
 // WithdrawAction returns the action of a withdrawal of a fiat currency, or
 // of a crypto one.
@@ -168,16 +196,20 @@ func WithdrawAction(fiat bool) Action {
 	return WithdrawCrypto
 }
 
-// CheckWithdrawal decides a withdrawal of amount of the currency symbol
-// (currencyHK) by a user at level who has requested used in the window
-// already. It returns a *Refusal when the level does not allow it or the
-// amount is above a limit.
-func (p Policy) CheckWithdrawal(level Level, fiat bool, symbol, currencyHK string, amount, used shared.Decimal) error {
+// CheckWithdrawal decides a withdrawal of amount of the currency
+// currencyHK, known by symbols, its current symbol first, by a user at
+// level who has requested used in the window already. It returns a
+// *Refusal when the level does not allow it, the amount is above a limit,
+// or the level limits currencies and this one has no limit (#406).
+func (p Policy) CheckWithdrawal(level Level, fiat bool, symbols []string, currencyHK string, amount, used shared.Decimal) error {
 	action := WithdrawAction(fiat)
 	if !p.Allows(level, action) {
 		return &Refusal{Code: CodeVerificationRequired, Action: action, Level: level, Required: p.Required(action)}
 	}
-	limit := p.Limit(level, symbol)
+	limit, ok := p.Limit(level, symbols...)
+	if !ok {
+		return &Refusal{Code: CodeWithdrawalLimitUnconfigured, Action: action, Level: level, CurrencyHK: currencyHK}
+	}
 	if limit.PerTransaction != nil && amount.GreaterThan(*limit.PerTransaction) {
 		return &Refusal{Code: CodeWithdrawalLimitExceeded, Action: action, Level: level, CurrencyHK: currencyHK,
 			Period: PeriodTransaction, Limit: *limit.PerTransaction}
@@ -197,6 +229,10 @@ const (
 	// CodeWithdrawalLimitExceeded is a withdrawal above a limit of the
 	// user's level.
 	CodeWithdrawalLimitExceeded = "withdrawal_limit_exceeded"
+	// CodeWithdrawalLimitUnconfigured is a withdrawal of a currency that
+	// has no limit at a level that limits currencies (#406): a
+	// configuration error, refused rather than unlimited.
+	CodeWithdrawalLimitUnconfigured = "withdrawal_limit_unconfigured"
 )
 
 // The periods of a limit.
@@ -223,8 +259,11 @@ type Refusal struct {
 }
 
 func (r *Refusal) Error() string {
-	if r.Code == CodeVerificationRequired {
+	switch r.Code {
+	case CodeVerificationRequired:
 		return fmt.Sprintf("%s: %s needs level %d, the user has %d", r.Code, r.Action, r.Required, r.Level)
+	case CodeWithdrawalLimitUnconfigured:
+		return fmt.Sprintf("%s: %s of %s has no limit at level %d", r.Code, r.Action, r.CurrencyHK, r.Level)
 	}
 	return fmt.Sprintf("%s: %s of %s above the %s limit %s", r.Code, r.Action, r.CurrencyHK, r.Period, r.Limit)
 }
@@ -243,6 +282,7 @@ func (r *Refusal) Remaining() shared.Decimal {
 var (
 	messageVerificationRequired    = i18n.M("VERIFICATION_REQUIRED")
 	messageWithdrawalLimitExceeded = i18n.M("WITHDRAWAL_LIMIT_EXCEEDED")
+	messageLimitUnconfigured       = i18n.M("WITHDRAWAL_LIMIT_UNCONFIGURED")
 )
 
 // Send answers a refusal with 403, its code, and what the client needs to
@@ -256,9 +296,13 @@ func Send(c *gin.Context, err error) bool {
 	}
 	info := gin.H{"action": r.Action, "level": r.Level}
 	message := messageVerificationRequired
-	if r.Code == CodeVerificationRequired {
+	switch r.Code {
+	case CodeVerificationRequired:
 		info["required_level"] = r.Required
-	} else {
+	case CodeWithdrawalLimitUnconfigured:
+		message = messageLimitUnconfigured
+		info["currency_hk"] = r.CurrencyHK
+	default:
 		message = messageWithdrawalLimitExceeded
 		info["currency_hk"] = r.CurrencyHK
 		info["period"] = r.Period
@@ -272,7 +316,8 @@ func Send(c *gin.Context, err error) bool {
 	return true
 }
 
-// symbols returns the currency symbols that have limits, sorted.
+// symbols returns the currency symbols that have limits, sorted, without
+// the default.
 func (p Policy) symbols() []string {
-	return slices.Sorted(maps.Keys(p.limits))
+	return slices.DeleteFunc(slices.Sorted(maps.Keys(p.limits)), func(s string) bool { return s == AnyCurrency })
 }

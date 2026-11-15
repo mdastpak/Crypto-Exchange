@@ -19,7 +19,7 @@ import (
 // show what each level unlocks and what remains of the daily limits.
 //
 // @Summary Get my verification level
-// @Description The verification level of the signed-in user, from 0 to 2, and the KYC tier and status it comes from. Only an approved tier counts. actions lists every action (deposit_fiat, deposit_crypto, trade_otc, trade_market, withdraw_fiat, withdraw_crypto), whether the level allows it, and the level it needs. withdrawal_limits lists the limits of the currencies that the level may withdraw: per transaction, and in any 24 hours in all the user's accounts, the fee included, with what the user has requested and what remains. An action that the level does not allow answers 403 verification_required; a withdrawal above a limit answers 403 withdrawal_limit_exceeded.
+// @Description The verification level of the signed-in user, from 0 to 2, and the KYC tier and status it comes from. Only an approved tier counts. actions lists every action (deposit_fiat, deposit_crypto, trade_otc, trade_market, withdraw_fiat, withdraw_crypto), whether the level allows it, and the level it needs. withdrawal_limits lists the limits of the currencies that the level may withdraw: per transaction, and in any 24 hours in all the user's accounts, the fee included, with what the user has requested and what remains. An action that the level does not allow answers 403 verification_required; a withdrawal above a limit answers 403 withdrawal_limit_exceeded, and one of a currency without a limit at a level that limits others answers 403 withdrawal_limit_unconfigured (#406). A limit configured by a previous symbol of a currency is listed under its current symbol.
 // @Tags user
 // @Produce json
 // @Security BearerAuth

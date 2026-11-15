@@ -69,10 +69,18 @@ func TestPolicy_EveryActionAtEveryLevel(t *testing.T) {
 	assert.Equal(t, Level2, p.Required(WithdrawCrypto))
 
 	// The rial's limits: daily at level 1, none at level 2.
-	assert.Equal(t, "1000000000", p.Limit(Level1, "IRR").Daily.String())
-	assert.Equal(t, Limit{}, p.Limit(Level2, "IRR"), "level 2 has no limit of the exchange")
-	assert.Nil(t, p.Limit(Level1, "IRR").PerTransaction)
-	assert.Equal(t, Limit{}, p.Limit(Level2, "USDT"), "a currency without limits has none")
+	limit := func(level Level, symbols ...string) Limit {
+		t.Helper()
+		l, ok := p.Limit(level, symbols...)
+		require.True(t, ok, "level %d, %v", level, symbols)
+		return l
+	}
+	assert.Equal(t, "1000000000", limit(Level1, "IRR").Daily.String())
+	assert.Equal(t, Limit{}, limit(Level2, "IRR"), "level 2 has no limit of the exchange")
+	assert.Nil(t, limit(Level1, "IRR").PerTransaction)
+	assert.Equal(t, Limit{}, limit(Level2, "USDT"), "level 2 limits no currency, so none is refused there")
+	_, ok := p.Limit(Level1, "USDT")
+	assert.False(t, ok, "level 1 limits the rial, so a currency without a limit is not unlimited there (#406)")
 }
 
 func TestPolicy_TheSettingsChangeIt(t *testing.T) {
@@ -86,8 +94,11 @@ func TestPolicy_TheSettingsChangeIt(t *testing.T) {
 	assert.True(t, p.Allows(Level1, WithdrawCrypto))
 	assert.True(t, p.Allows(Level0, TradeMarket))
 	assert.False(t, p.Allows(Level0, TradeOTC), "an action the settings leave out takes its default")
-	assert.Equal(t, "300", p.Limit(Level1, "USDT").PerTransaction.String())
-	assert.Equal(t, Limit{}, p.Limit(Level1, "IRR"), "the settings replace the default limits")
+	usdt, ok := p.Limit(Level1, "USDT")
+	require.True(t, ok)
+	assert.Equal(t, "300", usdt.PerTransaction.String())
+	_, ok = p.Limit(Level1, "IRR")
+	assert.False(t, ok, "the settings replace the default limits, and the rial has none at a limited level")
 
 	_, err = NewPolicy(config.VerificationConfig{MinLevel: map[string]int{config.ActionDepositFiat: 3}})
 	require.Error(t, err)
@@ -110,32 +121,85 @@ func TestPolicy_CheckWithdrawal(t *testing.T) {
 		return r
 	}
 
-	require.NoError(t, p.CheckWithdrawal(Level1, true, "IRR", irr, dec("600"), dec("400")), "up to the limit exactly")
+	require.NoError(t, p.CheckWithdrawal(Level1, true, []string{"IRR"}, irr, dec("600"), dec("400")), "up to the limit exactly")
 
-	r := refusal(p.CheckWithdrawal(Level0, true, "IRR", irr, dec("1"), dec("0")))
+	r := refusal(p.CheckWithdrawal(Level0, true, []string{"IRR"}, irr, dec("1"), dec("0")))
 	assert.Equal(t, CodeVerificationRequired, r.Code)
 	assert.Equal(t, WithdrawFiat, r.Action)
 	assert.Equal(t, Level1, r.Required)
 
-	r = refusal(p.CheckWithdrawal(Level1, false, "USDT", irr, dec("1"), dec("0")))
+	r = refusal(p.CheckWithdrawal(Level1, false, []string{"USDT"}, irr, dec("1"), dec("0")))
 	assert.Equal(t, CodeVerificationRequired, r.Code, "crypto needs level 2")
 	assert.Equal(t, Level2, r.Required)
 
-	r = refusal(p.CheckWithdrawal(Level1, true, "IRR", irr, dec("601"), dec("0")))
+	r = refusal(p.CheckWithdrawal(Level1, true, []string{"IRR"}, irr, dec("601"), dec("0")))
 	assert.Equal(t, CodeWithdrawalLimitExceeded, r.Code)
 	assert.Equal(t, PeriodTransaction, r.Period)
 	assert.Equal(t, "600", r.Limit.String())
 
-	r = refusal(p.CheckWithdrawal(Level1, true, "IRR", irr, dec("500"), dec("700")))
+	r = refusal(p.CheckWithdrawal(Level1, true, []string{"IRR"}, irr, dec("500"), dec("700")))
 	assert.Equal(t, PeriodDaily, r.Period)
 	assert.Equal(t, "1000", r.Limit.String())
 	assert.Equal(t, "300", r.Remaining().String())
 
-	r = refusal(p.CheckWithdrawal(Level1, true, "IRR", irr, dec("1"), dec("1200")))
+	r = refusal(p.CheckWithdrawal(Level1, true, []string{"IRR"}, irr, dec("1"), dec("1200")))
 	assert.Equal(t, "0", r.Remaining().String(), "never below zero")
 
-	require.NoError(t, p.CheckWithdrawal(Level2, true, "IRR", irr, dec("4000"), dec("1000")), "level 2 has its own limit")
-	require.NoError(t, p.CheckWithdrawal(Level2, false, "BTC", irr, dec("1000000"), dec("0")), "crypto without limits")
+	require.NoError(t, p.CheckWithdrawal(Level2, true, []string{"IRR"}, irr, dec("4000"), dec("1000")), "level 2 has its own limit")
+
+	// A currency without a limit at a level that limits currencies is
+	// refused, not unlimited (#406).
+	r = refusal(p.CheckWithdrawal(Level2, false, []string{"BTC"}, irr, dec("1"), dec("0")))
+	assert.Equal(t, CodeWithdrawalLimitUnconfigured, r.Code)
+	assert.Equal(t, irr, r.CurrencyHK)
+}
+
+// TestPolicy_TheLimitFollowsTheCurrency checks #406: the limit of a
+// currency follows it through a rename, by its previous symbol, the
+// current symbol's entry first; a new or migrated currency takes the
+// default of the level, and without one it is refused.
+func TestPolicy_TheLimitFollowsTheCurrency(t *testing.T) {
+	const irt = "c0ffee00-0000-4000-8000-000000000002"
+	p, err := NewPolicy(config.VerificationConfig{
+		MinLevel: map[string]int{config.ActionWithdrawCrypto: 1},
+		WithdrawalLimits: map[string]map[int]config.WithdrawalLimit{
+			"IRR":  {1: {Daily: "1000"}},
+			"USDT": {1: {Daily: "50"}},
+			"TUSD": {1: {Daily: "70"}},
+		},
+	})
+	require.NoError(t, err)
+
+	// IRR renamed to IRT: its symbols are IRT, then IRR.
+	r := new(Refusal)
+	require.ErrorAs(t, p.CheckWithdrawal(Level1, true, []string{"IRT", "IRR"}, irt, dec("1001"), dec("0")), &r)
+	assert.Equal(t, CodeWithdrawalLimitExceeded, r.Code, "the limit of IRR still applies to IRT")
+	assert.Equal(t, "1000", r.Limit.String())
+	require.NoError(t, p.CheckWithdrawal(Level1, true, []string{"IRT", "IRR"}, irt, dec("1000"), dec("0")))
+
+	// The entry of the current symbol comes first.
+	l, ok := p.Limit(Level1, "TUSD", "USDT")
+	require.True(t, ok)
+	assert.Equal(t, "70", l.Daily.String())
+
+	// A new currency, or the target of a migration, with a symbol of its own.
+	require.ErrorAs(t, p.CheckWithdrawal(Level1, false, []string{"NEWCOIN"}, irt, dec("1"), dec("0")), &r)
+	assert.Equal(t, CodeWithdrawalLimitUnconfigured, r.Code)
+
+	// With a default of the level, it takes that.
+	p, err = NewPolicy(config.VerificationConfig{
+		MinLevel: map[string]int{config.ActionWithdrawCrypto: 1},
+		WithdrawalLimits: map[string]map[int]config.WithdrawalLimit{
+			"IRR":              {1: {Daily: "1000"}},
+			config.AnyCurrency: {1: {PerTransaction: "5"}},
+		},
+	})
+	require.NoError(t, err)
+	require.ErrorAs(t, p.CheckWithdrawal(Level1, false, []string{"NEWCOIN"}, irt, dec("6"), dec("0")), &r)
+	assert.Equal(t, CodeWithdrawalLimitExceeded, r.Code)
+	assert.Equal(t, "5", r.Limit.String())
+	require.NoError(t, p.CheckWithdrawal(Level1, false, []string{"NEWCOIN"}, irt, dec("5"), dec("0")))
+	assert.NotContains(t, p.symbols(), config.AnyCurrency, "the default is no currency of the summary")
 }
 
 func TestSend_AnswersTheRefusals(t *testing.T) {

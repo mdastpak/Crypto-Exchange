@@ -551,7 +551,12 @@ verification:
     withdraw_fiat: 1
     withdraw_crypto: 2
   # Per currency symbol and level, in units of the currency, the fee
-  # included. Empty or absent is no limit. Unset takes these defaults.
+  # included. Empty or absent is no limit. Unset takes these defaults. A
+  # previous symbol of a renamed currency still names it, and "*" holds the
+  # default of each level for every other currency. A level that limits a
+  # currency refuses the withdrawals of a currency without a limit or a
+  # default there (withdrawal_limit_unconfigured), rather than leave them
+  # unlimited (#406).
   withdrawal_limits:
     IRR:
       1: {daily: "1000000000"}       # 100 million tomans in any 24 hours
@@ -633,10 +638,14 @@ withdrawals:
   fiat_destination_wait_hours: 0     # The user's own accounts wait for nothing
   crypto_destination_wait_hours: 24  # A new address is usable after this long
   # By currency symbol, the amount from which a withdrawal waits for an
-  # administrator before it is paid (#70). A currency left out is never held.
+  # administrator before it is paid (#70). A previous symbol of a renamed
+  # currency still names it; "*" is the threshold of every other currency.
+  # Once any is set, a currency without one, and no "*", is held whatever
+  # the amount (#406). Empty holds nothing.
   review_above: {}
   #   USDT: "10000"
   #   IRR: "5000000000"
+  #   "*": "1000"
   # How a withdrawal is paid (#70). manual: an administrator pays each
   # transfer and records it (GET /admin/payouts). The limits of the rails
   # come from the documents of the banks and the payment provider, in
