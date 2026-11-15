@@ -196,6 +196,13 @@ definitions:
           $ref: '#/definitions/rebrand.Migration'
         type: array
     type: object
+  admin.MigrationProgress:
+    properties:
+      sources:
+        items:
+          $ref: '#/definitions/rebrand.SourceProgress'
+        type: array
+    type: object
   admin.PlatformOverview:
     properties:
       controls:
@@ -2901,6 +2908,31 @@ definitions:
       uuid:
         type: string
     type: object
+  rebrand.Converted:
+    properties:
+      amount:
+        example: "150.5"
+        type: string
+      credited:
+        example: "1.5"
+        type: string
+      dust:
+        example: "0.005"
+        type: string
+      entry_id:
+        format: uuid
+        type: string
+      source_hk:
+        description: |-
+          Source and Amount are what left the account; Target and Credited
+          what entered it. Dust is the part under the precision of the target,
+          which the exchange keeps.
+        format: uuid
+        type: string
+      target_hk:
+        format: uuid
+        type: string
+    type: object
   rebrand.Migration:
     properties:
       announcement_url:
@@ -2995,6 +3027,34 @@ definitions:
         type: string
       ratio:
         example: "0.01"
+        type: string
+    type: object
+  rebrand.SourceProgress:
+    properties:
+      conversions:
+        description: |-
+          Conversions are the balances converted, Converted what left them,
+          Credited what the target received, and Dust what the exchange kept.
+        type: integer
+      converted:
+        example: "150.5"
+        type: string
+      credited:
+        example: "1.5"
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+      dust:
+        example: "0.005"
+        type: string
+      holders:
+        description: |-
+          Holders are the balances of the source that are left, available,
+          locked, or pending, and Remaining their sum.
+        type: integer
+      remaining:
+        example: "12.5"
         type: string
     type: object
   rebrand.Step:
@@ -3712,6 +3772,21 @@ definitions:
     properties:
       code:
         example: "123456"
+        type: string
+    type: object
+  user.conversionRequest:
+    properties:
+      source_hk:
+        description: |-
+          SourceHK is the source currency to convert, whose whole available
+          balance converts.
+        format: uuid
+        type: string
+      sub_account_id:
+        description: |-
+          SubAccountID converts the holding of a sub-account of the user; empty
+          is the main account.
+        format: uuid
         type: string
     type: object
   user.profileUpdate:
@@ -5281,6 +5356,64 @@ paths:
       security:
       - BearerAuth: []
       summary: Cancel a migration
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/migrations/{id}/progress:
+    get:
+      description: 'For each source of the migration into this currency: the balances
+        of the source that are left (holders, with their available, locked, and pending
+        sum as remaining), and from the ledger the conversions made, what they converted,
+        what the target received, and the dust kept. A forced migration completes
+        only once no holder is left: its locked funds and pending deposits convert
+        once they are available.'
+      parameters:
+      - description: The target's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The migration's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.MigrationProgress'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the progress of a migration's conversion
       tags:
       - admin currencies
   /api/v1/admin/currencies/{hk}/networks:
@@ -10122,6 +10255,77 @@ paths:
       summary: Confirm a contact change
       tags:
       - user contacts
+  /api/v1/user/currency-migrations/{id}/convert:
+    post:
+      consumes:
+      - application/json
+      description: While an optional migration (a rebrand, redenomination, or merger
+        that offers its conversion) is in its converting phase, converts the whole
+        available balance of one of its sources into the target, at the source's ratio,
+        rounded down to the precision of the target; the rest under it is dust, which
+        the exchange keeps. Locked funds and pending deposits stay. The source must
+        allow convert_from and the target convert_into, and no restriction of the
+        user may block the conversion of either. A forced migration converts every
+        holder by itself and answers migration_not_converting here.
+      parameters:
+      - description: The migration's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The source
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.conversionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/rebrand.Converted'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: account_frozen, operation_restricted, asset_restricted, or
+            currency_operation_disabled
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: migration_not_found or not_a_source
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: migration_not_converting, nothing_to_convert, or insufficient_balance
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: conversions_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Convert a holding of a migrating currency
+      tags:
+      - user-currencies
   /api/v1/user/favorites:
     get:
       description: 'The favorite currencies and trading pairs of the signed-in user,

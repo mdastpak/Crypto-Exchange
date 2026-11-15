@@ -131,8 +131,10 @@ A balance (`internal/domain/balance`) is a state machine of one asset in one acc
 | `WITHDRAWAL` | | -a | | -a | A withdrawal is completed |
 | `TRANSFER_OUT` | | -a | | -a | Funds are sent to another account, through the lock |
 | `TRANSFER_IN` | +a | | | +a | Funds are received from another account |
+| `CONVERSION_DEBIT` | | -a | | -a | A currency migration converts the source, through the lock |
+| `CONVERSION_CREDIT` | +a | | | +a | A currency migration credits the target |
 
-Funds enter the total only through a credited deposit, a trade credit, or a transfer in, and leave it only from locked funds. A property test applies random sequences of transitions and checks that the total changes by exactly the funds that entered or left. Each transition returns a change event with the components before and after and the version, which a repository uses for optimistic locking (`UPDATE ... WHERE version = $n`). The database enforces the same invariants. The [ledger](#the-ledger) applies the transitions. Where funds are held on chain is tracked per wallet by custody, not in the user's balance.
+Funds enter the total only through a credited deposit, a trade credit, a transfer in, or a conversion credit, and leave it only from locked funds. A property test applies random sequences of transitions and checks that the total changes by exactly the funds that entered or left. Each transition returns a change event with the components before and after and the version, which a repository uses for optimistic locking (`UPDATE ... WHERE version = $n`). The database enforces the same invariants. The [ledger](#the-ledger) applies the transitions. Where funds are held on chain is tracked per wallet by custody, not in the user's balance.
 
 Every asset of the exchange is a row of `currencies`, and how it moves on each network a row of `currency_networks`: balances, markets, orders, trades, custody, restrictions, favorites, and delistings all reference a currency by its `hk`. See [the asset registry](#the-asset-registry).
 
@@ -149,6 +151,7 @@ Every asset of the exchange is a row of `currencies`, and how it moves on each n
 | `Transfer` | `LOCK` and `TRANSFER_OUT` of the sender, `TRANSFER_IN` of the receiver | none |
 | `SettleTrade` (OTC, against the exchange) | `TRADE_DEBIT` of what the user gives, `TRADE_CREDIT` of what it receives, `FEE` | `inventory` +given and -received, `fees` +fee |
 | `Withdraw` | `WITHDRAWAL` and `FEE`, from the funds locked at the request | `custody` +a, `fees` +fee |
+| `Convert` ([currency migrations](api.md#currency-migrations)) | `LOCK` and `CONVERSION_DEBIT` of the source, `CONVERSION_CREDIT` of the target | `custody` +a of the source, `custody` -(credit + dust) and `fees` +dust of the target |
 
 - **Accounts.** An account is a user and a sub-account of the user, or none for the main account. Each has a balance per currency, so a sub-account holds funds apart from the main account, and `Transfer` moves funds between them. Sub-accounts themselves are [#63](https://github.com/mdastpak/Crypto-Exchange/issues/63). The ledger refuses a sub-account that does not exist, is another user's, or is deleted, and keeps it from being deleted until the operation commits. Every table that names a user and a sub-account (balances, their changes and snapshots, orders, deposit addresses, withdrawals, sessions, settlements, and AML alerts) also checks in a foreign key that the sub-account is of that user (migration 20).
 - **One entry per operation.** Each operation is one row of `ledger_entries`, written in one transaction with its postings:

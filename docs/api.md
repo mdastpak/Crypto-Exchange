@@ -1142,10 +1142,12 @@ A migration goes through scheduled phases, each applied at its time by the sched
 | `announced` | The sources show the migration; everything is allowed | The same |
 | `deposits_paused` | Deposits and withdrawals of the sources stop | Not allowed |
 | `trading_halted` | Trading and conversions of the sources stop too | Not allowed |
-| `converting` | Balances are converted | The conversion is offered |
-| `completed` | The sources leave the lists | The sources stay |
+| `converting` | The available balances of the sources are converted; locked funds and pending deposits convert once they are available | Each holder may convert, with `POST /user/currency-migrations/{id}/convert` |
+| `completed` | The sources leave the lists, once no balance of them is left | The sources stay, and the conversion ends |
 
-The phases narrow the capabilities of the sources, which an operation checks, and refuse with `403 currency_operation_disabled`, whose `info.migration` names the migration. The conversion of balances, idempotent per migration and account, rounded down to the precision of the target with the dust recorded, and the conversion of late deposits of an old token, come with the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)); the notices to holders with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
+The phases narrow the capabilities of the sources, which an operation checks, and refuse with `403 currency_operation_disabled`, whose `info.migration` names the migration.
+
+A conversion is one ledger entry of kind `conversion` (migration 34): the available balance of the source is locked and debited (`CONVERSION_DEBIT`), and the target credited (`CONVERSION_CREDIT`) with the amount times the ratio, rounded down to the precision of the target, the most decimals of its networks, or 18 without one. The rest under it is dust, which goes to the `fees` account in the target, so custody must hold the credit and the dust. The entry's key is `currency_migration:<migration>:<balance>:v<version>`, so a balance converts once even when instances retry, and its reference is the migration. A forced migration in `converting` converts the holders in the scheduler of every instance, each balance claimed with `FOR UPDATE SKIP LOCKED`, so the instances share the work. Its `completed` phase waits, past its time, until no balance of its sources is left, available, locked, or pending. The conversion of late deposits of an old token comes with [#67](https://github.com/mdastpak/Crypto-Exchange/issues/67), and the notices to holders with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
 
 ### `POST /admin/currencies/{hk}/migrations` (admin)
 
@@ -1175,6 +1177,14 @@ The migrations that the currency is the target or a source of, newest first, wit
 ### `POST /admin/currencies/{hk}/migrations/{id}/cancel` (admin)
 
 Cancels a migration into `hk` before it converts: the phases that are left do not apply, and the sources get back what the phases paused. The optional body `{"version": 3}` refuses a cancel based on another version with `409 version_conflict`. Other errors: `404`, and `409` with `migration_not_open` for a completed or cancelled migration, or `migration_irreversible` from `converting` on. Audited as `currency.migration_cancel`.
+
+### `GET /admin/currencies/{hk}/migrations/{id}/progress` (admin)
+
+For each source of the migration into `hk`: `holders`, the balances of the source that are left, and `remaining`, their sum, available, locked, and pending; and from the ledger `conversions`, the balances converted, `converted`, what left them, `credited`, what the target received, and `dust`. `404` for a migration that is not into `hk`.
+
+### `POST /user/currency-migrations/{id}/convert` (user)
+
+While an optional migration is `converting`, converts the user's whole available balance of one source, `{"source_hk": "<hk>"}`, with `sub_account_id` for a sub-account. Locked funds and pending deposits stay. The source must allow `convert_from` and the target `convert_into`, and no restriction of the user may block a conversion of either. Response `201` with `entry_id`, `source_hk`, `amount`, `target_hk`, `credited`, and `dust`. Errors: `404` `migration_not_found` or `not_a_source`; `409` `migration_not_converting` (also for a forced migration, which converts by itself), `nothing_to_convert`, or `insufficient_balance` when the funds were spent meanwhile; `403` from the [restrictions](#restrictions) or `currency_operation_disabled`.
 
 ## Delistings
 

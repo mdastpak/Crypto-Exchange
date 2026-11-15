@@ -387,3 +387,50 @@ func TestReconcile_ReplaysAStoredChangeThatIsNotItsTransition(t *testing.T) {
 	require.Len(t, report.Mismatches, 1)
 	assert.Contains(t, report.Mismatches[0].Reason, "is not a valid transition")
 }
+
+// TestLedger_Convert converts a holding as a currency migration does
+// (#215): the source leaves through a lock, the target enters, custody
+// must hold the target instead, and the dust goes to the fees.
+func TestLedger_Convert(t *testing.T) {
+	ctx := context.Background()
+	b := newBooks(t)
+	alice := b.user()
+	lend, aave := b.currency("LEND"), b.currency("AAVE")
+	b.fund(alice, lend, "150.5")
+
+	ref := Ref{Type: "currency_migration", ID: "m1"}
+	c := Conversion{From: amount(lend, "150.5"), To: amount(aave, "1.5"), Dust: dec("0.005")}
+	res, err := b.Convert(ctx, "migration:m1:a", alice, c, ref)
+	require.NoError(t, err)
+	assert.Equal(t, [3]string{"0", "0", "0"}, b.components(alice, lend))
+	assert.Equal(t, [3]string{"1.5", "0", "0"}, b.components(alice, aave))
+
+	again, err := b.Convert(ctx, "migration:m1:a", alice, c, ref)
+	require.NoError(t, err)
+	assert.True(t, again.Replayed, "a conversion applies once")
+	assert.Equal(t, res.EntryID, again.EntryID)
+
+	lendBooks, aaveBooks := b.reconcile(lend), b.reconcile(aave)
+	assert.Equal(t, "0", lendBooks.Expected.String(), "custody no longer holds the source")
+	assert.Equal(t, "1.505", aaveBooks.Expected.String(), "custody holds what was credited and the dust")
+	assert.Equal(t, "0.005", aaveBooks.Accounts[AccountFees].String())
+
+	// A holding too small for the precision of the target is all dust.
+	bob := b.user()
+	b.fund(bob, lend, "0.1")
+	_, err = b.Convert(ctx, "migration:m1:b", bob, Conversion{From: amount(lend, "0.1"), To: amount(aave, "0"), Dust: dec("0.001")}, ref)
+	require.NoError(t, err)
+	assert.Equal(t, [3]string{"0", "0", "0"}, b.components(bob, lend))
+	assert.Equal(t, "0.006", b.reconcile(aave).Accounts[AccountFees].String())
+
+	for name, bad := range map[string]Conversion{
+		"into itself":  {From: amount(lend, "1"), To: amount(lend, "1")},
+		"nothing":      {From: amount(lend, "1"), To: amount(aave, "0")},
+		"negative":     {From: amount(lend, "1"), To: amount(aave, "-1"), Dust: dec("2")},
+		"no source":    {From: amount(lend, "0"), To: amount(aave, "1")},
+		"above it has": {From: amount(lend, "1"), To: amount(aave, "1")},
+	} {
+		_, err := b.Convert(ctx, "migration:bad:"+name, bob, bad, ref)
+		require.Error(t, err, name)
+	}
+}

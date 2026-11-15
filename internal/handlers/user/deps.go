@@ -11,9 +11,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
+	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
+	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/userauth"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
@@ -30,6 +32,12 @@ import (
 // QuoteService gives the OTC quotes (#61): *otc.Service.
 type QuoteService interface {
 	Quote(ctx context.Context, req otc.Request) (otc.Quote, error)
+}
+
+// ConversionService converts the user's holdings of the sources of
+// optional currency migrations (#215): rebrand.Store.
+type ConversionService interface {
+	ConvertOwn(ctx context.Context, migrationHK, sourceHK string, a ledger.Account) (rebrand.Converted, error)
 }
 
 // Store is the database of the routes: the contacts and their changes, the
@@ -154,6 +162,7 @@ var (
 	_ RestrictionReader   = restrictions.Store{}
 	_ VerificationReader  = verification.Store{}
 	_ WithdrawalService   = withdrawals.Service{}
+	_ ConversionService   = rebrand.Store{}
 	_ DestinationStore    = destinations.Store{}
 	_ ConfirmationService = confirm.Service{}
 	_ CodeStore           = (*otp.Store)(nil)

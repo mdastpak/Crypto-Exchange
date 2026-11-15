@@ -110,12 +110,13 @@ func TestTotalEffect(t *testing.T) {
 		BalanceChangeLock: 0, BalanceChangeUnlock: 0,
 		BalanceChangeTradeCredit: +1, BalanceChangeTradeDebit: -1, BalanceChangeFee: -1, BalanceChangeWithdrawal: -1,
 		BalanceChangeTransferOut: -1, BalanceChangeTransferIn: +1,
+		BalanceChangeConversionOut: -1, BalanceChangeConversionIn: +1,
 	} {
 		got, ok := change.TotalEffect()
 		assert.True(t, ok, change)
 		assert.Equal(t, want, got, change)
 	}
-	assert.Len(t, transitions, 11, "every transition is listed above")
+	assert.Len(t, transitions, 13, "every transition is listed above")
 	_, ok := BalanceChangeType("SETTLEMENT").TotalEffect()
 	assert.False(t, ok)
 }

@@ -1533,6 +1533,91 @@
                 }
             }
         },
+        "/api/v1/admin/currencies/{hk}/migrations/{id}/progress": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For each source of the migration into this currency: the balances of the source that are left (holders, with their available, locked, and pending sum as remaining), and from the ledger the conversions made, what they converted, what the target received, and the dust kept. A forced migration completes only once no holder is left: its locked funds and pending deposits convert once they are available.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Show the progress of a migration's conversion",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The target's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The migration's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.MigrationProgress"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/currencies/{hk}/networks": {
             "get": {
                 "security": [
@@ -8822,6 +8907,107 @@
                 }
             }
         },
+        "/api/v1/user/currency-migrations/{id}/convert": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "While an optional migration (a rebrand, redenomination, or merger that offers its conversion) is in its converting phase, converts the whole available balance of one of its sources into the target, at the source's ratio, rounded down to the precision of the target; the rest under it is dust, which the exchange keeps. Locked funds and pending deposits stay. The source must allow convert_from and the target convert_into, and no restriction of the user may block the conversion of either. A forced migration converts every holder by itself and answers migration_not_converting here.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-currencies"
+                ],
+                "summary": "Convert a holding of a migrating currency",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The migration's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The source",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.conversionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/rebrand.Converted"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "account_frozen, operation_restricted, asset_restricted, or currency_operation_disabled",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "migration_not_found or not_a_source",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "migration_not_converting, nothing_to_convert, or insufficient_balance",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "conversions_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/favorites": {
             "get": {
                 "security": [
@@ -11649,6 +11835,17 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/rebrand.Migration"
+                    }
+                }
+            }
+        },
+        "admin.MigrationProgress": {
+            "type": "object",
+            "properties": {
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rebrand.SourceProgress"
                     }
                 }
             }
@@ -15236,6 +15433,36 @@
                 }
             }
         },
+        "rebrand.Converted": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "150.5"
+                },
+                "credited": {
+                    "type": "string",
+                    "example": "1.5"
+                },
+                "dust": {
+                    "type": "string",
+                    "example": "0.005"
+                },
+                "entry_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source_hk": {
+                    "description": "Source and Amount are what left the account; Target and Credited\nwhat entered it. Dust is the part under the precision of the target,\nwhich the exchange keeps.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "target_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "rebrand.Migration": {
             "type": "object",
             "properties": {
@@ -15365,6 +15592,39 @@
                 "ratio": {
                     "type": "string",
                     "example": "0.01"
+                }
+            }
+        },
+        "rebrand.SourceProgress": {
+            "type": "object",
+            "properties": {
+                "conversions": {
+                    "description": "Conversions are the balances converted, Converted what left them,\nCredited what the target received, and Dust what the exchange kept.",
+                    "type": "integer"
+                },
+                "converted": {
+                    "type": "string",
+                    "example": "150.5"
+                },
+                "credited": {
+                    "type": "string",
+                    "example": "1.5"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dust": {
+                    "type": "string",
+                    "example": "0.005"
+                },
+                "holders": {
+                    "description": "Holders are the balances of the source that are left, available,\nlocked, or pending, and Remaining their sum.",
+                    "type": "integer"
+                },
+                "remaining": {
+                    "type": "string",
+                    "example": "12.5"
                 }
             }
         },
@@ -16293,6 +16553,21 @@
                 "code": {
                     "type": "string",
                     "example": "123456"
+                }
+            }
+        },
+        "user.conversionRequest": {
+            "type": "object",
+            "properties": {
+                "source_hk": {
+                    "description": "SourceHK is the source currency to convert, whose whole available\nbalance converts.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID converts the holding of a sub-account of the user; empty\nis the main account.",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

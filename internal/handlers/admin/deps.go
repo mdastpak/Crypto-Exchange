@@ -128,6 +128,7 @@ type RebrandStore interface {
 	Schedule(ctx context.Context, targetHK string, p rebrand.Plan, origin audit.Event) (rebrand.Migration, error)
 	List(ctx context.Context, currencyHK string) ([]rebrand.Migration, error)
 	Cancel(ctx context.Context, targetHK, hk string, version *int64, origin audit.Event) (rebrand.Migration, []currencies.Change, error)
+	Progress(ctx context.Context, targetHK, migrationHK string) ([]rebrand.SourceProgress, error)
 }
 
 // AuditLog records the events of the admin routes and lists the log:
