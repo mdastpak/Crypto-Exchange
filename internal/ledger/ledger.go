@@ -79,6 +79,7 @@ const (
 	KindTransfer        = "transfer"
 	KindTrade           = "trade"
 	KindWithdrawal      = "withdrawal"
+	KindConversion      = "conversion"
 )
 
 var (
@@ -256,6 +257,54 @@ func (l Ledger) SettleTrade(ctx context.Context, key string, a Account, t Trade,
 		e.postings = append(e.postings, posting{AccountFees, t.Fee.Currency, t.Fee.Value})
 	}
 	return l.record(ctx, e)
+}
+
+// Conversion converts the available funds of a in one currency into
+// another, as a currency migration does (#215): From leaves the balance,
+// through a lock as every debit does, and To enters it. Custody must then
+// hold From less of its currency and To + Dust more of the other, which the
+// exchange receives from the migration of the project; Dust, the part of
+// the converted amount under the precision of the target, goes to the fees
+// account. To or Dust of zero is none, not both.
+type Conversion struct {
+	From, To Amount
+	Dust     shared.Decimal
+}
+
+// Convert records a conversion of a.
+func (l Ledger) Convert(ctx context.Context, key string, a Account, c Conversion, ref Ref) (Result, error) {
+	e, err := conversion(key, a, c, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return l.record(ctx, e)
+}
+
+// conversion is the entry of a conversion.
+func conversion(key string, a Account, c Conversion, ref Ref) (entry, error) {
+	if c.From.Currency == c.To.Currency {
+		return entry{}, fmt.Errorf("%w: a conversion of %s into itself", ErrInvalidRequest, c.From.Currency)
+	}
+	if c.To.Value.IsNegative() || c.Dust.IsNegative() || c.To.Value.IsZero() && c.Dust.IsZero() {
+		return entry{}, fmt.Errorf("%w: a conversion credits a positive amount or dust", ErrInvalidRequest)
+	}
+	e := entry{kind: KindConversion, key: key, ref: ref,
+		moves: []move{
+			{a, c.From.Currency, balance.BalanceChangeLock, c.From.Value},
+			{a, c.From.Currency, balance.BalanceChangeConversionOut, c.From.Value},
+		},
+		postings: []posting{
+			{AccountCustody, c.From.Currency, c.From.Value},
+			{AccountCustody, c.To.Currency, c.To.Value.Add(c.Dust).Neg()},
+		},
+	}
+	if c.To.Value.IsPositive() {
+		e.moves = append(e.moves, move{a, c.To.Currency, balance.BalanceChangeConversionIn, c.To.Value})
+	}
+	if c.Dust.IsPositive() {
+		e.postings = append(e.postings, posting{AccountFees, c.To.Currency, c.Dust})
+	}
+	return e, nil
 }
 
 // Withdraw completes a withdrawal of a, whose amount and fee were locked

@@ -48,6 +48,8 @@ func TestLedger_RefusesAnEntryOfTheWrongShape(t *testing.T) {
 		{KindTrade, "TRADE_CREDIT", AccountFees},
 		{KindTrade, "TRADE_CREDIT", AccountCustody},
 		{KindWithdrawal, "TRANSFER_IN", AccountInventory},
+		{KindConversion, "CONVERSION_CREDIT", AccountFees},
+		{KindDepositCredited, "CONVERSION_CREDIT", AccountCustody},
 	} {
 		err := b.forge(forged.kind, forged.change, forged.account)
 		require.Error(t, err, "%+v", forged)
@@ -80,6 +82,13 @@ func TestLedger_RefusesAnEntryOfTheWrongShape(t *testing.T) {
 	_, err = b.Withdraw(ctx, "shape:withdraw", bob, amount(btc, "0.4"), dec("0.01"), Ref{})
 	require.NoError(t, err)
 	_, err = b.Withdraw(ctx, "shape:withdraw-free", bob, amount(btc, "0.05"), dec("0"), Ref{})
+	require.NoError(t, err)
+	eth := b.currency("ETH")
+	_, err = b.Convert(ctx, "shape:convert", alice, Conversion{From: amount(usdt, "5"), To: amount(eth, "0.002")}, Ref{})
+	require.NoError(t, err)
+	_, err = b.Convert(ctx, "shape:convert-dust", alice, Conversion{From: amount(usdt, "5"), To: amount(eth, "0.002"), Dust: dec("0.0001")}, Ref{})
+	require.NoError(t, err)
+	_, err = b.Convert(ctx, "shape:convert-only-dust", alice, Conversion{From: amount(usdt, "1"), To: amount(eth, "0"), Dust: dec("0.0001")}, Ref{})
 	require.NoError(t, err)
 	report, err := b.Reconcile(ctx, nil)
 	require.NoError(t, err)

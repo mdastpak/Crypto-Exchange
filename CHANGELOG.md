@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The conversion of currency migrations in the ledger ([#215](https://github.com/mdastpak/Crypto-Exchange/issues/215)). See [Currency migrations](docs/api.md#currency-migrations).
+  - A ledger entry of kind `conversion`, with the balance changes `CONVERSION_DEBIT` and `CONVERSION_CREDIT`, locks and debits the source and credits the target at the ratio, rounded down to the precision of the target; the dust goes to the `fees` account. Migration 34 adds the kind and its shapes to the check of every entry.
+  - A forced migration in `converting` converts the available balances of its sources in the scheduler of every instance, each balance once, claimed with `SKIP LOCKED`. Its `completed` phase waits until no balance of its sources is left, locked and pending funds included.
+  - `POST /user/currency-migrations/{id}/convert` converts the user's holding of a source of an optional migration while it converts, under the capabilities of both currencies and the user's restrictions.
+  - `GET /admin/currencies/{hk}/migrations/{id}/progress` shows the holders left and what was converted, credited, and kept as dust, per source.
 - OTC quotes ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)). See [OTC quotes](docs/api.md#otc-quotes) and the [`otc` settings](docs/configuration.md#otc).
   - `POST /user/otc/quote` with `market`, `side`, and `quantity` or `quote_amount` gives a firm price with its expiry, `otc.quote_ttl_seconds` of 5 to 10, and the taker fee of the market apart.
   - The price is the reference price of `price.Reader` raised for a buy, and lowered for a sell, by half the spread, the hedge cost with a fixed part per quote, the margin by size band, the risk premium, and `sqrt(slippage_k × quantity / liquidity)`, all per market in `otc.markets`. A margin under `min_margin_bps` is widened to it, so that no quote is given at a loss. The price is rounded to the tick against the user. A rial market takes its reference in tomans with `reference_multiplier: "10"`.
