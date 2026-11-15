@@ -72,7 +72,11 @@ func (s Service) Get(ctx context.Context, userHK, id string) (Withdrawal, error)
 		return Withdrawal{}, ErrNotFound
 	}
 	w, err := read(ctx, s.DB, `w.id = $1 AND w.user_id = $2`, id, userHK)
+	if err != nil {
+		return w, err
+	}
 	w.UserHK = ""
+	w.Payouts, err = payoutsOf(ctx, s.DB, w.ID)
 	return w, err
 }
 

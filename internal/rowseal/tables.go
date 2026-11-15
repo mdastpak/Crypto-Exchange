@@ -267,6 +267,15 @@ var (
 		text("table_name"), text("row_key"), timestamptz("detected_at"), timestamptz("resolved_at"),
 		text("resolution"), text("resolved_by"), text("reason"),
 	}}
+	// WithdrawalPayouts covers a transfer that pays a withdrawal (#70): its
+	// withdrawal, rail, provider, amount, fee, status, and the provider's
+	// references. A payout raised, completed, or released in SQL is not
+	// acted on. Its rows are sealed from the first one.
+	WithdrawalPayouts = &Table{Name: "withdrawal_payouts", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("withdrawal_id"), text("seq"), text("rail"), text("provider"), text("amount"), text("fee"), text("status"),
+		text("idempotency_key"), text("provider_ref"), text("tracking_id"), timestamptz("submitted_at"),
+		timestamptz("completed_at"), timestamptz("failed_at"),
+	}, SealedFromStart: true}
 )
 
 // Tables lists the protected tables.
@@ -274,7 +283,7 @@ var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
-	IntegrityFindings,
+	IntegrityFindings, WithdrawalPayouts,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

@@ -133,6 +133,14 @@ const (
 	// rejecting it, which releases its funds (#70), with the reason.
 	ActionWithdrawalApprove = "withdrawal.approve"
 	ActionWithdrawalReject  = "withdrawal.reject"
+	// The payouts of a withdrawal (#70): planned by the system, completed or
+	// failed by the provider or an administrator, and an administrator
+	// reading the destination of one in the clear to pay it by hand. The
+	// target is the withdrawal.
+	ActionWithdrawalPayoutsPlanned = "withdrawal.payouts_planned"
+	ActionWithdrawalPayoutComplete = "withdrawal.payout_complete"
+	ActionWithdrawalPayoutFail     = "withdrawal.payout_fail"
+	ActionWithdrawalPayoutView     = "withdrawal.payout_view"
 	// A user setting or removing their anti-phishing code (#375). The
 	// target is the user; the event never holds the phrase.
 	ActionUserAntiPhishingCodeSet    = "user.anti_phishing_code_set"

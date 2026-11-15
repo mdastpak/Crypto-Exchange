@@ -13,9 +13,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/testutil/identitytest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/pgtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/sealtest"
 	"github.com/mdastpak/crypto-exchange/internal/testutil/usertest"
@@ -63,13 +65,14 @@ func newFixture(t *testing.T, daily string) fixture {
 	require.NoError(t, err)
 
 	policy, err := verification.NewPolicy(config.VerificationConfig{
-		MinLevel:         map[string]int{"withdraw_crypto": 0},
+		MinLevel:         map[string]int{"withdraw_crypto": 0, "withdraw_fiat": 0},
 		WithdrawalLimits: map[string]map[int]config.WithdrawalLimit{"USDT": {0: {Daily: daily}}},
 	})
 	require.NoError(t, err)
 	levels := verification.Store{DB: db, Policy: policy}
 	noWait := 0
-	book := destinations.Store{DB: db, Levels: levels, Settings: config.WithdrawalsConfig{MaxDestinations: 20, CryptoDestinationWaitHours: &noWait}}
+	book := destinations.Store{DB: db, Levels: levels, Settings: config.WithdrawalsConfig{MaxDestinations: 20, CryptoDestinationWaitHours: &noWait},
+		Ownership: &identity.Stub{MatchUnlisted: true}, NationalIDs: identitytest.NewSealer()}
 
 	user := usertest.Insert(t, db, usertest.User{Email: "alice@example.com"})
 	require.NoError(t, rowseal.Reseal(ctx, db, rowseal.Users, "hk = $1", user))

@@ -4244,6 +4244,354 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/payouts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The payouts of withdrawals of a status, by when they are due: submitted by default, the transfers that the manual provider waits for an administrator to pay. Each has the user, the currency, the rail, the amount, and the destination masked. A payout that fails its seal answers 409 row_unverified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "List payouts",
+                "parameters": [
+                    {
+                        "enum": [
+                            "planned",
+                            "submitted",
+                            "completed",
+                            "failed",
+                            "released"
+                        ],
+                        "type": "string",
+                        "description": "submitted by default",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "At most 100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/withdrawals.Payout"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payouts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A payout with its destination in the clear: the card number, the IBAN, the account number, or the address and its memo, for the administrator who pays it by hand. The reading is audited as withdrawal.payout_view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "Show a payout to pay",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The payout",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.PayoutDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "payout_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payouts/{id}/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records a submitted payout as paid, with the bank's tracking number or the hash on chain. Its amount and its share of the fee leave the user's balance in the ledger, in the same transaction. The withdrawal completes when every payout is paid. A sensitive route: it needs a step-up. Audited as withdrawal.payout_complete.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "Record a payout as paid",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The payout",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The tracking number",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.payoutCompletion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Payout"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "payout_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "payout_not_open or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/payouts/{id}/fail": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records a planned or submitted payout as failed. Its amount is planned again on the next rail that reaches the destination; when none can take it, its amount and its share of the fee are released to the user. The payouts paid stay paid. A sensitive route: it needs a step-up. Audited as withdrawal.payout_fail, with the reason.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin withdrawals"
+                ],
+                "summary": "Record a payout as failed",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The payout",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The reason",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.payoutFailure"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/withdrawals.Payout"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "payout_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "payout_not_open or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/platform": {
             "get": {
                 "security": [
@@ -11051,6 +11399,26 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.payoutCompletion": {
+            "type": "object",
+            "properties": {
+                "tracking_id": {
+                    "description": "TrackingID is the bank's tracking number, or the hash of the\ntransaction on chain, 1 to 200 characters.",
+                    "type": "string",
+                    "example": "140311150012345678"
+                }
+            }
+        },
+        "admin.payoutFailure": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "description": "Reason is why it failed, 1 to 200 characters.",
+                    "type": "string",
+                    "example": "The destination bank refused the transfer."
+                }
+            }
+        },
         "admin.stepUpRequest": {
             "type": "object",
             "properties": {
@@ -15462,6 +15830,253 @@ const docTemplate = `{
                 }
             }
         },
+        "withdrawals.Payout": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is what the destination receives by this payout, and Fee the\nshare of the withdrawal's fee that it charges.",
+                    "type": "string",
+                    "example": "100000000"
+                },
+                "attempts": {
+                    "type": "integer"
+                },
+                "bank": {
+                    "type": "string",
+                    "example": "mellat"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "IRR"
+                },
+                "destination": {
+                    "type": "string",
+                    "example": "IR82054***************9002"
+                },
+                "destination_kind": {
+                    "type": "string",
+                    "enum": [
+                        "card",
+                        "iban",
+                        "account",
+                        "crypto"
+                    ]
+                },
+                "failed_at": {
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "internal"
+                },
+                "provider": {
+                    "description": "The fields of the administrators' views.",
+                    "type": "string",
+                    "example": "manual"
+                },
+                "rail": {
+                    "type": "string",
+                    "enum": [
+                        "card",
+                        "paya",
+                        "satna",
+                        "pol",
+                        "account",
+                        "chain"
+                    ],
+                    "example": "paya"
+                },
+                "scheduled_for": {
+                    "description": "ScheduledFor is when it may be sent: a later day holds what the\ndaily limits do not allow today.",
+                    "type": "string"
+                },
+                "seq": {
+                    "description": "Seq orders the payouts of a withdrawal.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "status": {
+                    "enum": [
+                        "planned",
+                        "submitted",
+                        "completed",
+                        "failed",
+                        "released"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/withdrawals.PayoutStatus"
+                        }
+                    ],
+                    "example": "submitted"
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "tracking_id": {
+                    "description": "TrackingID is the bank's tracking number, or the hash of the\ntransaction on chain.",
+                    "type": "string"
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "withdrawal_id": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "withdrawals.PayoutDetail": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is what the destination receives by this payout, and Fee the\nshare of the withdrawal's fee that it charges.",
+                    "type": "string",
+                    "example": "100000000"
+                },
+                "attempts": {
+                    "type": "integer"
+                },
+                "bank": {
+                    "type": "string",
+                    "example": "mellat"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "IRR"
+                },
+                "destination": {
+                    "type": "string",
+                    "example": "IR82054***************9002"
+                },
+                "destination_kind": {
+                    "type": "string",
+                    "enum": [
+                        "card",
+                        "iban",
+                        "account",
+                        "crypto"
+                    ]
+                },
+                "destination_memo": {
+                    "type": "string"
+                },
+                "destination_value": {
+                    "description": "DestinationValue is the card number, the IBAN, the account number,\nor the address, and DestinationMemo the memo of an address.",
+                    "type": "string",
+                    "example": "IR820540102680020817909002"
+                },
+                "failed_at": {
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "internal"
+                },
+                "provider": {
+                    "description": "The fields of the administrators' views.",
+                    "type": "string",
+                    "example": "manual"
+                },
+                "rail": {
+                    "type": "string",
+                    "enum": [
+                        "card",
+                        "paya",
+                        "satna",
+                        "pol",
+                        "account",
+                        "chain"
+                    ],
+                    "example": "paya"
+                },
+                "scheduled_for": {
+                    "description": "ScheduledFor is when it may be sent: a later day holds what the\ndaily limits do not allow today.",
+                    "type": "string"
+                },
+                "seq": {
+                    "description": "Seq orders the payouts of a withdrawal.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "status": {
+                    "enum": [
+                        "planned",
+                        "submitted",
+                        "completed",
+                        "failed",
+                        "released"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/withdrawals.PayoutStatus"
+                        }
+                    ],
+                    "example": "submitted"
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "tracking_id": {
+                    "description": "TrackingID is the bank's tracking number, or the hash of the\ntransaction on chain.",
+                    "type": "string"
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "withdrawal_id": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "withdrawals.PayoutStatus": {
+            "type": "string",
+            "enum": [
+                "planned",
+                "submitted",
+                "completed",
+                "failed",
+                "released"
+            ],
+            "x-enum-varnames": [
+                "PayoutPlanned",
+                "PayoutSubmitted",
+                "PayoutCompleted",
+                "PayoutFailed",
+                "PayoutReleased"
+            ]
+        },
         "withdrawals.Status": {
             "type": "string",
             "enum": [
@@ -15531,6 +16146,13 @@ const docTemplate = `{
                 "network": {
                     "type": "string",
                     "example": "tron"
+                },
+                "payouts": {
+                    "description": "Payouts are the transfers that pay it, in the view of one withdrawal.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/withdrawals.Payout"
+                    }
                 },
                 "reason": {
                     "description": "Reason is why it was rejected or failed.",

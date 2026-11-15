@@ -362,6 +362,23 @@ type Querier interface {
 // transaction, with FOR SHARE, so that the destination cannot be removed
 // before the request commits.
 func (s Store) Usable(ctx context.Context, q Querier, userHK, id string) (Resolved, error) {
+	return s.resolve(ctx, q, userHK, id, true)
+}
+
+// Resolve returns a destination of the user's book with its number or
+// address in the clear, for a payout of a withdrawal to it (#70). The
+// withdrawal checked that the destination was usable when it was
+// requested, so its payouts go there even if the user removed it since:
+// cancelling the withdrawal is how the user stops them. It refuses a
+// destination that is not the user's, or that does not match its seal in
+// enforce mode (ErrUnverified).
+func (s Store) Resolve(ctx context.Context, q Querier, userHK, id string) (Resolved, error) {
+	return s.resolve(ctx, q, userHK, id, false)
+}
+
+// resolve reads a destination of the user in the clear. For a new
+// withdrawal, it must be in the book, past its wait, and share-locked.
+func (s Store) resolve(ctx context.Context, q Querier, userHK, id string, forRequest bool) (Resolved, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return Resolved{}, ErrNotFound
 	}
@@ -369,8 +386,12 @@ func (s Store) Usable(ctx context.Context, q Querier, userHK, id string) (Resolv
 	var value, memo []byte
 	var usable bool
 	row := rowseal.WithdrawalDestinations.NewRow()
+	where := `id = $1 AND user_hk = $2`
+	if forRequest {
+		where += ` AND removed_at IS NULL FOR SHARE`
+	}
 	err := q.QueryRowContext(ctx, `SELECT `+listed+`, value_enc, memo_enc, usable_from <= NOW(), `+rowseal.WithdrawalDestinations.Fields("")+`
-		FROM withdrawal_destinations WHERE id = $1 AND user_hk = $2 AND removed_at IS NULL FOR SHARE`, id, userHK).
+		FROM withdrawal_destinations WHERE `+where, id, userHK).
 		Scan(append([]any{&r.ID, &r.Kind, &r.Label, &r.Masked, &r.Bank, &r.Network, &r.UsableFrom, &r.CreatedAt, &r.Version,
 			&value, &memo, &usable}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -382,7 +403,7 @@ func (s Store) Usable(ctx context.Context, q Querier, userHK, id string) (Resolv
 	if err := rowseal.Check(ctx, rowseal.WithdrawalDestinations, row); err != nil {
 		return Resolved{}, err
 	}
-	if !usable {
+	if forRequest && !usable {
 		return Resolved{}, &NotUsableYet{Until: r.UsableFrom}
 	}
 	cipher := field.Active()

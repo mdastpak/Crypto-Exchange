@@ -397,6 +397,22 @@ definitions:
         example: "1"
         type: string
     type: object
+  admin.payoutCompletion:
+    properties:
+      tracking_id:
+        description: |-
+          TrackingID is the bank's tracking number, or the hash of the
+          transaction on chain, 1 to 200 characters.
+        example: "140311150012345678"
+        type: string
+    type: object
+  admin.payoutFailure:
+    properties:
+      reason:
+        description: Reason is why it failed, 1 to 200 characters.
+        example: The destination bank refused the transfer.
+        type: string
+    type: object
   admin.stepUpRequest:
     properties:
       totp:
@@ -3731,6 +3747,204 @@ definitions:
           $ref: '#/definitions/verification.LimitStatus'
         type: array
     type: object
+  withdrawals.Payout:
+    properties:
+      amount:
+        description: |-
+          Amount is what the destination receives by this payout, and Fee the
+          share of the withdrawal's fee that it charges.
+        example: "100000000"
+        type: string
+      attempts:
+        type: integer
+      bank:
+        example: mellat
+        type: string
+      completed_at:
+        type: string
+      currency:
+        example: IRR
+        type: string
+      destination:
+        example: IR82054***************9002
+        type: string
+      destination_kind:
+        enum:
+        - card
+        - iban
+        - account
+        - crypto
+        type: string
+      failed_at:
+        type: string
+      fee:
+        example: "0"
+        type: string
+      id:
+        format: uuid
+        type: string
+      last_error:
+        type: string
+      network:
+        example: internal
+        type: string
+      provider:
+        description: The fields of the administrators' views.
+        example: manual
+        type: string
+      rail:
+        enum:
+        - card
+        - paya
+        - satna
+        - pol
+        - account
+        - chain
+        example: paya
+        type: string
+      scheduled_for:
+        description: |-
+          ScheduledFor is when it may be sent: a later day holds what the
+          daily limits do not allow today.
+        type: string
+      seq:
+        description: Seq orders the payouts of a withdrawal.
+        example: 1
+        type: integer
+      status:
+        allOf:
+        - $ref: '#/definitions/withdrawals.PayoutStatus'
+        enum:
+        - planned
+        - submitted
+        - completed
+        - failed
+        - released
+        example: submitted
+      submitted_at:
+        type: string
+      tracking_id:
+        description: |-
+          TrackingID is the bank's tracking number, or the hash of the
+          transaction on chain.
+        type: string
+      user_hk:
+        format: uuid
+        type: string
+      withdrawal_id:
+        format: uuid
+        type: string
+    type: object
+  withdrawals.PayoutDetail:
+    properties:
+      amount:
+        description: |-
+          Amount is what the destination receives by this payout, and Fee the
+          share of the withdrawal's fee that it charges.
+        example: "100000000"
+        type: string
+      attempts:
+        type: integer
+      bank:
+        example: mellat
+        type: string
+      completed_at:
+        type: string
+      currency:
+        example: IRR
+        type: string
+      destination:
+        example: IR82054***************9002
+        type: string
+      destination_kind:
+        enum:
+        - card
+        - iban
+        - account
+        - crypto
+        type: string
+      destination_memo:
+        type: string
+      destination_value:
+        description: |-
+          DestinationValue is the card number, the IBAN, the account number,
+          or the address, and DestinationMemo the memo of an address.
+        example: IR820540102680020817909002
+        type: string
+      failed_at:
+        type: string
+      fee:
+        example: "0"
+        type: string
+      id:
+        format: uuid
+        type: string
+      last_error:
+        type: string
+      network:
+        example: internal
+        type: string
+      provider:
+        description: The fields of the administrators' views.
+        example: manual
+        type: string
+      rail:
+        enum:
+        - card
+        - paya
+        - satna
+        - pol
+        - account
+        - chain
+        example: paya
+        type: string
+      scheduled_for:
+        description: |-
+          ScheduledFor is when it may be sent: a later day holds what the
+          daily limits do not allow today.
+        type: string
+      seq:
+        description: Seq orders the payouts of a withdrawal.
+        example: 1
+        type: integer
+      status:
+        allOf:
+        - $ref: '#/definitions/withdrawals.PayoutStatus'
+        enum:
+        - planned
+        - submitted
+        - completed
+        - failed
+        - released
+        example: submitted
+      submitted_at:
+        type: string
+      tracking_id:
+        description: |-
+          TrackingID is the bank's tracking number, or the hash of the
+          transaction on chain.
+        type: string
+      user_hk:
+        format: uuid
+        type: string
+      withdrawal_id:
+        format: uuid
+        type: string
+    type: object
+  withdrawals.PayoutStatus:
+    enum:
+    - planned
+    - submitted
+    - completed
+    - failed
+    - released
+    type: string
+    x-enum-varnames:
+    - PayoutPlanned
+    - PayoutSubmitted
+    - PayoutCompleted
+    - PayoutFailed
+    - PayoutReleased
   withdrawals.Status:
     enum:
     - review
@@ -3790,6 +4004,11 @@ definitions:
       network:
         example: tron
         type: string
+      payouts:
+        description: Payouts are the transfers that pay it, in the view of one withdrawal.
+        items:
+          $ref: '#/definitions/withdrawals.Payout'
+        type: array
       reason:
         description: Reason is why it was rejected or failed.
         type: string
@@ -6612,6 +6831,235 @@ paths:
       summary: Choose how SMS is routed
       tags:
       - admin notifications
+  /api/v1/admin/payouts:
+    get:
+      description: 'The payouts of withdrawals of a status, by when they are due:
+        submitted by default, the transfers that the manual provider waits for an
+        administrator to pay. Each has the user, the currency, the rail, the amount,
+        and the destination masked. A payout that fails its seal answers 409 row_unverified.'
+      parameters:
+      - description: submitted by default
+        enum:
+        - planned
+        - submitted
+        - completed
+        - failed
+        - released
+        in: query
+        name: status
+        type: string
+      - description: At most 100
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/withdrawals.Payout'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List payouts
+      tags:
+      - admin withdrawals
+  /api/v1/admin/payouts/{id}:
+    get:
+      description: 'A payout with its destination in the clear: the card number, the
+        IBAN, the account number, or the address and its memo, for the administrator
+        who pays it by hand. The reading is audited as withdrawal.payout_view.'
+      parameters:
+      - description: The payout
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/withdrawals.PayoutDetail'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: payout_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show a payout to pay
+      tags:
+      - admin withdrawals
+  /api/v1/admin/payouts/{id}/complete:
+    post:
+      consumes:
+      - application/json
+      description: 'Records a submitted payout as paid, with the bank''s tracking
+        number or the hash on chain. Its amount and its share of the fee leave the
+        user''s balance in the ledger, in the same transaction. The withdrawal completes
+        when every payout is paid. A sensitive route: it needs a step-up. Audited
+        as withdrawal.payout_complete.'
+      parameters:
+      - description: The payout
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The tracking number
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.payoutCompletion'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/withdrawals.Payout'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: payout_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: payout_not_open or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Record a payout as paid
+      tags:
+      - admin withdrawals
+  /api/v1/admin/payouts/{id}/fail:
+    post:
+      consumes:
+      - application/json
+      description: 'Records a planned or submitted payout as failed. Its amount is
+        planned again on the next rail that reaches the destination; when none can
+        take it, its amount and its share of the fee are released to the user. The
+        payouts paid stay paid. A sensitive route: it needs a step-up. Audited as
+        withdrawal.payout_fail, with the reason.'
+      parameters:
+      - description: The payout
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The reason
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.payoutFailure'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/withdrawals.Payout'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: payout_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: payout_not_open or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Record a payout as failed
+      tags:
+      - admin withdrawals
   /api/v1/admin/platform:
     get:
       description: What users see now (the status of GET /api/v1/public/status), and
