@@ -332,6 +332,29 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 		return Finding{}, false, err
 	}
 	defer tx.Rollback()
+	// The row of the finding is locked before the finding (#411): a request
+	// that holds the row, such as the user row, records its finding after
+	// it, so the other order could wait on it for ever. The table and the
+	// key of a finding never change, and are read first without a lock.
+	var table, rowKey string
+	err = tx.QueryRowContext(ctx, `SELECT table_name, row_key FROM integrity_findings WHERE id = $1`, id).Scan(&table, &rowKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Finding{}, false, ErrNotFound
+	}
+	if err != nil {
+		return Finding{}, false, err
+	}
+	t := TableNamed(table)
+	if t == nil {
+		return Finding{}, false, fmt.Errorf("finding %d names the unknown table %q", id, table)
+	}
+	// The row as it is now, locked until the commit: what a request
+	// records, what an approval compares with the request, and what is
+	// sealed.
+	row, err := lockRow(ctx, tx, t, rowKey)
+	if err != nil {
+		return Finding{}, false, err
+	}
 	f, err := scanFinding(tx.QueryRowContext(ctx, `SELECT `+findingFields+` FROM integrity_findings WHERE id = $1 FOR UPDATE`, id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Finding{}, false, ErrNotFound
@@ -342,9 +365,8 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 	if f.ResolvedAt != nil {
 		return Finding{}, false, ErrResolved
 	}
-	t := TableNamed(f.Table)
-	if t == nil {
-		return Finding{}, false, fmt.Errorf("finding %d names the unknown table %q", id, f.Table)
+	if f.Table != table || f.RowKey != rowKey {
+		return Finding{}, false, fmt.Errorf("finding %d changed its row while it was re-sealed", id)
 	}
 	extra := map[string]interface{}{}
 	if twoPerson {
@@ -354,12 +376,6 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 		}
 		if owner == origin.ActorID {
 			return Finding{}, false, ErrOwnRow
-		}
-		// The row as it is now, locked until the commit: what a request
-		// records, and what an approval compares with the request (#411).
-		row, err := lockRow(ctx, tx, t, f.RowKey)
-		if err != nil {
-			return Finding{}, false, err
 		}
 		waiting := f.ResealRequestedAt != nil && time.Since(*f.ResealRequestedAt) < ResealApprovalTTL
 		if waiting {
