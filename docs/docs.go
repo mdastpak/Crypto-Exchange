@@ -12554,6 +12554,11 @@ const docTemplate = `{
                     "description": "Destination is where it goes, masked, such as \"TR7NHq...gjLj6t\".",
                     "type": "string",
                     "example": "TR7NHq...gjLj6t"
+                },
+                "fee": {
+                    "description": "Fee is the network fee that is charged on top of the amount, with its\ncurrency, such as \"1 USDT\" (#408). Empty when the operation has none.\nIt is shown in the first message and the answer that starts the\nconfirmation; it is not stored, because the digest binds it already.",
+                    "type": "string",
+                    "example": "1 USDT"
                 }
             }
         },

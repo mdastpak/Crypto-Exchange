@@ -673,6 +673,14 @@ definitions:
         description: Destination is where it goes, masked, such as "TR7NHq...gjLj6t".
         example: TR7NHq...gjLj6t
         type: string
+      fee:
+        description: |-
+          Fee is the network fee that is charged on top of the amount, with its
+          currency, such as "1 USDT" (#408). Empty when the operation has none.
+          It is shown in the first message and the answer that starts the
+          confirmation; it is not stored, because the digest binds it already.
+        example: 1 USDT
+        type: string
     type: object
   confirm.Method:
     enum:

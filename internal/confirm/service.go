@@ -323,17 +323,27 @@ type Details struct {
 	Amount string `json:"amount" example:"100 USDT"`
 	// Destination is where it goes, masked, such as "TR7NHq...gjLj6t".
 	Destination string `json:"destination" example:"TR7NHq...gjLj6t"`
+	// Fee is the network fee that is charged on top of the amount, with its
+	// currency, such as "1 USDT" (#408). Empty when the operation has none.
+	// It is shown in the first message and the answer that starts the
+	// confirmation; it is not stored, because the digest binds it already.
+	Fee string `json:"fee,omitempty" example:"1 USDT"`
 }
 
 // String is the details in one line, for an email or a template that has
 // one parameter.
-func (d Details) String() string { return d.Amount + " to " + d.Destination }
+func (d Details) String() string {
+	if d.Fee != "" {
+		return d.Amount + " to " + d.Destination + " (fee " + d.Fee + ")"
+	}
+	return d.Amount + " to " + d.Destination
+}
 
 // MaxDetailLength bounds the amount and the destination of Details.
 const MaxDetailLength = 25
 
 func (d Details) valid() bool {
-	return d.Amount != "" && d.Destination != "" && len(d.Amount) <= MaxDetailLength && len(d.Destination) <= MaxDetailLength
+	return d.Amount != "" && d.Destination != "" && len(d.Amount) <= MaxDetailLength && len(d.Destination) <= MaxDetailLength && len(d.Fee) <= MaxDetailLength
 }
 
 // Challenge is a confirmation as the user sees it.
