@@ -39,3 +39,8 @@ func (s Store) ConvertOwn(ctx context.Context, migrationHK, sourceHK string, a l
 func (s Store) Progress(ctx context.Context, targetHK, migrationHK string) ([]SourceProgress, error) {
 	return Progress(ctx, s.DB, targetHK, migrationHK)
 }
+
+// Retry is Retry on s.DB.
+func (s Store) Retry(ctx context.Context, targetHK, migrationHK string, origin audit.Event) (int, error) {
+	return Retry(ctx, s.DB, targetHK, migrationHK, origin)
+}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/convhold"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
@@ -67,32 +69,51 @@ type Converted struct {
 func ConvertHoldings(ctx context.Context, db *sql.DB, limit int) (int, error) {
 	converted := 0
 	// The migrations that fail their seal in this run (#451): their
-	// holdings wait, and the others convert.
+	// holdings wait, and the others convert. A balance that fails to
+	// convert is held (#452), and counts toward the limit.
 	skip := []string{}
-	for converted < limit {
-		ok, refused, err := convertOne(ctx, db, skip)
+	for tried := 0; tried < limit; {
+		out, refused, err := convertOne(ctx, db, skip)
 		if err != nil {
 			return converted, err
 		}
-		if refused != "" {
+		switch out {
+		case outcomeNone:
+			return converted, nil
+		case outcomeRefused:
 			skip = append(skip, refused)
 			continue
+		case outcomeConverted:
+			converted++
 		}
-		if !ok {
-			break
-		}
-		converted++
+		tried++
 	}
 	return converted, nil
 }
 
-// convertOne converts one holding of a migration that is not in skip. A
-// migration that fails its seal converts nothing: convertOne returns it,
-// and its finding is recorded.
-func convertOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, error) {
+// The outcomes of the conversion of one balance.
+type outcome int
+
+const (
+	// outcomeNone is no balance left to claim.
+	outcomeNone outcome = iota
+	// outcomeConverted is a balance converted.
+	outcomeConverted
+	// outcomeHeld is a balance whose conversion failed, held for a retry.
+	outcomeHeld
+	// outcomeRefused is a migration that fails its seal.
+	outcomeRefused
+)
+
+// convertOne converts one holding of a migration that is not in skip, the
+// lowest balance that is not held (#452). A migration that fails its seal
+// converts nothing: convertOne returns it, and its finding is recorded. A
+// balance whose conversion fails is held, so that the next claim takes the
+// next one.
+func convertOne(ctx context.Context, db *sql.DB, skip []string) (outcome, string, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to start a conversion: %w", err)
+		return outcomeNone, "", fmt.Errorf("failed to start a conversion: %w", err)
 	}
 	defer tx.Rollback()
 	// The source balance first, then the ledger takes the target's: no
@@ -110,25 +131,46 @@ func convertOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, e
 		JOIN currency_migrations m ON m.hk = s.migration_hk
 		WHERE m.forced AND m.phase = 'converting' AND b.available::numeric > 0
 		  AND NOT (m.hk::text = ANY(string_to_array($1, ',')))
+		  AND `+fmt.Sprintf(convhold.Skip, convhold.KindMigration, "m.hk", "b.id")+`
 		ORDER BY b.id
 		FOR NO KEY UPDATE OF b SKIP LOCKED LIMIT 1`, []any{joinHKs(skip)}, sealed.Dest()...)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, "", nil
+		return outcomeNone, "", nil
 	}
 	if err != nil {
-		return false, "", err
+		if h.balanceID == "" {
+			return outcomeNone, "", err
+		}
+		return hold(ctx, db, tx, h, err)
 	}
 	if err := rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed); err != nil {
 		log.Printf("SECURITY: migration %s converts nothing until its finding is resolved: %v", h.migration, err)
-		return false, h.migration, nil
+		return outcomeRefused, h.migration, nil
 	}
 	if _, err := convert(ctx, tx, h); err != nil {
-		return false, "", err
+		return hold(ctx, db, tx, h, err)
+	}
+	if err := convhold.Release(ctx, tx, convhold.KindMigration, h.migration, h.balanceID); err != nil {
+		return outcomeNone, "", err
 	}
 	if err := tx.Commit(); err != nil {
-		return false, "", fmt.Errorf("failed to commit a conversion: %w", err)
+		return outcomeNone, "", fmt.Errorf("failed to commit a conversion: %w", err)
 	}
-	return true, "", nil
+	return outcomeConverted, "", nil
+}
+
+// hold rolls back the conversion of h that failed with cause, and holds
+// its balance for a retry. A cancelled context is not the balance's
+// failure: it returns the error instead.
+func hold(ctx context.Context, db *sql.DB, tx *sql.Tx, h holding, cause error) (outcome, string, error) {
+	_ = tx.Rollback()
+	if ctx.Err() != nil {
+		return outcomeNone, "", cause
+	}
+	if _, err := convhold.Hold(ctx, db, convhold.KindMigration, h.migration, h.balanceID, h.source, cause); err != nil {
+		return outcomeNone, "", fmt.Errorf("%w (while converting: %w)", err, cause)
+	}
+	return outcomeHeld, "", nil
 }
 
 // claim reads and locks one holding.
@@ -304,6 +346,12 @@ type SourceProgress struct {
 	// converts until an administrator reviews its integrity finding and
 	// re-seals it.
 	Unverified bool `json:"unverified,omitempty"`
+	// Blocked are the balances of the source whose conversion failed, held
+	// for a retry (#452), and BlockedCodes how many failed with each code,
+	// such as row_unverified. The migration completes only once they too
+	// are converted.
+	Blocked      int            `json:"blocked"`
+	BlockedCodes map[string]int `json:"blocked_codes,omitempty"`
 }
 
 // Progress returns the progress of the conversion of each source of a
@@ -358,10 +406,30 @@ func Progress(ctx context.Context, db *sql.DB, targetHK, migrationHK string) ([]
 		migrationHK).Scan(sealed.Dest()...); err != nil {
 		return nil, fmt.Errorf("failed to read the progress: %w", err)
 	}
-	if rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed) != nil {
-		for i := range out {
-			out[i].Unverified = true
-		}
+	unverified := rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed) != nil
+	blocked, err := convhold.Summary(ctx, db, convhold.KindMigration, migrationHK)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Unverified = unverified
+		b := blocked[out[i].CurrencyHK]
+		out[i].Blocked, out[i].BlockedCodes = b.Balances, b.Codes
 	}
 	return out, nil
+}
+
+// Retry makes the balances of a migration into targetHK whose conversion
+// failed due now (#452), such as after a re-seal, and returns how many, or
+// ErrNotFound. The next run of the scheduler converts them.
+func Retry(ctx context.Context, db *sql.DB, targetHK, migrationHK string, origin audit.Event) (int, error) {
+	var ok bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM currency_migrations WHERE hk = $1::uuid AND target_hk = $2::uuid)`,
+		migrationHK, targetHK).Scan(&ok); err != nil {
+		return 0, fmt.Errorf("failed to read the migration: %w", err)
+	}
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return convhold.Retry(ctx, db, convhold.KindMigration, migrationHK, targetHK, origin)
 }

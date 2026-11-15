@@ -123,6 +123,7 @@ type DelistingStore interface {
 	Override(ctx context.Context, currencyHK string, k currencies.Capability, allowed *bool, note string, origin audit.Event) (*models.CurrencyLifecycle, delisting.Change, error)
 	Report(ctx context.Context, currencyHK, hk string) (delisting.SettlementReport, error)
 	Notices(ctx context.Context, currencyHK, hk string) ([]delisting.NoticeReport, error)
+	Retry(ctx context.Context, currencyHK, hk string, origin audit.Event) (int, error)
 }
 
 // RebrandStore changes and reads the rebrands: rebrand.Store.
@@ -131,6 +132,7 @@ type RebrandStore interface {
 	List(ctx context.Context, currencyHK string) ([]rebrand.Migration, error)
 	Cancel(ctx context.Context, targetHK, hk string, version *int64, origin audit.Event) (rebrand.Migration, []currencies.Change, error)
 	Progress(ctx context.Context, targetHK, migrationHK string) ([]rebrand.SourceProgress, error)
+	Retry(ctx context.Context, targetHK, migrationHK string, origin audit.Event) (int, error)
 }
 
 // AuditLog records the events of the admin routes and lists the log:

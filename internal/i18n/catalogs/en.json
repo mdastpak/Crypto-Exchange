@@ -69,6 +69,8 @@
   "CONTROL_NOT_FOUND": "Control not found",
   "CONTROL_VERSION_CONFLICT": "The control has changed since that version; read it again and retry.",
   "CONVERSIONS_UNAVAILABLE": "Conversions are not available right now.",
+  "FAILED_TO_RETRY_CONVERSIONS": "Failed to retry the held conversions.",
+  "CONVERSIONS_RETRIED": "The held conversions are due now.",
   "CURRENCIES_RETRIEVED_SUCCESSFULLY": "Currencies retrieved successfully.",
   "CURRENCIES_UNAVAILABLE": "Currencies are temporarily unavailable.",
   "CURRENCY_ALREADY_DELISTING": "The currency is already being delisted, with steps left, or is delisted.",
