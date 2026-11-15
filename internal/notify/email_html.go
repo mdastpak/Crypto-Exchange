@@ -56,10 +56,16 @@ func loadHTMLTemplates(setting string) (*htmlTemplates, error) {
 		dir = os.DirFS(setting)
 	}
 	t := &htmlTemplates{}
-	for name, into := range map[string]**htmltemplate.Template{
-		htmlTemplateName(""): &t.otp, htmlTemplateName(PurposeWithdrawal): &t.withdrawal,
-		htmlTemplateName(PurposeAntiPhishingReminder): &t.reminder, htmlTemplateName(PurposeDenied): &t.denied,
+	// In a fixed order, so that a directory that lacks several templates
+	// always names the same one first.
+	for _, tmpl := range []struct {
+		purpose string
+		into    **htmltemplate.Template
+	}{
+		{"", &t.otp}, {PurposeWithdrawal, &t.withdrawal},
+		{PurposeAntiPhishingReminder, &t.reminder}, {PurposeDenied, &t.denied},
 	} {
+		name, into := htmlTemplateName(tmpl.purpose), tmpl.into
 		text, err := fs.ReadFile(dir, name)
 		if err != nil {
 			return nil, fmt.Errorf("html_templates: %w", err)
