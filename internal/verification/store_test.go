@@ -310,3 +310,78 @@ func TestStore_CheckWithdrawal_RefusesWhatItCannotCheck(t *testing.T) {
 	require.Error(t, check(alice, irr, "0"))
 	require.NoError(t, check(alice, irr, fmt.Sprint(1_000_000_000_000)), "no limits without settings")
 }
+
+// TestStore_TheLimitFollowsARename renames the rial in SQL, as an
+// administrator's rename does (#406): the symbol changes in place, and
+// currency_symbols keeps the old one. The limit of IRR, and what the window
+// holds, still apply to IRT, and the summary shows the limit under the new
+// symbol. A currency listed later, with no limit, is refused at the level
+// that limits currencies.
+func TestStore_TheLimitFollowsARename(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, map[string]map[int]config.WithdrawalLimit{
+		"IRR": {1: {Daily: "1000"}},
+	})
+	irr := f.currency("IRR", true)
+	alice := f.user(shared.KYCTierBasic, shared.KYCStatusApproved)
+	main := f.account(alice)
+	f.fund(main, irr, "5000")
+	_, err := f.request(alice, main, irr, "800")
+	require.NoError(t, err)
+
+	_, err = f.DB.Exec(`UPDATE currencies SET info = jsonb_set(info, '{symbol}', '"IRT"') WHERE hk = $1`, irr)
+	require.NoError(t, err)
+	var previous int
+	require.NoError(t, f.DB.QueryRow(`SELECT count(*) FROM currency_symbols WHERE currency_hk = $1 AND symbol = 'IRR' AND NOT current`, irr).Scan(&previous))
+	require.Equal(t, 1, previous, "the rename keeps IRR as a previous symbol")
+
+	r := refusalOf(t, func() error { _, err := f.request(alice, main, irr, "201"); return err }())
+	assert.Equal(t, CodeWithdrawalLimitExceeded, r.Code, "the limit of IRR applies to IRT")
+	assert.Equal(t, "800", r.Used.String())
+	_, err = f.request(alice, main, irr, "200")
+	require.NoError(t, err)
+
+	sum, err := f.Summary(ctx, alice)
+	require.NoError(t, err)
+	require.Len(t, sum.WithdrawalLimits, 1)
+	assert.Equal(t, "IRT", sum.WithdrawalLimits[0].Symbol)
+	assert.Equal(t, irr, sum.WithdrawalLimits[0].CurrencyHK)
+	assert.Equal(t, "0", sum.WithdrawalLimits[0].Remaining.String())
+
+	toman := f.currency("TMN", true)
+	f.fund(main, toman, "5000")
+	r = refusalOf(t, func() error { _, err := f.request(alice, main, toman, "1"); return err }())
+	assert.Equal(t, CodeWithdrawalLimitUnconfigured, r.Code, "a new currency without a limit is not unlimited")
+
+	// Released, IRR may name another currency, so it no longer names IRT.
+	_, err = f.DB.Exec(`UPDATE currency_symbols SET released_at = NOW(), released_by = $2 WHERE currency_hk = $1 AND symbol = 'IRR'`, irr, alice)
+	require.NoError(t, err)
+	r = refusalOf(t, func() error { _, err := f.request(alice, main, irr, "1"); return err }())
+	assert.Equal(t, CodeWithdrawalLimitUnconfigured, r.Code, "a released symbol no longer carries the limit")
+}
+
+// TestWithdrawableCurrencies_ShowWhatHasNoLimit lists the currencies that
+// the warnings at startup check (#406): listed, with a network that
+// withdraws. The rial, renamed, keeps its limit by its previous symbol; a
+// new fiat currency without one is refused at level 1, which limits the
+// rial; a currency no network withdraws is left out.
+func TestWithdrawableCurrencies_ShowWhatHasNoLimit(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, map[string]map[int]config.WithdrawalLimit{"IRR": {1: {Daily: "1000"}}})
+	irr, toman, closed := f.currency("IRR", true), f.currency("TMN", true), f.currency("OLD", true)
+	for _, hk := range []string{irr, toman, closed} {
+		_, err := f.DB.Exec(`INSERT INTO currency_networks (currency_hk, network, decimals, custody_mode, withdrawal_enabled)
+			VALUES ($1, 'internal', 0, 'ON_CHAIN', $2)`, hk, hk != closed)
+		require.NoError(t, err)
+	}
+	_, err := f.DB.Exec(`UPDATE currencies SET info = jsonb_set(info, '{symbol}', '"IRT"') WHERE hk = $1`, irr)
+	require.NoError(t, err)
+
+	list, err := WithdrawableCurrencies(ctx, f.DB)
+	require.NoError(t, err)
+	require.Len(t, list, 2, "OLD has no network that withdraws")
+	assert.Equal(t, []string{"IRT", "IRR"}, list[0].Symbols)
+	assert.Empty(t, f.Policy.Unlimited(list[0]), "the renamed rial keeps its limit")
+	assert.Equal(t, []string{"TMN"}, list[1].Symbols)
+	assert.Equal(t, []Level{Level1}, f.Policy.Unlimited(list[1]), "refused at level 1; level 2 limits no currency")
+}

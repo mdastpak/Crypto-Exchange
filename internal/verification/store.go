@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -84,14 +86,28 @@ func (s Store) Check(ctx context.Context, q Querier, userHK string, a Action) er
 
 // currency is what a check needs of a currency.
 type currency struct {
-	Symbol string
-	Fiat   bool
+	// Symbols are its current symbol, and then the ones it had before a
+	// rename, by which a limit may be configured (#406).
+	Symbols []string
+	Fiat    bool
 }
+
+// symbolsOf is the expression of every symbol of the currency c.hk, its
+// current one first and then its previous ones, the latest first, joined
+// with commas, which no symbol holds: upper-case letters and digits.
+// currency_symbols keeps each symbol a currency had, reserved to it until
+// an administrator releases it; a released symbol may name another
+// currency, so it no longer counts.
+const symbolsOf = `concat_ws(',', c.info->>'symbol', (SELECT string_agg(p.symbol, ',' ORDER BY p.created_at DESC, p.symbol)
+		FROM currency_symbols p WHERE p.currency_hk = c.hk AND NOT p.current AND p.released_at IS NULL
+		  AND p.symbol <> c.info->>'symbol'))`
 
 func readCurrency(ctx context.Context, q Querier, currencyHK string) (currency, error) {
 	var c currency
-	err := q.QueryRowContext(ctx, `SELECT info->>'symbol', COALESCE((info->>'if_fiat')::boolean, false)
-		FROM currencies WHERE hk = $1 AND deleted_at IS NULL`, currencyHK).Scan(&c.Symbol, &c.Fiat)
+	var symbols string
+	err := q.QueryRowContext(ctx, `SELECT `+symbolsOf+`, COALESCE((c.info->>'if_fiat')::boolean, false)
+		FROM currencies c WHERE c.hk = $1 AND c.deleted_at IS NULL`, currencyHK).Scan(&symbols, &c.Fiat)
+	c.Symbols = strings.Split(symbols, ",")
 	if errors.Is(err, sql.ErrNoRows) {
 		return currency{}, fmt.Errorf("%w: %s", ErrUnknownCurrency, currencyHK)
 	}
@@ -125,12 +141,12 @@ func (s Store) CheckWithdrawal(ctx context.Context, tx *sql.Tx, userHK, currency
 		return err
 	}
 	used := shared.NewDecimalFromInt64(0)
-	if limit := s.Policy.Limit(st.Level, c.Symbol); limit.Daily != nil && s.Policy.Allows(st.Level, WithdrawAction(c.Fiat)) {
+	if limit, _ := s.Policy.Limit(st.Level, c.Symbols...); limit.Daily != nil && s.Policy.Allows(st.Level, WithdrawAction(c.Fiat)) {
 		if used, err = withdrawn(ctx, tx, userHK, currencyHK, true); err != nil {
 			return err
 		}
 	}
-	return s.Policy.CheckWithdrawal(st.Level, c.Fiat, c.Symbol, currencyHK, amount, used)
+	return s.Policy.CheckWithdrawal(st.Level, c.Fiat, c.Symbols, currencyHK, amount, used)
 }
 
 // withdrawn returns what the user has requested to withdraw of the
@@ -208,25 +224,32 @@ func (s Store) Summary(ctx context.Context, userHK string) (Summary, error) {
 	for _, a := range Actions {
 		sum.Actions = append(sum.Actions, ActionStatus{Action: a, Allowed: s.Policy.Allows(st.Level, a), RequiredLevel: s.Policy.Required(a)})
 	}
-	for _, symbol := range s.Policy.symbols() {
-		limit := s.Policy.Limit(st.Level, symbol)
-		if limit.Daily == nil && limit.PerTransaction == nil {
-			continue
-		}
-		var hk string
-		var fiat bool
-		err := s.DB.QueryRowContext(ctx, `SELECT hk::text, COALESCE((info->>'if_fiat')::boolean, false)
-			FROM currencies WHERE info->>'symbol' = $1 AND deleted_at IS NULL`, symbol).Scan(&hk, &fiat)
+	// Each configured symbol names the currency that has or had it (#406),
+	// shown by its current symbol, once.
+	seen := map[string]bool{}
+	for _, configured := range s.Policy.symbols() {
+		var hk, symbols string
+		var c currency
+		err := s.DB.QueryRowContext(ctx, `SELECT c.hk::text, `+symbolsOf+`, COALESCE((c.info->>'if_fiat')::boolean, false)
+			FROM currencies c WHERE c.deleted_at IS NULL
+			  AND (c.info->>'symbol' = $1 OR c.hk = (SELECT cs.currency_hk FROM currency_symbols cs WHERE cs.symbol = $1 AND cs.released_at IS NULL))
+			LIMIT 1`, configured).Scan(&hk, &symbols, &c.Fiat)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
-			return Summary{}, fmt.Errorf("read the currency %s: %w", symbol, err)
+			return Summary{}, fmt.Errorf("read the currency %s: %w", configured, err)
 		}
-		if !s.Policy.Allows(st.Level, WithdrawAction(fiat)) {
+		c.Symbols = strings.Split(symbols, ",")
+		if seen[hk] || !s.Policy.Allows(st.Level, WithdrawAction(c.Fiat)) {
 			continue
 		}
-		ls := LimitStatus{CurrencyHK: hk, Symbol: symbol, Daily: limit.Daily, PerTransaction: limit.PerTransaction,
+		seen[hk] = true
+		limit, _ := s.Policy.Limit(st.Level, c.Symbols...)
+		if limit.Daily == nil && limit.PerTransaction == nil {
+			continue
+		}
+		ls := LimitStatus{CurrencyHK: hk, Symbol: c.Symbols[0], Daily: limit.Daily, PerTransaction: limit.PerTransaction,
 			Used: shared.NewDecimalFromInt64(0), WindowHours: int(Window.Hours())}
 		if limit.Daily != nil {
 			if ls.Used, err = withdrawn(ctx, s.DB, userHK, hk, false); err != nil {
@@ -241,4 +264,53 @@ func (s Store) Summary(ctx context.Context, userHK string) (Summary, error) {
 		sum.WithdrawalLimits = append(sum.WithdrawalLimits, ls)
 	}
 	return sum, nil
+}
+
+// Withdrawable is a listed currency that a network may withdraw.
+type Withdrawable struct {
+	HK string
+	// Symbols are its current symbol, and then its previous ones.
+	Symbols []string
+	Fiat    bool
+}
+
+// WithdrawableCurrencies returns the listed currencies that some network
+// may withdraw, by current symbol, for the warnings of a configuration
+// that leaves one without a limit or a review threshold (#406).
+func WithdrawableCurrencies(ctx context.Context, q Querier) ([]Withdrawable, error) {
+	rows, err := q.QueryContext(ctx, `SELECT c.hk::text, `+symbolsOf+`, COALESCE((c.info->>'if_fiat')::boolean, false)
+		FROM currencies c
+		WHERE c.deleted_at IS NULL AND c.status = 'approved'
+		  AND EXISTS (SELECT 1 FROM currency_networks n WHERE n.currency_hk = c.hk AND n.withdrawal_enabled)
+		ORDER BY c.info->>'symbol'`)
+	if err != nil {
+		return nil, fmt.Errorf("list the withdrawable currencies: %w", err)
+	}
+	defer rows.Close()
+	var out []Withdrawable
+	for rows.Next() {
+		var w Withdrawable
+		var symbols string
+		if err := rows.Scan(&w.HK, &symbols, &w.Fiat); err != nil {
+			return nil, fmt.Errorf("list the withdrawable currencies: %w", err)
+		}
+		w.Symbols = strings.Split(symbols, ",")
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// Unlimited returns the levels that allow the withdrawals of w and refuse
+// them for want of a limit (#406).
+func (p Policy) Unlimited(w Withdrawable) []Level {
+	var levels []Level
+	for level := Level(config.MinVerificationLevel); level <= Level(config.MaxVerificationLevel); level++ {
+		if !p.Allows(level, WithdrawAction(w.Fiat)) {
+			continue
+		}
+		if _, ok := p.Limit(level, w.Symbols...); !ok {
+			levels = append(levels, level)
+		}
+	}
+	return levels
 }

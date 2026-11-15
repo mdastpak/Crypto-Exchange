@@ -47,8 +47,13 @@ type VerificationConfig struct {
 	MinLevel map[string]int `yaml:"min_level"`
 	// WithdrawalLimits are the withdrawal limits per currency symbol and
 	// level, in units of the currency. Unset takes
-	// DefaultWithdrawalLimits. A currency without an entry, or a level
-	// without one, has no limit.
+	// DefaultWithdrawalLimits. The entry of a symbol follows its currency
+	// through a rename: a previous symbol of a currency still names it
+	// (#406). The key AnyCurrency, "*", holds the default of each level
+	// for the currencies without an entry. A level that limits some
+	// currency, or has a default, refuses the withdrawals of a currency
+	// that has neither, rather than leave them unlimited; a currency with
+	// an entry that leaves a level out has no limit at that level.
 	WithdrawalLimits map[string]map[int]WithdrawalLimit `yaml:"withdrawal_limits"`
 }
 
@@ -108,6 +113,11 @@ func (c *Configuration) applyVerificationDefaults() {
 
 var currencySymbol = regexp.MustCompile(`^[A-Z0-9]{1,20}$`)
 
+// AnyCurrency is the key of verification.withdrawal_limits and of
+// withdrawals.review_above that applies to every currency without an entry
+// of its own (#406).
+const AnyCurrency = "*"
+
 // verificationProblems reports unknown actions, levels out of range,
 // withdrawals at level 0 in release mode, and limits that are not positive
 // amounts, or whose bound per transaction is above the daily one.
@@ -131,8 +141,8 @@ func (c *Configuration) verificationProblems(p *problems) {
 		}
 	}
 	for _, symbol := range slices.Sorted(maps.Keys(v.WithdrawalLimits)) {
-		if !currencySymbol.MatchString(symbol) {
-			p.add("verification.withdrawal_limits."+symbol, "is not a currency symbol: upper-case letters and digits")
+		if symbol != AnyCurrency && !currencySymbol.MatchString(symbol) {
+			p.add("verification.withdrawal_limits."+symbol, "is not a currency symbol: upper-case letters and digits, or \"*\" for every other currency")
 			continue
 		}
 		levels := v.WithdrawalLimits[symbol]

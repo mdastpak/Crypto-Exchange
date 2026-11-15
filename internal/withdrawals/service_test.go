@@ -93,7 +93,9 @@ func newFixture(t *testing.T, daily string) fixture {
 	c := confirm.Service{DB: db, Authenticator: authenticator{}, MaxAttempts: 3}
 	return fixture{
 		Service: Service{DB: db, Confirm: c, Destinations: book, Levels: levels, Ledger: l,
-			ReviewAbove: map[string]shared.Decimal{"USDT": shared.NewDecimalFromInt64(300)}},
+			// Every currency that the tests withdraw has a threshold: one
+			// without is held whatever the amount (#406).
+			ReviewAbove: map[string]shared.Decimal{"USDT": shared.NewDecimalFromInt64(300), "IRR": shared.NewDecimalFromInt64(1_000_000_000_000)}},
 		t: t, confirm: c, user: user, usdt: usdt, address: d.ID,
 	}
 }
@@ -353,4 +355,43 @@ func TestRequest_RefusesAFeeThatChangedAfterTheConfirmation(t *testing.T) {
 	w, err := f.withdraw(r)
 	require.NoError(t, err)
 	assert.Equal(t, "5", w.Fee.String())
+}
+
+// The review threshold follows its currency (#406): after a rename, the
+// threshold of the old symbol still holds a large withdrawal. A currency
+// without a threshold, under any symbol, is held whatever the amount while
+// thresholds are configured, unless the default "*" gives it one.
+func TestRequest_TheReviewThresholdFollowsTheCurrency(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "")
+	_, err := f.DB.ExecContext(ctx, `UPDATE currencies SET info = jsonb_set(info, '{symbol}', '"USDX"') WHERE hk = $1`, f.usdt)
+	require.NoError(t, err)
+
+	held, err := f.withdraw(f.request("300", "renamed-big"))
+	require.NoError(t, err)
+	assert.Equal(t, StatusReview, held.Status, "the threshold of USDT still applies to USDX")
+	assert.Equal(t, ReviewAmount, held.ReviewReason)
+	small, err := f.withdraw(f.request("25", "renamed-small"))
+	require.NoError(t, err)
+	assert.Equal(t, StatusQueued, small.Status)
+
+	f.ReviewAbove = map[string]shared.Decimal{"BTC": shared.NewDecimalFromInt64(1)}
+	unconfigured, err := f.withdraw(f.request("25", "unconfigured"))
+	require.NoError(t, err)
+	assert.Equal(t, StatusReview, unconfigured.Status, "no threshold is not never")
+	assert.Equal(t, ReviewUnconfigured, unconfigured.ReviewReason)
+
+	f.ReviewAbove[config.AnyCurrency] = shared.NewDecimalFromInt64(50)
+	byDefault, err := f.withdraw(f.request("25", "default-small"))
+	require.NoError(t, err)
+	assert.Equal(t, StatusQueued, byDefault.Status, "below the default")
+	byDefault, err = f.withdraw(f.request("60", "default-big"))
+	require.NoError(t, err)
+	assert.Equal(t, StatusReview, byDefault.Status)
+	assert.Equal(t, ReviewAmount, byDefault.ReviewReason)
+
+	f.ReviewAbove = nil
+	none, err := f.withdraw(f.request("500", "none"))
+	require.NoError(t, err)
+	assert.Equal(t, StatusQueued, none.Status, "no threshold configured holds nothing")
 }

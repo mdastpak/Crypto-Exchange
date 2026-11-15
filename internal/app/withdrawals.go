@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
+	"github.com/mdastpak/crypto-exchange/internal/verification"
 	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
 )
 
@@ -48,6 +50,9 @@ func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration
 	}
 	s := withdrawals.Service{DB: db, Confirm: confirmer, Destinations: book, Levels: levels, Ledger: ledger.Ledger{DB: db},
 		ReviewAbove: review}
+	if store, ok := levels.(verification.Store); ok {
+		warnUnconfigured(db, store.Policy, review)
+	}
 	links.Confirmations, links.Withdrawals = confirmer, s
 	h.User.Confirmations = confirmer
 	h.User.Withdrawals, h.Admin.Withdrawals = s, s
@@ -136,5 +141,40 @@ func (r *payoutRunner) Stop(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// warnUnconfigured logs each listed currency that a network may withdraw
+// and that the settings leave without a limit at a level that allows its
+// withdrawals, or without a review threshold (#406): its withdrawals are
+// refused at that level, or all held for review, until the settings name
+// it, under any of its symbols, or give a "*" default. A currency renamed,
+// listed, or created by a migration later is checked at each request.
+func warnUnconfigured(db *sql.DB, policy verification.Policy, review map[string]shared.Decimal) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	currencies, err := verification.WithdrawableCurrencies(ctx, db)
+	if err != nil {
+		log.Printf("WARNING: the withdrawable currencies could not be checked against the limits: %v", err)
+		return
+	}
+	for _, c := range currencies {
+		if levels := policy.Unlimited(c); len(levels) > 0 {
+			log.Printf("WARNING: withdrawals of %s are refused at level %v: verification.withdrawal_limits has no entry for %s, "+
+				"and no %q default (#406)", c.Symbols[0], levels, strings.Join(c.Symbols, " or "), config.AnyCurrency)
+		}
+		if len(review) == 0 {
+			continue
+		}
+		found := false
+		for _, symbol := range append(c.Symbols, config.AnyCurrency) {
+			if _, found = review[symbol]; found {
+				break
+			}
+		}
+		if !found {
+			log.Printf("WARNING: every withdrawal of %s is held for review: withdrawals.review_above has no entry for %s, "+
+				"and no %q default (#406)", c.Symbols[0], strings.Join(c.Symbols, " or "), config.AnyCurrency)
+		}
 	}
 }

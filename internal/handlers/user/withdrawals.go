@@ -73,7 +73,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // RequestWithdrawal asks for a withdrawal (#70).
 //
 // @Summary Request a withdrawal
-// @Description Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.
+// @Description Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a "*" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.
 // @Tags user-withdrawals
 // @Accept json
 // @Produce json
@@ -85,7 +85,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // @Success 202 {object} models.APIResponse{info=withdrawalChallenge}
 // @Failure 400 {object} models.APIResponse "validation_failed, or idempotency_key_required"
 // @Failure 401 {object} models.APIResponse
-// @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, account_frozen, operation_restricted, asset_restricted, or security_hold"
+// @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold"
 // @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, confirmation_denied, or row_unverified"
 // @Failure 503 {object} models.APIResponse "withdrawals_unavailable or feature_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"

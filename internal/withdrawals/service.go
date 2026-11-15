@@ -350,9 +350,7 @@ func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request
 	if utf8.RuneCountInString(p.details.Amount) > confirm.MaxDetailLength || utf8.RuneCountInString(p.details.Fee) > confirm.MaxDetailLength {
 		return p, invalid("amount", "has too many digits for the confirmation message")
 	}
-	if threshold, ok := s.ReviewAbove[cur.Info.Symbol]; ok && r.Amount.GreaterThanOrEqual(threshold) {
-		p.review = ReviewAmount
-	}
+	p.review = s.reviewOf(append([]string{cur.Info.Symbol}, cur.PreviousSymbols...), r.Amount)
 	return p, nil
 }
 
