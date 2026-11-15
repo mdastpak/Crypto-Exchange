@@ -283,6 +283,7 @@ Relevant code: `internal/middleware/security.go:11`, `internal/middleware/valida
 | M-17 | P0 / security | Fixed-window Redis pipeline returns an error | Protected request does not silently pass | Passes: as M-16 ([#34](https://github.com/mdastpak/Crypto-Exchange/issues/34)) |
 | M-18 | P1 / contract | Trading limiter receives a context with `user_id` | Key is `ratelimit:trading:user:<id>` | Current route does not set `user_id`; JWT claims are stored under `claims` only |
 | M-19 | P1 / contract | Trading limiter has no `user_id` | Documented fallback uses trusted client IP | Current fallback is client IP, but XFF handling is unsafe |
+| M-20 | P1 / security | Unauthenticated requests with made-up HTTP methods, many of them rejected by the REST limit | The method label of the HTTP metrics and the span names keep to the standard methods and `other`, so no series is added per method | Passes: `TestMiddleware_BoundsTheMethodLabel` and `TestMetrics_AMadeUpMethodAddsNoSeries` through the router ([#403](https://github.com/mdastpak/Crypto-Exchange/issues/403)) |
 
 ---
 
