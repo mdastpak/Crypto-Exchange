@@ -97,26 +97,27 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	if err != nil {
 		return nil, fmt.Errorf("invalid from address: %w", err)
 	}
-	templates := map[string]**template.Template{}
 	d := &EmailDeliverer{cfg: cfg, from: from, codeTTL: codeTTL, now: time.Now, plaintextAllowed: isLocalHost}
-	templates["otp_subject"], templates["otp_body"] = &d.subject, &d.body
-	templates["withdrawal_subject"], templates["withdrawal_body"] = &d.withdrawalSubject, &d.withdrawalBody
-	templates["anti_phishing_reminder_subject"], templates["anti_phishing_reminder_body"] = &d.reminderSubject, &d.reminderBody
-	templates["denied_subject"], templates["denied_body"] = &d.deniedSubject, &d.deniedBody
-	for name, text := range map[string]string{
-		"otp_subject": cfg.OTPSubject, "otp_body": cfg.OTPBody,
-		"withdrawal_subject":             orDefault(cfg.WithdrawalSubject, config.DefaultWithdrawalEmailSubject),
-		"withdrawal_body":                orDefault(cfg.WithdrawalBody, config.DefaultWithdrawalEmailBody),
-		"anti_phishing_reminder_subject": orDefault(cfg.AntiPhishingReminderSubject, config.DefaultAntiPhishingReminderSubject),
-		"anti_phishing_reminder_body":    orDefault(cfg.AntiPhishingReminderBody, config.DefaultAntiPhishingReminderBody),
-		"denied_subject":                 orDefault(cfg.DeniedSubject, config.DefaultDeniedEmailSubject),
-		"denied_body":                    orDefault(cfg.DeniedBody, config.DefaultDeniedEmailBody),
+	// In a fixed order, so that several invalid templates always name the
+	// same one first.
+	for _, tmpl := range []struct {
+		name, text string
+		into       **template.Template
+	}{
+		{"otp_subject", cfg.OTPSubject, &d.subject},
+		{"otp_body", cfg.OTPBody, &d.body},
+		{"withdrawal_subject", orDefault(cfg.WithdrawalSubject, config.DefaultWithdrawalEmailSubject), &d.withdrawalSubject},
+		{"withdrawal_body", orDefault(cfg.WithdrawalBody, config.DefaultWithdrawalEmailBody), &d.withdrawalBody},
+		{"anti_phishing_reminder_subject", orDefault(cfg.AntiPhishingReminderSubject, config.DefaultAntiPhishingReminderSubject), &d.reminderSubject},
+		{"anti_phishing_reminder_body", orDefault(cfg.AntiPhishingReminderBody, config.DefaultAntiPhishingReminderBody), &d.reminderBody},
+		{"denied_subject", orDefault(cfg.DeniedSubject, config.DefaultDeniedEmailSubject), &d.deniedSubject},
+		{"denied_body", orDefault(cfg.DeniedBody, config.DefaultDeniedEmailBody), &d.deniedBody},
 	} {
-		t, err := template.New(name).Parse(text)
+		t, err := template.New(tmpl.name).Parse(tmpl.text)
 		if err != nil {
-			return nil, fmt.Errorf("invalid %s: %w", name, err)
+			return nil, fmt.Errorf("invalid %s: %w", tmpl.name, err)
 		}
-		*templates[name] = t
+		*tmpl.into = t
 	}
 
 	d.timeout = time.Duration(cfg.Timeout) * time.Second
