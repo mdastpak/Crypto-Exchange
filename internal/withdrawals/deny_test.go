@@ -146,6 +146,42 @@ func TestDeny_AConfirmationCanNoLongerBeConfirmed(t *testing.T) {
 	assert.Equal(t, "1000", available)
 }
 
+// endsAtNotice ends the request of a denial as its notice goes out, and
+// records whether the notice's context ended with it.
+type endsAtNotice struct {
+	denylink.Confirmations
+	cancel context.CancelFunc
+	called bool
+	err    error
+}
+
+func (e *endsAtNotice) NotifyDenied(ctx context.Context, userHK string, d confirm.Denial) error {
+	e.cancel()
+	e.called, e.err = true, ctx.Err()
+	return e.Confirmations.NotifyDenied(ctx, userHK, d)
+}
+
+// TestDeny_TheNoticeDoesNotEndWithTheRequest ends the request of a denial
+// once the account is secured, as a page closed after the POST does: the
+// notice still goes out, since the used link cannot be asked again.
+func TestDeny_TheNoticeDoesNotEndWithTheRequest(t *testing.T) {
+	f := newFixture(t, "")
+	w, err := f.withdraw(f.request("100", "deny-notice"))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	notices := &endsAtNotice{Confirmations: f.confirm, cancel: cancel}
+	links := f.links()
+	links.Confirmations = notices
+	link, err := links.Issue(ctx, f.user, f.confirmationOf(w.ID))
+	require.NoError(t, err)
+
+	_, err = links.Deny(ctx, link.Token, origin)
+	require.NoError(t, err)
+	require.True(t, notices.called, "the notice is sent")
+	assert.NoError(t, notices.err, "the notice's context outlives the request")
+}
+
 // TestDeny_RefusesWhatIsNotAUsableLink: a malformed or unknown token, an
 // expired link, and a link raised in SQL all answer the same, and change
 // nothing.

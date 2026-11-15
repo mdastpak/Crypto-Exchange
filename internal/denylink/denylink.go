@@ -262,6 +262,11 @@ func (s Service) Deny(ctx context.Context, token string, origin audit.Event) (Ou
 	notice := confirm.Denial{Details: details, Cancelled: out.WithdrawalsCancelled, InProgress: out.WithdrawalsInProgress,
 		HoldHours: int(s.Hold / time.Hour)}
 	if denied {
+		// The account is secured by now: the notice goes out even when the
+		// request ends, as when the page is closed after the POST. The
+		// link is used, so the user cannot ask again.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
 		if err := s.Confirmations.NotifyDenied(ctx, userHK, notice); err != nil {
 			// The account is secured; the page shows what was done.
 			log.Printf("Failed to send the notice of a denial to user %s: %v", userHK, err)
