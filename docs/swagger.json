@@ -8812,7 +8812,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "The account password is a second step of the sign-in, after the code, never a replacement for it. The first password needs only the session; a change needs current_password. A new password has at least security.password.min_length characters (10 by default) and at most 256 bytes, and at least five different characters. A change ends every other session of the user. A wrong current password answers 403 password_invalid and counts toward the lock of the password: 429 password_locked with Retry-After.",
+                "description": "The account password is a second step of the sign-in, after the code, never a replacement for it. The first password needs contact_code, the code that POST /user/password/code sent to a verified contact of the account: 403 contact_proof_required without one, 403 contact_code_invalid for a wrong or expired one, and 429 rate_limited after too many. A change needs current_password. A new password has at least security.password.min_length characters (10 by default) and at most 256 bytes, and at least five different characters. A change ends every other session of the user. A wrong current password answers 403 password_invalid and counts toward the lock of the password: 429 password_locked with Retry-After.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8873,6 +8873,92 @@
                     },
                     "429": {
                         "description": "password_locked, or a rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/password/code": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends a code to a verified contact of the account (send_to, or the first one), which PUT /user/password needs as contact_code to set the first password. The code is valid for expires_in seconds and works only in this session; a new request replaces it. 409 password_set answers an account that has a password: a change needs current_password instead.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user security"
+                ],
+                "summary": "Send the code of the first password",
+                "parameters": [
+                    {
+                        "description": "The contact that receives the code",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/user.PasswordCodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.PasswordCodeSent"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "password_set, contact_not_found, or channel_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -14860,6 +14946,35 @@
                 }
             }
         },
+        "user.PasswordCodeRequest": {
+            "type": "object",
+            "properties": {
+                "send_to": {
+                    "description": "SendTo is the verified contact that receives the code: email or\nmobile. By default, the first verified contact of the account.",
+                    "type": "string",
+                    "enum": [
+                        "email",
+                        "mobile"
+                    ],
+                    "example": "email"
+                }
+            }
+        },
+        "user.PasswordCodeSent": {
+            "type": "object",
+            "properties": {
+                "code_sent_to": {
+                    "description": "CodeSentTo is the masked contact that received the code.",
+                    "type": "string",
+                    "example": "ali*****@example.com"
+                },
+                "expires_in": {
+                    "description": "ExpiresIn is the number of seconds the code is valid.",
+                    "type": "integer",
+                    "example": 60
+                }
+            }
+        },
         "user.Profile": {
             "type": "object",
             "properties": {
@@ -15000,6 +15115,11 @@
         "user.SetPasswordRequest": {
             "type": "object",
             "properties": {
+                "contact_code": {
+                    "description": "ContactCode is required to set the first password: the code that\nPOST /user/password/code sent to a verified contact of the account.",
+                    "type": "string",
+                    "example": "123456"
+                },
                 "current_password": {
                     "description": "CurrentPassword is required to change a password, and left out to\nset the first one.",
                     "type": "string"

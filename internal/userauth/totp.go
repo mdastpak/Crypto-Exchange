@@ -245,11 +245,11 @@ func (t *TOTP) Confirm(ctx context.Context, userHK, code string, event audit.Eve
 }
 
 // Verify checks a code of the user's authenticator. A right code proves the
-// owner, so it cancels an account recovery, as the password does.
+// owner, so it cancels an account recovery, as the password does, within
+// the limits of InSession.
 func (t *TOTP) Verify(ctx context.Context, userHK, code string) error {
 	return t.check(ctx, userHK, code, true, func(tx *sql.Tx) error {
-		_, err := endRecovery(ctx, tx, userHK, RecoveryCancelled, ReasonRecoveryFactorProven, audit.Event{})
-		return err
+		return cancelProven(ctx, tx, userHK, ReasonRecoveryFactorProven)
 	})
 }
 

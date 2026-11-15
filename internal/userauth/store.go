@@ -260,8 +260,9 @@ func (p *Passwords) Verify(ctx context.Context, userHK, password string) error {
 		return fmt.Errorf("clear the password attempts: %w", err)
 	}
 	// The owner of the account is here: a recovery that waits to replace
-	// this password ends (#307). A password that cannot end it is not
-	// accepted, so that the recovery cannot outlive the sign-in.
+	// this password ends (#307), unless the proof comes from a session that
+	// is older than the recovery (InSession). A password that cannot end it
+	// is not accepted, so that the recovery cannot outlive the sign-in.
 	if err := p.cancelRecovery(ctx, userHK); err != nil {
 		return err
 	}
@@ -320,6 +321,10 @@ type SetResult struct {
 //
 // The first password comes with the recovery codes of the account, which
 // reset a forgotten password. They are returned once and never stored.
+//
+// A first password needs a fresh proof of the owner, which the caller
+// checks before it calls Set: PUT /user/password takes a code sent to a
+// verified contact (#401).
 func (p *Passwords) Set(ctx context.Context, userHK, current, password string, event audit.Event) (SetResult, error) {
 	if err := CheckPolicy(password, p.MinPasswordLength()); err != nil {
 		return SetResult{}, err
