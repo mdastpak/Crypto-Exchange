@@ -14590,14 +14590,14 @@ const docTemplate = `{
         "price.Status": {
             "type": "string",
             "enum": [
-                "override",
                 "live",
-                "stale"
+                "stale",
+                "override"
             ],
             "x-enum-varnames": [
-                "StatusOverride",
                 "StatusLive",
-                "StatusStale"
+                "StatusStale",
+                "StatusOverride"
             ]
         },
         "priceoverride.Override": {

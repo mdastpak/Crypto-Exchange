@@ -28,9 +28,6 @@ var (
 	errNotAnUpdate = errors.New("price: not a price update")
 )
 
-// StatusOverride is the status of a price that an administrator set (#59).
-const StatusOverride Status = "override"
-
 // Override is a price that an administrator set for a market until a time,
 // in place of the aggregated one.
 type Override struct {
