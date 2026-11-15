@@ -36,6 +36,12 @@ func (t Tx) Lock(ctx context.Context, key string, a Account, amount Amount, ref 
 	})
 }
 
+// Balance is Ledger.Balance within the transaction, so that a caller that
+// holds a transaction needs no second connection of the pool (#405).
+func (t Tx) Balance(ctx context.Context, a Account, currency shared.UUID) (balance.Balance, error) {
+	return balanceIn(ctx, t.tx, a, currency)
+}
+
 // Release is Ledger.Release within the transaction.
 func (t Tx) Release(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
 	return t.record(ctx, entry{kind: KindRelease, key: key, ref: ref,

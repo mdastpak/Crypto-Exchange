@@ -458,15 +458,36 @@ type stored struct {
 
 // load reads the user's confirmation id in tx, locked, and checks its seal.
 func (s Service) load(ctx context.Context, tx *sql.Tx, userHK, id string) (stored, error) {
+	return s.read(ctx, tx, userHK, id, true)
+}
+
+// rowReader reads one row: the database or a transaction.
+type rowReader interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// peek reads the confirmation id of the user without a lock, on a
+// connection of its own.
+func (s Service) peek(ctx context.Context, userHK, id string) (stored, error) {
+	return s.read(ctx, s.DB, userHK, id, false)
+}
+
+// read reads the confirmation id of the user in q, and locks it when lock
+// is set.
+func (s Service) read(ctx context.Context, q rowReader, userHK, id string, lock bool) (stored, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return stored{}, ErrNotFound
 	}
 	var c stored
 	row := rowseal.OperationConfirmations.NewRow()
-	err := tx.QueryRowContext(ctx, `SELECT id::text, user_hk::text, purpose, amount, destination, method, digest, code_session, sent_to,
+	query := `SELECT id::text, user_hk::text, purpose, amount, destination, method, digest, code_session, sent_to,
 			failed_attempts, expires_at, confirmed_at IS NOT NULL, consumed_at IS NOT NULL, expires_at <= NOW(),
-			COALESCE(confirmed_at + make_interval(secs => $3) > NOW(), false), `+rowseal.OperationConfirmations.Fields("")+`
-		FROM operation_confirmations WHERE id = $1 AND user_hk = $2 FOR UPDATE`, id, userHK, s.ttl().Seconds()).
+			COALESCE(confirmed_at + make_interval(secs => $3) > NOW(), false), ` + rowseal.OperationConfirmations.Fields("") + `
+		FROM operation_confirmations WHERE id = $1 AND user_hk = $2`
+	if lock {
+		query += ` FOR UPDATE`
+	}
+	err := q.QueryRowContext(ctx, query, id, userHK, s.ttl().Seconds()).
 		Scan(append([]any{&c.id, &c.userHK, &c.purpose, &c.details.Amount, &c.details.Destination, &c.method, &c.digest, &c.session, &c.sentTo,
 			&c.failed, &c.expiresAt, &c.confirmed, &c.consumed, &c.expired, &c.usable}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -485,33 +506,48 @@ func (s Service) load(ctx context.Context, tx *sql.Tx, userHK, id string) (store
 // passkey's answer, and records origin, the audit event of the request,
 // with the outcome. A wrong proof counts against the confirmation: after
 // MaxAttempts, it can no longer be confirmed.
+//
+// The proof is checked before the confirmation is locked: the passkeys,
+// the authenticator, and the code store read and write on connections of
+// their own, and a transaction that waited for them would hold a second
+// connection of the pool, so that enough requests at once would exhaust it
+// (#405). The lock then checks again that nothing changed meanwhile.
 func (s Service) Confirm(ctx context.Context, userHK, id string, proof Proof, origin audit.Event) error {
+	c, err := s.peek(ctx, userHK, id)
+	if err != nil {
+		return err
+	}
+	if err := s.confirmable(c); err != nil {
+		return err
+	}
+	wrong, err := s.check(ctx, userHK, c, proof)
+	if err != nil {
+		return err
+	}
+
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	c, err := s.load(ctx, tx, userHK, id)
+	locked, err := s.load(ctx, tx, userHK, id)
 	if err != nil {
 		return err
 	}
-	switch {
-	case c.confirmed:
-		return ErrAlreadyConfirmed
-	case c.expired:
-		return ErrExpired
-	case c.failed >= s.maxAttempts():
-		return ErrTooManyAttempts
+	if err := s.confirmable(locked); err != nil {
+		return err
 	}
+	if locked.method != c.method || locked.session != c.session {
+		// A new code or ceremony was sent meanwhile: the proof was of the
+		// one before.
+		return ErrInvalidCode
+	}
+	c = locked
 	event := origin
 	event.ActorType, event.ActorID = audit.ActorUser, userHK
 	event.Action, event.TargetType, event.TargetID = audit.ActionUserOperationConfirm, audit.TargetOperationConfirmation, id
 	event.Changes = &audit.Changes{After: map[string]interface{}{"purpose": c.purpose, "method": c.method, "amount": c.details.Amount, "destination": c.details.Destination}}
 
-	wrong, err := s.check(ctx, userHK, c, proof)
-	if err != nil {
-		return err
-	}
 	if wrong != nil {
 		if _, err := tx.ExecContext(ctx, `UPDATE operation_confirmations SET failed_attempts = failed_attempts + 1 WHERE id = $1`, id); err != nil {
 			return fmt.Errorf("count the attempt: %w", err)
@@ -545,6 +581,19 @@ func (s Service) Confirm(ctx context.Context, userHK, id string, proof Proof, or
 		return err
 	}
 	return tx.Commit()
+}
+
+// confirmable refuses a confirmation that can no longer be confirmed.
+func (s Service) confirmable(c stored) error {
+	switch {
+	case c.confirmed:
+		return ErrAlreadyConfirmed
+	case c.expired:
+		return ErrExpired
+	case c.failed >= s.maxAttempts():
+		return ErrTooManyAttempts
+	}
+	return nil
 }
 
 // check checks the proof with the confirmation's method. It returns a
@@ -605,25 +654,21 @@ func (s Service) check(ctx context.Context, userHK string, c stored, proof Proof
 // confirmed yet, or begins a new passkey ceremony of a confirmation by
 // passkey, and gives it a new lifetime. The code store's limits bound how
 // often codes go out. An authenticator confirmation has nothing to send.
+//
+// What it sends is prepared before the confirmation is locked, since the
+// passkeys, the contacts, and the code store are read on connections of
+// their own (#405); the lock then checks again that the confirmation is
+// still open.
 func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challenge, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
+	c, err := s.peek(ctx, userHK, id)
 	if err != nil {
 		return Challenge{}, err
 	}
-	defer tx.Rollback()
-	c, err := s.load(ctx, tx, userHK, id)
-	if err != nil {
+	if err := s.resendable(c); err != nil {
 		return Challenge{}, err
 	}
-	switch {
-	case c.confirmed:
-		return Challenge{}, ErrAlreadyConfirmed
-	case c.failed >= s.maxAttempts():
-		return Challenge{}, ErrTooManyAttempts
-	case Method(c.method) == MethodTOTP:
-		return Challenge{}, ErrMethodUnavailable
-	case Method(c.method) == MethodPasskey:
-		return s.restartPasskey(ctx, tx, userHK, c)
+	if Method(c.method) == MethodPasskey {
+		return s.restartPasskey(ctx, userHK, c)
 	}
 	available, err := s.available(ctx, userHK)
 	if err != nil {
@@ -640,6 +685,15 @@ func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challen
 	if err != nil {
 		return Challenge{}, fmt.Errorf("issue the code: %w", err)
 	}
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Challenge{}, err
+	}
+	defer tx.Rollback()
+	if c, err = s.relock(ctx, tx, userHK, c); err != nil {
+		return Challenge{}, err
+	}
 	out := Challenge{ID: c.id, Method: Method(c.method), SentTo: contact.masked, Details: c.details}
 	if err := tx.QueryRowContext(ctx, `UPDATE operation_confirmations SET code_session = $2, sent_to = $3,
 			expires_at = NOW() + make_interval(secs => $4) WHERE id = $1 RETURNING expires_at`,
@@ -655,9 +709,38 @@ func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challen
 	return out, s.send(ctx, userHK, Purpose(c.purpose), contact, issued.Code, c.details)
 }
 
+// resendable refuses a confirmation that has nothing to send again.
+func (s Service) resendable(c stored) error {
+	switch {
+	case c.confirmed:
+		return ErrAlreadyConfirmed
+	case c.failed >= s.maxAttempts():
+		return ErrTooManyAttempts
+	case Method(c.method) == MethodTOTP:
+		return ErrMethodUnavailable
+	}
+	return nil
+}
+
+// relock locks, in tx, the confirmation that c read without a lock, and
+// checks that it still has something to send by the same method.
+func (s Service) relock(ctx context.Context, tx *sql.Tx, userHK string, c stored) (stored, error) {
+	locked, err := s.load(ctx, tx, userHK, c.id)
+	if err != nil {
+		return stored{}, err
+	}
+	if err := s.resendable(locked); err != nil {
+		return stored{}, err
+	}
+	if locked.method != c.method {
+		return stored{}, ErrMethodUnavailable
+	}
+	return locked, nil
+}
+
 // restartPasskey begins a new passkey ceremony of the confirmation c, whose
 // previous one an attempt took, and gives the confirmation a new lifetime.
-func (s Service) restartPasskey(ctx context.Context, tx *sql.Tx, userHK string, c stored) (Challenge, error) {
+func (s Service) restartPasskey(ctx context.Context, userHK string, c stored) (Challenge, error) {
 	if s.Passkeys == nil {
 		return Challenge{}, ErrMethodUnavailable
 	}
@@ -670,6 +753,14 @@ func (s Service) restartPasskey(ctx context.Context, tx *sql.Tx, userHK string, 
 	}
 	out := Challenge{ID: c.id, Method: MethodPasskey, Details: c.details}
 	if out.Passkey, err = optionsOf(options); err != nil {
+		return Challenge{}, err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Challenge{}, err
+	}
+	defer tx.Rollback()
+	if _, err := s.relock(ctx, tx, userHK, c); err != nil {
 		return Challenge{}, err
 	}
 	if err := tx.QueryRowContext(ctx, `UPDATE operation_confirmations SET expires_at = NOW() + make_interval(secs => $2)
