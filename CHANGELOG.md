@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `admin verification grant` sets the verification level of a user, for the testnet run of M2 and for manual review, until the identity checks and the KYC review grant levels ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)).
+  - `-user` takes the user's ID, email address, or mobile number; `-level` is 0 to 2, down as well as up. `-reason` and `-operator` are required, and `-dry-run` reports the change without making it.
+  - The level is written as an approved KYC tier in the user's row, which is sealed again, so the command needs the data keys. A row whose seal does not match, an administrator, and an account that is not active are refused.
+  - Each change is audited as `user.verification_set`, with the operator, the reason, and the level before and after. It waits for an operation of the user in flight, and applies from the user's next request on every instance.
+- Release mode refuses `verification.min_level` below 1 for `withdraw_fiat` and `withdraw_crypto`, so that one wrong file cannot open withdrawals to accounts that proved nothing ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)).
+
 - "This was not me" links in the messages of withdrawal codes ([#374](https://github.com/mdastpak/Crypto-Exchange/issues/374)). A link can only stop and protect; it never approves anything.
   - Each SMS and email of a code carries a link of its own: `security.deny_links.base_url` and a token of 12 Base62 characters on the exchange's own domain, with no external shortener. The token is stored only as its SHA-256, bound to the user and the confirmation, used once, and expires after `security.deny_links.ttl_hours`.
   - Opening the link changes nothing. The site's page posts the token to `POST /public/deny/{token}`, which in one transaction denies the confirmation, cancels the user's withdrawals in `review` or `queued` with their funds released, ends every session, and starts the security hold. The answer counts what it did and names no account; a link that is not usable answers `404 deny_link_invalid`. The route is rate-limited per IP.

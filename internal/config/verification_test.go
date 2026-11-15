@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,4 +57,33 @@ func keysOf(m map[string]int) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// TestVerification_ReleaseRefusesWithdrawalsAtLevel0: one wrong file must
+// not let accounts that proved nothing move funds out (#440). The other
+// actions stay a decision of the file, and outside release mode every
+// action may be set from 0 to 2.
+func TestVerification_ReleaseRefusesWithdrawalsAtLevel0(t *testing.T) {
+	c := secureRelease(t)
+	c.Verification.MinLevel = DefaultVerificationMinLevel()
+	c.Verification.MinLevel[ActionWithdrawFiat] = 0
+	c.Verification.MinLevel[ActionWithdrawCrypto] = 0
+	c.Verification.MinLevel[ActionDepositCrypto] = 0
+	c.Verification.MinLevel[ActionTradeOTC] = 0
+
+	problems := problemsOf(c)
+	require.Len(t, problems, 2, "the two withdrawals, not the deposit or the trade: %v", problems)
+	all := strings.Join(problems, "\n")
+	assert.Contains(t, all, "verification.min_level.withdraw_fiat")
+	assert.Contains(t, all, "verification.min_level.withdraw_crypto")
+	assert.Contains(t, all, "release mode needs level 1 or more for withdrawals")
+
+	c.Verification.MinLevel[ActionWithdrawFiat] = 1
+	c.Verification.MinLevel[ActionWithdrawCrypto] = 1
+	assert.Empty(t, problemsOf(c), "level 1 is enough")
+
+	c.Server.Mode = "debug"
+	c.Verification.MinLevel[ActionWithdrawFiat] = 0
+	c.Verification.MinLevel[ActionWithdrawCrypto] = 0
+	assert.Empty(t, problemsOf(c), "development may allow withdrawals at level 0")
 }

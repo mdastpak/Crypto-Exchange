@@ -1251,6 +1251,24 @@ What a user may do depends on their verification level ([#157](https://github.co
 
 The deposit, withdrawal (#70), OTC (#61, #62), and order (#76) paths all check through the same component, `internal/verification`. A withdrawal request checks its level and limits in its own transaction, under a lock of the user's withdrawals of the currency, and locks its funds in that same transaction. Two requests of the same user therefore never pass the limit together.
 
+### Granting a level
+
+The identity checks ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [#162](https://github.com/mdastpak/Crypto-Exchange/issues/162)) and the KYC review ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#71](https://github.com/mdastpak/Crypto-Exchange/issues/71)) will grant the levels. Until then, an operator sets the level of a user with `cmd/admin` ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)). This is for the testnet run of M2 and for manual review:
+
+```sh
+admin -operator "Sara" verification grant -user alice@example.com -level 2 -reason "testnet run" -dry-run
+admin -operator "Sara" verification grant -user alice@example.com -level 2 -reason "testnet run"
+```
+
+- **Who.** `-user` takes the user's ID, email address, or mobile number in any usual form. The output names the user by ID only.
+- **What.** `-level` is 0 to 2, and a level can go down as well as up. A level is a KYC tier, approved: `BASIC` for 1, `STANDARD` for 2, and no tier, pending, for 0. A user who has the level already is left as they are.
+- **Required.** `-reason` (at most 500 characters) and `-operator` are required. `-dry-run` checks the change and reports it without writing it.
+- **Sealed and audited.** The command seals the user's row as the server does, so it needs the data keys (`keys.provider`). It records `user.verification_set` in the [audit log](#audit-log) with the operator, the reason, and the level, tier, and status before and after.
+- **Refused.** A row changed outside the backend (its seal does not match), an administrator, an account that is not active, and a deleted one.
+- **When it applies.** The change waits for an operation of the user in flight. Every instance applies the new level from the user's next deposit, trade, or withdrawal. A lower level stops nothing that was requested already.
+
+The run uses the production level policy. Release mode refuses `verification.min_level` below 1 for `withdraw_fiat` and `withdraw_crypto`, so that one wrong file cannot open withdrawals to accounts that proved nothing.
+
 ### `GET /user/verification`
 
 Returns the signed-in user's verification:
