@@ -286,12 +286,15 @@ var (
 		sealedBytes("token_hash"), text("user_hk"), text("confirmation_id"), timestamptz("expires_at"), timestamptz("used_at"),
 	}, SealedFromStart: true}
 	// PriceOverrides covers a price that an administrator set for a market
-	// (#59): its market, prices, expiry, and end. An override set, moved,
+	// (#59): its market, prices, expiry, and end, and its approval by a
+	// second administrator (#453). An override set, moved,
 	// or lengthened in SQL is not served. Its rows are sealed from the
 	// first one.
 	PriceOverrides = &Table{Name: "price_overrides", Key: "id", KeyType: "uuid", Columns: []Column{
 		text("market"), text("bid"), text("ask"), text("mid"), text("reason"), text("created_by"),
 		timestamptz("created_at"), timestamptz("expires_at"), timestamptz("ended_at"), text("ended_by"),
+		optional(text("reference_mid")), optional(timestamptz("approve_by")), optional(text("approved_by")),
+		optional(timestamptz("approved_at")),
 	}, SealedFromStart: true}
 )
 

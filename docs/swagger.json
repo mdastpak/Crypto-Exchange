@@ -4617,7 +4617,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the reference price of a market in place of the price engine's until expires_in_seconds pass (#59), for when the providers are wrong or down. Bid and ask default to mid; bid \u003c= mid \u003c= ask. The market must exist. A market has one override in force at most: 409 price_override_exists until it ends. Every instance of the server serves it within a second, and stops at its expiry. A sensitive route: it needs a step-up. Audited as price.override_set, with the prices, the expiry, and the reason. The row is sealed: an override changed in SQL is not served.",
+                "description": "Sets the reference price of a market in place of the price engine's until expires_in_seconds pass (#59), for when the providers are wrong or down. Bid and ask default to mid; bid \u003c= mid \u003c= ask. The market must exist. A market has one override in force or pending at most: 409 price_override_exists until it ends. An override whose mid is within price.overrides.max_deviation_bps of the live reference mid applies at once, audited as price.override_set: every instance of the server serves it within a second, and stops at its expiry. One beyond it, or for a market without a live reference, answers pending=true and approve_by (#453), audited as price.override_request: it is not served until another administrator approves it with POST /admin/price-overrides/{id}/approve before approve_by, and lapses otherwise. A sensitive route: it needs a step-up. The row is sealed: an override changed in SQL is not served.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5692,6 +5692,89 @@
                 }
             }
         },
+        "/api/v1/admin/price-overrides/{id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Approves a pending override (#453), one beyond price.overrides.max_deviation_bps of the live reference mid or set without one, as a second administrator: never the one who set it (403 second_approval_required). It is then served on every instance within a second, until its expiry, and a delisting may record it as its settlement price. 409 price_override_not_pending for one that applied at once or is approved already, price_override_lapsed after its approve_by, and price_override_ended for one that ended. A sensitive route: it needs a step-up. Audited as price.override_approve; the sealed row records the approver.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin prices"
+                ],
+                "summary": "Approve a price override",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The override",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/priceoverride.Override"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required or second_approval_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "price_override_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "price_override_not_pending, price_override_lapsed, price_override_ended, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "prices_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/price-overrides/{id}/end": {
             "post": {
                 "security": [
@@ -5699,7 +5782,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Ends an override in force before its expiry (#59): the market takes the price engine's price again, on every instance within a second. A sensitive route: it needs a step-up. Audited as price.override_end.",
+                "description": "Ends an override in force before its expiry (#59), or withdraws a pending one (#453): the market takes the price engine's price again, on every instance within a second. A sensitive route: it needs a step-up. Audited as price.override_end.",
                 "produces": [
                     "application/json"
                 ],
@@ -15382,6 +15465,19 @@
                 }
             }
         },
+        "price.OverrideRef": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "description": "Approved is an override that a second administrator approved: one\nbeyond the bound against the live price, or set without one (#453).",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "price.Price": {
             "type": "object",
             "properties": {
@@ -15412,6 +15508,14 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "override": {
+                    "description": "Override is the administrator's override that a price of status\noverride is (#453), never set on a price of the engine.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/price.OverrideRef"
+                        }
+                    ]
                 },
                 "sig": {
                     "type": "string"
@@ -15460,6 +15564,16 @@
         "priceoverride.Override": {
             "type": "object",
             "properties": {
+                "approve_by": {
+                    "type": "string"
+                },
+                "approved_at": {
+                    "type": "string"
+                },
+                "approved_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
                 "ask": {
                     "type": "string",
                     "example": "64100"
@@ -15475,6 +15589,10 @@
                     "description": "CreatedBy and EndedBy are the administrators' hk.",
                     "type": "string",
                     "format": "uuid"
+                },
+                "deviation_bps": {
+                    "type": "integer",
+                    "example": 8
                 },
                 "ended_at": {
                     "type": "string"
@@ -15494,6 +15612,9 @@
                     "description": "InForce is whether it is served now.",
                     "type": "boolean"
                 },
+                "lapsed": {
+                    "type": "boolean"
+                },
                 "market": {
                     "type": "string",
                     "example": "BTC/USDT"
@@ -15502,8 +15623,17 @@
                     "type": "string",
                     "example": "64050"
                 },
+                "pending": {
+                    "description": "Pending is an override that waits for a second administrator until\nApproveBy (#453), and Lapsed one that nobody approved by then.\nApprovedBy and ApprovedAt record the approval.",
+                    "type": "boolean"
+                },
                 "reason": {
                     "type": "string"
+                },
+                "reference_mid": {
+                    "description": "ReferenceMid is the live reference mid when it was set, and\nDeviationBPS how far its mid is from it, in basis points; both are\nabsent without a live reference.",
+                    "type": "string",
+                    "example": "64000"
                 }
             }
         },

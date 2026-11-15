@@ -83,7 +83,7 @@ When the leader dies, its lease expires and another replica takes it within `lea
 
 `price.Reader` is the consumer library: `Get(ctx, "BTC/USDT")` returns the reference price that quotes use ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)).
 
-1. An administrator's override in force, with status `override`.
+1. An administrator's override in force, with status `override` and the override's `id` and whether a second administrator `approved` it. An override that waits for its approval is not served.
 2. Otherwise the cached price, when it is live, of that market, with a mid above 0, and at most one second old (`price.DefaultMaxAge`). An older one is `price.ErrStale`, and none `price.ErrNoPrice`.
 
 A Redis error is returned as is: a price is never guessed, so a caller fails closed and quotes nothing.
@@ -112,6 +112,8 @@ To rotate it: add the new public key to `price.verify_keys` on every server, the
 ### Overrides
 
 An administrator sets the price of a market in place of the engine's for a time, through the [admin API](api.md#reference-prices), when the providers are wrong or down. The overrides are rows of PostgreSQL, sealed, and never in Redis, so that a write to Redis cannot set a price. Each server instance reads those in force every second (`priceoverride.Watcher`) and at once after its own change, and keeps the last ones it read while PostgreSQL cannot be read; none is served past its expiry, even before the next read. An override that fails its seal is not served.
+
+An override is bounded by the live reference price ([#453](https://github.com/mdastpak/Crypto-Exchange/issues/453)), so that one administrator, or a stolen session with a step-up, cannot set a price far from the market. Its mid within `price.overrides.max_deviation_bps` of the live mid applies at once. One beyond it, or set while the market has no live price, waits for a second administrator for `price.overrides.approval_minutes`, is not served meanwhile, and lapses unapproved. A delisting settles only at an approved override. The `override` of a price is not signed, so `price.Reader` drops it from a price read from Redis: only an override read from PostgreSQL carries one.
 
 ### Latency budget
 

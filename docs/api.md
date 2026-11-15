@@ -88,13 +88,15 @@ An error response contains only a fixed message for each error. Internal details
 | `session_not_found` | `409` | The session to end at the [session limit](#session-limit) is not an active session of the user |
 | `version_conflict` | `409` | The currency changed since the version sent; `info.version` is the current one |
 | `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
-| `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
+| `second_approval_required` | `409`, `403` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift (`409`); the administrator who asked for a re-seal or set a [price override](#reference-prices) cannot also approve it (`403`) |
 | `row_unverified` | `409` | The [restriction](#restrictions) or [control](#maintenance-and-lockdowns) to change was changed outside the backend, in `enforce` mode; an administrator reviews its [integrity finding](#integrity-findings) first |
 | `prices_unavailable` | `503` | The reference prices cannot be read now, or the server has no price store |
 | `price_unavailable` | `404` | The market has no fresh reference price: the price engine has no quorum for it |
 | `price_override_exists` | `409` | The market already has a [price override](#reference-prices) in force |
 | `price_override_not_found` | `404` | No price override has this id |
 | `price_override_ended` | `409` | The price override already ended or expired |
+| `price_override_not_pending` | `409` | The price override does not wait for an approval: it applied at once, or was approved |
+| `price_override_lapsed` | `409` | The price override waited past its approval window and lapsed |
 | `otc_unavailable` | `503` | The server gives no [OTC quotes](#otc-quotes): it has no reference prices or no verification levels |
 | `otc_market_unavailable` | `404` | The market has no OTC quotes: it is not in `otc.markets`, or not a public market |
 | `market_inactive` | `409` | The market is paused, in maintenance or suspended |
@@ -985,15 +987,26 @@ Sets the reference price of the market in place of the engine's, for when the pr
 
 `bid` and `ask` default to `mid`, and `bid <= mid <= ask`. `expires_in_seconds` is from 1 to 86400, and `reason` from 1 to 500 characters. The market must exist (`404 market_not_found`). A market has one override in force at most: `409 price_override_exists` until it expires or ends.
 
-Response `201` with the override. Every instance serves it within a second, and none past its expiry. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `price.override_set`, with the prices, the expiry, and the reason. The row is [sealed](data-protection.md): an override set or lengthened in SQL is not served.
+The override is bounded by the live reference mid of the market ([#453](https://github.com/mdastpak/Crypto-Exchange/issues/453)), recorded as its `reference_mid`, with the `deviation_bps` of its mid from it, rounded up:
+
+- Within `price.overrides.max_deviation_bps` (300 by default), it applies at once: response `201` with `in_force` true. Audited as `price.override_set`.
+- Beyond it, or when the market has no live price, so that there is nothing to bound it by, it waits for a second administrator: response `201` with `pending` true and `approve_by`, the end of `price.overrides.approval_minutes` (30 by default), and the message `PRICE_OVERRIDE_PENDING`. It is not served until [approved](#post-adminprice-overridesidapprove-admin), and lapses (`lapsed` true) unapproved after `approve_by`. It holds the market meanwhile: `409 price_override_exists`. Audited as `price.override_request`.
+
+Every instance serves an override in force within a second, and none past its expiry. A sensitive route: it needs a [step-up](#post-adminstep-up). The audit event has the prices, the expiry, the reason, the reference, and the deviation. The row is [sealed](data-protection.md): an override set, lengthened, or approved in SQL is not served, and the database refuses an approval by the administrator who set it.
+
+A [delisting](#delistings) settles only at an override that a second administrator approved: one that applied at once within the bound is the price of OTC quotes, but never fixes the rate of every holder. Each OTC quote and settlement price names the override it used (`override_id` in the components of a quote, the id in `settlement_price_detail`).
 
 ### `GET /admin/price-overrides` (admin)
 
-The overrides, newest first: `?in_force=true` for those in force only, and `limit` from 1 to 100 (100).
+The overrides, newest first: `?in_force=true` for those served now only, and `limit` from 1 to 100 (100). Each shows `in_force`, `pending`, `lapsed`, `reference_mid`, `deviation_bps`, `approve_by`, `approved_by`, and `approved_at`.
 
 ### `POST /admin/price-overrides/{id}/end` (admin)
 
-Ends an override before its expiry: the market takes the engine's price again. `404 price_override_not_found`, `409 price_override_ended` for one that already ended or expired. A sensitive route. Audited as `price.override_end`.
+Ends an override before its expiry, or one that waits for its approval: the market takes the engine's price again. `404 price_override_not_found`, `409 price_override_ended` for one that already ended or expired. A sensitive route. Audited as `price.override_end`.
+
+### `POST /admin/price-overrides/{id}/approve` (admin)
+
+Approves an override that waits for a second administrator ([#453](https://github.com/mdastpak/Crypto-Exchange/issues/453)): it is then served until its expiry, on every instance within a second. Response `200` with the override, `approved_by` and `approved_at` set. `403 second_approval_required` for the administrator who set it, `409 price_override_not_pending` for one that applied at once or was approved, `409 price_override_lapsed` past its `approve_by`, `409 price_override_ended`, and `404 price_override_not_found`. A sensitive route. Audited as `price.override_approve`.
 
 ## OTC quotes
 

@@ -36,17 +36,24 @@ func (f *fakePrices) Get(_ context.Context, market string) (price.Price, error) 
 }
 
 type fakeOverrides struct {
-	err     error
-	set     priceoverride.New
-	ended   string
-	origins []audit.Event
-	inForce bool
-	limit   int
+	err      error
+	set      priceoverride.New
+	ended    string
+	approved string
+	pending  bool
+	origins  []audit.Event
+	inForce  bool
+	limit    int
 }
 
 func (f *fakeOverrides) Set(_ context.Context, n priceoverride.New, adminHK string, origin audit.Event) (priceoverride.Override, error) {
 	f.set, f.origins = n, append(f.origins, origin)
-	return priceoverride.Override{ID: "o1", Market: n.Market, Mid: n.Mid, InForce: true, CreatedBy: adminHK}, f.err
+	return priceoverride.Override{ID: "o1", Market: n.Market, Mid: n.Mid, InForce: !f.pending, Pending: f.pending, CreatedBy: adminHK}, f.err
+}
+
+func (f *fakeOverrides) Approve(_ context.Context, id, adminHK string, origin audit.Event) (priceoverride.Override, error) {
+	f.approved, f.origins = id, append(f.origins, origin)
+	return priceoverride.Override{ID: id, InForce: true, ApprovedBy: adminHK}, f.err
 }
 
 func (f *fakeOverrides) End(_ context.Context, id, _ string, origin audit.Event) (priceoverride.Override, error) {
@@ -75,6 +82,7 @@ func servePrices(t *testing.T, h *AdminHandler, method, path, body string) (int,
 	r.POST("/markets/:base/:quote/price-override", h.SetPriceOverride)
 	r.GET("/price-overrides", h.ListPriceOverrides)
 	r.POST("/price-overrides/:id/end", h.EndPriceOverride)
+	r.POST("/price-overrides/:id/approve", h.ApprovePriceOverride)
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -90,6 +98,7 @@ func TestPriceRoutes_WithoutTheStoresAreUnavailable(t *testing.T) {
 		{http.MethodPost, "/markets/BTC/USDT/price-override"},
 		{http.MethodGet, "/price-overrides"},
 		{http.MethodPost, "/price-overrides/o1/end"},
+		{http.MethodPost, "/price-overrides/o1/approve"},
 	} {
 		status, resp := servePrices(t, h, r[0], r[1], `{}`)
 		assert.Equal(t, http.StatusServiceUnavailable, status, r[1])
@@ -207,5 +216,52 @@ func TestListAndEndPriceOverrides(t *testing.T) {
 		store.err = err
 		_, resp := servePrices(t, h, http.MethodPost, "/price-overrides/o1/end", "")
 		assert.Equal(t, want, resp["code"])
+	}
+}
+
+// TestSetPriceOverride_PassesTheLiveReference checks that the live price,
+// and only a live one, bounds a new override (#453), and that a pending
+// override says so.
+func TestSetPriceOverride_PassesTheLiveReference(t *testing.T) {
+	store := &fakeOverrides{}
+	prices := &fakePrices{p: price.Price{Status: price.StatusLive, Mid: shared.MustNewDecimalFromString("64000")}}
+	h := &AdminHandler{PriceOverrides: store, Prices: prices, Registry: &fakeRegistry{}}
+	status, _ := servePrices(t, h, http.MethodPost, "/markets/btc/usdt/price-override", btcOverride)
+	require.Equal(t, http.StatusCreated, status)
+	require.NotNil(t, store.set.Reference)
+	assert.Equal(t, "64000", store.set.Reference.String())
+
+	for _, p := range []fakePrices{{p: price.Price{Status: price.StatusOverride, Mid: shared.MustNewDecimalFromString("1")}}, {err: price.ErrStale}} {
+		*prices = p
+		store.pending = true
+		status, resp := servePrices(t, h, http.MethodPost, "/markets/btc/usdt/price-override", btcOverride)
+		require.Equal(t, http.StatusCreated, status)
+		assert.Nil(t, store.set.Reference, "an override or no price is no reference")
+		assert.Equal(t, true, resp["info"].(map[string]any)["pending"])
+	}
+}
+
+func TestApprovePriceOverride(t *testing.T) {
+	store, watcher := &fakeOverrides{}, &countingRefresher{}
+	h := &AdminHandler{PriceOverrides: store, OverrideWatcher: watcher}
+	status, resp := servePrices(t, h, http.MethodPost, "/price-overrides/o1/approve", "")
+	require.Equal(t, http.StatusOK, status, resp)
+	assert.Equal(t, "o1", store.approved)
+	assert.Equal(t, priceAdmin, store.origins[0].ActorID)
+	assert.Equal(t, 1, watcher.refreshes, "applied on this instance at once")
+	for err, want := range map[error]struct {
+		status int
+		code   string
+	}{
+		priceoverride.ErrSameAdmin:  {http.StatusForbidden, codeSecondApproval},
+		priceoverride.ErrNotPending: {http.StatusConflict, codeNotPending},
+		priceoverride.ErrLapsed:     {http.StatusConflict, codeOverrideLapsed},
+		priceoverride.ErrEnded:      {http.StatusConflict, codePriceOverrideEnded},
+		priceoverride.ErrNotFound:   {http.StatusNotFound, codePriceOverrideMissing},
+	} {
+		store.err = err
+		status, resp := servePrices(t, h, http.MethodPost, "/price-overrides/o1/approve", "")
+		assert.Equal(t, want.status, status, err.Error())
+		assert.Equal(t, want.code, resp["code"], err.Error())
 	}
 }

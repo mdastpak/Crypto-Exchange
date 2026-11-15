@@ -240,10 +240,22 @@ func TestReader(t *testing.T) {
 	_, err = r.Get(ctx, "BTC/USDT")
 	assert.Error(t, err)
 
-	overrides["BTC/USDT"] = Override{Market: "BTC/USDT", Bid: sd("99"), Ask: sd("101"), Mid: sd("100"), Set: now.Add(-time.Hour), Expires: now.Add(time.Minute)}
+	// The signature does not cover the override of a price (#453): one
+	// written to Redis is dropped.
+	forged := livePrice("BTC/USDT", "100", now)
+	forged.Override = &OverrideRef{ID: "forged", Approved: true}
+	body, _ = json.Marshal(forged)
+	require.NoError(t, client.Set(ctx, Key("BTC/USDT"), body, time.Minute).Err())
+	p, err = r.Get(ctx, "BTC/USDT")
+	require.NoError(t, err)
+	assert.Nil(t, p.Override)
+	require.NoError(t, client.Del(ctx, Key("BTC/USDT")).Err())
+
+	overrides["BTC/USDT"] = Override{ID: "o1", Approved: true, Market: "BTC/USDT", Bid: sd("99"), Ask: sd("101"), Mid: sd("100"), Set: now.Add(-time.Hour), Expires: now.Add(time.Minute)}
 	p, err = r.Get(ctx, "BTC/USDT")
 	require.NoError(t, err)
 	assert.Equal(t, StatusOverride, p.Status)
+	assert.Equal(t, &OverrideRef{ID: "o1", Approved: true}, p.Override)
 	assert.True(t, p.Live())
 	assert.Equal(t, "99", p.Bid.String())
 	assert.Equal(t, []string{"override"}, p.Sources)

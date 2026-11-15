@@ -28,6 +28,9 @@ const (
 	codePriceOverrideExists  = "price_override_exists"
 	codePriceOverrideMissing = "price_override_not_found"
 	codePriceOverrideEnded   = "price_override_ended"
+	codeNotPending           = "price_override_not_pending"
+	codeOverrideLapsed       = "price_override_lapsed"
+	codeSecondApproval       = "second_approval_required"
 )
 
 // priceOverrideRequest is a price that an administrator sets.
@@ -84,7 +87,7 @@ func (h *AdminHandler) GetMarketPrice(c *gin.Context) {
 }
 
 // @Summary Set the price of a market
-// @Description Sets the reference price of a market in place of the price engine's until expires_in_seconds pass (#59), for when the providers are wrong or down. Bid and ask default to mid; bid <= mid <= ask. The market must exist. A market has one override in force at most: 409 price_override_exists until it ends. Every instance of the server serves it within a second, and stops at its expiry. A sensitive route: it needs a step-up. Audited as price.override_set, with the prices, the expiry, and the reason. The row is sealed: an override changed in SQL is not served.
+// @Description Sets the reference price of a market in place of the price engine's until expires_in_seconds pass (#59), for when the providers are wrong or down. Bid and ask default to mid; bid <= mid <= ask. The market must exist. A market has one override in force or pending at most: 409 price_override_exists until it ends. An override whose mid is within price.overrides.max_deviation_bps of the live reference mid applies at once, audited as price.override_set: every instance of the server serves it within a second, and stops at its expiry. One beyond it, or for a market without a live reference, answers pending=true and approve_by (#453), audited as price.override_request: it is not served until another administrator approves it with POST /admin/price-overrides/{id}/approve before approve_by, and lapses otherwise. A sensitive route: it needs a step-up. The row is sealed: an override changed in SQL is not served.
 // @Tags admin prices
 // @Accept json
 // @Produce json
@@ -158,16 +161,63 @@ func (h *AdminHandler) SetPriceOverride(c *gin.Context) {
 			return
 		}
 	}
+	// The live reference bounds the override (#453): with no override in
+	// force, the reader gives the engine's price. Without one, or with an
+	// override in force (which Set refuses), it waits for an approval.
+	var reference *shared.Decimal
+	if h.Prices != nil {
+		if p, err := h.Prices.Get(ctx, base+"/"+quote); err == nil && p.Status == price.StatusLive {
+			reference = &p.Mid
+		}
+	}
 	o, err := h.PriceOverrides.Set(ctx, priceoverride.New{
 		Market: base + "/" + quote, Bid: bid, Ask: ask, Mid: mid, Reason: req.Reason,
-		For: time.Duration(req.ExpiresInSeconds) * time.Second,
+		For: time.Duration(req.ExpiresInSeconds) * time.Second, Reference: reference,
 	}, adminHK, origin)
 	if err != nil {
 		sendPriceOverrideError(c, err)
 		return
 	}
 	h.refreshOverrides(ctx)
+	if o.Pending {
+		helpers.SendResponse(c, http.StatusCreated, i18n.M("PRICE_OVERRIDE_PENDING"), o)
+		return
+	}
 	helpers.SendResponse(c, http.StatusCreated, i18n.M("PRICE_OVERRIDE_SET"), o)
+}
+
+// @Summary Approve a price override
+// @Description Approves a pending override (#453), one beyond price.overrides.max_deviation_bps of the live reference mid or set without one, as a second administrator: never the one who set it (403 second_approval_required). It is then served on every instance within a second, until its expiry, and a delisting may record it as its settlement price. 409 price_override_not_pending for one that applied at once or is approved already, price_override_lapsed after its approve_by, and price_override_ended for one that ended. A sensitive route: it needs a step-up. Audited as price.override_approve; the sealed row records the approver.
+// @Tags admin prices
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "The override" format(uuid)
+// @Success 200 {object} models.APIResponse{info=priceoverride.Override}
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse "step_up_required or second_approval_required"
+// @Failure 404 {object} models.APIResponse "price_override_not_found"
+// @Failure 409 {object} models.APIResponse "price_override_not_pending, price_override_lapsed, price_override_ended, or row_unverified"
+// @Failure 503 {object} models.APIResponse "prices_unavailable"
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/price-overrides/{id}/approve [post]
+func (h *AdminHandler) ApprovePriceOverride(c *gin.Context) {
+	if !h.pricesConfigured(c) {
+		return
+	}
+	origin, adminHK, ok := adminOrigin(c)
+	if !ok {
+		helpers.SendResponse(c, http.StatusUnauthorized, i18n.M("UNAUTHORIZED"), nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	o, err := h.PriceOverrides.Approve(ctx, c.Param("id"), adminHK, origin)
+	if err != nil {
+		sendPriceOverrideError(c, err)
+		return
+	}
+	h.refreshOverrides(ctx)
+	helpers.SendResponse(c, http.StatusOK, i18n.M("PRICE_OVERRIDE_APPROVED"), o)
 }
 
 // @Summary List the price overrides
@@ -217,7 +267,7 @@ func (h *AdminHandler) ListPriceOverrides(c *gin.Context) {
 }
 
 // @Summary End a price override
-// @Description Ends an override in force before its expiry (#59): the market takes the price engine's price again, on every instance within a second. A sensitive route: it needs a step-up. Audited as price.override_end.
+// @Description Ends an override in force before its expiry (#59), or withdraws a pending one (#453): the market takes the price engine's price again, on every instance within a second. A sensitive route: it needs a step-up. Audited as price.override_end.
 // @Tags admin prices
 // @Produce json
 // @Security BearerAuth
@@ -271,6 +321,12 @@ func sendPriceOverrideError(c *gin.Context, err error) {
 		helpers.SendError(c, http.StatusNotFound, codePriceOverrideMissing, i18n.M("PRICE_OVERRIDE_NOT_FOUND"), nil)
 	case errors.Is(err, priceoverride.ErrEnded):
 		helpers.SendError(c, http.StatusConflict, codePriceOverrideEnded, i18n.M("PRICE_OVERRIDE_ENDED_ALREADY"), nil)
+	case errors.Is(err, priceoverride.ErrNotPending):
+		helpers.SendError(c, http.StatusConflict, codeNotPending, i18n.M("PRICE_OVERRIDE_NOT_PENDING"), nil)
+	case errors.Is(err, priceoverride.ErrLapsed):
+		helpers.SendError(c, http.StatusConflict, codeOverrideLapsed, i18n.M("PRICE_OVERRIDE_LAPSED"), nil)
+	case errors.Is(err, priceoverride.ErrSameAdmin):
+		helpers.SendError(c, http.StatusForbidden, codeSecondApproval, i18n.M("PRICE_OVERRIDE_SECOND_ADMIN"), nil)
 	case errors.Is(err, rowseal.ErrUnverified):
 		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 	default:

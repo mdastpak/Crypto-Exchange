@@ -131,6 +131,17 @@ type Price struct {
 	// them. See sign.go.
 	KeyID     string `json:"kid,omitempty"`
 	Signature string `json:"sig,omitempty"`
+	// Override is the administrator's override that a price of status
+	// override is (#453), never set on a price of the engine.
+	Override *OverrideRef `json:"override,omitempty"`
+}
+
+// OverrideRef names the override that a price is.
+type OverrideRef struct {
+	ID string `json:"id" format:"uuid"`
+	// Approved is an override that a second administrator approved: one
+	// beyond the bound against the live price, or set without one (#453).
+	Approved bool `json:"approved"`
 }
 
 // Live reports whether the price may be served as current: a live price,

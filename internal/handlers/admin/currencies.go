@@ -101,7 +101,8 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 		h.Rebrands = rebrand.Store{DB: db}
 		h.Audit = audit.Log{DB: db}
 		h.Findings = rowseal.Findings{DB: db}
-		h.PriceOverrides = priceoverride.Store{DB: db}
+		bounds := is.Settings().Price.Overrides
+		h.PriceOverrides = priceoverride.Store{DB: db, MaxDeviationBPS: bounds.Deviation(), ApprovalWindow: bounds.ApprovalWindow()}
 	}
 	if catalog := currencies.ForServices(is); catalog != nil {
 		h.Currencies = catalog

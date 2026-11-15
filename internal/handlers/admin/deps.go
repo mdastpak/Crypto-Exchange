@@ -184,6 +184,7 @@ type PriceReader interface {
 type PriceOverrideStore interface {
 	Set(ctx context.Context, n priceoverride.New, adminHK string, origin audit.Event) (priceoverride.Override, error)
 	End(ctx context.Context, id, adminHK string, origin audit.Event) (priceoverride.Override, error)
+	Approve(ctx context.Context, id, adminHK string, origin audit.Event) (priceoverride.Override, error)
 	List(ctx context.Context, inForce bool, limit int) ([]priceoverride.Override, error)
 }
 

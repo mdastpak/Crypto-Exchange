@@ -9,6 +9,13 @@
 // one applies on every instance within it, and the readers of the prices
 // (price.Reader) take one without a query. An override expires by itself;
 // an administrator may end it before.
+//
+// An override whose mid is within the bound of the live reference mid
+// applies at once. One beyond it, or for a market without a live
+// reference, is pending (#453): it is served only once a second
+// administrator approves it, before approve_by, and lapses otherwise. A
+// delisting records the price of an override as its settlement price only
+// when it was approved so.
 package priceoverride
 
 import (
@@ -26,6 +33,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/price"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+
+	"github.com/shopspring/decimal"
 )
 
 // The errors of the store.
@@ -39,6 +48,13 @@ var (
 	ErrEnded = errors.New("priceoverride: the override has ended")
 	// ErrInvalid is an override whose prices or expiry are not valid.
 	ErrInvalid = errors.New("priceoverride: invalid override")
+	// ErrNotPending is an approval of an override that does not wait for
+	// one.
+	ErrNotPending = errors.New("priceoverride: the override does not wait for an approval")
+	// ErrLapsed is an approval of an override after its approve_by.
+	ErrLapsed = errors.New("priceoverride: the override lapsed without an approval")
+	// ErrSameAdmin is an approval by the administrator who set it.
+	ErrSameAdmin = errors.New("priceoverride: an override is approved by another administrator")
 )
 
 // Override is a price that an administrator set.
@@ -57,6 +73,19 @@ type Override struct {
 	EndedBy   string     `json:"ended_by,omitempty" format:"uuid"`
 	// InForce is whether it is served now.
 	InForce bool `json:"in_force"`
+	// ReferenceMid is the live reference mid when it was set, and
+	// DeviationBPS how far its mid is from it, in basis points; both are
+	// absent without a live reference.
+	ReferenceMid *shared.Decimal `json:"reference_mid,omitempty" swaggertype:"string" example:"64000"`
+	DeviationBPS *int64          `json:"deviation_bps,omitempty" example:"8"`
+	// Pending is an override that waits for a second administrator until
+	// ApproveBy (#453), and Lapsed one that nobody approved by then.
+	// ApprovedBy and ApprovedAt record the approval.
+	Pending    bool       `json:"pending"`
+	Lapsed     bool       `json:"lapsed,omitempty"`
+	ApproveBy  *time.Time `json:"approve_by,omitempty"`
+	ApprovedBy string     `json:"approved_by,omitempty" format:"uuid"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 }
 
 // New is an override to set.
@@ -66,6 +95,9 @@ type New struct {
 	Reason        string
 	// For is how long it lasts.
 	For time.Duration
+	// Reference is the live reference mid of the market, nil without one:
+	// the price engine's, read when no override is in force.
+	Reference *shared.Decimal
 }
 
 // MaxFor bounds how long an override lasts: an administrator sets a new one
@@ -75,22 +107,59 @@ const MaxFor = 24 * time.Hour
 // MaxList bounds a list.
 const MaxList = 100
 
+// The defaults of a Store.
+const (
+	DefaultMaxDeviationBPS = 300
+	DefaultApprovalWindow  = 30 * time.Minute
+)
+
 // Store keeps the overrides.
 type Store struct {
 	DB *sql.DB
+	// MaxDeviationBPS bounds the mid of an override that applies at once,
+	// against the live reference mid; ApprovalWindow is how long one
+	// beyond it waits for its approval. Zero is the default.
+	MaxDeviationBPS int
+	ApprovalWindow  time.Duration
+}
+
+func (s Store) bound() int64 {
+	if s.MaxDeviationBPS <= 0 {
+		return DefaultMaxDeviationBPS
+	}
+	return int64(s.MaxDeviationBPS)
+}
+
+func (s Store) window() time.Duration {
+	if s.ApprovalWindow <= 0 {
+		return DefaultApprovalWindow
+	}
+	return s.ApprovalWindow
+}
+
+// Deviation returns how far mid is from reference, in basis points,
+// rounded up.
+func Deviation(mid, reference shared.Decimal) int64 {
+	bps := mid.Decimal().Sub(reference.Decimal()).Abs().Mul(decimal.NewFromInt(10000)).Div(reference.Decimal()).Ceil()
+	return bps.IntPart()
 }
 
 const columns = `id::text, market, bid::text, ask::text, mid::text, reason, created_by::text, created_at, expires_at,
-	ended_at, COALESCE(ended_by::text, ''), now()`
+	ended_at, COALESCE(ended_by::text, ''), now(), reference_mid::text, approve_by, COALESCE(approved_by::text, ''), approved_at`
+
+// served is the condition of an override that is served: not ended, not
+// expired, and approved when it waits for an approval.
+const served = `ended_at IS NULL AND expires_at > now() AND (approve_by IS NULL OR approved_at IS NOT NULL)`
 
 func scan(scanner func(...any) error) (Override, *rowseal.Row, error) {
 	var o Override
 	var bid, ask, mid string
-	var ended sql.NullTime
+	var ended, approveBy, approvedAt sql.NullTime
+	var reference sql.NullString
 	var now time.Time
 	row := rowseal.PriceOverrides.NewRow()
 	if err := scanner(append([]any{&o.ID, &o.Market, &bid, &ask, &mid, &o.Reason, &o.CreatedBy, &o.CreatedAt, &o.ExpiresAt,
-		&ended, &o.EndedBy, &now}, row.Dest()...)...); err != nil {
+		&ended, &o.EndedBy, &now, &reference, &approveBy, &o.ApprovedBy, &approvedAt}, row.Dest()...)...); err != nil {
 		return Override{}, nil, err
 	}
 	var err error
@@ -108,7 +177,27 @@ func scan(scanner func(...any) error) (Override, *rowseal.Row, error) {
 		t := ended.Time.UTC()
 		o.EndedAt = &t
 	}
-	o.InForce = o.EndedAt == nil && now.Before(o.ExpiresAt)
+	if reference.Valid {
+		ref, err := shared.NewDecimalFromString(reference.String)
+		if err != nil {
+			return Override{}, nil, err
+		}
+		dev := Deviation(o.Mid, ref)
+		o.ReferenceMid, o.DeviationBPS = &ref, &dev
+	}
+	if approveBy.Valid {
+		t := approveBy.Time.UTC()
+		o.ApproveBy = &t
+	}
+	if approvedAt.Valid {
+		t := approvedAt.Time.UTC()
+		o.ApprovedAt = &t
+	}
+	open := o.EndedAt == nil && now.Before(o.ExpiresAt)
+	waiting := o.ApproveBy != nil && o.ApprovedAt == nil
+	o.Pending = open && waiting && now.Before(*o.ApproveBy)
+	o.Lapsed = waiting && !now.Before(*o.ApproveBy)
+	o.InForce = open && !waiting
 	return o, row, nil
 }
 
@@ -143,10 +232,15 @@ func (s Store) Set(ctx context.Context, n New, adminHK string, origin audit.Even
 		return Override{}, err
 	}
 	defer tx.Rollback()
-	// Close the override that expired, at its expiry, so that the market
-	// takes a new one.
-	rows, err := tx.QueryContext(ctx, `UPDATE price_overrides SET ended_at = expires_at, row_version = row_version + 1
-		WHERE market = $1 AND ended_at IS NULL AND expires_at <= now() RETURNING id`, n.Market)
+	// Close the override that expired, at its expiry, or that lapsed
+	// without its approval, at its approve_by, so that the market takes a
+	// new one.
+	rows, err := tx.QueryContext(ctx, `UPDATE price_overrides
+		SET ended_at = CASE WHEN approve_by IS NOT NULL AND approved_at IS NULL THEN LEAST(expires_at, approve_by) ELSE expires_at END,
+			row_version = row_version + 1
+		WHERE market = $1 AND ended_at IS NULL
+		  AND (expires_at <= now() OR (approve_by IS NOT NULL AND approved_at IS NULL AND approve_by <= now()))
+		RETURNING id`, n.Market)
 	if err != nil {
 		return Override{}, err
 	}
@@ -165,10 +259,23 @@ func (s Store) Set(ctx context.Context, n New, adminHK string, origin audit.Even
 			return Override{}, err
 		}
 	}
+	// Within the bound of the live reference, it applies at once; beyond
+	// it, or without a reference, it waits for a second administrator.
+	var reference any
+	pending := n.Reference == nil || !n.Reference.IsPositive()
+	if !pending {
+		reference = n.Reference.String()
+		pending = Deviation(n.Mid, *n.Reference) > s.bound()
+	}
+	var approveBy any
+	if pending {
+		approveBy = s.window().Seconds()
+	}
 	var id string
-	err = tx.QueryRowContext(ctx, `INSERT INTO price_overrides (market, bid, ask, mid, reason, created_by, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7)) RETURNING id::text`,
-		n.Market, n.Bid.String(), n.Ask.String(), n.Mid.String(), n.Reason, adminHK, n.For.Seconds()).Scan(&id)
+	err = tx.QueryRowContext(ctx, `INSERT INTO price_overrides (market, bid, ask, mid, reason, created_by, expires_at, reference_mid, approve_by)
+		VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8::numeric,
+			CASE WHEN $9::float8 IS NULL THEN NULL ELSE now() + make_interval(secs => $9::float8) END) RETURNING id::text`,
+		n.Market, n.Bid.String(), n.Ask.String(), n.Mid.String(), n.Reason, adminHK, n.For.Seconds(), reference, approveBy).Scan(&id)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return Override{}, ErrExists
@@ -186,11 +293,21 @@ func (s Store) Set(ctx context.Context, n New, adminHK string, origin audit.Even
 	event := origin
 	event.ActorType, event.ActorID = audit.ActorAdmin, adminHK
 	event.Action, event.TargetType, event.TargetID = audit.ActionPriceOverrideSet, audit.TargetPriceOverride, id
+	if pending {
+		event.Action = audit.ActionPriceOverrideRequest
+	}
 	event.Outcome = audit.Success
-	event.Changes = &audit.Changes{After: map[string]any{
+	after := map[string]any{
 		"market": o.Market, "bid": o.Bid.String(), "ask": o.Ask.String(), "mid": o.Mid.String(),
-		"expires_at": o.ExpiresAt, "reason": o.Reason,
-	}}
+		"expires_at": o.ExpiresAt, "reason": o.Reason, "pending": pending,
+	}
+	if o.ReferenceMid != nil {
+		after["reference_mid"], after["deviation_bps"] = o.ReferenceMid.String(), *o.DeviationBPS
+	}
+	if o.ApproveBy != nil {
+		after["approve_by"] = *o.ApproveBy
+	}
+	event.Changes = &audit.Changes{After: after}
 	if err := audit.Record(ctx, tx, event); err != nil {
 		return Override{}, err
 	}
@@ -208,7 +325,7 @@ func (s Store) End(ctx context.Context, id, adminHK string, origin audit.Event) 
 	if err != nil {
 		return Override{}, err
 	}
-	if !o.InForce {
+	if !o.InForce && !o.Pending {
 		return Override{}, ErrEnded
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE price_overrides SET ended_at = now(), ended_by = $2, row_version = row_version + 1
@@ -234,6 +351,57 @@ func (s Store) End(ctx context.Context, id, adminHK string, origin audit.Event) 
 		return Override{}, err
 	}
 	return ended, tx.Commit()
+}
+
+// Approve approves a pending override as the administrator adminHK, who
+// is not the one who set it (#453): it is then served, until its expiry.
+func (s Store) Approve(ctx context.Context, id, adminHK string, origin audit.Event) (Override, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Override{}, err
+	}
+	defer tx.Rollback()
+	o, err := get(ctx, tx, id, true)
+	if err != nil {
+		return Override{}, err
+	}
+	switch {
+	case o.Lapsed:
+		return Override{}, ErrLapsed
+	case !o.Pending && !o.InForce:
+		return Override{}, ErrEnded
+	case !o.Pending:
+		return Override{}, ErrNotPending
+	case o.CreatedBy == adminHK:
+		return Override{}, ErrSameAdmin
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE price_overrides SET approved_by = $2, approved_at = now(), row_version = row_version + 1
+		WHERE id = $1 AND approved_at IS NULL AND approve_by > now()`, id, adminHK); err != nil {
+		return Override{}, err
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.PriceOverrides, "id = $1", id); err != nil {
+		return Override{}, err
+	}
+	approved, err := get(ctx, tx, id, false)
+	if err != nil {
+		return Override{}, err
+	}
+	if approved.ApprovedAt == nil {
+		// It lapsed between the read and the write.
+		return Override{}, ErrLapsed
+	}
+	event := origin
+	event.ActorType, event.ActorID = audit.ActorAdmin, adminHK
+	event.Action, event.TargetType, event.TargetID = audit.ActionPriceOverrideApprove, audit.TargetPriceOverride, id
+	event.Outcome = audit.Success
+	event.Changes = &audit.Changes{
+		Before: map[string]any{"market": o.Market, "mid": o.Mid.String(), "created_by": o.CreatedBy},
+		After:  map[string]any{"approved_by": adminHK, "approved_at": approved.ApprovedAt},
+	}
+	if err := audit.Record(ctx, tx, event); err != nil {
+		return Override{}, err
+	}
+	return approved, tx.Commit()
 }
 
 type querier interface {
@@ -272,7 +440,7 @@ func (s Store) List(ctx context.Context, inForce bool, limit int) ([]Override, e
 	}
 	where := ""
 	if inForce {
-		where = "WHERE ended_at IS NULL AND expires_at > now()"
+		where = "WHERE " + served
 	}
 	//nolint:gosec // G202: the columns and the condition are constants of this package.
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+columns+`, `+rowseal.PriceOverrides.Fields("")+` FROM price_overrides `+where+`
@@ -300,7 +468,7 @@ func (s Store) List(ctx context.Context, inForce bool, limit int) ([]Override, e
 func (s Store) inForce(ctx context.Context) ([]Override, error) {
 	//nolint:gosec // G202: the columns are constants of this package.
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+columns+`, `+rowseal.PriceOverrides.Fields("")+` FROM price_overrides
-		WHERE ended_at IS NULL AND expires_at > now()`)
+		WHERE `+served)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +531,8 @@ func (w *Watcher) Refresh(ctx context.Context) error {
 	}
 	byMarket := make(map[string]price.Override, len(list))
 	for _, o := range list {
-		byMarket[o.Market] = price.Override{ID: o.ID, Market: o.Market, Bid: o.Bid, Ask: o.Ask, Mid: o.Mid, Set: o.CreatedAt, Expires: o.ExpiresAt}
+		byMarket[o.Market] = price.Override{ID: o.ID, Market: o.Market, Bid: o.Bid, Ask: o.Ask, Mid: o.Mid, Set: o.CreatedAt,
+			Expires: o.ExpiresAt, Approved: o.ApprovedBy != ""}
 	}
 	w.mu.Lock()
 	w.byMarket = byMarket

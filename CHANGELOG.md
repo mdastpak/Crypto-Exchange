@@ -255,6 +255,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- One administrator could set any reference price ([#453](https://github.com/mdastpak/Crypto-Exchange/issues/453)). See [Overrides](docs/price-engine.md#overrides).
+  - An override applies at once only within `price.overrides.max_deviation_bps` (300 by default, `PRICE_OVERRIDES_MAX_DEVIATION_BPS`) of the live reference mid. Beyond it, or with no live price, it waits for a second administrator, `POST /admin/price-overrides/{id}/approve`, for `price.overrides.approval_minutes` (30 by default, `PRICE_OVERRIDES_APPROVAL_MINUTES`), and lapses unapproved. Audited as `price.override_request` and `price.override_approve`.
+  - A delisting settles only at an approved override, and each settlement price and OTC quote names the override it used.
+  - Migration 41 adds `reference_mid`, `approve_by`, `approved_by`, and `approved_at` to `price_overrides`, sealed, and refuses an approval by the administrator who set the override.
+
 - One balance that cannot convert no longer stops a forced migration or a delisting settlement for every holder ([#452](https://github.com/mdastpak/Crypto-Exchange/issues/452)). See [Held conversions](docs/architecture.md#held-conversions).
   - A balance whose conversion fails is held in `currency_conversion_holds` (migration 40) with a stable code and a retry after a minute, doubling to an hour; the claim skips it, so the others convert. A conversion releases its hold. The completion and `delisted` still wait for every balance.
   - `currency_conversion_failures_total{kind, code}` counts the failures, and the progress and settlement reports show `blocked` and `blocked_codes`.
