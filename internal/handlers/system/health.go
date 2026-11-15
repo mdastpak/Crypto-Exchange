@@ -75,6 +75,21 @@ func (h *SystemHandler) dependencies() []dependency {
 	return deps
 }
 
+// checkWithin runs check and returns at the deadline of ctx, also when the
+// check does not follow its context (#402): a call that waits on a lock or
+// on network I/O must not hold the probe past its timeout. A check that
+// returns late ends in the background.
+func checkWithin(ctx context.Context, check func(context.Context) error) error {
+	done := make(chan error, 1)
+	go func() { done <- check(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // LivenessHandler reports that the process serves requests. It checks no
 // dependency, so that an orchestrator does not restart an instance for an
 // outage elsewhere.
@@ -125,7 +140,7 @@ func (h *SystemHandler) ReadinessHandler(c *gin.Context) {
 			defer cancel()
 			start := time.Now()
 			status := "ok"
-			if err := dep.check(ctx); err != nil {
+			if err := checkWithin(ctx, dep.check); err != nil {
 				status = "error"
 			}
 			results[i] = ServiceStatus{Status: status, LastCheck: time.Now().UTC(), LatencyMs: time.Since(start).Milliseconds()}

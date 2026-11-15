@@ -47,6 +47,17 @@ The server starts without the broker and connects in the background, so a rollin
 
 When one node of a cluster is down, the server moves to another one within about a second; the requests of that second may get `503 delivery_unavailable`.
 
+### A broker under a resource alarm
+
+When a node runs low on memory or disk, RabbitMQ blocks the connections that publish: it keeps them and heartbeats on them, but reads nothing more from them, so the client never sees them drop. The server treats this as the broker being away ([#402](https://github.com/mdastpak/Crypto-Exchange/issues/402)):
+
+- It follows the broker's `connection.blocked` and `connection.unblocked` notifications. While blocked, a publish fails at once, `rabbitmq_up` is `0`, and readiness answers `200` with `rabbitmq` `error`, as in the table above.
+- A publish that already sits in a socket write the broker does not read holds only the publishes of its channel, each of them until its own deadline: the context of the request, or five seconds for the confirmation. The health check, the metrics, and the other routes never wait for it.
+- Each readiness check returns at its timeout, also when the dependency it calls does not.
+- Shutdown closes the connection with a deadline of five seconds, which also ends a write that waits for the broker.
+
+The outbox relay publishes each event with a deadline of its own, so its transaction ends after the batch time plus one deadline at most, and the events stay pending until the alarm clears.
+
 ### WebSocket clients
 
 An instance whose subscription to the currency events was lost subscribes again on whichever node it reaches. The events published in between are lost for its clients, so it then sends every client `{"event": "currencies.resync", "server_time": "..."}`, and a client reloads the currencies over REST ([API](api.md#server-messages)). The sequence numbers of the channel protocol ([#66](https://github.com/mdastpak/Crypto-Exchange/issues/66)) will let a client fetch only what it missed.

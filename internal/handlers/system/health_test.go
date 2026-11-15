@@ -116,6 +116,29 @@ func TestReadiness_ASlowDependencyIsReportedWithinTheTimeout(t *testing.T) {
 	assert.Equal(t, "error", healthOf(t, w).Details["postgres"].Status)
 }
 
+// TestReadiness_ACheckThatIgnoresItsContextIsCutAtTheTimeout covers a
+// check that blocks without regard to its context, as RabbitMQ's health
+// check did on a broker under a resource alarm (#402): the probe still
+// answers within the timeout, and an optional dependency only degrades it.
+func TestReadiness_ACheckThatIgnoresItsContextIsCutAtTheTimeout(t *testing.T) {
+	h := handlerFailing()
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	h.checks[2] = dependency{"rabbitmq", func(context.Context) error {
+		<-stuck
+		return nil
+	}, true}
+	h.checkTimeout = 100 * time.Millisecond
+
+	start := time.Now()
+	w := get(h, "/system/ready")
+	assert.Less(t, time.Since(start), time.Second)
+	assert.Equal(t, http.StatusOK, w.Code)
+	status := healthOf(t, w)
+	assert.Equal(t, "degraded", status.Status)
+	assert.Equal(t, "error", status.Details["rabbitmq"].Status)
+}
+
 func TestReadiness_HidesTheDetailsInReleaseMode(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	t.Cleanup(func() { gin.SetMode(gin.TestMode) })
