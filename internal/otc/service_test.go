@@ -338,11 +338,14 @@ func TestService_LoadTest(t *testing.T) {
 	require.NoError(t, err)
 	account := Account{UserHK: f.user}
 	// The target holds when the test runs alone, as the CI's load test
-	// step runs it, with LOAD_TESTS=1. Within go test ./..., other packages
-	// share the machine and the databases, and the race detector slows the
-	// code ten times or more: there it sends 200 requests a second with ten
-	// times the budget, which still catches a quote that waits on a lock.
-	total, rate, budget := 400, 200, 100*time.Millisecond
+	// step runs it, with LOAD_TESTS=1. Within go test ./..., every other
+	// package shares the machine and the databases, and the race detector
+	// slows the code ten times or more: rounds of 200 to 600 ms at the p99
+	// were seen there in CI. So it sends 200 requests a second with a bound
+	// of 2 s, which a quote that waits on a lock (seconds, up to the
+	// statement timeout) still crosses, and the timing itself is the load
+	// test step's.
+	total, rate, budget := 400, 200, 2*time.Second
 	if os.Getenv("LOAD_TESTS") == "1" && !raceEnabled {
 		total, rate, budget = 1000, 1000, 10*time.Millisecond
 	}
