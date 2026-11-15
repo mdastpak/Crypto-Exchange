@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{if eq .Stage "cancelled"}}{{.Currency}} در صرافی می&zwnj;ماند{{else}}{{.Currency}} در حال حذف از صرافی است{{end}}</title>
+</head>
+<body dir="rtl" style="margin:0;padding:0;background:#f4f5f7;font-family:Vazirmatn,Tahoma,'Segoe UI',Arial,sans-serif;color:#1f2933;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" dir="rtl" style="background:#f4f5f7;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" dir="rtl" style="max-width:480px;background:#ffffff;border-radius:12px;border:1px solid #e4e7eb;text-align:right;">
+<tr><td style="padding:28px 28px 8px;font-size:15px;font-weight:600;color:#52606d;">{{.Sender}}</td></tr>
+{{if .AntiPhishingCode}}<tr><td style="padding:12px 28px 0;"><div style="padding:10px 14px;border-radius:8px;background:#eef9f1;border:1px solid #a6dfb8;font-size:13px;color:#1d6b38;">کد ضدفیشینگ شما: <b>{{.AntiPhishingCode}}</b>. ایمیلی که این کد را نداشته باشد از طرف ما نیست.</div></td></tr>{{end}}
+{{if eq .Stage "cancelled"}}
+<tr><td style="padding:8px 28px 0;font-size:20px;font-weight:700;"><span dir="ltr">{{.Currency}}</span> در صرافی می&zwnj;ماند</td></tr>
+<tr><td style="padding:16px 28px 0;font-size:15px;line-height:1.9;">حذف <span dir="ltr">{{.Currency}}</span> لغو شد: دوباره فعال است و همه عملیات&zwnj;ها باز است.</td></tr>
+{{else}}
+<tr><td style="padding:8px 28px 0;font-size:20px;font-weight:700;"><span dir="ltr">{{.Currency}}</span> در حال حذف از صرافی است</td></tr>
+<tr><td style="padding:16px 28px 0;font-size:15px;line-height:1.9;">
+{{if eq .Stage "reminder"}}{{.DaysLeft}} روز تا مسدود شدن <span dir="ltr">{{.Currency}}</span> باقی مانده است.
+{{else if eq .Stage "delist_announced"}}<span dir="ltr">{{.Currency}}</span> به&zwnj;صورت مرحله&zwnj;ای از صرافی حذف می&zwnj;شود.
+{{else if eq .Stage "deposits_disabled"}}واریز <span dir="ltr">{{.Currency}}</span> از این پس بسته است.
+{{else if eq .Stage "sell_only"}}از این پس <span dir="ltr">{{.Currency}}</span> فقط فروخته می&zwnj;شود و خرید آن ممکن نیست.
+{{else if eq .Stage "trading_halted"}}معامله <span dir="ltr">{{.Currency}}</span> از این پس متوقف است.
+{{else if eq .Stage "withdrawal_only"}}از این پس فقط برداشت <span dir="ltr">{{.Currency}}</span> ممکن است.
+{{else if eq .Stage "frozen"}}<span dir="ltr">{{.Currency}}</span> مسدود شد و موجودی&zwnj;های باقی&zwnj;مانده تسویه می&zwnj;شوند.
+{{else if eq .Stage "delisted"}}<span dir="ltr">{{.Currency}}</span> از صرافی حذف شد.{{end}}
+</td></tr>
+{{if .Deadline}}<tr><td style="padding:12px 28px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" dir="rtl" style="border:1px solid #e4e7eb;border-radius:10px;">
+<tr><td style="padding:12px 16px;font-size:13px;color:#616e7c;">زمان مسدود شدن</td><td style="padding:12px 16px;font-size:15px;font-weight:700;text-align:left;" dir="ltr">{{.Deadline}}</td></tr>
+{{if .DaysLeft}}<tr><td style="padding:12px 16px;font-size:13px;color:#616e7c;border-top:1px solid #e4e7eb;">روزهای باقی&zwnj;مانده</td><td style="padding:12px 16px;font-size:15px;font-weight:700;text-align:left;border-top:1px solid #e4e7eb;" dir="ltr">{{.DaysLeft}}</td></tr>{{end}}
+</table>
+</td></tr>
+<tr><td style="padding:16px 28px 0;font-size:15px;line-height:1.9;">پیش از آن، موجودی خود را برداشت کنید یا بفروشید.</td></tr>{{end}}
+{{if eq .Settlement "convert"}}<tr><td style="padding:12px 28px 0;font-size:15px;line-height:1.9;">موجودی باقی&zwnj;مانده هنگام مسدود شدن با قیمت تسویه به <span dir="ltr">{{.SettlementCurrency}}</span> تبدیل می&zwnj;شود.</td></tr>
+{{else if eq .Settlement "claim"}}<tr><td style="padding:12px 28px 0;font-size:15px;line-height:1.9;">موجودی باقی&zwnj;مانده هنگام مسدود شدن تا {{.ClaimDays}} روز برای دریافت صاحبانش نگه داشته می&zwnj;شود.</td></tr>{{end}}
+{{if .Holder}}<tr><td style="padding:16px 28px 0;">
+<div style="padding:12px 16px;border-radius:10px;background:#fdecea;border:1px solid #f5b5ae;font-size:14px;line-height:1.9;color:#8a1c12;">شما <span dir="ltr">{{.Currency}}</span> دارید: این پیام به موجودی شما مربوط است.</div>
+</td></tr>{{end}}
+{{end}}
+<tr><td style="padding:20px 28px 28px;">
+<div style="padding:12px 16px;border-radius:10px;background:#fff4e5;border:1px solid #f7c58b;font-size:13px;line-height:1.9;color:#8a4b00;">
+برای جزئیات، صرافی را خودتان باز کنید، با نشانی آن یا اپلیکیشن ما. این ایمیل هیچ لینکی ندارد.
+</div>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

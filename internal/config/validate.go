@@ -272,6 +272,16 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Delisting.IntervalSeconds; v < 1 || v > MaxDelistingIntervalSeconds {
 		p.add("delisting.interval_seconds", "is %d; it must be from 1 to %d", v, MaxDelistingIntervalSeconds)
 	}
+	seenDays := map[int]bool{}
+	for _, d := range c.Delisting.Notices.ReminderDays {
+		switch {
+		case d < 1 || d > MaxDelistingReminderDays:
+			p.add("delisting.notices.reminder_days", "has %d; each must be from 1 to %d", d, MaxDelistingReminderDays)
+		case seenDays[d]:
+			p.add("delisting.notices.reminder_days", "has %d twice", d)
+		}
+		seenDays[d] = true
+	}
 	if v := c.Platform.PollIntervalMs; v < MinPlatformPollIntervalMs || v > MaxPlatformPollIntervalMs {
 		p.add("platform.poll_interval_ms", "is %d; it must be from %d to %d", v, MinPlatformPollIntervalMs, MaxPlatformPollIntervalMs)
 	}

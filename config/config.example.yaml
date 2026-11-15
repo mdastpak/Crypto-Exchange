@@ -244,9 +244,17 @@ notifications:
       Your anti-phishing code {{.AntiPhishingCode}} was set {{.AgeDays}} days ago, and {{.Uses}} emails from us have shown it.
 
       The more emails show it, the more places it can be seen. Sign in to the exchange yourself, not through a link, and choose a new code in the security settings.
+    # The notices of a delisting (#216): each stage, the reminders of the
+    # freeze, and the cancel. They can use {{.Currency}}, {{.Stage}} (a
+    # lifecycle state, reminder, or cancelled), {{.Deadline}},
+    # {{.DaysLeft}}, {{.Holder}}, {{.Settlement}}, {{.SettlementCurrency}},
+    # and {{.ClaimDays}}. Empty takes the built-in English text.
+    delisting_notice_subject: ""
+    delisting_notice_body: ""
     # The HTML part beside the text: en or fa (config/email), none for text
     # only, or a directory with otp.html, withdrawal.html,
-    # anti_phishing_reminder.html, and denied.html, each showing
+    # anti_phishing_reminder.html, denied.html, and delisting_notice.html,
+    # each showing
     # {{.AntiPhishingCode}}, and withdrawal.html {{.DenyLink}}.
     html_templates: en
   sms:
@@ -260,6 +268,7 @@ notifications:
       otp_template: ""      # A verify template approved in the Kavenegar panel; the code fills %token
       withdrawal_template: ""  # For withdrawal codes: %token the code, %token10 what it confirms, %token2 the token of the "this was not me" link; empty is no SMS for them
       anti_phishing_reminder_template: ""  # The reminder to change the anti-phishing code: %token the emails that showed it; empty is no SMS reminder
+      delisting_notice_template: ""  # The notices of a delisting to its holders: %token the symbol, %token2 the date of the freeze; empty is email only
       base_url: "https://api.kavenegar.com"
       timeout_seconds: 10
     smsir:
@@ -267,6 +276,7 @@ notifications:
       otp_template_id: 0    # A quick-send (verify) template of the panel with #CODE#
       withdrawal_template_id: 0  # With #CODE#, #AMOUNT#, #DEST#, and #DENY#, the token of the "this was not me" link; 0 sends withdrawal codes through other providers
       anti_phishing_reminder_template_id: 0  # With #COUNT#, the emails that showed the code; 0 is none
+      delisting_notice_template_id: 0  # With #CURRENCY# and #DATE#, the date of the freeze; 0 is none
       base_url: "https://api.sms.ir"
       timeout_seconds: 10
     # In the auto mode, a provider is passed over while it fails or does
@@ -359,6 +369,9 @@ favorites:
 # that are due.
 delisting:
   interval_seconds: 30         # How often; a step applies at most this late
+  notices:                     # The notices to the users (#216)
+    enabled: true              # Email to everyone, and SMS to the holders with a template
+    reminder_days: [30, 14, 7, 3, 1]  # Days before the freeze that the holders are reminded on
 
 # cmd/market-worker: collects the global market data catalog (unverified
 # assets, and the markets of global and Iranian exchanges); see

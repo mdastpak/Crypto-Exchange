@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The notices of delistings ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)). See [Delisting notices](docs/api.md#delisting-notices).
+  - Each stage that a delisting reaches is told to every user by email, and to the users who hold the currency also by SMS; holders are reminded of the freeze on `delisting.notices.reminder_days` (30, 14, 7, 3, and 1 days before), by email and SMS; a cancel is told by email. Push and the in-app inbox join with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
+  - The emails show the anti-phishing code and have no link: `notifications.email.delisting_notice_subject`/`_body` and `delisting_notice.html` in `en` and `fa`. A directory of HTML templates must now hold `delisting_notice.html`. SMS needs a template of its own: `notifications.sms.kavenegar.delisting_notice_template` (`%token` the symbol, `%token2` the date of the freeze) or `smsir.delisting_notice_template_id` (`#CURRENCY#`, `#DATE#`).
+  - The scheduler of every instance writes each notice once, its recipients once, and sends each recipient at least once, holders first, claimed with `SKIP LOCKED`, with retries; the channels sent are recorded. Migration 36 adds `currency_delisting_notices` and `currency_delisting_notice_recipients`.
+  - `GET /admin/currencies/{hk}/delistings/{id}/notices` shows each notice with its recipients by outcome. `delisting.notices.enabled` (`DELISTING_NOTICES_ENABLED`) turns them off.
 - The settlement of delistings ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)). See [Delistings](docs/api.md#delistings).
   - At `frozen`, a delisting that converts records its price once, the fixed price or the reference price of the price engine (its mid for `last_trade`, its longest TWAP for `twap`), in `settlement_price` with its source and time, audited as `currency.delisting_price` (migration 35). It waits while the reference is not live.
   - Every available balance of the currency is then converted at that price into the settlement currency, as a ledger `conversion` that refers to the delisting, rounded down to the precision of the settlement currency with the dust to `fees`, by the scheduler of every instance, each balance once.

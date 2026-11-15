@@ -212,3 +212,22 @@ func verifiedContacts(ctx context.Context, q queryer, userHK string) ([]contact,
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
+
+// Contact is a primary verified contact of a user: its type, email or
+// mobile, and its value. Never log the value.
+type Contact struct{ Type, Value string }
+
+// VerifiedContacts returns the primary verified email and mobile contacts
+// of a user, for the other notices that go to them, such as those of a
+// delisting (#216). A contact that does not match its seal is left out.
+func VerifiedContacts(ctx context.Context, q queryer, userHK string) ([]Contact, error) {
+	contacts, err := verifiedContacts(ctx, q, userHK)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Contact, 0, len(contacts))
+	for _, c := range contacts {
+		out = append(out, Contact{Type: c.typ, Value: c.value})
+	}
+	return out, nil
+}

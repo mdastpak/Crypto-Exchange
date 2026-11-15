@@ -30,6 +30,10 @@ const (
 	SMSIRParamDest   = "DEST"
 	SMSIRParamDeny   = "DENY"
 	SMSIRParamCount  = "COUNT"
+	// SMSIRParamCurrency and SMSIRParamDate are, in the notice of a
+	// delisting, the symbol and the date of the freeze.
+	SMSIRParamCurrency = "CURRENCY"
+	SMSIRParamDate     = "DATE"
 )
 
 // smsirMaxValue is the longest value of a template parameter that sms.ir
@@ -43,6 +47,7 @@ type SMSIRDeliverer struct {
 	apiKey                          string
 	otpTemplate, withdrawalTemplate int
 	reminderTemplate                int
+	delistingTemplate               int
 	baseURL                         string
 	client                          *http.Client
 }
@@ -70,6 +75,7 @@ func NewSMSIRDeliverer(cfg config.SMSIRConfig) (*SMSIRDeliverer, error) {
 		otpTemplate:        cfg.OTPTemplateID,
 		withdrawalTemplate: cfg.WithdrawalTemplateID,
 		reminderTemplate:   cfg.AntiPhishingReminderTemplateID,
+		delistingTemplate:  cfg.DelistingNoticeTemplateID,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
 		client:             &http.Client{Timeout: timeout},
 	}, nil
@@ -85,6 +91,8 @@ func (s *SMSIRDeliverer) Supports(purpose string) bool {
 		return s.withdrawalTemplate > 0
 	case PurposeAntiPhishingReminder:
 		return s.reminderTemplate > 0
+	case PurposeDelistingNotice:
+		return s.delistingTemplate > 0
 	}
 	// A message of another purpose, such as the notice of a denial
 	// (#374), has no template here: it must never go out with the
@@ -148,6 +156,12 @@ func (s *SMSIRDeliverer) params(msg OTPMessage) (int, []smsirParam, error) {
 		}
 		// The reminder carries the number of emails, never the code.
 		return s.reminderTemplate, []smsirParam{{SMSIRParamCount, strconv.FormatInt(msg.Uses, 10)}}, nil
+	case PurposeDelistingNotice:
+		if s.delistingTemplate <= 0 {
+			return 0, nil, errors.New("smsir: no delisting_notice_template_id for the notices of delistings")
+		}
+		return s.delistingTemplate, []smsirParam{{SMSIRParamCurrency, msg.Delisting.Currency},
+			{SMSIRParamDate, deadlineDate(msg.Delisting)}}, nil
 	case "":
 		return s.otpTemplate, []smsirParam{{SMSIRParamCode, msg.Code}}, nil
 	}

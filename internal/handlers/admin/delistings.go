@@ -341,3 +341,41 @@ func (h *AdminHandler) GetDelistingSettlement(c *gin.Context) {
 		helpers.SendResponse(c, http.StatusOK, i18n.M("DELISTING_SETTLEMENT_RETRIEVED"), report)
 	}
 }
+
+// @Summary Show the notices of a delisting
+// @Description The notices that the delisting sent its users (#216): one for the last stage that each run of the scheduler applied (step:<state>), a reminder of the freeze on each of delisting.notices.reminder_days (reminder:<days>d), and one for its cancel. Each stage and the cancel go to every user by email, and to the users who hold the currency also by SMS when a provider has a template for it; a reminder goes to the holders only. Each notice shows when it was due, when its recipients were written, how many there are and how many held the currency, and its recipients by outcome: sent, no_contact (no verified contact that a channel reaches), stale (the delisting was cancelled, or the account deleted, before it went), failed (after the last attempt), and pending.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Param id path string true "The delisting's id" format(uuid)
+// @Success 200 {object} models.APIResponse{info=[]delisting.NoticeReport}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk}/delistings/{id}/notices [get]
+func (h *AdminHandler) GetDelistingNotices(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	hk, ok := currencyParam(c)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_DELISTING_ID"), nil)
+		return
+	}
+	notices, err := h.Delistings.Notices(ctx, hk, id.String())
+	switch {
+	case errors.Is(err, delisting.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("DELISTING_NOT_FOUND"), nil)
+	case err != nil:
+		log.Printf("Failed to read the notices of the delisting %s: %v", id, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_DELISTING_NOTICES"), nil)
+	default:
+		helpers.SendResponse(c, http.StatusOK, i18n.M("DELISTING_NOTICES_RETRIEVED"), notices)
+	}
+}

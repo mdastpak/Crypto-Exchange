@@ -18,8 +18,8 @@ type SMSProvider interface {
 	// Name is the provider's name in the configuration.
 	Name() string
 	// Supports reports whether the provider has a template for messages of
-	// purpose: "" for sign-in codes, PurposeWithdrawal, or
-	// PurposeAntiPhishingReminder.
+	// purpose: "" for sign-in codes, PurposeWithdrawal,
+	// PurposeAntiPhishingReminder, or PurposeDelistingNotice.
 	Supports(purpose string) bool
 	// Send sends msg and returns the provider's ID of the message. A
 	// failure of the provider, which another provider may not have, is a
@@ -89,12 +89,18 @@ const (
 	SMSPurposeSignIn     = "sign_in"
 	SMSPurposeWithdrawal = "withdrawal"
 	SMSPurposeReminder   = "anti_phishing_reminder"
+	SMSPurposeDelisting  = "delisting_notice"
 )
 
 // smsPurposes are the purposes of messages, by their names.
 var smsPurposes = map[string]string{
 	SMSPurposeSignIn: "", SMSPurposeWithdrawal: PurposeWithdrawal, SMSPurposeReminder: PurposeAntiPhishingReminder,
+	SMSPurposeDelisting: PurposeDelistingNotice,
 }
+
+// smsPurposeNames are the names of the purposes, in the order that the
+// status lists them.
+var smsPurposeNames = []string{SMSPurposeSignIn, SMSPurposeWithdrawal, SMSPurposeReminder, SMSPurposeDelisting}
 
 // SMSPurposeName is the name of the purpose of a message.
 func SMSPurposeName(purpose string) string {
@@ -447,7 +453,7 @@ func (r *SMSRouter) Status(ctx context.Context) SMSStatus {
 	}
 	for _, p := range r.providers {
 		ps := SMSProviderStatus{Name: p.Name(), ProviderHealth: health[p.Name()]}
-		for _, name := range []string{SMSPurposeSignIn, SMSPurposeWithdrawal, SMSPurposeReminder} {
+		for _, name := range smsPurposeNames {
 			if p.Supports(smsPurposes[name]) {
 				ps.Templates = append(ps.Templates, name)
 			}
@@ -486,7 +492,7 @@ func (r *SMSRouter) CheckRouting(routing SMSRouting) error {
 		}
 		seen[name] = true
 	}
-	for _, name := range []string{SMSPurposeSignIn, SMSPurposeWithdrawal, SMSPurposeReminder} {
+	for _, name := range smsPurposeNames {
 		purpose := smsPurposes[name]
 		if r.Supports(purpose) && !slices.ContainsFunc(routing.Order, func(n string) bool { return r.provider(n).Supports(purpose) }) {
 			return fmt.Errorf("the order has no provider with a %s template", name)

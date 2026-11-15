@@ -1217,7 +1217,25 @@ At `frozen`, the balances that are left are settled per the delisting's `settlem
 - `convert` records the price once, when the currency is frozen, in `settlement_price`, with `settlement_price_detail` and `settlement_priced_at`, audited as `currency.delisting_price`. `fixed` is the plan's `fixed_price`. `last_trade` and `twap` read the reference price of the [price engine](#reference-prices) for the market of the currency in the settlement currency, such as `XYZ/USDT`, where an administrator's price override comes first: until the exchange has its own trades ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)), `last_trade` is its mid, and `twap` is its TWAP over the longest window. While that price is not live, the settlement waits, and an administrator can set it with an override. Every available balance is then converted at that price in the ledger, as an entry of kind `conversion` that refers to the delisting (as a [migration](#currency-migrations) converts), rounded down to the precision of the settlement currency, with the dust kept in `fees`. The scheduler of every instance shares the balances, each claimed with `FOR UPDATE SKIP LOCKED` and converted once. Locked funds and pending deposits convert once they are available.
 - `claim` holds the balances for their owners for `claim_days`.
 
-A delisting that reaches `delisted` passes through `frozen`, and its `delisted` step waits, past its time, until no balance of the currency is left ([#412](https://github.com/mdastpak/Crypto-Exchange/issues/412)), so a claim holds the currency at `frozen` while balances are held. The cancellation of open orders comes with the order book, and the notices to holders with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
+A delisting that reaches `delisted` passes through `frozen`, and its `delisted` step waits, past its time, until no balance of the currency is left ([#412](https://github.com/mdastpak/Crypto-Exchange/issues/412)), so a claim holds the currency at `frozen` while balances are held. The cancellation of open orders comes with the order book.
+
+### Delisting notices
+
+The users are told of each delisting ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)), while `delisting.notices.enabled` is on:
+
+| Notice | When | Who | Channels |
+| --- | --- | --- | --- |
+| `step:<state>` | A step applies; of steps that apply in one run, as by an emergency, only the last | Every user | Email to all; SMS also to holders |
+| `reminder:<days>d` | `<days>` before the `frozen` step, for each of `delisting.notices.reminder_days` (30, 14, 7, 3, 1) | Holders only | Email and SMS |
+| `cancelled` | The delisting is cancelled, after it told anything | Every user | Email |
+
+A holder is a user with a balance of the currency, available, locked, or pending, when the notice goes out; holders are sent first. Each notice says the currency, the stage, when the currency is frozen and the days left, what happens to the balances left (`convert` into the settlement currency, or `claim` within `claim_days`), and, to a holder, that it concerns their balance. Emails show the anti-phishing code and carry no link; the text and HTML templates are `notifications.email.delisting_notice_subject`/`_body` and `delisting_notice.html` in English and Persian. SMS goes only with a template of its own, `notifications.sms.kavenegar.delisting_notice_template` or `smsir.delisting_notice_template_id`, with the symbol and the date of the freeze; without one, holders are told by email. Push and the in-app inbox join with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170): holders by every channel, the others by the free ones.
+
+The scheduler of every instance runs the notices after the steps. A notice is written once (`currency_delisting_notices`, migration 36), its recipients once by the instance that claims it, and each recipient is sent by the instance that claims it with `FOR UPDATE SKIP LOCKED`, at least once: the channels already sent are recorded, so a retry does not send one twice. A send that fails stops the run, and is tried again after 15 minutes times its attempts, up to 5. A step applied, or a reminder due, more than 48 hours ago is not told, as after a long outage. A notice of a delisting cancelled before it went out, or to an account deleted since, is `stale`.
+
+### `GET /admin/currencies/{hk}/delistings/{id}/notices` (admin)
+
+The notices of the delisting, in the order they were due: `kind`, `stage`, `due_at`, `prepared_at` once its recipients were written, `recipients` and `holders`, and the recipients by outcome: `sent`, `no_contact` (no verified contact that a channel reaches), `stale`, `failed`, and `pending`. `404` for a delisting that is not of `hk`.
 
 ### `POST /admin/currencies/{hk}/delistings` (admin)
 
@@ -1622,7 +1640,7 @@ Returns:
 - `effective_order`: the order that sign-in codes take now;
 - `delivery_reports`: whether the delivery of each message is checked;
 - `window_minutes`: the time that the counts cover, 15 minutes;
-- `providers`: each configured provider with its `templates` (`sign_in`, `withdrawal`, `anti_phishing_reminder`), `healthy`, `breaker_open_until` while its breaker is open, and its counts in the window: `accepted`, `provider_errors`, `delivered`, and `failed`.
+- `providers`: each configured provider with its `templates` (`sign_in`, `withdrawal`, `anti_phishing_reminder`, `delisting_notice`), `healthy`, `breaker_open_until` while its breaker is open, and its counts in the window: `accepted`, `provider_errors`, `delivered`, and `failed`.
 
 `404 sms_not_configured` on a server without SMS.
 
