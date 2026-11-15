@@ -8,11 +8,13 @@ import (
 	"net/http"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/userauth"
 
 	"github.com/gin-gonic/gin"
 )
@@ -156,6 +158,11 @@ func (h *UserHandler) ConfirmOperation(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
 	defer cancel()
+	// A code of the authenticator or a passkey proved in this session
+	// cancels only a recovery that began after it (#401).
+	if claims, ok := auth.GetClaims(c); ok {
+		ctx = userauth.InSession(ctx, claims.SessionID)
+	}
 	proof := confirm.Proof{Code: req.Code, Passkey: req.Passkey}
 	if err := h.Confirmations.Confirm(ctx, userHK, c.Param("id"), proof, audit.FromRequest(c)); err != nil {
 		sendConfirmationError(c, userHK, err)

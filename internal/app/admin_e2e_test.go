@@ -53,6 +53,8 @@ type capturingSender struct {
 	// antiPhishing is the anti-phishing code that the last message to
 	// each contact showed (#375).
 	antiPhishing map[string]string
+	// latest is the code of the last message to any contact.
+	latest string
 }
 
 func (s *capturingSender) Supports(contactType string) bool {
@@ -66,6 +68,7 @@ func (s *capturingSender) SendOTP(ctx context.Context, msg notify.OTPMessage) er
 		s.codes = make(map[string][]string)
 	}
 	s.codes[msg.Contact] = append(s.codes[msg.Contact], msg.Code)
+	s.latest = msg.Code
 	if s.antiPhishing == nil {
 		s.antiPhishing = make(map[string]string)
 	}
@@ -81,6 +84,13 @@ func (s *capturingSender) last(contact string) string {
 		return ""
 	}
 	return codes[len(codes)-1]
+}
+
+// lastSent returns the code of the last message to any contact.
+func (s *capturingSender) lastSent() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.latest
 }
 
 func (s *capturingSender) count(contact string) int {

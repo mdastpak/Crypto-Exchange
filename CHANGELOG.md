@@ -271,6 +271,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
+- A session alone can no longer set an account's first password ([#401](https://github.com/mdastpak/Crypto-Exchange/issues/401)). The first password ends every other session and becomes the second step of the sign-in, so whoever stole a session could lock the owner out and control the factor that confirms withdrawals.
+  - `PUT /user/password` needs `contact_code` for the first password: a code that the new `POST /user/password/code` sends to a verified contact of the account, bound to the session in Redis and used once. Without it, `403 contact_proof_required`; with a wrong one, `403 contact_code_invalid`. **Clients must ask for the code first.**
+  - A proof of the second factor in a session (a step-up, a password change, the confirmation of an operation) cancels an account recovery only when the session began after the recovery. A sign-in still cancels it.
 - Row seals for admin sessions, user restrictions, platform controls, and recovery codes ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337), part of [#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)). Migration 14 adds `row_version`, `row_seal`, and `seal_key_version` to `admin_sessions`, `user_restrictions`, `platform_controls`, and `user_recovery_codes`, and the backend seals each of their writes. In `enforce` mode:
   - a revoked admin session set back to active in SQL, one made to last, or a step-up lengthened there answers `401`;
   - a recovery code stored, or a used one put back, in SQL resets nothing (`403 account_unavailable`). The hash of a code has no key, so anyone who wrote to the database could give an account a code of their own;

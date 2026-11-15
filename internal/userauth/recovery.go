@@ -21,9 +21,10 @@ import (
 // the recovery codes gets the account back. A recovery proves every
 // verified contact of the account with a code; in the strict mode the owner
 // also proves their identity again. A proved recovery then waits, and only
-// after the wait can it set a new password. Proving the password at any
-// time cancels it, so the owner of an account stops a recovery that someone
-// else started by signing in.
+// after the wait can it set a new password. Proving the password in a
+// sign-in cancels it, so the owner of an account stops a recovery that
+// someone else started by signing in. A proof in a session cancels it only
+// when the session began after the recovery (#401, InSession).
 
 // The modes and the identity steps of a recovery.
 const (
@@ -263,6 +264,50 @@ func endRecovery(ctx context.Context, tx *sql.Tx, userHK, status, reason string,
 	return true, nil
 }
 
+// sessionKey is the context key of InSession.
+type sessionKey struct{}
+
+// InSession marks ctx as a proof of a second factor made by the session
+// sessionID, such as a step-up, a password change, or the confirmation of
+// an operation, rather than by a sign-in.
+//
+// A proof in a session cancels an account recovery only when the session
+// began after the recovery did (#401). A session that is older than the
+// recovery may be the one the recovery is meant to take the account back
+// from: someone who holds a stolen session could otherwise cancel every
+// recovery that the owner opens. The owner of the account still cancels
+// one with a full sign-in.
+func InSession(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionKey{}, sessionID)
+}
+
+// sessionOf returns the session of InSession, or "" for a sign-in.
+func sessionOf(ctx context.Context) string {
+	sessionID, _ := ctx.Value(sessionKey{}).(string)
+	return sessionID
+}
+
+// cancelProven ends, within tx, the open recovery of a user who just proved
+// a second factor, with reason. A proof in a session that is older than
+// the recovery leaves it open (InSession).
+func cancelProven(ctx context.Context, tx *sql.Tx, userHK, reason string) error {
+	if sessionID := sessionOf(ctx); sessionID != "" {
+		var older bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM account_recoveries r
+			WHERE r.user_hk = $1 AND r.status IN ('verifying', 'waiting')
+			  AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = $2 AND s.user_id = $1 AND s.created_at >= r.started_at))`,
+			userHK, sessionID).Scan(&older)
+		if err != nil {
+			return fmt.Errorf("read the recovery: %w", err)
+		}
+		if older {
+			return nil
+		}
+	}
+	_, err := endRecovery(ctx, tx, userHK, RecoveryCancelled, reason, audit.Event{})
+	return err
+}
+
 // cancelRecovery cancels the open recovery of a user whose password was
 // just proved. Most accounts have none, and nothing is written for them.
 func (p *Passwords) cancelRecovery(ctx context.Context, userHK string) error {
@@ -279,7 +324,7 @@ func (p *Passwords) cancelRecovery(ctx context.Context, userHK string) error {
 		return fmt.Errorf("start the cancel of the recovery: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := endRecovery(ctx, tx, userHK, RecoveryCancelled, ReasonRecoveryPasswordProven, audit.Event{}); err != nil {
+	if err := cancelProven(ctx, tx, userHK, ReasonRecoveryPasswordProven); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -554,8 +599,8 @@ func (p *Passwords) CompleteRecovery(ctx context.Context, userHK string, contact
 
 // CancelRecoveryFor ends the open recovery of a user within tx, the
 // transaction in which a second factor of the account, other than the
-// password, was proved.
+// password, was proved. A proof in a session that is older than the
+// recovery leaves it open (InSession).
 func CancelRecoveryFor(ctx context.Context, tx *sql.Tx, userHK string) error {
-	_, err := endRecovery(ctx, tx, userHK, RecoveryCancelled, ReasonRecoveryFactorProven, audit.Event{})
-	return err
+	return cancelProven(ctx, tx, userHK, ReasonRecoveryFactorProven)
 }
