@@ -677,8 +677,8 @@ definitions:
         description: |-
           Fee is the network fee that is charged on top of the amount, with its
           currency, such as "1 USDT" (#408). Empty when the operation has none.
-          It is shown in the first message and the answer that starts the
-          confirmation; it is not stored, because the digest binds it already.
+          It is stored with the confirmation and sealed, so that every message
+          of the code, the first and one sent again, shows it.
         example: 1 USDT
         type: string
     type: object

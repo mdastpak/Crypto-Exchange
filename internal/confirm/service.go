@@ -325,8 +325,8 @@ type Details struct {
 	Destination string `json:"destination" example:"TR7NHq...gjLj6t"`
 	// Fee is the network fee that is charged on top of the amount, with its
 	// currency, such as "1 USDT" (#408). Empty when the operation has none.
-	// It is shown in the first message and the answer that starts the
-	// confirmation; it is not stored, because the digest binds it already.
+	// It is stored with the confirmation and sealed, so that every message
+	// of the code, the first and one sent again, shows it.
 	Fee string `json:"fee,omitempty" example:"1 USDT"`
 }
 
@@ -438,9 +438,9 @@ func (s Service) Start(ctx context.Context, userHK string, p Purpose, digest []b
 	}
 	defer tx.Rollback()
 	if err := tx.QueryRowContext(ctx, `INSERT INTO operation_confirmations
-			(id, user_hk, purpose, digest, amount, destination, method, code_session, sent_to, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW() + make_interval(secs => $10)) RETURNING expires_at`,
-		c.ID, userHK, string(p), digest, details.Amount, details.Destination, string(c.Method), session, sentTo,
+			(id, user_hk, purpose, digest, amount, destination, fee, method, code_session, sent_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, NOW() + make_interval(secs => $11)) RETURNING expires_at`,
+		c.ID, userHK, string(p), digest, details.Amount, details.Destination, details.Fee, string(c.Method), session, sentTo,
 		s.ttl().Seconds()).Scan(&c.ExpiresAt); err != nil {
 		return Challenge{}, fmt.Errorf("record the confirmation: %w", err)
 	}
@@ -531,7 +531,7 @@ func (s Service) read(ctx context.Context, q rowReader, userHK, id string, lock 
 	}
 	var c stored
 	row := rowseal.OperationConfirmations.NewRow()
-	query := `SELECT id::text, user_hk::text, purpose, amount, destination, method, digest, code_session, sent_to,
+	query := `SELECT id::text, user_hk::text, purpose, amount, destination, COALESCE(fee, ''), method, digest, code_session, sent_to,
 			failed_attempts, expires_at, confirmed_at IS NOT NULL, consumed_at IS NOT NULL, expires_at <= NOW(),
 			COALESCE(confirmed_at + make_interval(secs => $3) > NOW(), false), denied_at IS NOT NULL, ` +
 		rowseal.OperationConfirmations.Fields("") + `
@@ -540,7 +540,7 @@ func (s Service) read(ctx context.Context, q rowReader, userHK, id string, lock 
 		query += ` FOR UPDATE`
 	}
 	err := q.QueryRowContext(ctx, query, id, userHK, s.ttl().Seconds()).
-		Scan(append([]any{&c.id, &c.userHK, &c.purpose, &c.details.Amount, &c.details.Destination, &c.method, &c.digest, &c.session, &c.sentTo,
+		Scan(append([]any{&c.id, &c.userHK, &c.purpose, &c.details.Amount, &c.details.Destination, &c.details.Fee, &c.method, &c.digest, &c.session, &c.sentTo,
 			&c.failed, &c.expiresAt, &c.confirmed, &c.consumed, &c.expired, &c.usable, &c.denied}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return stored{}, ErrNotFound

@@ -380,3 +380,51 @@ func TestService_APasskeyConfirmsItsOwnCeremony(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []Method{MethodEmail}, st.Available)
 }
+
+// The fee of a confirmation is stored and sealed (#408): every message of
+// the code shows it, a code sent again too, and a fee changed in SQL is
+// refused with its finding recorded. A confirmation without a fee, as the
+// ones made before the column, keeps its seal.
+func TestService_TheFeeIsStoredAndSealed(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	alice := f.user(usertest.User{Email: "alice@example.com", Mobile: "09121234567"})
+	digest := withdrawal("100", "dest-1")
+	details := Details{Amount: "100 USDT", Destination: "TR7NHq...gjLj6t", Fee: "1 USDT"}
+
+	c, err := f.Start(ctx, alice, PurposeWithdrawal, digest, details, "client")
+	require.NoError(t, err)
+	assert.Equal(t, details, c.Details)
+	assert.Equal(t, "100 USDT to TR7NHq...gjLj6t (fee 1 USDT)", f.sender.last().Details)
+	var fee string
+	require.NoError(t, f.DB.QueryRow(`SELECT fee FROM operation_confirmations WHERE id = $1`, c.ID).Scan(&fee))
+	assert.Equal(t, "1 USDT", fee)
+
+	again, err := f.Resend(ctx, alice, c.ID, "client")
+	require.NoError(t, err)
+	assert.Equal(t, details, again.Details, "read back with the fee")
+	assert.Equal(t, "100 USDT to TR7NHq...gjLj6t (fee 1 USDT)", f.sender.last().Details, "a code sent again shows the fee")
+
+	// Without a fee, the column stays NULL and out of the seal.
+	plain, err := f.Start(ctx, alice, PurposeWithdrawal, digest, Details{Amount: "100 USDT", Destination: "TR7NHq...gjLj6t"}, "client")
+	require.NoError(t, err)
+	var null bool
+	require.NoError(t, f.DB.QueryRow(`SELECT fee IS NULL FROM operation_confirmations WHERE id = $1`, plain.ID).Scan(&null))
+	assert.True(t, null)
+	_, err = f.Resend(ctx, alice, plain.ID, "client")
+	require.NoError(t, err)
+
+	// A fee changed in SQL, lowered or cleared, no longer matches its seal.
+	for _, change := range []string{`fee = '0.1 USDT'`, `fee = NULL`} {
+		forged, err := f.Start(ctx, alice, PurposeWithdrawal, digest, details, "client")
+		require.NoError(t, err)
+		_, err = f.DB.Exec(`UPDATE operation_confirmations SET `+change+` WHERE id = $1`, forged.ID)
+		require.NoError(t, err)
+		_, err = f.Resend(ctx, alice, forged.ID, "client")
+		require.ErrorIs(t, err, ErrUnverified, change)
+		var findings int
+		require.NoError(t, f.DB.QueryRow(`SELECT COUNT(*) FROM integrity_findings WHERE table_name = 'operation_confirmations' AND row_key = $1`,
+			forged.ID).Scan(&findings))
+		assert.Equal(t, 1, findings, change)
+	}
+}

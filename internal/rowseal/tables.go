@@ -214,7 +214,7 @@ var (
 	OperationConfirmations = &Table{Name: "operation_confirmations", Key: "id", KeyType: "uuid", Columns: []Column{
 		text("user_hk"), text("purpose"), sealedBytes("digest"), text("method"), secret("code_session"),
 		text("failed_attempts"), timestamptz("expires_at"), timestamptz("confirmed_at"), timestamptz("consumed_at"),
-		optional(timestamptz("denied_at")),
+		optional(timestamptz("denied_at")), optional(text("fee")),
 	}, SealedFromStart: true}
 	// UserConfirmationMethods covers the method a user chose to confirm
 	// withdrawals (#161): one changed in SQL is ignored.
