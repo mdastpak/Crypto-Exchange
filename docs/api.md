@@ -826,7 +826,7 @@ Response `200` with the new version: `{"version": 3}`. Errors: `400` for an inva
 
 Soft-deletes a currency (sets `deleted_at` and `status = deleted`) and removes it from the cache. The optional query parameter `version` works as in `PUT`: `DELETE /admin/currencies/{hk}?version=3` is refused with `409` and `version_conflict` when the currency has changed since version 3.
 
-Response `200` with the new version. Errors: `400` for an invalid UUID or a `version` that is not a number of at least 1, `404` when the currency is not found or already deleted, `409` with `version_conflict`.
+Response `200` with the new version. Errors: `400` for an invalid UUID or a `version` that is not a number of at least 1, `404` when the currency is not found or already deleted, `409` with `version_conflict`, or `currency_has_holders` while any user holds the currency, available, locked, or pending ([#412](https://github.com/mdastpak/Crypto-Exchange/issues/412)): a [delisting](#delistings) settles their balances first.
 
 A deleted currency keeps its symbol and contract: creating another currency with them answers `409`, so that a symbol keeps naming one `hk` for clients that cached it. Restore it instead.
 
@@ -1212,7 +1212,12 @@ An administrator can override any capability of a currency, whatever its state, 
 
 The steps apply at their times. Every instance runs a scheduler, every `delisting.interval_seconds`, which claims each step that is due with `FOR UPDATE SKIP LOCKED` and applies it in one transaction with its audit event (`currency.lifecycle_change`) and its currency event in the outbox, so each step applies exactly once, and a step whose instance stopped before its commit is applied by the next run. Steps that came due while every instance was down apply in order. A flow that checks a capability in its transaction holds a share lock of the currency, so a step waits for it to finish.
 
-At `frozen`, the balances that are left are settled per the delisting's `settlement`: converted into another approved currency at the last trade price, a TWAP, or a fixed price, or held for their owners to claim for `claim_days`. The policy is recorded and announced with the schedule; the settlement itself, the cancellation of open orders, and the notices to holders come with the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)) and notifications ([#170](https://github.com/mdastpak/Crypto-Exchange/issues/170)).
+At `frozen`, the balances that are left are settled per the delisting's `settlement`, which is recorded and announced with the schedule:
+
+- `convert` records the price once, when the currency is frozen, in `settlement_price`, with `settlement_price_detail` and `settlement_priced_at`, audited as `currency.delisting_price`. `fixed` is the plan's `fixed_price`. `last_trade` and `twap` read the reference price of the [price engine](#reference-prices) for the market of the currency in the settlement currency, such as `XYZ/USDT`, where an administrator's price override comes first: until the exchange has its own trades ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)), `last_trade` is its mid, and `twap` is its TWAP over the longest window. While that price is not live, the settlement waits, and an administrator can set it with an override. Every available balance is then converted at that price in the ledger, as an entry of kind `conversion` that refers to the delisting (as a [migration](#currency-migrations) converts), rounded down to the precision of the settlement currency, with the dust kept in `fees`. The scheduler of every instance shares the balances, each claimed with `FOR UPDATE SKIP LOCKED` and converted once. Locked funds and pending deposits convert once they are available.
+- `claim` holds the balances for their owners for `claim_days`.
+
+A delisting that reaches `delisted` passes through `frozen`, and its `delisted` step waits, past its time, until no balance of the currency is left ([#412](https://github.com/mdastpak/Crypto-Exchange/issues/412)), so a claim holds the currency at `frozen` while balances are held. The cancellation of open orders comes with the order book, and the notices to holders with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
 
 ### `POST /admin/currencies/{hk}/delistings` (admin)
 
@@ -1237,7 +1242,7 @@ At `frozen`, the balances that are left are settled per the delisting's `settlem
 
 The steps follow the order of the lifecycle, each at a later time, and any of them may be left out. A `standard` delisting starts with `delist_announced`; an `emergency` one, for a security or regulatory reason, starts at `trading_halted` or later, and can start now. A delisting that stops before `delisted`, such as an emergency halt, stays `scheduled`: cancelling it relists the currency, and a new delisting, whose first step is after the state of the currency, supersedes it. `settlement` is `convert`, with `settlement_currency_hk` and `price_source` (`last_trade`, `twap`, or `fixed` with `fixed_price`), or `claim`, with `claim_days`. The schedule is audited as `currency.delisting_schedule`.
 
-Response `201` with the delisting. Errors: `400` (`validation_failed`), `404` for an unknown currency, `409` with `not_listed` for a currency that is not approved, or `delisting_in_progress` when a delisting of the currency has steps left or it is delisted.
+Response `201` with the delisting. Errors: `400` (`validation_failed`, also for steps that reach `delisted` from before `frozen` without passing through it), `404` for an unknown currency, `409` with `not_listed` for a currency that is not approved, or `delisting_in_progress` when a delisting of the currency has steps left or it is delisted.
 
 ### `GET /admin/currencies/{hk}/delistings` (admin)
 
@@ -1246,6 +1251,10 @@ The delistings of the currency, newest first, with their steps and when each app
 ### `POST /admin/currencies/{hk}/delistings/{id}/cancel` (admin)
 
 Cancels a delisting before `frozen`: the steps that are left do not apply, and the currency returns to `active`. The optional body `{"version": 3}` refuses a cancel based on another version with `409 version_conflict`. Other errors: `404`, and `409` with `delisting_not_scheduled` for a completed or cancelled delisting, or `delisting_irreversible` from `frozen` on. Audited as `currency.delisting_cancel`.
+
+### `GET /admin/currencies/{hk}/delistings/{id}/settlement` (admin)
+
+The settlement of the delisting: `holders`, the balances of the currency that are left, `remaining`, their sum, available, locked, and pending, and `available`; `price`, the recorded price (`price_recorded`, with `price_detail` and `priced_at`) or, before it, the fixed price of the plan, and `estimated`, what `remaining` would be credited at it; and from the ledger `conversions`, `converted`, `credited`, and `dust`. Before `frozen`, it is the preview of the settlement. `404` for a delisting that is not of `hk`.
 
 ### `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` (admin)
 

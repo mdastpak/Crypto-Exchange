@@ -901,6 +901,17 @@ definitions:
       settlement_currency_hk:
         format: uuid
         type: string
+      settlement_price:
+        description: |-
+          SettlementPrice is the price that converts the balances left, which
+          the scheduler records once when the currency is frozen, with where it
+          came from and when.
+        example: "0.0125"
+        type: string
+      settlement_price_detail:
+        type: string
+      settlement_priced_at:
+        type: string
       status:
         allOf:
         - $ref: '#/definitions/delisting.Status'
@@ -984,6 +995,61 @@ definitions:
     x-enum-varnames:
     - SettlementConvert
     - SettlementClaim
+  delisting.SettlementReport:
+    properties:
+      available:
+        example: "1200"
+        type: string
+      conversions:
+        description: |-
+          Conversions are the balances converted, Converted what left them,
+          Credited what the settlement currency received, and Dust what the
+          exchange kept.
+        type: integer
+      converted:
+        example: "50.5"
+        type: string
+      credited:
+        example: "0.63"
+        type: string
+      dust:
+        example: "0.00125"
+        type: string
+      estimated:
+        description: |-
+          Estimated is what Remaining would credit at Price, before the
+          rounding of each balance.
+        example: "15.63125"
+        type: string
+      holders:
+        description: |-
+          Holders are the balances of the currency that are left, available,
+          locked, or pending, and Remaining their sum, of which Available
+          converts now.
+        type: integer
+      price:
+        description: |-
+          Price is the recorded price of a conversion, with where it came from
+          and when; before it is recorded, the fixed price of the plan, if any.
+        example: "0.0125"
+        type: string
+      price_detail:
+        example: twap 300s of XYZ/USDT (live), 2026-12-08T00:00:00Z
+        type: string
+      price_recorded:
+        type: boolean
+      priced_at:
+        type: string
+      remaining:
+        example: "1250.5"
+        type: string
+      settlement:
+        allOf:
+        - $ref: '#/definitions/delisting.Settlement'
+        enum:
+        - convert
+        - claim
+    type: object
   delisting.Status:
     enum:
     - scheduled
@@ -4702,8 +4768,10 @@ paths:
       - admin currencies
   /api/v1/admin/currencies/{hk}:
     delete:
-      description: Soft-deletes the currency. With version, the delete is refused
-        with 409 version_conflict when the currency has changed since.
+      description: 'Soft-deletes the currency. A currency that users still hold, available,
+        locked, or pending, answers 409 currency_has_holders: delist it, which settles
+        their balances. With version, the delete is refused with 409 version_conflict
+        when the currency has changed since.'
       parameters:
       - description: The currency's UUID
         format: uuid
@@ -4745,7 +4813,7 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "409":
-          description: Conflict
+          description: version_conflict or currency_has_holders
           schema:
             $ref: '#/definitions/models.APIResponse'
         default:
@@ -5054,9 +5122,15 @@ paths:
         of the instances, exactly once, and changes the capabilities of the currency;
         a step that is due is applied at once. The settlement says what happens at
         frozen to the balances that are left: convert into another approved currency
-        at a price, or hold for a claim; it is recorded and announced now, and carried
-        out by the ledger. Audited as currency.delisting_schedule, and each step as
-        currency.lifecycle_change.'
+        at a price, or hold for a claim. A conversion records its price once when
+        the currency is frozen (the fixed price, or the reference price of the price
+        engine: its mid for last_trade, its TWAP over the longest window for twap)
+        and converts every available balance at it in the ledger, rounded down to
+        the precision of the settlement currency; locked and pending funds convert
+        once available. A delisting that reaches delisted passes through frozen, and
+        its delisted step waits until no balance of the currency is left, so a claim
+        holds the currency at frozen. Audited as currency.delisting_schedule, and
+        each step as currency.lifecycle_change.'
       parameters:
       - description: The currency's UUID
         format: uuid
@@ -5178,6 +5252,64 @@ paths:
       security:
       - BearerAuth: []
       summary: Cancel the delisting of a currency
+      tags:
+      - admin currencies
+  /api/v1/admin/currencies/{hk}/delistings/{id}/settlement:
+    get:
+      description: 'The settlement of the balances of the currency: before frozen,
+        a preview of the holders and their remaining balances (available, locked,
+        and pending), and, at a fixed price, the estimate of what they would be credited;
+        from frozen on, the recorded price with its source and time, and from the
+        ledger the conversions made, what they converted, what was credited, and the
+        dust kept.'
+      parameters:
+      - description: The currency's UUID
+        format: uuid
+        in: path
+        name: hk
+        required: true
+        type: string
+      - description: The delisting's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/delisting.SettlementReport'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the settlement of a delisting
       tags:
       - admin currencies
   /api/v1/admin/currencies/{hk}/migrations:

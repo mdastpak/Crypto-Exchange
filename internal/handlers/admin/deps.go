@@ -121,6 +121,7 @@ type DelistingStore interface {
 	List(ctx context.Context, currencyHK string) ([]delisting.Delisting, error)
 	Cancel(ctx context.Context, currencyHK, hk string, version *int64, origin audit.Event) (delisting.Delisting, delisting.Change, error)
 	Override(ctx context.Context, currencyHK string, k currencies.Capability, allowed *bool, note string, origin audit.Event) (*models.CurrencyLifecycle, delisting.Change, error)
+	Report(ctx context.Context, currencyHK, hk string) (delisting.SettlementReport, error)
 }
 
 // RebrandStore changes and reads the rebrands: rebrand.Store.

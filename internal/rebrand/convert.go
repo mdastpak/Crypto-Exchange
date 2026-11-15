@@ -18,11 +18,6 @@ import (
 // migration: its conversions, by the hk of the migration.
 const RefMigration = "currency_migration"
 
-// defaultPrecision is the precision of a target without networks, and the
-// most that a conversion keeps: the ledger's amounts have 18 decimal
-// places at most from a migration.
-const defaultPrecision = 18
-
 // The refusals of a conversion that a user asks for.
 var (
 	// ErrNotConverting is a conversion of a migration that is not in its
@@ -145,37 +140,13 @@ func claim(ctx context.Context, tx *sql.Tx, query string, args ...any) (holding,
 	return h, nil
 }
 
-// Split returns what amount of a source becomes at ratio: the credit,
-// rounded down to precision decimal places, and the dust under it. The
-// product is exact to 18 places; what lies beyond is under any currency's
-// unit and is not booked.
-func Split(amount, ratio decimal.Decimal, precision int32) (credit, dust decimal.Decimal) {
-	precision = min(max(precision, 0), defaultPrecision)
-	exact := amount.Mul(ratio).Truncate(defaultPrecision)
-	credit = exact.Truncate(precision)
-	return credit, exact.Sub(credit)
-}
-
-// precisionOf returns the precision of a currency: the most decimal places
-// of its networks, as many as a withdrawal can carry.
-func precisionOf(ctx context.Context, tx *sql.Tx, currencyHK string) (int32, error) {
-	var p sql.NullInt32
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(decimals) FROM currency_networks WHERE currency_hk = $1`, currencyHK).Scan(&p); err != nil {
-		return 0, fmt.Errorf("failed to read the precision of %s: %w", currencyHK, err)
-	}
-	if !p.Valid {
-		return defaultPrecision, nil
-	}
-	return p.Int32, nil
-}
-
 // convert converts the available balance of a claimed holding.
 func convert(ctx context.Context, tx *sql.Tx, h holding) (Converted, error) {
-	precision, err := precisionOf(ctx, tx, h.target)
+	precision, err := ledger.Precision(ctx, tx, h.target)
 	if err != nil {
 		return Converted{}, err
 	}
-	credit, dust := Split(h.available.Decimal(), h.ratio, precision)
+	credit, dust := ledger.Split(h.available.Decimal(), h.ratio, precision)
 	source, err := shared.UUIDFromString(h.source)
 	if err != nil {
 		return Converted{}, err

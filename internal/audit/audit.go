@@ -69,6 +69,9 @@ const (
 	ActionCurrencyDelistingCancel    = "currency.delisting_cancel"
 	ActionCurrencyCapabilityOverride = "currency.capability_override"
 	ActionCurrencyLifecycleChange    = "currency.lifecycle_change"
+	// ActionCurrencyDelistingPrice is the scheduler recording the price of
+	// the settlement of a delisting, once, when it starts.
+	ActionCurrencyDelistingPrice = "currency.delisting_price"
 	// ActionCurrencySymbolRelease is an administrator releasing a previous
 	// symbol of a currency, for another currency to take (#215).
 	ActionCurrencySymbolRelease = "currency.symbol_release"

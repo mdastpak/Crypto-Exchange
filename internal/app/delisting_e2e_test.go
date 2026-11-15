@@ -124,6 +124,16 @@ func TestCurrencyDelisting_EndToEnd(t *testing.T) {
 	status, raw = env.call(t, http.MethodPost, path+"/"+scheduled.Info.ID+"/cancel", nil, admin)
 	assert.Equal(t, http.StatusConflict, status)
 	assert.Contains(t, string(raw), "delisting_not_scheduled")
+
+	status, raw = env.call(t, http.MethodGet, path+"/"+scheduled.Info.ID+"/settlement", nil, admin)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var report struct {
+		Info delisting.SettlementReport `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &report))
+	assert.Equal(t, delisting.SettlementConvert, report.Info.Settlement)
+	assert.Zero(t, report.Info.Holders)
+	assert.Equal(t, "0", report.Info.Remaining)
 }
 
 // DelistingListBody is the info of a list of delistings.
