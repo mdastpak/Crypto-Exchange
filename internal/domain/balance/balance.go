@@ -24,9 +24,12 @@
 //	WITHDRAWAL                      -a                -a   (withdrawal completed)
 //	TRANSFER_OUT                    -a                -a   (sent to another account)
 //	TRANSFER_IN          +a                           +a   (received from another account)
+//	CONVERSION_DEBIT                -a                -a   (converted away in a currency migration)
+//	CONVERSION_CREDIT    +a                           +a   (received in a currency migration)
 //
 // Funds therefore only enter the total through a credited deposit, a trade
-// credit, or a transfer in, and only leave it from the locked funds. Each
+// credit, a transfer in, or a conversion credit, and only leave it from the
+// locked funds. Each
 // transition returns a BalanceChangeEvent, from which the ledger (#60)
 // records the change.
 package balance
@@ -80,6 +83,8 @@ var transitions = map[BalanceChangeType]delta{
 	BalanceChangeWithdrawal:    {locked: -1},
 	BalanceChangeTransferOut:   {locked: -1},
 	BalanceChangeTransferIn:    {available: +1},
+	BalanceChangeConversionOut: {locked: -1},
+	BalanceChangeConversionIn:  {available: +1},
 }
 
 // TotalEffect is the sign of a transition's effect on the total: +1 for
@@ -221,17 +226,19 @@ type BalanceChangeEvent struct {
 type BalanceChangeType string
 
 const (
-	BalanceChangePendingDep    BalanceChangeType = "PENDING_DEPOSIT" // Deposit detected
-	BalanceChangeDeposit       BalanceChangeType = "DEPOSIT"         // Deposit credited
-	BalanceChangeDepositFailed BalanceChangeType = "DEPOSIT_FAILED"  // Detected deposit that will not be credited
-	BalanceChangeLock          BalanceChangeType = "LOCK"            // Order placed or withdrawal requested
-	BalanceChangeUnlock        BalanceChangeType = "UNLOCK"          // Order cancelled or withdrawal failed
-	BalanceChangeTradeCredit   BalanceChangeType = "TRADE_CREDIT"    // Asset received in a trade
-	BalanceChangeTradeDebit    BalanceChangeType = "TRADE_DEBIT"     // Asset given in a trade, from the lock
-	BalanceChangeFee           BalanceChangeType = "FEE"             // Fee charged, from the lock
-	BalanceChangeWithdrawal    BalanceChangeType = "WITHDRAWAL"      // Withdrawal completed, from the lock
-	BalanceChangeTransferOut   BalanceChangeType = "TRANSFER_OUT"    // Sent to another account, from the lock
-	BalanceChangeTransferIn    BalanceChangeType = "TRANSFER_IN"     // Received from another account
+	BalanceChangePendingDep    BalanceChangeType = "PENDING_DEPOSIT"   // Deposit detected
+	BalanceChangeDeposit       BalanceChangeType = "DEPOSIT"           // Deposit credited
+	BalanceChangeDepositFailed BalanceChangeType = "DEPOSIT_FAILED"    // Detected deposit that will not be credited
+	BalanceChangeLock          BalanceChangeType = "LOCK"              // Order placed or withdrawal requested
+	BalanceChangeUnlock        BalanceChangeType = "UNLOCK"            // Order cancelled or withdrawal failed
+	BalanceChangeTradeCredit   BalanceChangeType = "TRADE_CREDIT"      // Asset received in a trade
+	BalanceChangeTradeDebit    BalanceChangeType = "TRADE_DEBIT"       // Asset given in a trade, from the lock
+	BalanceChangeFee           BalanceChangeType = "FEE"               // Fee charged, from the lock
+	BalanceChangeWithdrawal    BalanceChangeType = "WITHDRAWAL"        // Withdrawal completed, from the lock
+	BalanceChangeTransferOut   BalanceChangeType = "TRANSFER_OUT"      // Sent to another account, from the lock
+	BalanceChangeTransferIn    BalanceChangeType = "TRANSFER_IN"       // Received from another account
+	BalanceChangeConversionOut BalanceChangeType = "CONVERSION_DEBIT"  // Converted away in a currency migration, from the lock
+	BalanceChangeConversionIn  BalanceChangeType = "CONVERSION_CREDIT" // Received in a currency migration
 )
 
 func (b BalanceChangeType) String() string {

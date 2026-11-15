@@ -1286,6 +1286,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/currencies/:hk/migrations", ih.Admin.ListMigrations)
 		adminGroup.POST("/currencies/:hk/migrations", ih.Admin.ScheduleMigration)
 		adminGroup.POST("/currencies/:hk/migrations/:id/cancel", ih.Admin.CancelMigration)
+		adminGroup.GET("/currencies/:hk/migrations/:id/progress", ih.Admin.GetMigrationProgress)
 		adminGroup.GET("/currencies/:hk/delistings", ih.Admin.ListDelistings)
 		adminGroup.POST("/currencies/:hk/delistings", ih.Admin.ScheduleDelisting)
 		adminGroup.POST("/currencies/:hk/delistings/:id/cancel", ih.Admin.CancelDelisting)
@@ -1383,6 +1384,8 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// The OTC quotes (#61), with a limit of their own per user, on top
 		// of the trading limit of every user route.
 		activeGroup.POST("/otc/quote", gate.Require(platform.FeatureTrading), rl.OTCQuoteRateLimit(), ih.User.RequestQuote)
+		// The conversion that an optional currency migration offers (#215).
+		activeGroup.POST("/currency-migrations/:id/convert", ih.User.ConvertMigrationHolding)
 		// The anti-phishing code that the emails show (#375). Changing it
 		// needs a fresh proof of the second factor.
 		activeGroup.GET("/anti-phishing-code", ih.User.GetAntiPhishingCode)

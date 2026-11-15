@@ -83,10 +83,11 @@ func (c CurrencyReport) Balanced() bool {
 // operations of the ledger can leave in them (#404). Each entry kind has
 // its shape, which the database checks at commit, so:
 //
-//   - fees only grow, from the fees of trades and withdrawals: never below
-//     zero;
+//   - fees only grow, from the fees of trades and withdrawals and the dust
+//     of conversions: never below zero;
 //   - custody holds the negative of what custody must hold, which deposits
-//     raise and withdrawals lower: never above zero;
+//     and conversions into the currency raise, and withdrawals and
+//     conversions out of it lower, by what users held: never above zero;
 //   - deposits_pending is the negative of the deposits detected and not
 //     credited or failed yet, which is what users hold as pending: exactly
 //     the opposite of Pending.

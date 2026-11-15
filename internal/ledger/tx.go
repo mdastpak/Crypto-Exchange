@@ -55,6 +55,17 @@ func (t Tx) Withdraw(ctx context.Context, key string, a Account, amount Amount, 
 	return t.record(ctx, withdrawal(key, a, amount, fee, ref))
 }
 
+// Convert is Ledger.Convert within the transaction: a conversion of a
+// currency migration (#215), under the lock of the balance that the
+// migration claimed.
+func (t Tx) Convert(ctx context.Context, key string, a Account, c Conversion, ref Ref) (Result, error) {
+	e, err := conversion(key, a, c, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return t.record(ctx, e)
+}
+
 func (t Tx) record(ctx context.Context, e entry) (Result, error) {
 	start := time.Now()
 	res, err := func() (Result, error) {

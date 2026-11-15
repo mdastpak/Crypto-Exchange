@@ -403,7 +403,9 @@ func Cancel(ctx context.Context, db *sql.DB, targetHK, hk string, version *int64
 }
 
 // Advance applies the phases that are due at now, each exactly once on all
-// instances, at most limit of them. It is a currencies.Advancer.
+// instances, at most limit of them, and then converts at most limit
+// holdings of the forced migrations that are converting (ConvertHoldings).
+// It is a currencies.Advancer.
 func Advance(ctx context.Context, db *sql.DB, now time.Time, limit int) ([]currencies.Change, error) {
 	var changes []currencies.Change
 	for applied := 0; applied < limit; applied++ {
@@ -415,6 +417,9 @@ func Advance(ctx context.Context, db *sql.DB, now time.Time, limit int) ([]curre
 			break
 		}
 		changes = append(changes, c...)
+	}
+	if _, err := ConvertHoldings(ctx, db, limit); err != nil {
+		return changes, err
 	}
 	return changes, nil
 }
@@ -430,7 +435,10 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 	// it, another skips the migration rather than claim a later phase and
 	// apply it first. Only the scheduler locks phases, so claiming
 	// one first, and then the currencies and the migration, in the order of
-	// every other change, cannot deadlock.
+	// every other change, cannot deadlock. A forced migration completes only
+	// once no balance of its sources is left, available, locked, or pending:
+	// its converting phase converts the available funds, and the rest as
+	// they become available (ConvertHoldings).
 	var hk, targetHK string
 	var phase, before Phase
 	err = tx.QueryRowContext(ctx, `
@@ -439,6 +447,9 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 		WHERE m.phase NOT IN ('completed', 'cancelled') AND ph.applied_at IS NULL AND ph.scheduled_at <= $1
 		  AND NOT EXISTS (SELECT 1 FROM currency_migration_phases e
 		    WHERE e.migration_hk = ph.migration_hk AND e.applied_at IS NULL AND e.scheduled_at < ph.scheduled_at)
+		  AND NOT (ph.phase = 'completed' AND m.forced AND EXISTS (SELECT 1 FROM balances b
+		    JOIN currency_migration_sources s ON s.currency_hk = b.currency_hk
+		    WHERE s.migration_hk = m.hk AND (b.available::numeric + b.locked::numeric + b.pending_deposit::numeric) <> 0))
 		ORDER BY ph.scheduled_at, ph.migration_hk
 		FOR UPDATE OF ph SKIP LOCKED LIMIT 1`, now).Scan(&hk, &phase, &targetHK)
 	if errors.Is(err, sql.ErrNoRows) {

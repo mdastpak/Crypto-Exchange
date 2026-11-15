@@ -17,6 +17,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
+	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 
@@ -54,6 +55,9 @@ type UserHandler struct {
 	// Quotes gives the OTC quotes (#61). The server sets it; without it,
 	// the route answers otc_unavailable.
 	Quotes QuoteService
+	// Conversions converts holdings of the sources of optional migrations
+	// (#215).
+	Conversions ConversionService
 	// AntiPhishing keeps the anti-phishing code of the user (#375), which
 	// the emails to their verified contacts show.
 	AntiPhishing AntiPhishingStore
@@ -100,6 +104,7 @@ func NewHandler(is *models.InfraServices) *UserHandler {
 		h.Audit = audit.Log{DB: is.Postgres.DB}
 		h.Favorites = favorites.Store{DB: is.Postgres.DB}
 		h.Restrictions = restrictions.Store{DB: is.Postgres.DB}
+		h.Conversions = rebrand.Store{DB: is.Postgres.DB}
 		h.AntiPhishing = antiphishing.Store{DB: is.Postgres.DB, Rotation: antiphishing.NewRotation(is.Settings().AntiPhishing.Rotation)}
 		h.Agreements = agreements.Store{DB: is.Postgres.DB, Config: is.Settings()}
 		if policy, err := verification.NewPolicy(is.Settings().Verification); err != nil {

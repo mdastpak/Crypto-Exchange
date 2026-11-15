@@ -138,4 +138,18 @@ func TestCurrencyRebrand_EndToEnd(t *testing.T) {
 	status, raw = env.call(t, http.MethodPost, path+"/"+scheduled.Info.ID+"/cancel", nil, admin)
 	assert.Equal(t, http.StatusConflict, status)
 	assert.Contains(t, string(raw), "migration_not_open")
+
+	status, raw = env.call(t, http.MethodGet, path+"/"+scheduled.Info.ID+"/progress", nil, admin)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var progress struct {
+		Info struct {
+			Sources []rebrand.SourceProgress `json:"sources"`
+		} `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &progress))
+	require.Len(t, progress.Info.Sources, 1)
+	assert.Equal(t, lend, progress.Info.Sources[0].CurrencyHK)
+	assert.Zero(t, progress.Info.Sources[0].Holders)
+	status, _ = env.call(t, http.MethodGet, "/api/v1/admin/currencies/"+lend+"/migrations/"+scheduled.Info.ID+"/progress", nil, admin)
+	assert.Equal(t, http.StatusNotFound, status, "a migration is read through its target")
 }
