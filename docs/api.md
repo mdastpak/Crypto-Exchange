@@ -89,6 +89,11 @@ An error response contains only a fixed message for each error. Internal details
 | `control_ended` | `409` | The [maintenance or lockdown](#maintenance-and-lockdowns) has already ended or been lifted |
 | `second_approval_required` | `409` | The administrator who asked to lift a [lockdown](#maintenance-and-lockdowns) cannot also approve the lift |
 | `row_unverified` | `409` | The [restriction](#restrictions) or [control](#maintenance-and-lockdowns) to change was changed outside the backend, in `enforce` mode; an administrator reviews its [integrity finding](#integrity-findings) first |
+| `prices_unavailable` | `503` | The reference prices cannot be read now, or the server has no price store |
+| `price_unavailable` | `404` | The market has no fresh reference price: the price engine has no quorum for it |
+| `price_override_exists` | `409` | The market already has a [price override](#reference-prices) in force |
+| `price_override_not_found` | `404` | No price override has this id |
+| `price_override_ended` | `409` | The price override already ended or expired |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
 | `second_factor_required` | `403` | The operation moves funds, and the user has not set an [account password](#second-factor-and-step-up) yet |
 | `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
@@ -948,6 +953,40 @@ Writes the market, whole, with the checks of the registry file:
 The currencies must exist and differ. `status` is `ACTIVE`, `INACTIVE`, `MAINTENANCE`, `SUSPENDED`, or `DELISTED`; `INACTIVE` and `DELISTED` take the market out of the public list. The minimum order size must not be over a maximum that is not 0, the tick and lot sizes must be positive, and each fee is required, from 0 to 1000 basis points.
 
 Response `201` for a new market and `200` otherwise, with the market. `400 validation_failed` with the problems by field, a currency that does not exist among them. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `market.set` with the fields that changed. Every instance shows the change in the public list within ten seconds.
+
+## Reference prices
+
+The reference price of a market is what quotes use ([#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)): an administrator's override while one is in force, and otherwise the [price engine](price-engine.md)'s price, when it is live and at most one second old. See [Distribution](price-engine.md#distribution).
+
+### `GET /admin/markets/{base}/{quote}/price` (admin)
+
+The reference price now, with `status` `override` or `live`, `bid`, `ask`, `mid`, the VWAP and TWAP by window, the `sources`, and when it was computed (`at`) and last fed (`updated`). `404 price_unavailable` when there is none: the engine has no quorum for the market, or no fresh price reached Redis. `503 prices_unavailable` when Redis cannot be read.
+
+### `POST /admin/markets/{base}/{quote}/price-override` (admin)
+
+Sets the reference price of the market in place of the engine's, for when the providers are wrong or down:
+
+```json
+{
+  "mid": "64050",
+  "bid": "64000",
+  "ask": "64100",
+  "expires_in_seconds": 900,
+  "reason": "Binance and Kraken are down"
+}
+```
+
+`bid` and `ask` default to `mid`, and `bid <= mid <= ask`. `expires_in_seconds` is from 1 to 86400, and `reason` from 1 to 500 characters. The market must exist (`404 market_not_found`). A market has one override in force at most: `409 price_override_exists` until it expires or ends.
+
+Response `201` with the override. Every instance serves it within a second, and none past its expiry. A sensitive route: it needs a [step-up](#post-adminstep-up). Audited as `price.override_set`, with the prices, the expiry, and the reason. The row is [sealed](data-protection.md): an override set or lengthened in SQL is not served.
+
+### `GET /admin/price-overrides` (admin)
+
+The overrides, newest first: `?in_force=true` for those in force only, and `limit` from 1 to 100 (100).
+
+### `POST /admin/price-overrides/{id}/end` (admin)
+
+Ends an override before its expiry: the market takes the engine's price again. `404 price_override_not_found`, `409 price_override_ended` for one that already ended or expired. A sensitive route. Audited as `price.override_end`.
 
 ## Market data
 
@@ -2122,3 +2161,19 @@ When an instance loses its subscription to the broker, because the broker restar
 ```
 
 A client that receives it reloads the currencies with `GET /public/currencies`. An instance that started without the broker sends it too, once it subscribes.
+
+### Prices
+
+The [reference prices](#reference-prices) of the price engine reach every client as they change ([#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)):
+
+```json
+{
+  "event": "prices.update",
+  "prices": [
+    { "market": "BTC/USDT", "bid": "64000", "ask": "64100", "mid": "64050", "updated": "2026-11-15T10:00:00.123456Z" }
+  ],
+  "server_time": "2026-11-15T10:00:00Z"
+}
+```
+
+An event holds the markets whose price changed since the instance last sent it, at most every 100 ms per market, and every market at least every 5 seconds while it is live. A stale price is not sent: a market that stops appearing has no live price. `updated` is when the newest provider input of the price was observed. Like the currency events, the event is rebuilt from these fields before it is sent; an update larger than 1 MiB or of more than 2000 markets is dropped. Prices are not replayed: a client that reconnects receives them with the next change. An administrator's override is not in these events; quotes read it through the reference price.

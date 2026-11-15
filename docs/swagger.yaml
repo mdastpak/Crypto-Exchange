@@ -413,6 +413,27 @@ definitions:
         example: The destination bank refused the transfer.
         type: string
     type: object
+  admin.priceOverrideRequest:
+    properties:
+      ask:
+        example: "64100"
+        type: string
+      bid:
+        example: "64000"
+        type: string
+      expires_in_seconds:
+        description: 'ExpiresInSeconds is how long it lasts: 1 to 86400.'
+        example: 900
+        type: integer
+      mid:
+        description: Mid is the reference price; Bid and Ask default to it.
+        example: "64050"
+        type: string
+      reason:
+        description: Reason is why, 1 to 500 characters.
+        example: Binance and Kraken are down
+        type: string
+    type: object
   admin.stepUpRequest:
     properties:
       totp:
@@ -2393,6 +2414,99 @@ definitions:
         items:
           $ref: '#/definitions/platform.PublicControl'
         type: array
+    type: object
+  price.Price:
+    properties:
+      ask:
+        type: number
+      at:
+        description: |-
+          At is when the price was computed, and Updated when its newest input
+          was observed; for a stale price, Updated is that of its last live
+          price.
+        type: string
+      bid:
+        description: |-
+          Bid and Ask are the best bid and ask over the providers; they may
+          cross when the venues disagree.
+        type: number
+      market:
+        type: string
+      mid:
+        description: 'Mid is the reference price: the median of the providers'' mids.'
+        type: number
+      outliers:
+        items:
+          type: string
+        type: array
+      sources:
+        description: |-
+          Sources are the providers of the figures, and Outliers those
+          rejected at this interval.
+        items:
+          type: string
+        type: array
+      status:
+        $ref: '#/definitions/price.Status'
+      twap:
+        additionalProperties:
+          type: number
+        type: object
+      updated:
+        type: string
+      vwap:
+        additionalProperties:
+          type: number
+        description: |-
+          VWAP and TWAP are by window, such as "60s"; a window without trades
+          has no VWAP.
+        type: object
+    type: object
+  price.Status:
+    enum:
+    - override
+    - live
+    - stale
+    type: string
+    x-enum-varnames:
+    - StatusOverride
+    - StatusLive
+    - StatusStale
+  priceoverride.Override:
+    properties:
+      ask:
+        example: "64100"
+        type: string
+      bid:
+        example: "64000"
+        type: string
+      created_at:
+        type: string
+      created_by:
+        description: CreatedBy and EndedBy are the administrators' hk.
+        format: uuid
+        type: string
+      ended_at:
+        type: string
+      ended_by:
+        format: uuid
+        type: string
+      expires_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      in_force:
+        description: InForce is whether it is served now.
+        type: boolean
+      market:
+        example: BTC/USDT
+        type: string
+      mid:
+        example: "64050"
+        type: string
+      reason:
+        type: string
     type: object
   public.CurrencyPage:
     properties:
@@ -6754,6 +6868,135 @@ paths:
       summary: Add or change a market
       tags:
       - admin markets
+  /api/v1/admin/markets/{base}/{quote}/price:
+    get:
+      description: 'The price that quotes use now (#59): an administrator''s override
+        in force (status override), or the price engine''s aggregated price when it
+        is live and fresh (status live), with its sources and time. 404 price_unavailable
+        when there is none: the engine has no quorum for the market, or Redis has
+        no fresh price.'
+      parameters:
+      - description: The symbol of the base currency
+        example: BTC
+        in: path
+        name: base
+        required: true
+        type: string
+      - description: The symbol of the quote currency
+        example: USDT
+        in: path
+        name: quote
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/price.Price'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: price_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: prices_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the reference price of a market
+      tags:
+      - admin prices
+  /api/v1/admin/markets/{base}/{quote}/price-override:
+    post:
+      consumes:
+      - application/json
+      description: 'Sets the reference price of a market in place of the price engine''s
+        until expires_in_seconds pass (#59), for when the providers are wrong or down.
+        Bid and ask default to mid; bid <= mid <= ask. The market must exist. A market
+        has one override in force at most: 409 price_override_exists until it ends.
+        Every instance of the server serves it within a second, and stops at its expiry.
+        A sensitive route: it needs a step-up. Audited as price.override_set, with
+        the prices, the expiry, and the reason. The row is sealed: an override changed
+        in SQL is not served.'
+      parameters:
+      - description: The symbol of the base currency
+        example: BTC
+        in: path
+        name: base
+        required: true
+        type: string
+      - description: The symbol of the quote currency
+        example: USDT
+        in: path
+        name: quote
+        required: true
+        type: string
+      - description: The price
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.priceOverrideRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/priceoverride.Override'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: market_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: price_override_exists or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: prices_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Set the price of a market
+      tags:
+      - admin prices
   /api/v1/admin/notifications/sms:
     get:
       description: 'The SMS providers (#371) and how messages go through them: the
@@ -7349,6 +7592,113 @@ paths:
       summary: Lift a platform control
       tags:
       - admin platform
+  /api/v1/admin/price-overrides:
+    get:
+      description: 'The prices that administrators set (#59), newest first: those
+        in force with in_force=true, or the last limit (100) of every state.'
+      parameters:
+      - description: Only those in force
+        in: query
+        name: in_force
+        type: boolean
+      - description: At most 100
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/priceoverride.Override'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: prices_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the price overrides
+      tags:
+      - admin prices
+  /api/v1/admin/price-overrides/{id}/end:
+    post:
+      description: 'Ends an override in force before its expiry (#59): the market
+        takes the price engine''s price again, on every instance within a second.
+        A sensitive route: it needs a step-up. Audited as price.override_end.'
+      parameters:
+      - description: The override
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/priceoverride.Override'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: price_override_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: price_override_ended or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: prices_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: End a price override
+      tags:
+      - admin prices
   /api/v1/admin/sessions:
     get:
       description: The active sessions of the administrator of the token, newest first,

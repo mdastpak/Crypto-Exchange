@@ -123,8 +123,9 @@ type Price struct {
 	Updated time.Time `json:"updated"`
 }
 
-// Live reports whether the price may be served as current.
-func (p Price) Live() bool { return p.Status == StatusLive }
+// Live reports whether the price may be served as current: a live price,
+// or an administrator's override.
+func (p Price) Live() bool { return p.Status == StatusLive || p.Status == StatusOverride }
 
 // NormalizeMarket returns the market of a configured symbol: BASE/QUOTE or
 // BASE-QUOTE in any case, with the aliases of the venues (XBT for BTC,

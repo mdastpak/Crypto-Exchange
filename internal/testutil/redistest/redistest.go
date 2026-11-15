@@ -40,4 +40,6 @@ const (
 	MarketData
 	// Confirm is the database of internal/confirm.
 	Confirm
+	// Price is the database of internal/price.
+	Price
 )

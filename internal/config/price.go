@@ -113,6 +113,51 @@ func (c *Configuration) priceAggregatorProblems(p *problems) {
 	if a.Enabled && enabled == 0 {
 		p.add("price_aggregator.providers", "has no enabled provider")
 	}
+	if a.CacheTTLMs < 10 || a.CacheTTLMs > 60_000 {
+		p.add("price_aggregator.cache_ttl_ms", "is %d; it must be between 10 and 60000", a.CacheTTLMs)
+	} else if a.CacheTTLMs < a.AggregationInterval {
+		p.add("price_aggregator.cache_ttl_ms", "is %d, below aggregation_interval_ms (%d): every price would expire before the next", a.CacheTTLMs, a.AggregationInterval)
+	}
+	if a.LeaseTTLMs < 3*a.AggregationInterval || a.LeaseTTLMs > 60_000 {
+		p.add("price_aggregator.lease_ttl_ms", "is %d; it must be from three intervals (%d) to 60000", a.LeaseTTLMs, 3*a.AggregationInterval)
+	}
+	if !a.Enabled {
+		return
+	}
+	if a.PublishToRedis {
+		var missing []string
+		standalone := c.Redis.Mode == "" || c.Redis.Mode == RedisModeStandalone
+		if standalone && (c.Redis.Host == "" || c.Redis.Port == "") {
+			missing = append(missing, setting("redis.host"), setting("redis.port"))
+		}
+		if len(missing) > 0 {
+			*p = append(*p, "publish_to_redis needs: "+strings.Join(missing, ", "))
+		}
+		c.redisModeProblems(p)
+	}
+	if a.PublishToRabbitMQ {
+		if !a.PublishToRedis {
+			// One replica publishes, by a lease in Redis.
+			p.add("price_aggregator.publish_to_rabbitmq", "needs publish_to_redis, whose lease elects the one replica that publishes")
+		}
+		var missing []string
+		for _, r := range []struct {
+			ok  bool
+			key string
+		}{
+			{c.RabbitMQ.Host != "" || len(c.RabbitMQ.Hosts) > 0, "rabbitmq.host"},
+			{c.RabbitMQ.Username != "", "rabbitmq.username"},
+			{c.RabbitMQ.Password != "", "rabbitmq.password"},
+			{c.RabbitMQ.Exchanges.PriceUpdates != "", "rabbitmq.exchanges.price_updates"},
+		} {
+			if !r.ok {
+				missing = append(missing, setting(r.key))
+			}
+		}
+		if len(missing) > 0 {
+			*p = append(*p, "publish_to_rabbitmq needs: "+strings.Join(missing, ", "))
+		}
+	}
 }
 
 // priceRoute returns how this node reaches a price provider.

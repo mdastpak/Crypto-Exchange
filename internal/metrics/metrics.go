@@ -178,6 +178,24 @@ var (
 		Name: "price_market_sources",
 		Help: "Providers that make the reference price of a market.",
 	}, []string{"market"})
+	// PricePublisherLeader is 1 on the replica that publishes the updates
+	// (#59), and PricePublishErrors counts the failed writes, by target
+	// (cache, lease, stream, rabbitmq).
+	PricePublisherLeader = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "price_publisher_leader",
+		Help: "1 on the replica of the price aggregator that publishes the updates.",
+	})
+	PricePublishErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_publish_errors_total",
+		Help: "Failed writes of the prices, by target: cache, lease, stream, rabbitmq.",
+	}, []string{"target"})
+	// PriceDelivery is the time from a price's newest tick to its send to
+	// the WebSocket clients of an instance (#59).
+	PriceDelivery = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "price_delivery_latency_seconds",
+		Help:    "Time from the newest provider tick of a price to its send to the WebSocket clients.",
+		Buckets: []float64{.005, .01, .025, .05, .1, .15, .2, .25, .5, 1, 2.5, 5},
+	})
 )
 
 func init() {
@@ -188,7 +206,7 @@ func init() {
 		LedgerMismatches, LedgerImbalancedCurrencies, LedgerAccountProblems, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
 		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
-		PriceAggregation, PriceMarketLive, PriceMarketSources,
+		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceDelivery,
 	)
 }
 

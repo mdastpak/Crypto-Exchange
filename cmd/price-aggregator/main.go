@@ -6,7 +6,8 @@
 // It runs apart from the server, so that it can run only on the nodes that
 // reach the providers, and so that a slow or blocked provider never touches
 // the trading API. It needs no database: several replicas may run at once,
-// each following the providers and computing the same prices on its own.
+// each following the providers and computing the same prices on its own,
+// and writing them to Redis; one at a time publishes the updates (#59).
 package main
 
 import (
@@ -27,9 +28,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/logging"
 	"github.com/mdastpak/crypto-exchange/internal/metrics"
 	"github.com/mdastpak/crypto-exchange/internal/price"
+	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 )
 
 var configPath string
@@ -75,7 +78,17 @@ func run() error {
 			return fmt.Errorf("invalid price providers: %w", err)
 		}
 		interval := time.Duration(config.Config.PriceAggregator.AggregationInterval) * time.Millisecond
-		p.service = price.NewService(agg, feeds, interval)
+		publisher, closeTargets, err := newPublisher()
+		if err != nil {
+			return err
+		}
+		defer closeTargets()
+		var sinks []price.Sink
+		if publisher != nil {
+			sinks = append(sinks, publisher)
+			wg.Go(func() { publisher.Run(ctx) })
+		}
+		p.service = price.NewService(agg, feeds, interval, sinks...)
 		wg.Go(func() { p.service.Run(ctx) })
 		log.Printf("Price aggregator started: %d providers, every %s", len(feeds), interval)
 	} else {
@@ -91,6 +104,43 @@ func run() error {
 	stop()
 	wg.Wait()
 	return err
+}
+
+// newPublisher returns the publisher of the prices to Redis and RabbitMQ
+// (#59), or nil when the aggregator publishes nowhere, and the function that
+// closes their connections.
+func newPublisher() (*price.Publisher, func(), error) {
+	a := config.Config.PriceAggregator
+	if !a.PublishToRedis {
+		return nil, func() {}, nil
+	}
+	redisService, err := db.NewRedisService(&config.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+	closers := []func(){func() { _ = redisService.Close() }}
+	opts := price.PublisherOptions{
+		Redis:        redisService.Client,
+		CacheTTL:     time.Duration(a.CacheTTLMs) * time.Millisecond,
+		Stream:       price.DefaultStream,
+		StreamMaxLen: a.StreamMaxLen,
+		LeaseTTL:     time.Duration(a.LeaseTTLMs) * time.Millisecond,
+	}
+	if a.PublishToRabbitMQ {
+		exchange := config.Config.RabbitMQ.Exchanges.PriceUpdates
+		broker, err := rabbitmq.NewRabbitMQService(&config.Config, exchange)
+		if err != nil {
+			_ = redisService.Close()
+			return nil, nil, fmt.Errorf("RabbitMQ: %w", err)
+		}
+		closers = append(closers, func() { _ = broker.Close() })
+		opts.Broker, opts.Exchange = broker, exchange
+	}
+	return price.NewPublisher(opts), func() {
+		for _, c := range closers {
+			c()
+		}
+	}, nil
 }
 
 // serve answers the probes until ctx is done or the server fails.

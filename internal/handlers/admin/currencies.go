@@ -18,6 +18,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
+	"github.com/mdastpak/crypto-exchange/internal/priceoverride"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -73,6 +74,14 @@ type AdminHandler struct {
 	// configured; without them, the routes answer sms_not_configured.
 	SMS       SMSRouter
 	SMSRoutes SMSRoutingStore
+
+	// Prices reads the reference prices (#59), and PriceOverrides keeps the
+	// prices that administrators set in their place; OverrideWatcher is
+	// this instance's copy of those, which a change refreshes at once.
+	// Without PriceOverrides, the routes answer prices_unavailable.
+	Prices          PriceReader
+	PriceOverrides  PriceOverrideStore
+	OverrideWatcher OverrideRefresher
 }
 
 // NewHandler returns the handler with the stores of the services in is. A
@@ -92,6 +101,7 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 		h.Rebrands = rebrand.Store{DB: db}
 		h.Audit = audit.Log{DB: db}
 		h.Findings = rowseal.Findings{DB: db}
+		h.PriceOverrides = priceoverride.Store{DB: db}
 	}
 	if catalog := currencies.ForServices(is); catalog != nil {
 		h.Currencies = catalog

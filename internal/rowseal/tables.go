@@ -285,6 +285,14 @@ var (
 	DenyLinks = &Table{Name: "deny_links", Key: "id", KeyType: "uuid", Columns: []Column{
 		sealedBytes("token_hash"), text("user_hk"), text("confirmation_id"), timestamptz("expires_at"), timestamptz("used_at"),
 	}, SealedFromStart: true}
+	// PriceOverrides covers a price that an administrator set for a market
+	// (#59): its market, prices, expiry, and end. An override set, moved,
+	// or lengthened in SQL is not served. Its rows are sealed from the
+	// first one.
+	PriceOverrides = &Table{Name: "price_overrides", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("market"), text("bid"), text("ask"), text("mid"), text("reason"), text("created_by"),
+		timestamptz("created_at"), timestamptz("expires_at"), timestamptz("ended_at"), text("ended_by"),
+	}, SealedFromStart: true}
 )
 
 // Tables lists the protected tables.
@@ -292,7 +300,7 @@ var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
-	IntegrityFindings, WithdrawalPayouts, DenyLinks,
+	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

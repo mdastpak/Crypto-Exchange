@@ -5,7 +5,7 @@
 | Part | Issue | State |
 | --- | --- | --- |
 | Providers, aggregation, `cmd/price-aggregator`, metrics | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) | Done |
-| Price cache in Redis, distribution, consumer library, admin override | [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59) | Planned |
+| Price cache in Redis, distribution, consumer library, admin override | [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59) | Done |
 
 ## Running
 
@@ -13,7 +13,7 @@
 go run ./cmd/price-aggregator -config config/config.local.yaml
 ```
 
-The Docker image holds it as `/app/price-aggregator`; run it with `--entrypoint /app/price-aggregator`. It reads the same configuration file as the server, and needs only the [`price_aggregator`](configuration.md#price_aggregator) section, with `market_data.egress.proxy_url` for a provider reached through a proxy. It needs no database.
+The Docker image holds it as `/app/price-aggregator`; run it with `--entrypoint /app/price-aggregator`. It reads the same configuration file as the server, and needs only the [`price_aggregator`](configuration.md#price_aggregator) section, with `market_data.egress.proxy_url` for a provider reached through a proxy. It needs no database; to publish, it needs Redis and RabbitMQ.
 
 It answers on `price_aggregator.health_addr` (`:8082`), an internal address that must not be reachable from the public network:
 
@@ -27,7 +27,7 @@ It answers on `price_aggregator.health_addr` (`:8082`), an internal address that
 
 ## Several replicas
 
-The engine keeps no shared state. Each replica follows the providers and computes the prices on its own, from the same configuration, so that a replica that dies loses nothing and needs no takeover. Two replicas may differ by the ticks that reached one of them first; [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59) has one replica at a time publish, so that consumers see one series. Each replica opens its own connections to the providers, so run two or three, not one per node.
+The engine keeps no shared state. Each replica follows the providers and computes the prices on its own, from the same configuration, so that a replica that dies loses nothing and needs no takeover. Two replicas may differ by the ticks that reached one of them first, so one replica at a time publishes the updates, and consumers see one series (see [Distribution](#distribution)). Each replica opens its own connections to the providers, so run two or three, not one per node.
 
 ## Providers
 
@@ -67,6 +67,45 @@ A tick is rejected, and counted in `price_ticks_rejected_total`, when its market
 
 `TestAggregator_Load` runs three providers at 1,000 ticks per second each over 20 markets, for the 300 seconds of the longest window: an aggregation of every market takes about 0.1 ms at the median and well under 1 ms at the 99th percentile, within the budget of 10 ms, and a tick about 0.5 µs.
 
+## Distribution
+
+[#59](https://github.com/mdastpak/Crypto-Exchange/issues/59). Every interval, with `publish_to_redis`:
+
+1. **Every replica** writes each live price to its key `price:<BASE>/<QUOTE>` in Redis, as JSON, with a life of `cache_ttl_ms` (500 ms). A stale price is not written: its key expires, so no reader can take a price that lost its quorum. Since every replica writes, the keys stay fresh while any replica runs.
+2. **One replica**, the holder of the lease `price:publisher` (a token in Redis that lives `lease_ttl_ms`, 2 s, renewed every third of it), publishes the update of the interval: every price, live or stale, as `{"event": "prices.update", "prices": [...], "at": "..."}`.
+   - to the Redis stream `price:stream`, capped at about `stream_max_len` (10,000) entries, for a consumer that reads from where it stopped;
+   - with `publish_to_rabbitmq`, to the `price_updates` exchange, as a transient message that expires after 2 s, so that a slow queue never holds old prices. The server's WebSocket forwards it to the [clients](api.md#prices).
+
+When the leader dies, its lease expires and another replica takes it within `lease_ttl_ms`; the keys never lapse meanwhile. A replica that loses the lease, as when Redis failed over, stops publishing at once: a leader always checks its token before it publishes. A publish that fails counts in `price_publish_errors_total` and is not retried; the next interval publishes newer prices. Publishing never blocks the aggregation: a slow Redis or broker drops the older pending update.
+
+### Reading a price
+
+`price.Reader` is the consumer library: `Get(ctx, "BTC/USDT")` returns the reference price that quotes use ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)).
+
+1. An administrator's override in force, with status `override`.
+2. Otherwise the cached price, when it is live, of that market, with a mid above 0, and at most one second old (`price.DefaultMaxAge`). An older one is `price.ErrStale`, and none `price.ErrNoPrice`.
+
+A Redis error is returned as is: a price is never guessed, so a caller fails closed and quotes nothing.
+
+### Overrides
+
+An administrator sets the price of a market in place of the engine's for a time, through the [admin API](api.md#reference-prices), when the providers are wrong or down. The overrides are rows of PostgreSQL, sealed, and never in Redis, so that a write to Redis cannot set a price. Each server instance reads those in force every second (`priceoverride.Watcher`) and at once after its own change, and keeps the last ones it read while PostgreSQL cannot be read; none is served past its expiry, even before the next read. An override that fails its seal is not served.
+
+### Latency budget
+
+From a provider's tick to a WebSocket client, at the default settings:
+
+| Step | Budget |
+| --- | --- |
+| Provider to the aggregator (network and parsing) | 50 ms |
+| Wait for the next aggregation | 100 ms (`aggregation_interval_ms`) |
+| Aggregation | 1 ms |
+| Publish to RabbitMQ, and to the server instance | 20 ms |
+| Throttle and send to the client | 30 ms |
+| **Total, 99th percentile** | **200 ms** |
+
+`price_delivery_latency_seconds` measures it on each server instance, from the `updated` time of each price sent, the receipt of its newest tick. Alert when `histogram_quantile(0.99, rate(price_delivery_latency_seconds_bucket[5m])) > 0.2`.
+
 ## Metrics
 
 On `GET /metrics`, with the metrics of the Go runtime and of the process:
@@ -82,6 +121,9 @@ On `GET /metrics`, with the metrics of the Go runtime and of the process:
 | `price_aggregation_duration_seconds` | histogram | | Time of one aggregation of every market. |
 | `price_market_live` | gauge | `market` | 1 while the price of the market is live, 0 while it is stale. |
 | `price_market_sources` | gauge | `market` | Providers that make the price. |
+| `price_publisher_leader` | gauge | | 1 while this replica holds the lease and publishes. |
+| `price_publish_errors_total` | counter | `target` | Failed writes, by `cache`, `stream`, `rabbitmq`, or `lease`. |
+| `price_delivery_latency_seconds` | histogram | | On the server: from the newest tick of a price to its send to the WebSocket clients. |
 
 The labels take only the configured providers and markets.
 
@@ -89,4 +131,6 @@ The labels take only the configured providers and markets.
 | --- | --- | --- |
 | Market stale | `max by (market) (price_market_live) == 0` for 1 minute | No replica has the quorum of the market: quotes of it stop. Check `GET /providers` for the providers that are down. |
 | Provider silent | `min by (provider) (price_provider_last_tick_age_seconds) > 30` | No replica receives the provider, through its stream or REST. |
+| No publisher | `max(price_publisher_leader) == 0` for 1 minute | No replica publishes: check that the replicas reach Redis. |
+| Delivery slow | `histogram_quantile(0.99, rate(price_delivery_latency_seconds_bucket[5m])) > 0.2` | Past the [latency budget](#latency-budget). |
 | Aggregation slow | `histogram_quantile(0.99, rate(price_aggregation_duration_seconds_bucket[5m])) > 0.01` | The 99th percentile is past the budget of 10 ms. |

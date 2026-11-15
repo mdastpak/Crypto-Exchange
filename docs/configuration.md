@@ -548,7 +548,7 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 
 ### `price_aggregator`
 
-[`cmd/price-aggregator`](price-engine.md), the price engine ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). The server does not read it.
+[`cmd/price-aggregator`](price-engine.md), the price engine ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). The server does not read it: it reads the prices from Redis, and the overrides of administrators from PostgreSQL.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -560,7 +560,11 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `outlier_floor_bps` | `10` | From 0 to 10000. No deviation within this many basis points of the median makes an outlier. |
 | `min_providers` | `2` | At least 1. The quorum of a live price; below it, the price is stale. |
 | `stale_threshold_ms` | `5000` | Above 0. A provider's book older than this does not count. |
-| `publish_to_redis`, `publish_to_rabbitmq` | `true` | Reserved for the distribution of [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59). |
+| `publish_to_redis` | `true` | Writes the live prices to Redis and publishes the updates to the stream `price:stream` ([Distribution](price-engine.md#distribution), [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). Needs `redis`. |
+| `publish_to_rabbitmq` | `true` | The leader also publishes the updates to `rabbitmq.exchanges.price_updates`, which the WebSocket forwards to clients. Needs `publish_to_redis`, whose lease elects the leader, and `rabbitmq`. |
+| `cache_ttl_ms` | `500` | From 10 to 60000, and at least `aggregation_interval_ms`. The life of a price's key in Redis: a price not written again within it is gone. |
+| `lease_ttl_ms` | `2000` | From three intervals to 60000. The life of the publisher's lease: how long the updates stop when the leader dies. |
+| `stream_max_len` | `10000` | About how many updates `price:stream` keeps. |
 | `providers[].name` | | The provider, unique: `binance`, `coinbase`, `kraken` (with a stream), or `okx`, `nobitex`, `wallex` (REST only). See [Providers](price-engine.md#providers). |
 | `providers[].enabled` | `false` | Whether this node follows it. `nobitex` and `wallex` are of the Iran region only. |
 | `providers[].type` | | `websocket` (the stream, and REST while it is down) or `rest`. |
