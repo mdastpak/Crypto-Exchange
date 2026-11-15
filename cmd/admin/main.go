@@ -26,6 +26,7 @@
 //	admin [-config path] [-migrations url] fields [status|rekey|decrypt]
 //	admin [-config path] [-migrations url] assets import [-file path] [-dry-run]
 //	admin [-config path] [-migrations url] ledger [reconcile|snapshot]
+//	admin [-config path] [-migrations url] -operator <name> verification grant -user <id|contact> -level <n> -reason <text> [-dry-run]
 //
 // create and reset-totp print the authenticator secret once. They seal it
 // as the server does, with a field-enc data key, so they need keys.provider;
@@ -50,6 +51,9 @@
 // and the markets (#309), through the checks of internal/assetregistry.
 // ledger reconcile checks the books (#60), and exits with 1 when they do
 // not reconcile, for monitoring; ledger snapshot records snapshots.
+// verification grant sets the verification level of a user (#440), until
+// the identity checks and the KYC review grant it: it seals the user's row
+// as the server does, so it needs the data keys, and it requires -operator.
 //
 // Every change is recorded in the audit log in its transaction (#195), with
 // the system as the actor and, in the user agent, the operating-system user,
@@ -157,6 +161,12 @@ Ledger (see docs/architecture.md#the-ledger):
   ledger snapshot    Record a snapshot of every balance changed since its last one, as the server
                      does every hour.
 
+Verification levels of users (see docs/api.md#granting-a-level):
+  verification grant -user <id|email|mobile> -level <0..2> -reason <text> [-dry-run]
+                   Set the level of a user, until the identity checks and the KYC review grant it:
+                   for the testnet run, and for manual review. Needs -operator and the data keys;
+                   sealed in the user's row and audited. -dry-run reports the change without making it.
+
 Personal fields (see docs/data-protection.md#field-encryption):
   fields status    Count the rows still in plaintext, or encrypted with an older key.
   fields rekey     Encrypt them now and empty their plaintext, as the server's job does every hour.
@@ -217,6 +227,8 @@ type command struct {
 	rowSeals rowSealArgs
 	// assets holds the flags of assets import.
 	assets assetArgs
+	// verification holds the flags of verification grant.
+	verification verificationArgs
 }
 
 func parseArgs(args []string, stderr io.Writer) (command, error) {
@@ -261,6 +273,8 @@ func parseArgs(args []string, stderr io.Writer) (command, error) {
 		return parseAssetArgs(cmd, global.Args()[1:], stderr)
 	case "ledger":
 		return parseLedgerArgs(cmd, global.Args()[1:], stderr)
+	case "verification":
+		return parseVerificationArgs(cmd, global.Args()[1:], stderr)
 	default:
 		global.Usage()
 		return command{}, fmt.Errorf("unknown command %q", cmd.name)
@@ -400,6 +414,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(cmd.name, "ledger ") {
 		return runLedger(cmd, stdout, stderr)
+	}
+	if cmd.name == "verification grant" {
+		return runVerification(cmd, stdout, stderr)
 	}
 	if config.Config.Keys.Provider == "" {
 		fmt.Fprintln(stderr, "Error: authenticator secrets need the data keys: set keys.provider (KEYS_PROVIDER, see docs/data-protection.md)")

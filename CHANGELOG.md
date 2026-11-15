@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `admin verification grant` sets the verification level of a user, for the testnet run of M2 and for manual review, until the identity checks and the KYC review grant levels ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)).
+  - `-user` takes the user's ID, email address, or mobile number; `-level` is 0 to 2, down as well as up. `-reason` and `-operator` are required, and `-dry-run` reports the change without making it.
+  - The level is written as an approved KYC tier in the user's row, which is sealed again, so the command needs the data keys. A row whose seal does not match, an administrator, and an account that is not active are refused.
+  - Each change is audited as `user.verification_set`, with the operator, the reason, and the level before and after. It waits for an operation of the user in flight, and applies from the user's next request on every instance.
+- Release mode refuses `verification.min_level` below 1 for `withdraw_fiat` and `withdraw_crypto`, so that one wrong file cannot open withdrawals to accounts that proved nothing ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)).
 - The settlement of delistings ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)). See [Delistings](docs/api.md#delistings).
   - At `frozen`, a delisting that converts records its price once, the fixed price or the reference price of the price engine (its mid for `last_trade`, its longest TWAP for `twap`), in `settlement_price` with its source and time, audited as `currency.delisting_price` (migration 35). It waits while the reference is not live.
   - Every available balance of the currency is then converted at that price into the settlement currency, as a ledger `conversion` that refers to the delisting, rounded down to the precision of the settlement currency with the dust to `fees`, by the scheduler of every instance, each balance once.

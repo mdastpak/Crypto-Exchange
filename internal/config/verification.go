@@ -34,6 +34,10 @@ var VerificationActions = []string{
 	ActionDepositFiat, ActionDepositCrypto, ActionTradeOTC, ActionTradeMarket, ActionWithdrawFiat, ActionWithdrawCrypto,
 }
 
+// withdrawActions are the actions that move funds out, which release mode
+// never allows at level 0 (#440).
+var withdrawActions = []string{ActionWithdrawFiat, ActionWithdrawCrypto}
+
 // VerificationConfig sets what each verification level of a user may do
 // (#157). See docs/configuration.md#verification.
 type VerificationConfig struct {
@@ -104,9 +108,9 @@ func (c *Configuration) applyVerificationDefaults() {
 
 var currencySymbol = regexp.MustCompile(`^[A-Z0-9]{1,20}$`)
 
-// verificationProblems reports unknown actions, levels out of range, and
-// limits that are not positive amounts, or whose bound per transaction is
-// above the daily one.
+// verificationProblems reports unknown actions, levels out of range,
+// withdrawals at level 0 in release mode, and limits that are not positive
+// amounts, or whose bound per transaction is above the daily one.
 func (c *Configuration) verificationProblems(p *problems) {
 	v := c.Verification
 	for _, action := range slices.Sorted(maps.Keys(v.MinLevel)) {
@@ -115,8 +119,15 @@ func (c *Configuration) verificationProblems(p *problems) {
 			p.add(key, "is not an action; the actions are %v", VerificationActions)
 			continue
 		}
-		if level := v.MinLevel[action]; level < MinVerificationLevel || level > MaxVerificationLevel {
+		level := v.MinLevel[action]
+		if level < MinVerificationLevel || level > MaxVerificationLevel {
 			p.add(key, "is %d; it must be from %d to %d", level, MinVerificationLevel, MaxVerificationLevel)
+			continue
+		}
+		// One wrong file must not let an account that proved nothing move
+		// funds out (#440). Development may still allow it.
+		if c.Server.Mode == "release" && level < 1 && slices.Contains(withdrawActions, action) {
+			p.add(key, "is %d; release mode needs level 1 or more for withdrawals", level)
 		}
 	}
 	for _, symbol := range slices.Sorted(maps.Keys(v.WithdrawalLimits)) {
