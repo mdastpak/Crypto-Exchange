@@ -1209,6 +1209,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		publicGroup.POST("/auth/recovery/complete", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.CompleteRecovery)
 		publicGroup.POST("/auth/sessions/replace", rl.AuthRateLimit(middleware.AuthLogin), signIn, ih.Public.ReplaceSession)
 		publicGroup.POST("/auth/refresh", service, ih.Public.RefreshToken)
+		// A "this was not me" link (#374) only stops and protects, so it
+		// works during a maintenance too, as ending sessions does.
+		publicGroup.POST("/deny/:token", rl.AuthRateLimit(middleware.AuthLogin), ih.Public.Deny)
 		// The refresh token cookie is scoped to /public/auth, so logout lives
 		// here too, behind the same authentication as /user/logout.
 		publicGroup.POST("/auth/logout", auth.JWTUserVerification(ih.TokenBlacklist), userLogout(ih))

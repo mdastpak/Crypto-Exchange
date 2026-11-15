@@ -71,6 +71,8 @@ An error response contains only a fixed message for each error. Internal details
 | `confirmation_code_invalid` | `403` | The code of a [withdrawal confirmation](#withdrawal-confirmations) is wrong |
 | `confirmation_locked` | `429` | Too many wrong codes of a confirmation, or too many codes requested |
 | `confirmation_expired`, `confirmation_already_confirmed` | `409` | The confirmation is past its time, or was confirmed already |
+| `confirmation_denied` | `409` | The confirmation was stopped with its ["this was not me" link](#this-was-not-me-links) |
+| `deny_link_invalid` | `404` | The ["this was not me" link](#this-was-not-me-links) is unknown, expired, or used |
 | `confirmation_method_unavailable`, `confirmation_method_required` | `409` | The user cannot use that method now, or has no method to confirm withdrawals with |
 | `confirmations_unavailable` | `503` | The confirmations are not available now |
 | `use_admin_sign_in` | `403` | An administrator used the user sign-in |
@@ -1333,7 +1335,7 @@ The user chooses the method. Until they do, or while the chosen one is unavailab
 **Bound to the operation.**
 
 - When a withdrawal starts, the server records a confirmation with the digest of the withdrawal: a SHA-256 of its amount, currency, and destination.
-- It sends the code with a message that says what it confirms, such as `100 USDT to TR7NHq...gjLj6t`. The message never uses the sign-in text, so a withdrawal code cannot pass for a sign-in code.
+- It sends the code with a message that says what it confirms, such as `100 USDT to TR7NHq...gjLj6t`. The message never uses the sign-in text, so a withdrawal code cannot pass for a sign-in code. It carries a ["this was not me" link](#this-was-not-me-links) too, which can only stop.
 - The withdrawal consumes the confirmation, in its own transaction, only with the same digest. So a code confirms that withdrawal and no other, once.
 
 **Limits.**
@@ -1360,14 +1362,46 @@ The proof of a confirmation. It is a code, as `{"code": "482913"}`, in ASCII, Pe
 
 - `403 confirmation_code_invalid`;
 - `429 confirmation_locked`;
-- `409 confirmation_expired` or `confirmation_already_confirmed`;
+- `409 confirmation_expired`, `confirmation_already_confirmed`, or `confirmation_denied`;
 - `404` for a confirmation that is not the user's.
 
 It has the limits of a sign-in. The withdrawal workflow ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) returns the `id` of the confirmation when a withdrawal starts, and runs the withdrawal once it is confirmed.
 
 ### `POST /user/confirmations/{id}/resend`
 
-Sends a new code of an SMS or email confirmation, or begins a new ceremony of a confirmation by passkey and returns its options, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`).
+Sends a new code of an SMS or email confirmation, with a link of its own, or begins a new ceremony of a confirmation by passkey and returns its options, and gives the confirmation a new lifetime. It has the limits of a code request (`429 confirmation_locked`). A confirmation by the authenticator has nothing to send (`409 confirmation_method_unavailable`), and a denied one nothing more (`409 confirmation_denied`).
+
+## "This was not me" links
+
+Every message that carries the code of a withdrawal confirmation, by SMS or by email, also carries a link for a user who did not request it ([#374](https://github.com/mdastpak/Crypto-Exchange/issues/374)). The link can only stop and protect. It never approves anything: links invite phishing, and mail scanners and link previews open them on their own, so no operation is ever confirmed by a link. Someone else who opens it can only hold the owner's withdrawals for a while.
+
+**The link.**
+
+- It is `security.deny_links.base_url` followed by a token of 12 Base62 characters, such as `https://ex.ir/d/Ab3xK9q2LmPq`, on the exchange's own domain. No external shortener is used.
+- An SMS template holds the start of the link, and the token is its parameter: `%token2` at Kavenegar, `#DENY#` at sms.ir. An email shows the whole link, as a button in the HTML.
+- Each message gets a token of its own, from `crypto/rand`. The server stores only its SHA-256, bound to the user and the confirmation, in a sealed row. A token is used once, and expires after `security.deny_links.ttl_hours` (a day).
+- Without `base_url`, the messages carry no link, and a code never goes out without its link when they do.
+
+**Opening the link changes nothing.** The link opens a page of the exchange's site, which asks the user and then posts the token. The API has no `GET` for it, so a scanner or a preview that fetches the link does nothing.
+
+### `POST /public/deny/{token}`
+
+Uses the link of the token. In one transaction, it:
+
+1. denies the confirmation, which can no longer be confirmed, sent again, or consumed (`409 confirmation_denied`);
+2. cancels every withdrawal of the user in `review` or `queued`, and releases its funds, since whoever holds the account may have requested more than one;
+3. ends every session of the user;
+4. starts the [security hold](#security-hold) (`security.change_hold_hours`), which holds withdrawals.
+
+Its `info` counts what it did, and names no account:
+
+```json
+{"withdrawals_cancelled": 1, "withdrawals_in_progress": 0, "sessions_ended": 2, "security_hold_until": "2026-11-16T09:00:00Z"}
+```
+
+`withdrawals_in_progress` counts the withdrawals whose payouts had started, which the link cannot stop; the page asks the user to contact support. Then the user gets a notice by email of what was done, with the anti-phishing code and no link.
+
+An unknown, expired, or used token answers `404 deny_link_invalid`, the same for each. The route has the limits of a sign-in per IP, and works during a maintenance, as ending sessions does. The denial is audited as `user.operation_deny`, with the withdrawals it cancelled (`user.withdrawal_cancel`) and the sessions it ended (`user.session_revoke`), each with the reason `deny_link`.
 
 ## Withdrawals
 
@@ -1396,7 +1430,7 @@ The checks:
 - The currency is listed, and its lifecycle allows withdrawals; the network allows them (`409 withdrawals_closed`).
 - The destination is the user's, usable now (`409 destination_not_usable_yet` with `usable_from`), and of the kind of the currency: a card, an IBAN, or an account for a fiat currency, an address on `network` for a crypto one.
 - The user's restrictions and security hold (`403`, as for the other operations), and the `withdrawals` lockdown (`503 feature_locked`).
-- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, or `confirmation_mismatch` for one of another request.
+- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, or `confirmation_mismatch` for one of another request.
 
 A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
 

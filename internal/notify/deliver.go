@@ -111,8 +111,10 @@ func IsPermanent(err error) bool {
 	return errors.As(err, &p)
 }
 
-// redact returns the text of err with the code and the raw contact removed, so
-// that it can be logged. Providers may echo the recipient in their errors.
+// redact returns the text of err with the code, the raw contact, and the
+// token of a "this was not me" link (#374) removed, so that it can be
+// logged. Providers may echo the recipient or the parameters in their
+// errors.
 func redact(err error, msg OTPMessage) string {
 	text := err.Error()
 	if msg.Contact != "" {
@@ -125,6 +127,9 @@ func redact(err error, msg OTPMessage) string {
 	}
 	if msg.Code != "" {
 		text = strings.ReplaceAll(text, msg.Code, "[code]")
+	}
+	if msg.DenyToken != "" {
+		text = strings.ReplaceAll(text, msg.DenyToken, "[link]")
 	}
 	return text
 }

@@ -225,6 +225,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	if v := c.Security.ChangeHoldHours; v < 1 || v > MaxSecurityChangeHoldHours {
 		p.add("security.change_hold_hours", "is %d; it must be from 1 to %d", v, MaxSecurityChangeHoldHours)
 	}
+	c.denyLinkProblems(p)
 	if v := c.Security.Password.MinLength; v < MinPasswordMinLength || v > MaxPasswordMinLength {
 		p.add("security.password.min_length", "is %d; it must be from %d to %d", v, MinPasswordMinLength, MaxPasswordMinLength)
 	}
@@ -834,6 +835,28 @@ func passkeyProblems(p *problems, c *Configuration) {
 		if u.Scheme != "https" && (!local || c.Server.Mode == "release") {
 			p.add("security.passkeys.origins", "has %q; an origin uses https", origin)
 		}
+	}
+}
+
+// denyLinkProblems checks security.deny_links (#374). A link is the base
+// URL and a token, so the base is a page of the exchange's site over
+// https, which ends with a slash and has no query or fragment.
+func (c *Configuration) denyLinkProblems(p *problems) {
+	d := c.Security.DenyLinks
+	if v := d.TTLHours; v < 1 || v > MaxDenyLinkTTLHours {
+		p.add("security.deny_links.ttl_hours", "is %d; it must be from 1 to %d", v, MaxDenyLinkTTLHours)
+	}
+	if d.BaseURL == "" {
+		return
+	}
+	u, err := url.Parse(d.BaseURL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !strings.HasSuffix(u.Path, "/") {
+		p.add("security.deny_links.base_url", "is %q; it must be a URL that ends with a slash, such as https://ex.ir/d/", d.BaseURL)
+		return
+	}
+	local := u.Hostname() == "localhost"
+	if u.Scheme != "https" && (u.Scheme != "http" || !local || c.Server.Mode == "release") {
+		p.add("security.deny_links.base_url", "is %q; a link uses https", d.BaseURL)
 	}
 }
 

@@ -89,6 +89,9 @@ type PublicHandler struct {
 	// Guard elevates the session of a sign-in that proved the second
 	// factor, for the operations that it protects.
 	Guard Elevator
+	// Denials uses the "this was not me" links of the messages of
+	// confirmation codes (#374). Without it, every link is invalid.
+	Denials Denier
 }
 
 // NewHandler returns the handler with the stores of the services in is. A

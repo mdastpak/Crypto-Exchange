@@ -23,10 +23,11 @@ const (
 )
 
 // htmlTemplates are the HTML parts of the emails: of a sign-in code, of
-// a code that confirms a withdrawal (#161), and of the reminder to change
-// the anti-phishing code (#375). Nil is text only.
+// a code that confirms a withdrawal (#161), of the reminder to change
+// the anti-phishing code (#375), and of the notice of a "this was not me"
+// link that was used (#374). Nil is text only.
 type htmlTemplates struct {
-	otp, withdrawal, reminder *htmltemplate.Template
+	otp, withdrawal, reminder, denied *htmltemplate.Template
 }
 
 // loadHTMLTemplates loads the HTML templates that setting names: the
@@ -57,7 +58,7 @@ func loadHTMLTemplates(setting string) (*htmlTemplates, error) {
 	t := &htmlTemplates{}
 	for name, into := range map[string]**htmltemplate.Template{
 		htmlTemplateName(""): &t.otp, htmlTemplateName(PurposeWithdrawal): &t.withdrawal,
-		htmlTemplateName(PurposeAntiPhishingReminder): &t.reminder,
+		htmlTemplateName(PurposeAntiPhishingReminder): &t.reminder, htmlTemplateName(PurposeDenied): &t.denied,
 	} {
 		text, err := fs.ReadFile(dir, name)
 		if err != nil {
@@ -79,6 +80,8 @@ func htmlTemplateName(purpose string) string {
 		return "withdrawal.html"
 	case PurposeAntiPhishingReminder:
 		return "anti_phishing_reminder.html"
+	case PurposeDenied:
+		return "denied.html"
 	}
 	return "otp.html"
 }
@@ -94,6 +97,8 @@ func (t *htmlTemplates) render(msg OTPMessage, data emailData) (string, error) {
 		tmpl = t.withdrawal
 	case PurposeAntiPhishingReminder:
 		tmpl = t.reminder
+	case PurposeDenied:
+		tmpl = t.denied
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

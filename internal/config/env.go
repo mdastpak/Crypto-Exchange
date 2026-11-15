@@ -225,6 +225,8 @@ var envVars = []EnvVar{
 	intVar("ADMIN_STEP_UP_MINUTES", "admin.step_up_minutes", func(c *Configuration) *int { return &c.Admin.StepUpMinutes }),
 	intVar("CONTACTS_NEW_CONTACT_COOLDOWN_HOURS", "contacts.new_contact_cooldown_hours", func(c *Configuration) *int { return &c.Contacts.NewContactCooldownHours }),
 	intVar("SECURITY_CHANGE_HOLD_HOURS", "security.change_hold_hours", func(c *Configuration) *int { return &c.Security.ChangeHoldHours }),
+	stringVar("SECURITY_DENY_LINKS_BASE_URL", "security.deny_links.base_url", func(c *Configuration) *string { return &c.Security.DenyLinks.BaseURL }),
+	intVar("SECURITY_DENY_LINKS_TTL_HOURS", "security.deny_links.ttl_hours", func(c *Configuration) *int { return &c.Security.DenyLinks.TTLHours }),
 	intVar("SECURITY_PASSWORD_MIN_LENGTH", "security.password.min_length", func(c *Configuration) *int { return &c.Security.Password.MinLength }),
 	intVar("SECURITY_PASSWORD_MAX_FAILURES", "security.password.max_failures", func(c *Configuration) *int { return &c.Security.Password.MaxFailures }),
 	listVar("LEGAL_SIGNUP_BLOCKED_COUNTRIES", "legal.signup.blocked_countries", func(c *Configuration) *[]string { return &c.Legal.SignUp.BlockedCountries }),

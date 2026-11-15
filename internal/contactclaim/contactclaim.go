@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/contact"
 	"github.com/mdastpak/crypto-exchange/internal/db"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
@@ -186,25 +187,8 @@ func Detach(ctx context.Context, tx *sql.Tx, ownerHK, contactType, value, reason
 		return 0, false, err
 	}
 
-	rows, err := tx.QueryContext(ctx, `UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
-		WHERE user_id = $1 AND status = 'ACTIVE' RETURNING id`, ownerHK)
+	ended, err := auth.EndAll(ctx, tx, ownerHK)
 	if err != nil {
-		return 0, false, fmt.Errorf("failed to end the sessions: %w", err)
-	}
-	var ended []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return 0, false, fmt.Errorf("failed to end the sessions: %w", err)
-		}
-		ended = append(ended, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, false, fmt.Errorf("failed to end the sessions: %w", err)
-	}
-	if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = ANY($1::uuid[])", ended); err != nil {
 		return 0, false, err
 	}
 

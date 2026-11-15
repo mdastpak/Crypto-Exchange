@@ -171,3 +171,33 @@ func (s *PostgresSessionStore) RevokeOthers(ctx context.Context, userID, keep st
 	}
 	return len(revoked), nil
 }
+
+// EndAll ends every active session of the user within tx, the transaction
+// of a security event that the caller commits: a contact that another
+// account took (#252), or a "this was not me" link (#374). The rows are
+// re-sealed in tx. It returns the IDs of the sessions it ended, for the
+// caller's audit events.
+func EndAll(ctx context.Context, tx *sql.Tx, userID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `UPDATE sessions SET status = 'REVOKED', revoked_at = NOW()
+		WHERE user_id = $1 AND status = 'ACTIVE' RETURNING id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to end the sessions: %w", err)
+	}
+	var ended []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("failed to end the sessions: %w", err)
+		}
+		ended = append(ended, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to end the sessions: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.Sessions, "id = ANY($1::uuid[])", ended); err != nil {
+		return nil, err
+	}
+	return ended, nil
+}

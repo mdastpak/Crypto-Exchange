@@ -27,7 +27,10 @@ const (
 	CodeConfirmationAlreadyConfirmed  = "confirmation_already_confirmed"
 	CodeConfirmationMethodUnavailable = "confirmation_method_unavailable"
 	CodeConfirmationMethodRequired    = "confirmation_method_required"
-	codeConfirmationsUnavailable      = "confirmations_unavailable"
+	// CodeConfirmationDenied is a confirmation that its user stopped with
+	// the "this was not me" link of its message (#374).
+	CodeConfirmationDenied       = "confirmation_denied"
+	codeConfirmationsUnavailable = "confirmations_unavailable"
 )
 
 // ConfirmationMethodRequest chooses how withdrawals are confirmed.
@@ -142,7 +145,7 @@ func (h *UserHandler) SetConfirmationMethod(c *gin.Context) {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "confirmation_code_invalid"
 // @Failure 404 {object} models.APIResponse
-// @Failure 409 {object} models.APIResponse "confirmation_expired or confirmation_already_confirmed"
+// @Failure 409 {object} models.APIResponse "confirmation_expired, confirmation_already_confirmed, or confirmation_denied"
 // @Failure 429 {object} models.APIResponse "confirmation_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/confirmations/{id} [post]
@@ -183,7 +186,7 @@ func (h *UserHandler) ConfirmOperation(c *gin.Context) {
 // @Success 200 {object} models.APIResponse{info=confirm.Challenge}
 // @Failure 401 {object} models.APIResponse
 // @Failure 404 {object} models.APIResponse
-// @Failure 409 {object} models.APIResponse "confirmation_already_confirmed or confirmation_method_unavailable"
+// @Failure 409 {object} models.APIResponse "confirmation_already_confirmed, confirmation_method_unavailable, or confirmation_denied"
 // @Failure 429 {object} models.APIResponse "confirmation_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/confirmations/{id}/resend [post]
@@ -214,6 +217,8 @@ func sendConfirmationError(c *gin.Context, userHK string, err error) {
 		helpers.SendError(c, http.StatusTooManyRequests, CodeConfirmationLocked, i18n.M("CONFIRMATION_LOCKED"), nil)
 	case errors.Is(err, confirm.ErrExpired):
 		helpers.SendError(c, http.StatusConflict, CodeConfirmationExpired, i18n.M("CONFIRMATION_EXPIRED"), nil)
+	case errors.Is(err, confirm.ErrDenied):
+		helpers.SendError(c, http.StatusConflict, CodeConfirmationDenied, i18n.M("CONFIRMATION_DENIED"), nil)
 	case errors.Is(err, confirm.ErrAlreadyConfirmed):
 		helpers.SendError(c, http.StatusConflict, CodeConfirmationAlreadyConfirmed, i18n.M("CONFIRMATION_ALREADY_CONFIRMED"), nil)
 	case errors.Is(err, confirm.ErrMethodUnavailable):
