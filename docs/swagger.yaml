@@ -1090,6 +1090,12 @@ definitions:
         enum:
         - convert
         - claim
+      unverified:
+        description: |-
+          Unverified is a delisting that fails its seal (#451): it converts
+          nothing until an administrator reviews its integrity finding and
+          re-seals it.
+        type: boolean
     type: object
   delisting.Status:
     enum:
@@ -3172,6 +3178,12 @@ definitions:
       remaining:
         example: "12.5"
         type: string
+      unverified:
+        description: |-
+          Unverified is a migration that fails its seal (#451): nothing
+          converts until an administrator reviews its integrity finding and
+          re-seals it.
+        type: boolean
     type: object
   rebrand.Step:
     properties:
@@ -10578,7 +10590,9 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "409":
-          description: migration_not_converting, nothing_to_convert, or insufficient_balance
+          description: 'migration_not_converting, nothing_to_convert, insufficient_balance,
+            or row_unverified: the migration fails its seal and converts nothing until
+            it is reviewed'
           schema:
             $ref: '#/definitions/models.APIResponse'
         "503":

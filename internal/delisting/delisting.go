@@ -27,6 +27,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/google/uuid"
 )
@@ -351,6 +352,9 @@ func Schedule(ctx context.Context, db *sql.DB, currencyHK string, p Plan, origin
 			WHERE hk = $1`, open.String); err != nil {
 			return Delisting{}, Change{}, fmt.Errorf("failed to close the delisting before: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyDelistings, "hk = $1::uuid", open.String); err != nil {
+			return Delisting{}, Change{}, err
+		}
 	}
 	if p.Settlement == SettlementConvert {
 		var ok bool
@@ -373,6 +377,9 @@ func Schedule(ctx context.Context, db *sql.DB, currencyHK string, p Plan, origin
 		p.AnnouncementURL, p.Note, origin.ActorID)
 	if err != nil {
 		return Delisting{}, Change{}, fmt.Errorf("failed to schedule the delisting: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyDelistings, "hk = $1::uuid", hk); err != nil {
+		return Delisting{}, Change{}, err
 	}
 	steps := make([]map[string]any, 0, len(p.Steps))
 	for _, s := range p.Steps {
@@ -440,6 +447,9 @@ func Cancel(ctx context.Context, db *sql.DB, currencyHK, hk string, version *int
 	if _, err := tx.ExecContext(ctx, `UPDATE currency_delistings SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = $2,
 		version = version + 1 WHERE hk = $1`, hk, origin.ActorID); err != nil {
 		return Delisting{}, Change{}, fmt.Errorf("failed to cancel the delisting: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyDelistings, "hk = $1::uuid", hk); err != nil {
+		return Delisting{}, Change{}, err
 	}
 	if cur.lifecycle != currencies.LifecycleActive {
 		if _, err := tx.ExecContext(ctx, `UPDATE currencies SET lifecycle = 'active', lifecycle_changed_at = NOW() WHERE hk = $1`,
@@ -597,6 +607,9 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) (Change, bool, e
 			cancelled_by = created_by, version = version + 1 WHERE hk = $1`, delistingHK); err != nil {
 			return Change{}, false, fmt.Errorf("failed to end the delisting of a deleted currency: %w", err)
 		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyDelistings, "hk = $1::uuid", delistingHK); err != nil {
+			return Change{}, false, err
+		}
 		return Change{}, true, tx.Commit()
 	}
 	if err != nil {
@@ -633,6 +646,9 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) (Change, bool, e
 		if _, err := tx.ExecContext(ctx, `UPDATE currency_delistings SET status = 'completed', completed_at = $2, version = version + 1
 			WHERE hk = $1`, delistingHK, now); err != nil {
 			return Change{}, false, fmt.Errorf("failed to complete the delisting: %w", err)
+		}
+		if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyDelistings, "hk = $1::uuid", delistingHK); err != nil {
+			return Change{}, false, err
 		}
 	}
 	e := audit.Of(audit.Event{}, audit.ActionCurrencyLifecycleChange, audit.TargetCurrency, currencyHK)

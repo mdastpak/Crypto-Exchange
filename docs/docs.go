@@ -9168,7 +9168,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "migration_not_converting, nothing_to_convert, or insufficient_balance",
+                        "description": "migration_not_converting, nothing_to_convert, insufficient_balance, or row_unverified: the migration fails its seal and converts nothing until it is reviewed",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -13183,6 +13183,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/delisting.Settlement"
                         }
                     ]
+                },
+                "unverified": {
+                    "description": "Unverified is a delisting that fails its seal (#451): it converts\nnothing until an administrator reviews its integrity finding and\nre-seals it.",
+                    "type": "boolean"
                 }
             }
         },
@@ -15936,6 +15940,10 @@ const docTemplate = `{
                 "remaining": {
                     "type": "string",
                     "example": "12.5"
+                },
+                "unverified": {
+                    "description": "Unverified is a migration that fails its seal (#451): nothing\nconverts until an administrator reviews its integrity finding and\nre-seals it.",
+                    "type": "boolean"
                 }
             }
         },

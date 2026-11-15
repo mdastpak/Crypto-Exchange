@@ -14,6 +14,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/gin-gonic/gin"
 )
@@ -44,7 +45,7 @@ type conversionRequest struct {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "account_frozen, operation_restricted, asset_restricted, or currency_operation_disabled"
 // @Failure 404 {object} models.APIResponse "migration_not_found or not_a_source"
-// @Failure 409 {object} models.APIResponse "migration_not_converting, nothing_to_convert, or insufficient_balance"
+// @Failure 409 {object} models.APIResponse "migration_not_converting, nothing_to_convert, insufficient_balance, or row_unverified: the migration fails its seal and converts nothing until it is reviewed"
 // @Failure 503 {object} models.APIResponse "conversions_unavailable"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/currency-migrations/{id}/convert [post]
@@ -100,6 +101,8 @@ func (h *UserHandler) ConvertMigrationHolding(c *gin.Context) {
 		helpers.SendError(c, http.StatusConflict, "migration_not_converting", i18n.M("MIGRATION_NOT_CONVERTING"), nil)
 	case errors.Is(err, rebrand.ErrNothingToConvert):
 		helpers.SendError(c, http.StatusConflict, "nothing_to_convert", i18n.M("MIGRATION_NOTHING_TO_CONVERT"), nil)
+	case errors.Is(err, rowseal.ErrUnverified):
+		helpers.SendError(c, http.StatusConflict, "row_unverified", i18n.M("MIGRATION_UNVERIFIED"), nil)
 	case errors.Is(err, ledger.ErrInsufficientBalance), errors.Is(err, ledger.ErrInsufficientLocked):
 		helpers.SendError(c, http.StatusConflict, "insufficient_balance", i18n.M("INSUFFICIENT_BALANCE"), nil)
 	case restrictions.Send(c, err), currencies.SendRefusal(c, err):

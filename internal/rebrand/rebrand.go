@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"slices"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/google/uuid"
 )
@@ -316,6 +318,10 @@ func Schedule(ctx context.Context, db *sql.DB, targetHK string, p Plan, origin a
 		}
 		logged = append(logged, map[string]any{"currency_hk": s.CurrencyHK, "ratio": s.Ratio})
 	}
+	// The seal covers the sources too, so it is made once they are in.
+	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyMigrations, "hk = $1::uuid", hk); err != nil {
+		return Migration{}, err
+	}
 	steps := []map[string]any{}
 	for _, s := range p.Steps {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO currency_migration_phases (migration_hk, phase, scheduled_at) VALUES ($1, $2, $3)`,
@@ -380,6 +386,9 @@ func Cancel(ctx context.Context, db *sql.DB, targetHK, hk string, version *int64
 	if _, err := tx.ExecContext(ctx, `UPDATE currency_migrations SET phase = 'cancelled', cancelled_at = NOW(), cancelled_by = $2,
 		version = version + 1 WHERE hk = $1`, hk, origin.ActorID); err != nil {
 		return Migration{}, nil, fmt.Errorf("failed to cancel the migration: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyMigrations, "hk = $1::uuid", hk); err != nil {
+		return Migration{}, nil, err
 	}
 	e := audit.Of(origin, audit.ActionCurrencyMigrationCancel, audit.TargetCurrency, targetHK)
 	e.Changes = &audit.Changes{Before: map[string]any{"migration": hk, "phase": phase}, After: map[string]any{"migration": hk, "phase": PhaseCancelled}}
@@ -457,6 +466,8 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 		WHERE m.phase NOT IN ('completed', 'cancelled') AND ph.applied_at IS NULL AND ph.scheduled_at <= $1
 		  AND NOT EXISTS (SELECT 1 FROM currency_migration_phases e
 		    WHERE e.migration_hk = ph.migration_hk AND e.applied_at IS NULL AND e.scheduled_at < ph.scheduled_at)
+		  AND NOT EXISTS (SELECT 1 FROM integrity_findings f
+		    WHERE f.table_name = 'currency_migrations' AND f.row_key = m.hk::text AND f.resolved_at IS NULL)
 		  AND NOT (ph.phase = 'completed' AND m.forced AND EXISTS (SELECT 1 FROM balances b
 		    JOIN currency_migration_sources s ON s.currency_hk = b.currency_hk
 		    WHERE s.migration_hk = m.hk AND (b.available::numeric + b.locked::numeric + b.pending_deposit::numeric) <> 0))
@@ -478,10 +489,19 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 		return nil, false, err
 	}
 	// A cancel that came first ends the phase.
-	if err := tx.QueryRowContext(ctx, `SELECT phase FROM currency_migrations WHERE hk = $1 FOR UPDATE`, hk).Scan(&before); err != nil {
+	sealed := rowseal.CurrencyMigrations.NewRow()
+	if err := tx.QueryRowContext(ctx, `SELECT phase, `+rowseal.CurrencyMigrations.Fields("")+` FROM currency_migrations WHERE hk = $1 FOR UPDATE`,
+		hk).Scan(append([]any{&before}, sealed.Dest()...)...); err != nil {
 		return nil, false, fmt.Errorf("failed to lock the migration: %w", err)
 	}
 	if before == PhaseCompleted || before == PhaseCancelled {
+		return nil, true, nil
+	}
+	// A migration that fails its seal does not move on (#451): the phase
+	// would seal again a ratio or a target changed in SQL. Its finding is
+	// recorded, and the claim skips it while the finding is open.
+	if err := rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed); err != nil {
+		log.Printf("SECURITY: migration %s waits in phase %s until its finding is resolved: %v", hk, before, err)
 		return nil, true, nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE currency_migration_phases SET applied_at = $3 WHERE migration_hk = $1 AND phase = $2`,
@@ -491,6 +511,9 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) ([]currencies.Ch
 	if _, err := tx.ExecContext(ctx, `UPDATE currency_migrations SET phase = $2, version = version + 1,
 		completed_at = CASE WHEN $2 = 'completed' THEN $3::timestamptz END WHERE hk = $1`, hk, phase, now); err != nil {
 		return nil, false, fmt.Errorf("failed to apply a phase: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.CurrencyMigrations, "hk = $1::uuid", hk); err != nil {
+		return nil, false, err
 	}
 	e := audit.Of(audit.Event{}, audit.ActionCurrencyMigrationPhase, audit.TargetCurrency, targetHK)
 	e.Changes = &audit.Changes{Before: map[string]any{"migration": hk, "phase": before}, After: map[string]any{"migration": hk, "phase": phase}}

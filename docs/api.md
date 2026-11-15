@@ -1181,11 +1181,11 @@ Cancels a migration into `hk` before it converts: the phases that are left do no
 
 ### `GET /admin/currencies/{hk}/migrations/{id}/progress` (admin)
 
-For each source of the migration into `hk`: `holders`, the balances of the source that are left, and `remaining`, their sum, available, locked, and pending; and from the ledger `conversions`, the balances converted, `converted`, what left them, `credited`, what the target received, and `dust`. `404` for a migration that is not into `hk`.
+For each source of the migration into `hk`: `holders`, the balances of the source that are left, and `remaining`, their sum, available, locked, and pending; and from the ledger `conversions`, the balances converted, `converted`, what left them, `credited`, what the target received, and `dust`. `unverified: true` marks a migration that fails its [seal](data-protection.md#row-seals): nothing converts and no phase applies until an administrator reviews its integrity finding ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)). `404` for a migration that is not into `hk`.
 
 ### `POST /user/currency-migrations/{id}/convert` (user)
 
-While an optional migration is `converting`, converts the user's whole available balance of one source, `{"source_hk": "<hk>"}`, with `sub_account_id` for a sub-account. Locked funds and pending deposits stay. The source must allow `convert_from` and the target `convert_into`, and no restriction of the user may block a conversion of either. Response `201` with `entry_id`, `source_hk`, `amount`, `target_hk`, `credited`, and `dust`. Errors: `404` `migration_not_found` or `not_a_source`; `409` `migration_not_converting` (also for a forced migration, which converts by itself), `nothing_to_convert`, or `insufficient_balance` when the funds were spent meanwhile; `403` from the [restrictions](#restrictions) or `currency_operation_disabled`.
+While an optional migration is `converting`, converts the user's whole available balance of one source, `{"source_hk": "<hk>"}`, with `sub_account_id` for a sub-account. Locked funds and pending deposits stay. The source must allow `convert_from` and the target `convert_into`, and no restriction of the user may block a conversion of either. Response `201` with `entry_id`, `source_hk`, `amount`, `target_hk`, `credited`, and `dust`. Errors: `404` `migration_not_found` or `not_a_source`; `409` `migration_not_converting` (also for a forced migration, which converts by itself), `nothing_to_convert`, `insufficient_balance` when the funds were spent meanwhile, or `row_unverified` when the migration fails its [seal](data-protection.md#row-seals) and converts nothing until an administrator reviews it ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)); `403` from the [restrictions](#restrictions) or `currency_operation_disabled`.
 
 ## Delistings
 
@@ -1273,7 +1273,7 @@ Cancels a delisting before `frozen`: the steps that are left do not apply, and t
 
 ### `GET /admin/currencies/{hk}/delistings/{id}/settlement` (admin)
 
-The settlement of the delisting: `holders`, the balances of the currency that are left, `remaining`, their sum, available, locked, and pending, and `available`; `price`, the recorded price (`price_recorded`, with `price_detail` and `priced_at`) or, before it, the fixed price of the plan, and `estimated`, what `remaining` would be credited at it; and from the ledger `conversions`, `converted`, `credited`, and `dust`. Before `frozen`, it is the preview of the settlement. `404` for a delisting that is not of `hk`.
+The settlement of the delisting: `holders`, the balances of the currency that are left, `remaining`, their sum, available, locked, and pending, and `available`; `price`, the recorded price (`price_recorded`, with `price_detail` and `priced_at`) or, before it, the fixed price of the plan, and `estimated`, what `remaining` would be credited at it; and from the ledger `conversions`, `converted`, `credited`, and `dust`. Before `frozen`, it is the preview of the settlement. `unverified: true` marks a delisting that fails its [seal](data-protection.md#row-seals): no price is recorded and nothing converts until an administrator reviews its integrity finding ([#451](https://github.com/mdastpak/Crypto-Exchange/issues/451)). `404` for a delisting that is not of `hk`.
 
 ### `PUT` and `DELETE /admin/currencies/{hk}/capabilities/{capability}` (admin)
 

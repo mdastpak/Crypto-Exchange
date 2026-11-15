@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 
 	"github.com/shopspring/decimal"
 )
@@ -64,10 +66,17 @@ type Converted struct {
 // its sources is left.
 func ConvertHoldings(ctx context.Context, db *sql.DB, limit int) (int, error) {
 	converted := 0
+	// The migrations that fail their seal in this run (#451): their
+	// holdings wait, and the others convert.
+	skip := []string{}
 	for converted < limit {
-		ok, err := convertOne(ctx, db)
+		ok, refused, err := convertOne(ctx, db, skip)
 		if err != nil {
 			return converted, err
+		}
+		if refused != "" {
+			skip = append(skip, refused)
+			continue
 		}
 		if !ok {
 			break
@@ -77,47 +86,60 @@ func ConvertHoldings(ctx context.Context, db *sql.DB, limit int) (int, error) {
 	return converted, nil
 }
 
-func convertOne(ctx context.Context, db *sql.DB) (bool, error) {
+// convertOne converts one holding of a migration that is not in skip. A
+// migration that fails its seal converts nothing: convertOne returns it,
+// and its finding is recorded.
+func convertOne(ctx context.Context, db *sql.DB, skip []string) (bool, string, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to start a conversion: %w", err)
+		return false, "", fmt.Errorf("failed to start a conversion: %w", err)
 	}
 	defer tx.Rollback()
 	// The source balance first, then the ledger takes the target's: no
 	// other operation takes both, since the sources of a forced migration
 	// neither trade nor convert while it converts. FOR NO KEY UPDATE, as
-	// the ledger locks balances (see lockBalances).
+	// the ledger locks balances (see lockBalances). The sealed row of the
+	// migration is read in the same statement as the ratio and the target,
+	// so the seal is checked against the values that convert.
+	sealed := rowseal.CurrencyMigrations.NewRow()
 	h, err := claim(ctx, tx, `
-		SELECT m.hk, s.currency_hk, m.target_hk, s.ratio::text, b.id, b.user_id, b.sub_account_id, b.available, b.version
+		SELECT m.hk, s.currency_hk, m.target_hk, s.ratio::text, b.id, b.user_id, b.sub_account_id, b.available, b.version,
+			`+rowseal.CurrencyMigrations.Fields("m")+`
 		FROM balances b
 		JOIN currency_migration_sources s ON s.currency_hk = b.currency_hk
 		JOIN currency_migrations m ON m.hk = s.migration_hk
 		WHERE m.forced AND m.phase = 'converting' AND b.available::numeric > 0
+		  AND NOT (m.hk::text = ANY(string_to_array($1, ',')))
 		ORDER BY b.id
-		FOR NO KEY UPDATE OF b SKIP LOCKED LIMIT 1`)
+		FOR NO KEY UPDATE OF b SKIP LOCKED LIMIT 1`, []any{joinHKs(skip)}, sealed.Dest()...)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return false, "", nil
 	}
 	if err != nil {
-		return false, err
+		return false, "", err
+	}
+	if err := rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed); err != nil {
+		log.Printf("SECURITY: migration %s converts nothing until its finding is resolved: %v", h.migration, err)
+		return false, h.migration, nil
 	}
 	if _, err := convert(ctx, tx, h); err != nil {
-		return false, err
+		return false, "", err
 	}
 	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("failed to commit a conversion: %w", err)
+		return false, "", fmt.Errorf("failed to commit a conversion: %w", err)
 	}
-	return true, nil
+	return true, "", nil
 }
 
 // claim reads and locks one holding.
-func claim(ctx context.Context, tx *sql.Tx, query string, args ...any) (holding, error) {
+// extra receives the columns that the query selects after the holding.
+func claim(ctx context.Context, tx *sql.Tx, query string, args []any, extra ...any) (holding, error) {
 	var h holding
 	var ratio string
 	var user string
 	var sub sql.NullString
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&h.migration, &h.source, &h.target, &ratio, &h.balanceID,
-		&user, &sub, &h.available, &h.version); err != nil {
+	dest := append([]any{&h.migration, &h.source, &h.target, &ratio, &h.balanceID, &user, &sub, &h.available, &h.version}, extra...)
+	if err := tx.QueryRowContext(ctx, query, args...).Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return h, err
 		}
@@ -209,26 +231,39 @@ func ConvertOwn(ctx context.Context, db *sql.DB, migrationHK, sourceHK string, a
 			return Converted{}, err
 		}
 	}
+	// The migration, its source, and its sealed row in one statement, so
+	// that the seal is checked against the ratio and the target that
+	// convert (#451).
 	var forced bool
 	var phase Phase
-	if err := tx.QueryRowContext(ctx, `SELECT forced, phase FROM currency_migrations WHERE hk = $1 FOR SHARE`, migrationHK).
-		Scan(&forced, &phase); err != nil {
+	var current string
+	var ratio sql.NullString
+	sealed := rowseal.CurrencyMigrations.NewRow()
+	dest := append([]any{&forced, &phase, &current, &ratio}, sealed.Dest()...)
+	if err := tx.QueryRowContext(ctx, `SELECT m.forced, m.phase, m.target_hk, s.ratio::text, `+rowseal.CurrencyMigrations.Fields("m")+`
+		FROM currency_migrations m
+		LEFT JOIN currency_migration_sources s ON s.migration_hk = m.hk AND s.currency_hk = $2
+		WHERE m.hk = $1 FOR SHARE OF m`, migrationHK, sourceHK).Scan(dest...); err != nil {
 		return Converted{}, fmt.Errorf("failed to read the migration: %w", err)
+	}
+	if err := rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed); err != nil {
+		return Converted{}, err
+	}
+	if current != target {
+		return Converted{}, fmt.Errorf("the target of migration %s changed during the conversion", migrationHK)
 	}
 	if forced || phase != PhaseConverting {
 		return Converted{}, ErrNotConverting
+	}
+	if !ratio.Valid {
+		return Converted{}, ErrNotASource
 	}
 	// The balance is read, not locked: the ledger locks the source and the
 	// target in its own order, as a trade of the two would, and refuses the
 	// conversion if a concurrent operation spent the funds in between.
 	h := holding{migration: migrationHK, source: sourceHK, target: target, account: a}
-	err = tx.QueryRowContext(ctx, `SELECT ratio FROM currency_migration_sources WHERE migration_hk = $1 AND currency_hk = $2`,
-		migrationHK, sourceHK).Scan((*shared.Decimal)(&h.ratio))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Converted{}, ErrNotASource
-	}
-	if err != nil {
-		return Converted{}, fmt.Errorf("failed to read the source: %w", err)
+	if h.ratio, err = decimal.NewFromString(ratio.String); err != nil {
+		return Converted{}, fmt.Errorf("the ratio %q of migration %s: %w", ratio.String, migrationHK, err)
 	}
 	err = tx.QueryRowContext(ctx, `SELECT id, available, version FROM balances
 		WHERE user_id = $1 AND sub_account_id IS NOT DISTINCT FROM $2 AND currency_hk = $3`, a.UserHK, a.SubAccountID, sourceHK).
@@ -265,6 +300,10 @@ type SourceProgress struct {
 	Converted   string `json:"converted" example:"150.5"`
 	Credited    string `json:"credited" example:"1.5"`
 	Dust        string `json:"dust" example:"0.005"`
+	// Unverified is a migration that fails its seal (#451): nothing
+	// converts until an administrator reviews its integrity finding and
+	// re-seals it.
+	Unverified bool `json:"unverified,omitempty"`
 }
 
 // Progress returns the progress of the conversion of each source of a
@@ -313,6 +352,16 @@ func Progress(ctx context.Context, db *sql.DB, targetHK, migrationHK string) ([]
 	if len(out) == 0 {
 		// Every migration has a source.
 		return nil, ErrNotFound
+	}
+	sealed := rowseal.CurrencyMigrations.NewRow()
+	if err := db.QueryRowContext(ctx, `SELECT `+rowseal.CurrencyMigrations.Fields("")+` FROM currency_migrations WHERE hk = $1::uuid`,
+		migrationHK).Scan(sealed.Dest()...); err != nil {
+		return nil, fmt.Errorf("failed to read the progress: %w", err)
+	}
+	if rowseal.Require(ctx, rowseal.CurrencyMigrations, sealed) != nil {
+		for i := range out {
+			out[i].Unverified = true
+		}
 	}
 	return out, nil
 }
