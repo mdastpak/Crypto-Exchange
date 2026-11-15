@@ -570,6 +570,7 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `cache_ttl_ms` | `500` | From 10 to 60000, and at least `aggregation_interval_ms`. The life of a price's key in Redis: a price not written again within it is gone. |
 | `lease_ttl_ms` | `2000` | From three intervals to 60000. The life of the publisher's lease: how long the updates stop when the leader dies. |
 | `stream_max_len` | `10000` | About how many updates `price:stream` keeps. |
+| `signing_key` | none; **required** in release mode with `publish_to_redis` | The PEM file of the Ed25519 private key (PKCS #8) that signs each price in Redis and in the stream ([Integrity of the prices](price-engine.md#integrity-of-the-prices), [#450](https://github.com/mdastpak/Crypto-Exchange/issues/450)). `PRICE_AGGREGATOR_SIGNING_KEY` overrides it. Without it, the prices are unsigned, and a server that verifies refuses them. |
 | `providers[].name` | | The provider, unique: `binance`, `coinbase`, `kraken` (with a stream), or `okx`, `nobitex`, `wallex`, `ramzinex`, `tabdeal` (REST only). See [Providers](price-engine.md#providers). |
 | `providers[].enabled` | `false` | Whether this node follows it. `nobitex`, `wallex`, `ramzinex`, and `tabdeal` are of the Iran region only. |
 | `providers[].type` | | `websocket` (the stream, and REST while it is down) or `rest`. |
@@ -581,6 +582,15 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `providers[].stale_threshold_ms` | | Overrides `stale_threshold_ms` for the provider, such as one read through REST only. |
 | `providers[].egress` | `market_data.egress.default` | `direct`, or `proxy` through `market_data.egress.proxy_url`, as in [Egress per node](market-data.md#egress-per-node). |
 | `providers[].api_key`, `api_secret`, `passphrase`, `rate_limit` | | Not read: the public streams and tickers need no key. |
+
+### `price`
+
+How the servers read the reference prices in Redis ([Integrity of the prices](price-engine.md#integrity-of-the-prices), [#450](https://github.com/mdastpak/Crypto-Exchange/issues/450)).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `verify_keys` | none; **required** in release mode | The PEM files of the Ed25519 public keys (PKIX) of the price aggregators. A price that none of them signed is refused as stale. Two keys allow a rotation. `PRICE_VERIFY_KEYS` overrides it, separated by commas. |
+| `signatures` | on with `verify_keys` or in release mode, off otherwise | `on` needs `verify_keys`; `off` trusts every price in Redis, with a warning, and release mode refuses it. `PRICE_SIGNATURES` overrides it. |
 
 ### `platform`
 
@@ -896,6 +906,9 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `SITES_SCHEME` | `sites.scheme` |
 | `I18N_DEFAULT_LOCALE` | `i18n.default_locale` |
 | `I18N_LOCALES` | `i18n.locales`, as a comma-separated list |
+| `PRICE_AGGREGATOR_SIGNING_KEY` | `price_aggregator.signing_key` |
+| `PRICE_VERIFY_KEYS` | `price.verify_keys` |
+| `PRICE_SIGNATURES` | `price.signatures` |
 | `DELISTING_INTERVAL_SECONDS` | `delisting.interval_seconds` |
 | `DELISTING_NOTICES_ENABLED` | `delisting.notices.enabled` |
 | `PLATFORM_POLL_INTERVAL_MS` | `platform.poll_interval_ms` |
@@ -959,4 +972,5 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 - Prefer environment variables, or files mounted from a secret manager, for passwords and keys.
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
 - Keep the KYC provider's credentials (`IDENTITY_MOBILE_OWNERSHIP_API_KEY`, `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`) in the secret manager, with a pair of their own for every environment.
+- Mount the price signing key (`price_aggregator.signing_key`, such as `/run/secrets/price-signing.pem`) on the price aggregators only, never on a server; the servers get only its public key (`price.verify_keys`), which may be public. Give every environment its own pair. See [Integrity of the prices](price-engine.md#integrity-of-the-prices).
 - Give every environment its own KEK, and the server a Transit token that can only `encrypt` and `decrypt` with it, never read or delete it. See [`docs/data-protection.md`](data-protection.md).

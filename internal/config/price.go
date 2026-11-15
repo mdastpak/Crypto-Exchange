@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -125,6 +126,14 @@ func (c *Configuration) priceAggregatorProblems(p *problems) {
 		return
 	}
 	if a.PublishToRedis {
+		switch {
+		case a.SigningKey == "" && c.Server.Mode == "release":
+			p.add("price_aggregator.signing_key", "is not set; release mode signs every price written to Redis (#450)")
+		case a.SigningKey != "":
+			if _, err := os.Stat(string(a.SigningKey)); err != nil {
+				p.add("price_aggregator.signing_key", "is %q, which cannot be read: %v", a.SigningKey, err)
+			}
+		}
 		var missing []string
 		standalone := c.Redis.Mode == "" || c.Redis.Mode == RedisModeStandalone
 		if standalone && (c.Redis.Host == "" || c.Redis.Port == "") {

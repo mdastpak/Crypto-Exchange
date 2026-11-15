@@ -15211,6 +15211,10 @@ const docTemplate = `{
                     "description": "Bid and Ask are the best bid and ask over the providers; they may\ncross when the venues disagree.",
                     "type": "number"
                 },
+                "kid": {
+                    "description": "KeyID and Signature sign the price (#450): the id of the Ed25519 key\nof the aggregator, and the signature of the canonical encoding of\nevery other field. A reader that verifies refuses a price without\nthem. See sign.go.",
+                    "type": "string"
+                },
                 "market": {
                     "type": "string"
                 },
@@ -15223,6 +15227,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "sig": {
+                    "type": "string"
                 },
                 "sources": {
                     "description": "Sources are the providers of the figures, and Outliers those\nrejected at this interval.",

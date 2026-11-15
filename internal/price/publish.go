@@ -85,8 +85,11 @@ type PublisherOptions struct {
 	// LeaseTTL is how long the lease of the publisher lasts unrenewed:
 	// how soon another replica publishes after the holder dies.
 	LeaseTTL time.Duration
-	Logger   *log.Logger
-	Now      func() time.Time
+	// Signer signs each price, in its key and in the updates (#450); nil
+	// signs none, which a reader that verifies refuses.
+	Signer *Signer
+	Logger *log.Logger
+	Now    func() time.Time
 }
 
 // Publisher is a Sink that distributes the prices. Its Prices never waits:
@@ -161,6 +164,13 @@ func (p *Publisher) Run(ctx context.Context) {
 func (p *Publisher) publish(ctx context.Context, prices []Price) {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
+	if p.opts.Signer != nil {
+		signed := make([]Price, len(prices))
+		for i, price := range prices {
+			signed[i] = p.opts.Signer.Sign(price)
+		}
+		prices = signed
+	}
 	now := p.opts.Now()
 	if p.opts.Redis != nil {
 		if err := p.cache(ctx, prices); err != nil {

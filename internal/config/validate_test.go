@@ -44,6 +44,11 @@ func secureRelease(t *testing.T) Configuration {
 	c.RabbitMQ.TLS.PrivateNetwork = true
 	c.JWT.SSL.User.PrivateKey, c.JWT.SSL.User.PublicKey = "/run/secrets/private.pem", "/run/secrets/public.pem"
 	c.JWT.AccessToken.Expiration, c.JWT.RefreshToken.Expiration = 15, 10080
+	// The public key of the price aggregator (#450); validation only reads
+	// that the file is there.
+	verifyKey := filepath.Join(t.TempDir(), "price-verify.pem")
+	require.NoError(t, os.WriteFile(verifyKey, []byte("-----BEGIN PUBLIC KEY-----\n"), 0o600))
+	c.Price.VerifyKeys = []string{verifyKey}
 	setDefaults()
 	return Config
 }
@@ -675,4 +680,29 @@ func TestValidate_TheDefaultOfEveryOtherCurrency(t *testing.T) {
 	c.Verification.WithdrawalLimits[AnyCurrency] = map[int]WithdrawalLimit{1: {Daily: "100"}}
 	c.Withdrawals.ReviewAbove = map[string]string{"USDT": "10000", AnyCurrency: "500"}
 	assert.Empty(t, problemsOf(c))
+}
+
+func TestValidateServer_PriceSignatures(t *testing.T) {
+	c := secureRelease(t)
+	c.Price.Signatures = PriceSignaturesOff
+	assert.Equal(t, []string{"price.signatures (PRICE_SIGNATURES) is off, which trusts every price in Redis; release mode verifies them"}, problemsOf(c))
+
+	c = secureRelease(t)
+	c.Price.VerifyKeys = nil
+	assert.Equal(t, []string{"price.verify_keys (PRICE_VERIFY_KEYS) is empty; release mode verifies every price in Redis: set the public keys of the price aggregators"}, problemsOf(c))
+	assert.False(t, c.Price.Verifies())
+
+	c.Server.Mode = "debug"
+	assert.Empty(t, problemsOf(c), "development without keys reads the prices unverified, with a warning")
+	c.Price.Signatures = PriceSignaturesOn
+	assert.Len(t, problemsOf(c), 1, "on needs the keys")
+
+	c = secureRelease(t)
+	assert.True(t, c.Price.Verifies())
+	c.Price.VerifyKeys = append(c.Price.VerifyKeys, filepath.Join(t.TempDir(), "missing.pem"))
+	problems := problemsOf(c)
+	require.Len(t, problems, 1)
+	assert.Contains(t, problems[0], "price.verify_keys[1]")
+	c.Price.Signatures = "maybe"
+	assert.Contains(t, strings.Join(problemsOf(c), "\n"), "it must be on or off")
 }

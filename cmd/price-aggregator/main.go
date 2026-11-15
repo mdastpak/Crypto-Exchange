@@ -126,6 +126,17 @@ func newPublisher() (*price.Publisher, func(), error) {
 		StreamMaxLen: a.StreamMaxLen,
 		LeaseTTL:     time.Duration(a.LeaseTTLMs) * time.Millisecond,
 	}
+	if a.SigningKey != "" {
+		key, err := price.LoadSigningKey(string(a.SigningKey))
+		if err != nil {
+			_ = redisService.Close()
+			return nil, nil, err
+		}
+		opts.Signer = price.NewSigner(key)
+		log.Printf("Prices are signed with the key %s", opts.Signer.ID())
+	} else {
+		log.Println("WARNING: price_aggregator.signing_key is not set: the prices in Redis are unsigned, and servers that verify them refuse them")
+	}
 	if a.PublishToRabbitMQ {
 		exchange := config.Config.RabbitMQ.Exchanges.PriceUpdates
 		broker, err := rabbitmq.NewRabbitMQService(&config.Config, exchange)

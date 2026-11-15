@@ -125,6 +125,12 @@ type Price struct {
 	// price.
 	At      time.Time `json:"at"`
 	Updated time.Time `json:"updated"`
+	// KeyID and Signature sign the price (#450): the id of the Ed25519 key
+	// of the aggregator, and the signature of the canonical encoding of
+	// every other field. A reader that verifies refuses a price without
+	// them. See sign.go.
+	KeyID     string `json:"kid,omitempty"`
+	Signature string `json:"sig,omitempty"`
 }
 
 // Live reports whether the price may be served as current: a live price,

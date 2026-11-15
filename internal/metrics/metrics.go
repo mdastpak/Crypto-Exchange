@@ -189,6 +189,13 @@ var (
 		Name: "price_publish_errors_total",
 		Help: "Failed writes of the prices, by target: cache, lease, stream, rabbitmq.",
 	}, []string{"target"})
+	// PriceSignatureFailures counts the prices read from Redis that were
+	// refused for their signature (#450), by reason: unsigned,
+	// unknown_key, malformed, or bad_signature.
+	PriceSignatureFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_signature_failures_total",
+		Help: "Prices read from Redis and refused for their signature, by reason: unsigned, unknown_key, malformed, bad_signature.",
+	}, []string{"reason"})
 	// PriceDelivery is the time from a price's newest tick to its send to
 	// the WebSocket clients of an instance (#59).
 	PriceDelivery = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -227,7 +234,7 @@ func init() {
 		LedgerMismatches, LedgerImbalancedCurrencies, LedgerAccountProblems, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
 		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
-		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceDelivery,
+		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceSignatureFailures, PriceDelivery,
 		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin,
 	)
 }
