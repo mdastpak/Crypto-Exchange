@@ -456,7 +456,7 @@ func TestDelisting_AnEmergencyHaltCanBeCancelledOrTakenFurther(t *testing.T) {
 	// The investigation ends in a delisting, from where the currency is.
 	_, _, err = delisting.Schedule(ctx, db, hk, halt, origin())
 	assert.ErrorIs(t, err, delisting.ErrStepsBehind)
-	further := plan(start.Add(time.Minute), currencies.LifecycleWithdrawalOnly, currencies.LifecycleDelisted)
+	further := plan(start.Add(time.Minute), currencies.LifecycleWithdrawalOnly, currencies.LifecycleFrozen, currencies.LifecycleDelisted)
 	further.Kind = delisting.KindEmergency
 	next, _, err := delisting.Schedule(ctx, db, hk, further, origin())
 	require.NoError(t, err)

@@ -35,3 +35,8 @@ func (s Store) Cancel(ctx context.Context, currencyHK, hk string, version *int64
 func (s Store) Override(ctx context.Context, currencyHK string, k currencies.Capability, allowed *bool, note string, origin audit.Event) (*models.CurrencyLifecycle, Change, error) {
 	return Override(ctx, s.DB, currencyHK, k, allowed, note, origin)
 }
+
+// Report is Report on s.DB.
+func (s Store) Report(ctx context.Context, currencyHK, hk string) (SettlementReport, error) {
+	return Report(ctx, s.DB, currencyHK, hk)
+}

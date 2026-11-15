@@ -69,7 +69,7 @@ func decodeStrict(c *gin.Context, into any) bool {
 }
 
 // @Summary Schedule the delisting of a currency
-// @Description Schedules the steps that take an approved currency to delisted. A delisting that stopped before delisted, such as an emergency halt, stays scheduled, so that it can be cancelled to relist the currency; a new delisting supersedes it and takes the currency on from its state, with steps after it. A standard delisting starts with delist_announced; an emergency one, for a security or regulatory reason, at trading_halted or later. The steps follow the order of the lifecycle (delist_announced, deposits_disabled, sell_only, trading_halted, withdrawal_only, frozen, delisted), each at a later time, and any of them may be left out. Each step is applied at its time by the scheduler of the instances, exactly once, and changes the capabilities of the currency; a step that is due is applied at once. The settlement says what happens at frozen to the balances that are left: convert into another approved currency at a price, or hold for a claim; it is recorded and announced now, and carried out by the ledger. Audited as currency.delisting_schedule, and each step as currency.lifecycle_change.
+// @Description Schedules the steps that take an approved currency to delisted. A delisting that stopped before delisted, such as an emergency halt, stays scheduled, so that it can be cancelled to relist the currency; a new delisting supersedes it and takes the currency on from its state, with steps after it. A standard delisting starts with delist_announced; an emergency one, for a security or regulatory reason, at trading_halted or later. The steps follow the order of the lifecycle (delist_announced, deposits_disabled, sell_only, trading_halted, withdrawal_only, frozen, delisted), each at a later time, and any of them may be left out. Each step is applied at its time by the scheduler of the instances, exactly once, and changes the capabilities of the currency; a step that is due is applied at once. The settlement says what happens at frozen to the balances that are left: convert into another approved currency at a price, or hold for a claim. A conversion records its price once when the currency is frozen (the fixed price, or the reference price of the price engine: its mid for last_trade, its TWAP over the longest window for twap) and converts every available balance at it in the ledger, rounded down to the precision of the settlement currency; locked and pending funds convert once available. A delisting that reaches delisted passes through frozen, and its delisted step waits until no balance of the currency is left, so a claim holds the currency at frozen. Audited as currency.delisting_schedule, and each step as currency.lifecycle_change.
 // @Tags admin currencies
 // @Accept json
 // @Produce json
@@ -115,6 +115,8 @@ func (h *AdminHandler) ScheduleDelisting(c *gin.Context) {
 		helpers.SendError(c, http.StatusConflict, "delisting_in_progress", i18n.M("CURRENCY_ALREADY_DELISTING"), nil)
 	case errors.Is(err, delisting.ErrStepsBehind):
 		sendValidationErrors(c, fieldErrors{"steps": "must start after the lifecycle state that the currency is at"})
+	case errors.Is(err, delisting.ErrSkipsFrozen):
+		sendValidationErrors(c, fieldErrors{"steps": "must pass through frozen, where the balances that are left are settled, before delisted"})
 	case errors.Is(err, delisting.ErrSettlementCurrency):
 		sendValidationErrors(c, fieldErrors{"settlement_currency_hk": "must be another approved currency"})
 	case err != nil:
@@ -299,5 +301,43 @@ func (h *AdminHandler) changeCapability(c *gin.Context, allowed *bool, note stri
 	default:
 		h.afterLifecycleChange(ctx, change)
 		helpers.SendResponse(c, http.StatusOK, i18n.M("CAPABILITY_CHANGED"), l)
+	}
+}
+
+// @Summary Show the settlement of a delisting
+// @Description The settlement of the balances of the currency: before frozen, a preview of the holders and their remaining balances (available, locked, and pending), and, at a fixed price, the estimate of what they would be credited; from frozen on, the recorded price with its source and time, and from the ledger the conversions made, what they converted, what was credited, and the dust kept.
+// @Tags admin currencies
+// @Produce json
+// @Security BearerAuth
+// @Param hk path string true "The currency's UUID" format(uuid)
+// @Param id path string true "The delisting's id" format(uuid)
+// @Success 200 {object} models.APIResponse{info=delisting.SettlementReport}
+// @Failure 400 {object} models.APIResponse
+// @Failure 401 {object} models.APIResponse
+// @Failure 403 {object} models.APIResponse
+// @Failure 404 {object} models.APIResponse
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/currencies/{hk}/delistings/{id}/settlement [get]
+func (h *AdminHandler) GetDelistingSettlement(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	hk, ok := currencyParam(c)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		helpers.SendResponse(c, http.StatusBadRequest, i18n.M("INVALID_DELISTING_ID"), nil)
+		return
+	}
+	report, err := h.Delistings.Report(ctx, hk, id.String())
+	switch {
+	case errors.Is(err, delisting.ErrNotFound):
+		helpers.SendResponse(c, http.StatusNotFound, i18n.M("DELISTING_NOT_FOUND"), nil)
+	case err != nil:
+		log.Printf("Failed to read the settlement of the delisting %s: %v", id, err)
+		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("FAILED_TO_READ_DELISTING_SETTLEMENT"), nil)
+	default:
+		helpers.SendResponse(c, http.StatusOK, i18n.M("DELISTING_SETTLEMENT_RETRIEVED"), report)
 	}
 }

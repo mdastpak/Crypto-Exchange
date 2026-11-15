@@ -8,10 +8,9 @@
 // commit is applied by the next run. The change of the currency's lifecycle,
 // its audit event, and its currency event in the outbox commit together.
 //
-// The settlement of the balances that are left at the frozen step needs the
-// ledger (#60), and the notifications of the holders need #170; a delisting
-// records its settlement policy now, so that it is announced with the
-// schedule.
+// The balances that are left once the currency is frozen are settled by
+// its policy (settle.go): converted at a recorded price, or held for their
+// owners to claim. The notifications of the holders need #170.
 package delisting
 
 import (
@@ -85,6 +84,9 @@ var (
 	// ErrStepsBehind is a delisting of a currency that a delisting before
 	// left on its way, whose first step is not after where it is.
 	ErrStepsBehind = errors.New("the steps must start after the lifecycle state of the currency")
+	// ErrSkipsFrozen is a delisting that would reach delisted without
+	// frozen, where the balances that are left are settled.
+	ErrSkipsFrozen = errors.New("the steps must pass through frozen before delisted")
 	ErrNotFound    = errors.New("delisting not found")
 	// ErrNotScheduled is a cancel of a delisting that is completed or
 	// cancelled.
@@ -120,17 +122,23 @@ type Delisting struct {
 	PriceSource          PriceSource `json:"price_source,omitempty" enums:"last_trade,twap,fixed"`
 	// FixedPrice is the price of a fixed conversion, in the settlement
 	// currency, as a decimal string.
-	FixedPrice      *string    `json:"fixed_price,omitempty" example:"0.0125"`
-	ClaimDays       *int       `json:"claim_days,omitempty" example:"180"`
-	AnnouncementURL string     `json:"announcement_url,omitempty"`
-	Note            string     `json:"note,omitempty"`
-	Steps           []Step     `json:"steps"`
-	CreatedBy       string     `json:"created_by" format:"uuid"`
-	CreatedAt       time.Time  `json:"created_at"`
-	CancelledAt     *time.Time `json:"cancelled_at,omitempty"`
-	CancelledBy     *string    `json:"cancelled_by,omitempty" format:"uuid"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	Version         int64      `json:"version" example:"1"`
+	FixedPrice *string `json:"fixed_price,omitempty" example:"0.0125"`
+	ClaimDays  *int    `json:"claim_days,omitempty" example:"180"`
+	// SettlementPrice is the price that converts the balances left, which
+	// the scheduler records once when the currency is frozen, with where it
+	// came from and when.
+	SettlementPrice       *string    `json:"settlement_price,omitempty" example:"0.0125"`
+	SettlementPriceDetail string     `json:"settlement_price_detail,omitempty"`
+	SettlementPricedAt    *time.Time `json:"settlement_priced_at,omitempty"`
+	AnnouncementURL       string     `json:"announcement_url,omitempty"`
+	Note                  string     `json:"note,omitempty"`
+	Steps                 []Step     `json:"steps"`
+	CreatedBy             string     `json:"created_by" format:"uuid"`
+	CreatedAt             time.Time  `json:"created_at"`
+	CancelledAt           *time.Time `json:"cancelled_at,omitempty"`
+	CancelledBy           *string    `json:"cancelled_by,omitempty" format:"uuid"`
+	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	Version               int64      `json:"version" example:"1"`
 }
 
 // Plan is a delisting to schedule.
@@ -195,6 +203,10 @@ func (p *Plan) Validate(now time.Time) map[string]string {
 			errs["steps"] = "of an emergency delisting must start at trading_halted or later"
 		}
 	}
+	if _, bad := errs["steps"]; !bad && len(p.Steps) > 0 && p.Steps[0].State.Rank() < currencies.LifecycleFrozen.Rank() &&
+		skipsFrozen(p.Steps, currencies.LifecycleActive) {
+		errs["steps"] = "must pass through frozen, where the balances that are left are settled, before delisted"
+	}
 	switch p.Settlement {
 	case SettlementConvert:
 		if _, err := uuid.Parse(p.SettlementCurrencyHK); err != nil {
@@ -237,6 +249,20 @@ func (p *Plan) Validate(now time.Time) map[string]string {
 		errs["note"] = "must be at most 1000 characters"
 	}
 	return errs
+}
+
+// skipsFrozen reports steps that reach delisted from a state before frozen
+// without passing through it.
+func skipsFrozen(steps []Step, from currencies.Lifecycle) bool {
+	if from.Rank() >= currencies.LifecycleFrozen.Rank() {
+		return false
+	}
+	delisted, frozen := false, false
+	for _, st := range steps {
+		delisted = delisted || st.State == currencies.LifecycleDelisted
+		frozen = frozen || st.State == currencies.LifecycleFrozen
+	}
+	return delisted && !frozen
 }
 
 // Change is a committed change of the lifecycle of a currency.
@@ -316,6 +342,9 @@ func Schedule(ctx context.Context, db *sql.DB, currencyHK string, p Plan, origin
 		if p.Steps[0].State.Rank() <= cur.lifecycle.Rank() {
 			return Delisting{}, Change{}, ErrStepsBehind
 		}
+	}
+	if skipsFrozen(p.Steps, cur.lifecycle) {
+		return Delisting{}, Change{}, ErrSkipsFrozen
 	}
 	if open.Valid {
 		if _, err := tx.ExecContext(ctx, `UPDATE currency_delistings SET status = 'completed', completed_at = NOW(), version = version + 1
@@ -540,6 +569,9 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) (Change, bool, e
 	// and apply it first. Only the scheduler
 	// locks steps, so claiming one first, and then the currency and the
 	// delisting, in the order of every other change, cannot deadlock.
+	// The delisted step waits, past its time, until no balance of the
+	// currency is left: the settlement (settle.go) converts them, or their
+	// owners claim them.
 	var delistingHK, currencyHK string
 	var state currencies.Lifecycle
 	err = tx.QueryRowContext(ctx, `
@@ -548,6 +580,8 @@ func advanceOne(ctx context.Context, db *sql.DB, now time.Time) (Change, bool, e
 		WHERE d.status = 'scheduled' AND s.applied_at IS NULL AND s.scheduled_at <= $1
 		  AND NOT EXISTS (SELECT 1 FROM currency_delisting_steps e
 		    WHERE e.delisting_hk = s.delisting_hk AND e.applied_at IS NULL AND e.scheduled_at < s.scheduled_at)
+		  AND NOT (s.state = 'delisted' AND EXISTS (SELECT 1 FROM balances b WHERE b.currency_hk = d.currency_hk
+		    AND b.available::numeric + b.locked::numeric + b.pending_deposit::numeric <> 0))
 		ORDER BY s.scheduled_at, s.delisting_hk
 		FOR UPDATE OF s SKIP LOCKED LIMIT 1`, now).Scan(&delistingHK, &state, &currencyHK)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -624,7 +658,8 @@ type querier interface {
 }
 
 const columns = `hk, currency_hk, kind, status, settlement, settlement_currency_hk, COALESCE(price_source, ''),
-	trim_scale(fixed_price)::TEXT, claim_days, COALESCE(announcement_url, ''), COALESCE(note, ''), created_by, created_at,
+	trim_scale(fixed_price)::TEXT, claim_days, trim_scale(settlement_price)::TEXT, COALESCE(settlement_price_detail, ''),
+	settlement_priced_at, COALESCE(announcement_url, ''), COALESCE(note, ''), created_by, created_at,
 	cancelled_at, cancelled_by, completed_at, version`
 
 // List returns the delistings of a currency, newest first, with their
@@ -654,7 +689,7 @@ func list(ctx context.Context, q querier, query string, args ...any) ([]Delistin
 		var d Delisting
 		var claim sql.NullInt64
 		if err := rows.Scan(&d.ID, &d.CurrencyHK, &d.Kind, &d.Status, &d.Settlement, &d.SettlementCurrencyHK, &d.PriceSource,
-			&d.FixedPrice, &claim, &d.AnnouncementURL, &d.Note, &d.CreatedBy, &d.CreatedAt,
+			&d.FixedPrice, &claim, &d.SettlementPrice, &d.SettlementPriceDetail, &d.SettlementPricedAt, &d.AnnouncementURL, &d.Note, &d.CreatedBy, &d.CreatedAt,
 			&d.CancelledAt, &d.CancelledBy, &d.CompletedAt, &d.Version); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("failed to read the delistings: %w", err)
