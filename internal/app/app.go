@@ -276,7 +276,10 @@ func run() error {
 	// The reference prices and their overrides (#59), which the
 	// settlements of delistings read.
 	var priceWorker worker
-	handlers.Prices, priceWorker = startPrices(services.Postgres.DB, services.Redis.Client, handlers)
+	handlers.Prices, priceWorker, err = startPrices(services.Postgres.DB, services.Redis.Client, handlers)
+	if err != nil {
+		return fmt.Errorf("the reference prices: %w", err)
+	}
 	workers = append(workers, priceWorker)
 	scheduler := newDelistingScheduler(services, handlers, relay, otpSender)
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }

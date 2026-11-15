@@ -88,6 +88,27 @@ When the leader dies, its lease expires and another replica takes it within `lea
 
 A Redis error is returned as is: a price is never guessed, so a caller fails closed and quotes nothing.
 
+### Integrity of the prices
+
+[#450](https://github.com/mdastpak/Crypto-Exchange/issues/450). Redis is not trusted with a price. Whoever can write to it, through a leaked password, an open network, or a compromised neighbour, could otherwise set the reference price of every OTC quote and the price at which a [delisting](api.md#delistings) converts every balance, and keep it fresh, since the age is a field of the same value. The ledger would not notice: the loss is a price, not a sum.
+
+So the aggregator signs each price with an Ed25519 private key that only it holds (`price_aggregator.signing_key`), and every server holds the public keys (`price.verify_keys`): a server can verify a price but never make one. The aggregator has no database, so it cannot use the data keys.
+
+- The signature (`sig`, with the key id `kid`, the first 8 bytes of the SHA-256 of the public key in hex) covers a canonical encoding of every other field: `price/v1`, the key id, the market, the status, `bid`, `ask`, `mid`, the VWAP and TWAP by window in order, the sources, the outliers, and `at` and `updated` in nanoseconds. A change to any of them breaks it.
+- `price.Reader` verifies a price before it believes anything else of it, its age included. A price that is unsigned, malformed, signed by an unknown key, or changed is `price.ErrUnverifiedPrice`, which is also `ErrStale`: a quote answers as for a stale price, and a settlement waits. It is never replaced by an older value. Each counts in `price_signature_failures_total{reason}` (`unsigned`, `unknown_key`, `malformed`, `bad_signature`) and is logged once a minute per market.
+- The updates of `price:stream` carry the same signature in each price. The `price_updates` exchange feeds the WebSocket for display only, and is not a source that prices anything.
+- Overrides are rows of PostgreSQL, sealed, and not affected.
+- Release mode refuses an aggregator that publishes to Redis without `signing_key`, and a server without `verify_keys` or with `price.signatures: off`. Outside release mode, a server without keys reads the prices unverified, with a warning at startup.
+
+To make a key pair:
+
+```sh
+openssl genpkey -algorithm ed25519 -out price-signing.pem   # the aggregator's secret
+openssl pkey -in price-signing.pem -pubout -out price-verify.pem   # every server
+```
+
+To rotate it: add the new public key to `price.verify_keys` on every server, then give the aggregators the new private key, then remove the old public key. Both keys verify in between, so there is no gap.
+
 ### Overrides
 
 An administrator sets the price of a market in place of the engine's for a time, through the [admin API](api.md#reference-prices), when the providers are wrong or down. The overrides are rows of PostgreSQL, sealed, and never in Redis, so that a write to Redis cannot set a price. Each server instance reads those in force every second (`priceoverride.Watcher`) and at once after its own change, and keeps the last ones it read while PostgreSQL cannot be read; none is served past its expiry, even before the next read. An override that fails its seal is not served.

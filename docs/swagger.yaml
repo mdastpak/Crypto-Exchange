@@ -2598,6 +2598,13 @@ definitions:
           Bid and Ask are the best bid and ask over the providers; they may
           cross when the venues disagree.
         type: number
+      kid:
+        description: |-
+          KeyID and Signature sign the price (#450): the id of the Ed25519 key
+          of the aggregator, and the signature of the canonical encoding of
+          every other field. A reader that verifies refuses a price without
+          them. See sign.go.
+        type: string
       market:
         type: string
       mid:
@@ -2607,6 +2614,8 @@ definitions:
         items:
           type: string
         type: array
+      sig:
+        type: string
       sources:
         description: |-
           Sources are the providers of the figures, and Outliers those

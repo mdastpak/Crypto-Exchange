@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 )
 
 // The consumer library (#59): the quote service and the other consumers
@@ -56,6 +59,28 @@ type Reader struct {
 	overrides Overrides
 	maxAge    time.Duration
 	now       func() time.Time
+	// verifier verifies each price read from Redis (#450); nil verifies
+	// none, which only development allows.
+	verifier *Verifier
+	logged   sync.Map // market -> time of the last log of a refused price
+}
+
+// Verify makes r refuse every price in Redis that a key of v did not
+// sign, and returns r.
+func (r *Reader) Verify(v *Verifier) *Reader {
+	r.verifier = v
+	return r
+}
+
+// refused counts and logs, once a minute per market, a price that failed
+// its verification.
+func (r *Reader) refused(market, reason string, now time.Time) {
+	metrics.PriceSignatureFailures.WithLabelValues(reason).Inc()
+	if last, ok := r.logged.Load(market); ok && now.Sub(last.(time.Time)) < time.Minute {
+		return
+	}
+	r.logged.Store(market, now)
+	log.Printf("price: refused the price of %s in Redis: %s; only a price signed by the aggregator is used", market, reason)
 }
 
 // NewReader returns a reader of the prices in client, which takes an
@@ -91,7 +116,20 @@ func (r *Reader) Get(ctx context.Context, market string) (Price, error) {
 	}
 	var p Price
 	if err := json.Unmarshal(body, &p); err != nil {
+		if r.verifier != nil {
+			r.refused(market, ReasonMalformed, now)
+			return Price{}, ErrUnverifiedPrice
+		}
 		return Price{}, fmt.Errorf("price: decoding %s: %w", market, err)
+	}
+	// Verified before anything else of it is believed, its age included,
+	// which is a field of the same value. An older value is never taken
+	// in its place.
+	if r.verifier != nil {
+		if reason := r.verifier.Verify(p); reason != "" {
+			r.refused(market, reason, now)
+			return Price{}, ErrUnverifiedPrice
+		}
 	}
 	if p.Status != StatusLive || p.Market != market || !p.Mid.IsPositive() {
 		return Price{}, ErrStale

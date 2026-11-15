@@ -61,6 +61,7 @@ func (c *Configuration) validateServer() error {
 	c.antiPhishingProblems(&p)
 	c.smsProblems(&p)
 	c.withdrawalProblems(&p)
+	c.priceSignatureProblems(&p, release)
 	clientTLSProblems(&p, "redis", c.Redis.Host, c.Redis.TLS, release)
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
 	if release {
@@ -363,6 +364,34 @@ func (c *Configuration) tlsProblems(p *problems) {
 // postgresTLSModes are the sslmode values that always encrypt the
 // connection. "prefer" and "allow" fall back to plain text.
 var postgresTLSModes = []string{"require", "verify-ca", "verify-full"}
+
+// priceSignatureProblems checks how the server verifies the prices
+// (#450): on needs verify_keys, each a readable file, and release mode
+// refuses off. Unset is on with verify_keys, and off without them outside
+// release mode.
+func (c *Configuration) priceSignatureProblems(p *problems, release bool) {
+	switch c.Price.Signatures {
+	case "":
+		if len(c.Price.VerifyKeys) == 0 && release {
+			p.add("price.verify_keys", "is empty; release mode verifies every price in Redis: set the public keys of the price aggregators")
+		}
+	case PriceSignaturesOn:
+		if len(c.Price.VerifyKeys) == 0 {
+			p.add("price.verify_keys", "is empty; price.signatures is on: set the public keys of the price aggregators")
+		}
+	case PriceSignaturesOff:
+		if release {
+			p.add("price.signatures", "is off, which trusts every price in Redis; release mode verifies them")
+		}
+	default:
+		p.add("price.signatures", "is %q; it must be on or off", c.Price.Signatures)
+	}
+	for i, path := range c.Price.VerifyKeys {
+		if _, err := os.Stat(path); err != nil {
+			p.add(fmt.Sprintf("price.verify_keys[%d]", i), "is %q, which cannot be read: %v", path, err)
+		}
+	}
+}
 
 // releaseProblems refuses settings that are acceptable for development but
 // not in production.
