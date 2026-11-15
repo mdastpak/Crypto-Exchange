@@ -539,7 +539,9 @@ platform:
 # What each verification level of a user may do (#157). Level 0 has a
 # verified contact only; level 1 has the national ID matched with the owner
 # of a bank card or account; level 2 adds a reviewed video identity check
-# and a commitment letter. An action left out takes its default.
+# and a commitment letter. An action left out takes its default. Release
+# mode refuses level 0 for withdrawals (#440). Until the identity checks
+# grant levels, an operator does: admin verification grant.
 verification:
   min_level:
     deposit_fiat: 1

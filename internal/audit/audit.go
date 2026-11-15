@@ -176,6 +176,11 @@ const (
 	// restriction.
 	ActionUserRestrictionAdd  = "user.restriction_add"
 	ActionUserRestrictionLift = "user.restriction_lift"
+	// The verification level of a user set by an operator with cmd/admin,
+	// and later by the identity checks and the KYC review (#440). The
+	// target is the user; the changes hold the level, tier, and status
+	// before and after, and the reason.
+	ActionUserVerificationSet = "user.verification_set"
 	// The platform controls (#235): an administrator, or an operator with
 	// cmd/admin, creating a maintenance or a lockdown, changing its end or
 	// message, asking to lift it when a second administrator must approve,
