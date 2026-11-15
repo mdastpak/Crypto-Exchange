@@ -664,8 +664,14 @@ price_aggregator:
   outlier_floor_bps: 10        # No deviation under 0.1 % makes an outlier
   min_providers: 2             # Quorum of a live price; below it, stale
   stale_threshold_ms: 5000
+  # The distribution (docs/price-engine.md#distribution): each replica writes
+  # price:<market> with this TTL; one replica, the holder of the lease,
+  # publishes the updates to the stream price:stream and to RabbitMQ.
   publish_to_redis: true
-  publish_to_rabbitmq: true
+  publish_to_rabbitmq: true    # Needs publish_to_redis, for the lease
+  cache_ttl_ms: 500
+  lease_ttl_ms: 2000
+  stream_max_len: 10000
 
 custody:
   providers:

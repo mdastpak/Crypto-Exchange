@@ -66,6 +66,8 @@ type WebSocketHandler struct {
 	instanceID   string
 	refreshEvery time.Duration
 	shutdownOnce sync.Once
+	// prices remembers what was sent of each market (#59).
+	prices priceThrottle
 }
 
 type Client struct {
@@ -508,7 +510,7 @@ func (h *WebSocketHandler) drain(ctx context.Context, sub *subscription) error {
 			if !ok {
 				return errors.New("the consumer channel closed")
 			}
-			h.handleCurrencyUpdate(msg.Body)
+			h.handleEvent(msg.Body)
 			_ = msg.Ack(false)
 		}
 	}

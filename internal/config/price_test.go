@@ -19,6 +19,8 @@ func validPriceAggregator() Configuration {
 	a.OutlierFloorBPS = &floor
 	a.MinProviders = 2
 	a.StaleThreshold = 5000
+	a.CacheTTLMs = 500
+	a.LeaseTTLMs = 2000
 	a.Providers = []PriceProviderConfig{
 		{Name: "binance", Enabled: true, Type: PriceProviderWebSocket, Symbols: []string{"BTC/USDT"}},
 		{Name: "okx", Enabled: true, Type: PriceProviderREST, Symbols: []string{"BTC-USDT"}},
@@ -120,8 +122,12 @@ func TestPriceProxyURL(t *testing.T) {
 // The example file starts the price aggregator as it is, and with the
 // Iranian venues of the Iran region turned on.
 func TestConfigExample_StartsThePriceAggregator(t *testing.T) {
-	require.NoError(t, loadFile(t, configFile("config.example.yaml"), nil))
+	require.NoError(t, loadFile(t, configFile("config.example.yaml"), map[string]string{
+		"RABBITMQ_USER": "guest", "RABBITMQ_PASSWORD": "guest",
+	}))
 	require.NoError(t, ValidatePriceAggregator())
+	assert.True(t, Config.PriceAggregator.PublishToRedis)
+	assert.True(t, Config.PriceAggregator.PublishToRabbitMQ)
 	enabled := 0
 	for i, p := range Config.PriceAggregator.Providers {
 		if p.Name == "nobitex" || p.Name == "wallex" {
@@ -134,4 +140,33 @@ func TestConfigExample_StartsThePriceAggregator(t *testing.T) {
 	assert.GreaterOrEqual(t, enabled, 3)
 	assert.NoError(t, ValidatePriceAggregator())
 	assert.Equal(t, DefaultPriceOutlierFloorBPS, *Config.PriceAggregator.OutlierFloorBPS)
+}
+
+func TestValidatePriceAggregator_ChecksThePublishing(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+	Config = validPriceAggregator()
+	a := &Config.PriceAggregator
+	a.CacheTTLMs = 50
+	a.LeaseTTLMs = 100
+	a.PublishToRabbitMQ = true
+	err := ValidatePriceAggregator()
+	require.Error(t, err)
+	for _, want := range []string{
+		"price_aggregator.cache_ttl_ms is 50, below aggregation_interval_ms (100)",
+		"price_aggregator.lease_ttl_ms is 100; it must be from three intervals (300)",
+		"price_aggregator.publish_to_rabbitmq needs publish_to_redis",
+		"publish_to_rabbitmq needs: rabbitmq.host",
+	} {
+		assert.Contains(t, err.Error(), want)
+	}
+
+	Config = validPriceAggregator()
+	Config.PriceAggregator.PublishToRedis = true
+	err = ValidatePriceAggregator()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "publish_to_redis needs: redis.host")
+	Config.Redis.Host, Config.Redis.Port = "localhost", "6379"
+	Config.Redis.DurableWrites.TimeoutMs = 100
+	assert.NoError(t, ValidatePriceAggregator())
 }

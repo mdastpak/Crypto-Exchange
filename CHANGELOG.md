@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The distribution of the reference prices ([#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). See [Distribution](docs/price-engine.md#distribution).
+  - Every replica of `cmd/price-aggregator` writes the live prices to `price:<BASE>/<QUOTE>` in Redis, for `price_aggregator.cache_ttl_ms`. One replica at a time, by a lease in Redis (`lease_ttl_ms`), publishes each update to the stream `price:stream` (`stream_max_len`) and to the `price_updates` exchange, transient and expiring after 2 s.
+  - `price.Reader`, the consumer library: an administrator's override first, then a live price at most a second old, or an error; it never guesses a price.
+  - Administrators set the price of a market for up to a day, and end it: `POST /admin/markets/{base}/{quote}/price-override`, `GET /admin/price-overrides`, `POST /admin/price-overrides/{id}/end`, sensitive and audited as `price.override_set` and `price.override_end`. `GET /admin/markets/{base}/{quote}/price` shows the reference price now. Migration 33 adds `price_overrides`, sealed from its first row; every instance reads those in force every second.
+  - The WebSocket sends `prices.update` events with the markets whose price changed, at most every 100 ms per market. Metrics `price_publisher_leader`, `price_publish_errors_total`, and `price_delivery_latency_seconds`, against a budget of 200 ms from tick to client.
 - The price engine, `cmd/price-aggregator` ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). See [docs/price-engine.md](docs/price-engine.md).
   - Binance, Coinbase, and Kraken are followed by their streams (best bid and ask, and trades), reconnecting with backoff, and through the REST tickers of the market data venues while a stream is silent. OKX, Nobitex, and Wallex are read by REST; the Iranian venues, for the rial reference, only in the Iran region.
   - Every `aggregation_interval_ms`, per market: the fresh providers, the outliers rejected by the median absolute deviation, the best bid and ask, the median mid, and VWAP and TWAP over `vwap_windows_seconds`, from running sums. Below `min_providers`, the price is `stale` with its last live figures.

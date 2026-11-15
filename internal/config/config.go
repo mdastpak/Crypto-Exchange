@@ -557,12 +557,20 @@ type Configuration struct {
 		// past which a provider's mid is an outlier, and OutlierFloorBPS
 		// the smallest deviation from the median, in basis points, that
 		// makes one.
-		OutlierThreshold  float64 `yaml:"outlier_threshold_mad"`
-		OutlierFloorBPS   *int    `yaml:"outlier_floor_bps"`
-		MinProviders      int     `yaml:"min_providers"`
-		StaleThreshold    int     `yaml:"stale_threshold_ms"`
-		PublishToRedis    bool    `yaml:"publish_to_redis"`
-		PublishToRabbitMQ bool    `yaml:"publish_to_rabbitmq"`
+		OutlierThreshold float64 `yaml:"outlier_threshold_mad"`
+		OutlierFloorBPS  *int    `yaml:"outlier_floor_bps"`
+		MinProviders     int     `yaml:"min_providers"`
+		StaleThreshold   int     `yaml:"stale_threshold_ms"`
+		// PublishToRedis writes each live price to its key in Redis, with
+		// a TTL of CacheTTLMs, and the updates to the stream; one replica,
+		// the holder of a lease of LeaseTTLMs, publishes the updates, also
+		// to RabbitMQ with PublishToRabbitMQ (#59).
+		PublishToRedis    bool `yaml:"publish_to_redis"`
+		PublishToRabbitMQ bool `yaml:"publish_to_rabbitmq"`
+		CacheTTLMs        int  `yaml:"cache_ttl_ms"`
+		LeaseTTLMs        int  `yaml:"lease_ttl_ms"`
+		// StreamMaxLen caps the Redis stream of the updates, about.
+		StreamMaxLen int64 `yaml:"stream_max_len"`
 		// HealthAddr is the address of the probes, the metrics, and the
 		// operators' view of the prices of cmd/price-aggregator.
 		HealthAddr string `yaml:"health_addr"`
@@ -2039,6 +2047,15 @@ func setDefaults() {
 	}
 	if Config.PriceAggregator.HealthAddr == "" {
 		Config.PriceAggregator.HealthAddr = DefaultPriceAggregatorHealthAddr
+	}
+	if Config.PriceAggregator.CacheTTLMs == 0 {
+		Config.PriceAggregator.CacheTTLMs = 500
+	}
+	if Config.PriceAggregator.LeaseTTLMs == 0 {
+		Config.PriceAggregator.LeaseTTLMs = 2000
+	}
+	if Config.PriceAggregator.StreamMaxLen == 0 {
+		Config.PriceAggregator.StreamMaxLen = 10_000
 	}
 
 	if Config.Observability.Logging.Level == "" {
