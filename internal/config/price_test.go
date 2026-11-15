@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -168,5 +170,31 @@ func TestValidatePriceAggregator_ChecksThePublishing(t *testing.T) {
 	assert.Contains(t, err.Error(), "publish_to_redis needs: redis.host")
 	Config.Redis.Host, Config.Redis.Port = "localhost", "6379"
 	Config.Redis.DurableWrites.TimeoutMs = 100
+	assert.NoError(t, ValidatePriceAggregator())
+}
+
+// Release mode signs every price written to Redis (#450).
+func TestValidatePriceAggregator_ReleaseNeedsTheSigningKey(t *testing.T) {
+	saved := Config
+	defer func() { Config = saved }()
+	Config = validPriceAggregator()
+	Config.PriceAggregator.PublishToRedis = true
+	Config.Redis.Host, Config.Redis.Port = "localhost", "6379"
+	Config.Redis.DurableWrites.TimeoutMs = 100
+	assert.NoError(t, ValidatePriceAggregator(), "unsigned outside release mode")
+
+	Config.Server.Mode = "release"
+	err := ValidatePriceAggregator()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "price_aggregator.signing_key (PRICE_AGGREGATOR_SIGNING_KEY) is not set")
+
+	Config.PriceAggregator.SigningKey = KeyPath(filepath.Join(t.TempDir(), "missing.pem"))
+	err = ValidatePriceAggregator()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be read")
+
+	key := filepath.Join(t.TempDir(), "price-signing.pem")
+	require.NoError(t, os.WriteFile(key, []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600))
+	Config.PriceAggregator.SigningKey = KeyPath(key)
 	assert.NoError(t, ValidatePriceAggregator())
 }

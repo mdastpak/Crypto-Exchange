@@ -757,6 +757,18 @@ price_aggregator:
   cache_ttl_ms: 500
   lease_ttl_ms: 2000
   stream_max_len: 10000
+  # The Ed25519 private key (PKCS #8 PEM) that signs each price (#450);
+  # required in release mode. Make it with
+  # openssl genpkey -algorithm ed25519 -out price-signing.pem
+  signing_key: ""              # Or set PRICE_AGGREGATOR_SIGNING_KEY
+
+# How the servers read the reference prices in Redis (#450).
+price:
+  # The public keys of the aggregators (PKIX PEM), from
+  # openssl pkey -in price-signing.pem -pubout; two for a rotation.
+  # Without them, outside release mode, the prices are read unverified.
+  verify_keys: []              # Or set PRICE_VERIFY_KEYS, comma-separated
+  signatures: ""               # on, or off outside release mode only
 
 custody:
   providers:

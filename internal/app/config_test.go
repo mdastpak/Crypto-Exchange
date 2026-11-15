@@ -46,6 +46,7 @@ func TestValidateConfiguration_ExampleInReleaseMode(t *testing.T) {
 		"  - redis.tls.enabled (REDIS_TLS_ENABLED) is false; release mode needs TLS for redis: enable it, or set redis.tls.private_network (REDIS_TLS_PRIVATE_NETWORK) when only a trusted private network carries the connection",
 		"  - rabbitmq.tls.enabled (RABBITMQ_TLS_ENABLED) is false; release mode needs TLS for rabbitmq: enable it, or set rabbitmq.tls.private_network (RABBITMQ_TLS_PRIVATE_NETWORK) when only a trusted private network carries the connection",
 		"  - keys.provider (KEYS_PROVIDER) is not set; release mode needs the data keys (docs/data-protection.md)",
+		"  - price.verify_keys (PRICE_VERIFY_KEYS) is empty; release mode verifies every price in Redis",
 	}
 	for _, line := range want {
 		assert.Contains(t, list, line)

@@ -579,7 +579,15 @@ type Configuration struct {
 		// HealthAddr is the address of the probes, the metrics, and the
 		// operators' view of the prices of cmd/price-aggregator.
 		HealthAddr string `yaml:"health_addr"`
+		// SigningKey is the PEM file of the Ed25519 private key (PKCS #8)
+		// that signs each price written to Redis (#450), so that a write
+		// to Redis by anyone else is refused. Release mode requires it
+		// with publish_to_redis.
+		SigningKey KeyPath `yaml:"signing_key"`
 	} `yaml:"price_aggregator"`
+
+	// Price configures how the servers read the reference prices (#450).
+	Price PriceConfig `yaml:"price"`
 
 	Custody struct {
 		Providers []CustodyProviderConfig `yaml:"providers"`
@@ -868,6 +876,35 @@ type EmailConfig struct {
 	// Each must show {{.AntiPhishingCode}} (#375), and withdrawal.html
 	// {{.DenyLink}} (#374).
 	HTMLTemplates string `yaml:"html_templates"`
+}
+
+// PriceConfig configures the reading of the reference prices.
+type PriceConfig struct {
+	// VerifyKeys are the PEM files of the Ed25519 public keys (PKIX) of
+	// the aggregators: a price in Redis that none of them signed is
+	// refused. Two keys allow a rotation.
+	VerifyKeys []string `yaml:"verify_keys"`
+	// Signatures is "on", which needs verify_keys, or "off", which trusts
+	// every price in Redis, outside release mode only. Unset is on with
+	// verify_keys and in release mode, and off otherwise, with a warning.
+	Signatures string `yaml:"signatures"`
+}
+
+// The values of price.signatures.
+const (
+	PriceSignaturesOn  = "on"
+	PriceSignaturesOff = "off"
+)
+
+// Verifies reports whether the servers verify the prices.
+func (p PriceConfig) Verifies() bool {
+	switch p.Signatures {
+	case PriceSignaturesOff:
+		return false
+	case PriceSignaturesOn:
+		return true
+	}
+	return len(p.VerifyKeys) > 0
 }
 
 // DelistingNotices configures the notices of delistings (#216): each stage

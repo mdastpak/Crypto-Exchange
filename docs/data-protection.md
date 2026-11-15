@@ -235,6 +235,10 @@ After a rotation of `field-enc` or `blind-index` (see [rotating a data key](#rot
 
 The down migration of 16 refuses to drop the ciphertext while a value has no plaintext, as the current release stores them. Stop the servers, whose job would empty the plaintext again, and run `admin fields decrypt`: it writes the plaintext of each value back. golang-migrate marks the version as dirty after a refused migration; [force](configuration.md#postgres) it back to 16 before you run the decrypt command and migrate down again. The seals of rows that held ciphertext no longer match afterwards, since the columns they covered are gone: run `admin row-seals verify` in `report` mode to seal them again.
 
+### What Redis is trusted with
+
+Redis holds sign-in codes, protected by `otp-mac`, OTC quotes, signed with a key derived from it, and the reference prices, signed by the price aggregator with an Ed25519 key of its own ([#450](https://github.com/mdastpak/Crypto-Exchange/issues/450), see [Integrity of the prices](price-engine.md#integrity-of-the-prices)). A value written to Redis by anyone else is refused, so a write to Redis can deny a service but never set a code, a quote, or a price. Price overrides are in PostgreSQL, sealed.
+
 ### What is not encrypted
 
 - **Amounts and balances.** Encrypting them would stop SQL arithmetic, constraints such as `available >= 0`, and reports. They stay in plaintext, protected by the row seals, the ledger ([#60](https://github.com/mdastpak/Crypto-Exchange/issues/60)), and least-privilege [database roles](configuration.md#database-roles). Hiding them too would move all arithmetic into the ledger service; that is a decision for #60.

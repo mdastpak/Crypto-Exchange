@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Signed reference prices ([#450](https://github.com/mdastpak/Crypto-Exchange/issues/450)). See [Integrity of the prices](docs/price-engine.md#integrity-of-the-prices).
+  - `cmd/price-aggregator` signs each price that it writes to Redis and to `price:stream` with an Ed25519 key, `price_aggregator.signing_key` (`PRICE_AGGREGATOR_SIGNING_KEY`), over a canonical encoding of every field, with the key id in `kid` and the signature in `sig`.
+  - `price.Reader` verifies each price with `price.verify_keys` (`PRICE_VERIFY_KEYS`) before it reads its age: an unsigned, changed, malformed, or unknown-key price is `price.ErrUnverifiedPrice`, a stale price to OTC quotes and delisting settlements, counted in `price_signature_failures_total{reason}` and logged once a minute per market. Two public keys allow a rotation.
+  - Release mode refuses an aggregator that publishes to Redis without `signing_key`, and a server without `verify_keys` or with `price.signatures: off` (`PRICE_SIGNATURES`). Outside release mode, a server without keys reads the prices unverified, with a warning.
 - The notices of delistings ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)). See [Delisting notices](docs/api.md#delisting-notices).
   - Each stage that a delisting reaches is told to every user by email, and to the users who hold the currency also by SMS; holders are reminded of the freeze on `delisting.notices.reminder_days` (30, 14, 7, 3, and 1 days before), by email and SMS; a cancel is told by email. Push and the in-app inbox join with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
   - The emails show the anti-phishing code and have no link: `notifications.email.delisting_notice_subject`/`_body` and `delisting_notice.html` in `en` and `fa`. A directory of HTML templates must now hold `delisting_notice.html`. SMS needs a template of its own: `notifications.sms.kavenegar.delisting_notice_template` (`%token` the symbol, `%token2` the date of the freeze) or `smsir.delisting_notice_template_id` (`#CURRENCY#`, `#DATE#`).
