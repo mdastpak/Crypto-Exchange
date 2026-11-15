@@ -295,12 +295,50 @@ var (
 	}, SealedFromStart: true}
 )
 
+// The rows that decide how much the ledger credits the holders of a
+// currency that changes or goes (#451): a ratio, a target, a settlement
+// price, or a settlement currency changed in SQL would convert every
+// holder at that rate. The tables were created before they moved money,
+// so their rows are not sealed from the first one: the verifier seals the
+// rows that exist. The conversions refuse a row that fails its check in
+// every mode (Require), since they move money.
+var (
+	// CurrencyMigrations covers a migration of currencies (#215): its
+	// target, whether it is forced, its phase, who made it, its end, and,
+	// as one column, its sources and their ratios. The sources have no key
+	// of their own, so their seal is the migration's: a ratio raised, or a
+	// source added or removed in SQL, breaks the seal of the migration.
+	CurrencyMigrations = &Table{Name: "currency_migrations", Key: "hk", KeyType: "uuid", Columns: []Column{
+		text("target_hk"), text("forced"), text("phase"), text("created_by"),
+		timestamptz("cancelled_at"), text("cancelled_by"), timestamptz("completed_at"),
+		{Name: "sources", Expr: migrationSources},
+	}}
+	// CurrencyDelistings covers a delisting (#216): its currency, kind,
+	// status, settlement, settlement currency and price source, the fixed
+	// price, the days of a claim, who made it, its end, and the settlement
+	// price once it is recorded.
+	CurrencyDelistings = &Table{Name: "currency_delistings", Key: "hk", KeyType: "uuid", Columns: []Column{
+		text("currency_hk"), text("kind"), text("status"), text("settlement"), text("settlement_currency_hk"),
+		text("price_source"), text("fixed_price"), text("claim_days"), text("created_by"),
+		timestamptz("cancelled_at"), text("cancelled_by"), timestamptz("completed_at"),
+		optional(text("settlement_price")), optional(text("settlement_price_detail")),
+		optional(timestamptz("settlement_priced_at")),
+	}}
+)
+
+// migrationSources is the canonical text of the sources of a migration:
+// each currency and its ratio, in the order of the currencies. A
+// migration has at least one source, so the text is never NULL for one
+// that the backend made.
+const migrationSources = `(SELECT string_agg(src.currency_hk::text || '=' || src.ratio::text, ',' ORDER BY src.currency_hk)
+	FROM currency_migration_sources src WHERE src.migration_hk = %[1]shk)`
+
 // Tables lists the protected tables.
 var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
-	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides,
+	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

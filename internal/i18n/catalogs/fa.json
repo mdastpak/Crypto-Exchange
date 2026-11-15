@@ -264,6 +264,7 @@
   "MIGRATION_NOTHING_TO_CONVERT": "موجودی آزادی از این ارز برای تبدیل ندارید.",
   "MIGRATION_NOT_A_SOURCE": "این ارز در این مهاجرت تبدیل نمی‌شود.",
   "MIGRATION_NOT_CONVERTING": "این مهاجرت اکنون امکان تبدیل ندارد.",
+  "MIGRATION_UNVERIFIED": "این تبدیل تا بررسی مهاجرت از سوی صرافی متوقف است. بعداً دوباره تلاش کنید.",
   "MIGRATION_NOT_FOUND": "مهاجرت یافت نشد.",
   "MIGRATION_PAST_CANCEL": "مهاجرت در حال تبدیل موجودی‌هاست؛ دیگر نمی‌توان آن را لغو کرد.",
   "MIGRATION_PROGRESS_RETRIEVED": "پیشرفت مهاجرت دریافت شد.",

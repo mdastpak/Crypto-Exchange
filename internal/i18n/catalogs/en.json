@@ -264,6 +264,7 @@
   "MIGRATION_NOTHING_TO_CONVERT": "You have no available balance of this currency to convert.",
   "MIGRATION_NOT_A_SOURCE": "This currency is not converted by the migration.",
   "MIGRATION_NOT_CONVERTING": "The migration does not offer a conversion now.",
+  "MIGRATION_UNVERIFIED": "This conversion is paused while the exchange reviews the migration. Try again later.",
   "MIGRATION_NOT_FOUND": "Migration not found",
   "MIGRATION_PAST_CANCEL": "The migration is converting balances; it can no longer be cancelled.",
   "MIGRATION_PROGRESS_RETRIEVED": "Migration progress retrieved.",

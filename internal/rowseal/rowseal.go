@@ -257,6 +257,29 @@ func (s *Sealer) Check(ctx context.Context, t *Table, r *Row) error {
 // (#404).
 func (s *Sealer) refuses(t *Table) bool { return s.mode == ModeEnforce || t.SealedFromStart }
 
+// Require checks a row that a payment is about to rely on, such as the
+// ratio of a conversion (#451): as Check, but a row that fails its check is
+// refused in every mode, and a row that the verifier has not sealed yet
+// too, until it does. A nil sealer checks nothing.
+func (s *Sealer) Require(ctx context.Context, t *Table, r *Row) error {
+	if s == nil {
+		return nil
+	}
+	v, err := s.verdict(ctx, t, r)
+	if err != nil {
+		s.logf("SECURITY: the seal of %s %s could not be checked: %v", t.Name, r.Key, err)
+		return fmt.Errorf("%w: %w", ErrUnverified, err)
+	}
+	if v == "" {
+		return nil
+	}
+	s.report(ctx, t, r.Key, v, DetectedByRead)
+	return fmt.Errorf("%w: %s %s: %s", ErrUnverified, t.Name, r.Key, v)
+}
+
+// Require checks r with the active sealer; see Sealer.Require.
+func Require(ctx context.Context, t *Table, r *Row) error { return Active().Require(ctx, t, r) }
+
 // Check checks r with the active sealer; see Sealer.Check.
 func Check(ctx context.Context, t *Table, r *Row) error { return Active().Check(ctx, t, r) }
 
