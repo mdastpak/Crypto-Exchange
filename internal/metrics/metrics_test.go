@@ -2,10 +2,13 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/mdastpak/crypto-exchange/internal/httpmethod"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -31,6 +34,55 @@ func TestMiddleware_LabelsTheRouteNotThePath(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(HTTPRequests.WithLabelValues(http.MethodGet, "unmatched", "404")))
 	assert.GreaterOrEqual(t, testutil.CollectAndCount(HTTPDuration, "http_request_duration_seconds"), 2,
 		"the durations are recorded")
+}
+
+// methodsOf returns the values of the method label of the series of
+// http_requests_total for route.
+func methodsOf(t *testing.T, route string) map[string]bool {
+	t.Helper()
+	families, err := Registry.Gather()
+	require.NoError(t, err)
+	methods := map[string]bool{}
+	for _, f := range families {
+		if f.GetName() != "http_requests_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["route"] == route {
+				methods[labels["method"]] = true
+			}
+		}
+	}
+	return methods
+}
+
+// TestMiddleware_BoundsTheMethodLabel sends many methods that a client
+// made up (#403): they share one label value, "other", so that a client
+// cannot add series. The router matches no route for them, as for any
+// method it has no handler of.
+func TestMiddleware_BoundsTheMethodLabel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(Middleware())
+	r.Any("/cardinality", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	before := testutil.ToFloat64(HTTPRequests.WithLabelValues(httpmethod.Other, "unmatched", "404"))
+
+	for i := range 300 {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(fmt.Sprintf("M%d", i), "/cardinality", nil))
+	}
+	for _, m := range []string{http.MethodGet, http.MethodPost, "get", "PROPFIND"} {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(m, "/cardinality", nil))
+	}
+
+	assert.Equal(t, map[string]bool{"GET": true, "POST": true}, methodsOf(t, "/cardinality"))
+	for method := range methodsOf(t, "unmatched") {
+		assert.Equal(t, method, httpmethod.Normalize(method), "every method label is a standard method or other")
+	}
+	assert.Equal(t, before+302, testutil.ToFloat64(HTTPRequests.WithLabelValues(httpmethod.Other, "unmatched", "404")))
 }
 
 // TestServer_ServesTheRegistryOnItsOwnAddress scrapes a server of the

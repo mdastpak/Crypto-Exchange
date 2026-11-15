@@ -285,6 +285,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
+- A client can no longer add Prometheus series, or name spans, with a method it makes up ([#403](https://github.com/mdastpak/Crypto-Exchange/issues/403)). The HTTP metrics labelled the raw request method, which `net/http` accepts as any token, before the rate limit, so each new method added series that stayed until a restart: about 2 KiB of heap per method on every instance, and a scrape that grew without bound. The method label and the span names are now `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, or `other` (`internal/httpmethod`).
 - The ledger and the row seals no longer accept a balanced entry that no operation writes ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)). A role that may insert into the ledger could credit a user, offset the credit against an account of the exchange, and have it pass the reconciliation and, in `report` mode, be sealed by the verifier.
   - Migration 30 makes the balance trigger of the ledger check the shape of each entry: the change types, and the postings by account and sign, that its kind writes. An entry of another shape does not commit.
   - The reconciliation reports the accounts of the exchange that the operations cannot leave as they are: fees below zero, custody above zero, and pending deposits that differ from what users hold as pending. New metric `ledger_reconciliation_account_problems`; `admin ledger reconcile` prints them.

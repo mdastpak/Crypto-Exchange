@@ -36,7 +36,7 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 
 | Metric | Type | Labels | What |
 | --- | --- | --- | --- |
-| `http_requests_total` | counter | `method`, `route`, `status` | Requests answered. `route` is the pattern, or `unmatched`. |
+| `http_requests_total` | counter | `method`, `route`, `status` | Requests answered. `route` is the pattern, or `unmatched`. `method` is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, or `other` for any other method, since a client chooses it ([#403](https://github.com/mdastpak/Crypto-Exchange/issues/403)). |
 | `http_request_duration_seconds` | histogram | `method`, `route` | Time to answer. |
 | `rate_limit_rejections_total` | counter | `limiter` | Refusals of the limiters: `rest`, `rest-probe`, `ws`, `trading`, `auth:login`, `auth:otp`. |
 | `rabbitmq_publish_duration_seconds` | histogram | `exchange`, `outcome` | Time to publish a message and receive its publisher confirm; `outcome` is `ok` or `error`. |
@@ -80,7 +80,7 @@ With `observability.tracing.enabled`, the server sends its spans with OTLP over 
 
 | Span | Kind | Attributes |
 | --- | --- | --- |
-| `<METHOD> <route>`, such as `POST /api/v1/admin/currencies` | server | `http.request.method`, `http.route`, `http.response.status_code`; failed on a 5xx |
+| `<METHOD> <route>`, such as `POST /api/v1/admin/currencies` | server | `http.request.method`, `http.route`, `http.response.status_code`; failed on a 5xx. The method is a standard one or `other`, as for the metrics |
 | `postgresql` | client | `db.system.name`, `db.query.text`: the statement, which holds no values, since they are parameters |
 | `redis <command>`, `redis pipeline` | client | the command, never its arguments |
 | `publish <exchange>` | producer | `messaging.destination.name`; the message carries the `traceparent` header |

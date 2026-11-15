@@ -336,6 +336,7 @@ internal/favorites/     Personal favorites of currencies and trading pairs
 internal/geoip/         The country of a client: trusted edge header or MaxMind-format database
 internal/handlers/      HTTP and WebSocket handlers (admin, public, socket, system, user)
 internal/helpers/       Response helpers
+internal/httpmethod/    The request method as a bounded metric label and span name
 internal/i18n/          Locales, text direction, negotiation, and translated messages
 internal/identity/      Identity checks with a KYC provider: mobile ownership against the
                         national ID (Jibit client and a stub), sealed national IDs
