@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/httpmethod"
+
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -142,7 +144,8 @@ func init() {
 // Middleware records every request on HTTPRequests and HTTPDuration, by
 // its route pattern, such as /api/v1/user/contacts/:id, so that a value of
 // the path never becomes a label; a request that matched no route is
-// "unmatched".
+// "unmatched". The method is one of the standard ones, or "other" (#403),
+// since a client chooses it.
 func Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -151,8 +154,9 @@ func Middleware() gin.HandlerFunc {
 		if route == "" {
 			route = "unmatched"
 		}
-		HTTPDuration.WithLabelValues(c.Request.Method, route).Observe(time.Since(start).Seconds())
-		HTTPRequests.WithLabelValues(c.Request.Method, route, strconv.Itoa(c.Writer.Status())).Inc()
+		method := httpmethod.Normalize(c.Request.Method)
+		HTTPDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
+		HTTPRequests.WithLabelValues(method, route, strconv.Itoa(c.Writer.Status())).Inc()
 	}
 }
 
