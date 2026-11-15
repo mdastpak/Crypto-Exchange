@@ -10,6 +10,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
+	"github.com/mdastpak/crypto-exchange/internal/denylink"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
@@ -36,9 +37,21 @@ func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration
 		}
 		review[symbol] = d
 	}
+	// The "this was not me" links (#374): each message of a code carries
+	// one while security.deny_links.base_url is set, and the public route
+	// uses those issued, also after the links were turned off.
+	links := denylink.Service{DB: db, BaseURL: settings.Security.DenyLinks.BaseURL,
+		TTL:  time.Duration(settings.Security.DenyLinks.TTLHours) * time.Hour,
+		Hold: time.Duration(settings.Security.ChangeHoldHours) * time.Hour}
+	if links.BaseURL != "" {
+		confirmer.Links = links
+	}
 	s := withdrawals.Service{DB: db, Confirm: confirmer, Destinations: book, Levels: levels, Ledger: ledger.Ledger{DB: db},
 		ReviewAbove: review}
+	links.Confirmations, links.Withdrawals = confirmer, s
+	h.User.Confirmations = confirmer
 	h.User.Withdrawals, h.Admin.Withdrawals = s, s
+	h.Public.Denials = links
 	return nil
 }
 

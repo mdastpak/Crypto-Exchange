@@ -134,6 +134,10 @@ func TestValidateServer_Rules(t *testing.T) {
 		"no contact cooldown":              {func(c *Configuration) { c.Contacts.NewContactCooldownHours = -1 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is -1; it must be from 1 to 720"},
 		"contact cooldown over 30 days":    {func(c *Configuration) { c.Contacts.NewContactCooldownHours = 721 }, "contacts.new_contact_cooldown_hours (CONTACTS_NEW_CONTACT_COOLDOWN_HOURS) is 721"},
 		"no security hold":                 {func(c *Configuration) { c.Security.ChangeHoldHours = -1 }, "security.change_hold_hours (SECURITY_CHANGE_HOLD_HOURS) is -1; it must be from 1 to 720"},
+		"deny links over http":             {func(c *Configuration) { c.Security.DenyLinks.BaseURL = "http://ex.example/d/" }, `security.deny_links.base_url (SECURITY_DENY_LINKS_BASE_URL) is "http://ex.example/d/"; a link uses https`},
+		"deny links without a slash":       {func(c *Configuration) { c.Security.DenyLinks.BaseURL = "https://ex.example/d" }, "it must be a URL that ends with a slash"},
+		"deny links with a query":          {func(c *Configuration) { c.Security.DenyLinks.BaseURL = "https://ex.example/d/?t=" }, "it must be a URL that ends with a slash"},
+		"deny links over a week":           {func(c *Configuration) { c.Security.DenyLinks.TTLHours = 169 }, "security.deny_links.ttl_hours (SECURITY_DENY_LINKS_TTL_HOURS) is 169; it must be from 1 to 168"},
 		"stub ownership in release":        {func(c *Configuration) { c.Identity.MobileOwnership.Provider = MobileOwnershipStub }, "identity.mobile_ownership.provider (IDENTITY_MOBILE_OWNERSHIP_PROVIDER) is \"stub\""},
 		"unknown ownership provider":       {func(c *Configuration) { c.Identity.MobileOwnership.Provider = "shahkar" }, `identity.mobile_ownership.provider (IDENTITY_MOBILE_OWNERSHIP_PROVIDER) is "shahkar"; it must be one of none, stub, jibit`},
 		"jibit without credentials": {func(c *Configuration) {

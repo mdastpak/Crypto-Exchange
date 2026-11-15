@@ -7250,6 +7250,65 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/public/deny/{token}": {
+            "post": {
+                "description": "Every message of a withdrawal confirmation code carries a link to a page of the exchange's site with a token. Opening the link changes nothing: the page asks the user and posts the token here. The link can only stop, never approve. It denies the confirmation, which can no longer be confirmed; cancels every withdrawal of the user whose payouts have not started, with its funds released; ends every session of the user; and starts the security hold. The user then gets a notice by email. A token is used once and expires. An unknown, expired, or used token answers 404 deny_link_invalid, which names no account. The route is rate-limited per IP.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-security"
+                ],
+                "summary": "Use a \"this was not me\" link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The token of the link: 12 letters and digits",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "What the link did",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/denylink.Outcome"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "deny_link_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "A rate limit",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/locales": {
             "get": {
                 "description": "The locales the product supports, each with its names and its direction (ltr or rtl), the default, and the locale this request negotiated: from the lang query parameter, the X-Locale header, the locale cookie, Accept-Language, or the default, in that order (#283). Frontends build the language switcher from it and set lang and dir on the root element from current.",
@@ -8062,7 +8121,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "confirmation_expired or confirmation_already_confirmed",
+                        "description": "confirmation_expired, confirmation_already_confirmed, or confirmation_denied",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -8138,7 +8197,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "confirmation_already_confirmed or confirmation_method_unavailable",
+                        "description": "confirmation_already_confirmed, confirmation_method_unavailable, or confirmation_denied",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -10615,7 +10674,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, or row_unverified",
+                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, confirmation_denied, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -12187,6 +12246,27 @@ const docTemplate = `{
                             "$ref": "#/definitions/currencies.Lifecycle"
                         }
                     ]
+                }
+            }
+        },
+        "denylink.Outcome": {
+            "type": "object",
+            "properties": {
+                "security_hold_until": {
+                    "description": "SecurityHoldUntil is when the security hold ends.",
+                    "type": "string"
+                },
+                "sessions_ended": {
+                    "description": "SessionsEnded counts the sessions that ended.",
+                    "type": "integer"
+                },
+                "withdrawals_cancelled": {
+                    "description": "WithdrawalsCancelled counts the withdrawals that were cancelled, with\ntheir funds released.",
+                    "type": "integer"
+                },
+                "withdrawals_in_progress": {
+                    "description": "WithdrawalsInProgress counts the withdrawals that were being paid\nalready, which only support can follow.",
+                    "type": "integer"
                 }
             }
         },

@@ -602,7 +602,7 @@ func TestVerifyAll_AFindingClosedInSQLIsAFinding(t *testing.T) {
 // were sealed from the first one (#404), which every mode refuses and the
 // verifier never adopts; TestLedger_ReportModeDoesNotAdoptABalance runs it.
 func TestTables_TheMoneyTablesAreSealedFromStart(t *testing.T) {
-	for _, table := range []*rowseal.Table{rowseal.Balances, rowseal.Withdrawals, rowseal.WithdrawalPayouts, rowseal.WithdrawalDestinations, rowseal.OperationConfirmations} {
+	for _, table := range []*rowseal.Table{rowseal.Balances, rowseal.Withdrawals, rowseal.WithdrawalPayouts, rowseal.WithdrawalDestinations, rowseal.OperationConfirmations, rowseal.DenyLinks} {
 		assert.True(t, table.SealedFromStart, table.Name)
 	}
 	assert.False(t, rowseal.Users.SealedFromStart)

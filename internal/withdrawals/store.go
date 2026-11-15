@@ -157,14 +157,68 @@ func (s Service) Cancel(ctx context.Context, userHK, id string, origin audit.Eve
 		return Withdrawal{}, ErrNotFound
 	}
 	origin.ActorType, origin.ActorID = audit.ActorUser, userHK
-	w, err := s.settle(ctx, `w.id = $1 AND w.user_id = $2`, []any{id, userHK}, func(w Withdrawal) error {
-		if !w.Status.Cancellable() {
-			return ErrNotCancellable
-		}
-		return nil
-	}, StatusCancelled, "", "", origin, audit.ActionUserWithdrawalCancel)
+	w, err := s.settle(ctx, `w.id = $1 AND w.user_id = $2`, []any{id, userHK}, cancellable,
+		StatusCancelled, "", "", origin, audit.ActionUserWithdrawalCancel)
 	w.UserHK = ""
 	return w, err
+}
+
+func cancellable(w Withdrawal) error {
+	if !w.Status.Cancellable() {
+		return ErrNotCancellable
+	}
+	return nil
+}
+
+// ReasonDenied is the audit reason of a withdrawal that a "this was not
+// me" link cancelled (#374).
+const ReasonDenied = "deny_link"
+
+// CancelOnDenial cancels, in tx, the transaction of a "this was not me"
+// link (#374), every withdrawal of the user whose payouts have not
+// started, and releases their funds: someone else may hold the account,
+// and may have requested more than one. It returns how many it cancelled,
+// and how many are being paid already, which only support can follow. A
+// withdrawal that does not match its seal stays as it is, with its
+// finding, and its funds locked.
+func (s Service) CancelOnDenial(ctx context.Context, tx *sql.Tx, userHK string, origin audit.Event) (cancelled, inProgress int, err error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id::text FROM withdrawals WHERE user_id = $1 AND status IN ('review', 'queued')
+		ORDER BY created_at`, userHK)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read the open withdrawals: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, 0, fmt.Errorf("read the open withdrawals: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("read the open withdrawals: %w", err)
+	}
+	origin.ActorType, origin.ActorID, origin.Reason = audit.ActorUser, userHK, ReasonDenied
+	for _, id := range ids {
+		_, err := s.settleIn(ctx, tx, `w.id = $1 AND w.user_id = $2`, []any{id, userHK}, cancellable,
+			StatusCancelled, "", "", origin, audit.ActionUserWithdrawalCancel)
+		switch {
+		case errors.Is(err, ErrNotCancellable), errors.Is(err, rowseal.ErrUnverified):
+			// Planned meanwhile, or changed in SQL.
+			continue
+		case err != nil:
+			return 0, 0, err
+		}
+		cancelled++
+	}
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM withdrawals WHERE user_id = $1
+		AND (status = 'processing' OR (status = 'partially_paid' AND completed_at IS NULL))`, userHK).Scan(&inProgress)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count the withdrawals being paid: %w", err)
+	}
+	return cancelled, inProgress, nil
 }
 
 // Approve lets a withdrawal held for review go to its payouts, as the
@@ -210,6 +264,16 @@ func (s Service) settle(ctx context.Context, where string, args []any, allowed f
 		return Withdrawal{}, err
 	}
 	defer tx.Rollback()
+	w, err := s.settleIn(ctx, tx, where, args, allowed, status, adminHK, reason, origin, action)
+	if err != nil {
+		return Withdrawal{}, err
+	}
+	return w, tx.Commit()
+}
+
+// settleIn is settle in tx, which the caller commits.
+func (s Service) settleIn(ctx context.Context, tx *sql.Tx, where string, args []any, allowed func(Withdrawal) error, status Status,
+	adminHK, reason string, origin audit.Event, action string) (Withdrawal, error) {
 	// A withdrawal changed in SQL is not settled until its finding is
 	// resolved: its funds stay locked.
 	w, err := readLocked(ctx, tx, where, true, args...)
@@ -246,9 +310,5 @@ func (s Service) settle(ctx context.Context, where string, args []any, allowed f
 	if err := audit.Record(ctx, tx, e); err != nil {
 		return Withdrawal{}, err
 	}
-	w, err = read(ctx, tx, `w.id = $1`, w.ID)
-	if err != nil {
-		return Withdrawal{}, err
-	}
-	return w, tx.Commit()
+	return read(ctx, tx, `w.id = $1`, w.ID)
 }

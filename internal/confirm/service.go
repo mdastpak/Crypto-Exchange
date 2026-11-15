@@ -72,7 +72,21 @@ type Service struct {
 	Authenticator Authenticator
 	// MaxAttempts bounds the wrong codes of one confirmation; 5 when 0.
 	MaxAttempts int
+	// Links issue the "this was not me" link of each message of a code
+	// (#374); nil sends none.
+	Links DenyLinks
 }
+
+// DenyLinks issues the "this was not me" link of a message of a code
+// (#374): denylink.Service. Each message gets a link of its own.
+type DenyLinks interface {
+	Issue(ctx context.Context, userHK, confirmationID string) (Link, error)
+}
+
+// Link is a "this was not me" link: its token, which an SMS template
+// places after the exchange's own domain, and the whole URL, which an
+// email shows.
+type Link struct{ Token, URL string }
 
 // DefaultTTL is how long a confirmation lasts without a code store.
 const DefaultTTL = 5 * time.Minute
@@ -123,6 +137,26 @@ func (s Service) available(ctx context.Context, userHK string) (map[Method]conta
 	if s.Codes == nil || s.Sender == nil {
 		return out, nil
 	}
+	contacts, err := s.contacts(ctx, userHK)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range contacts {
+		method := MethodEmail
+		if c.typ == "mobile" {
+			if !s.SMSForWithdrawals {
+				continue
+			}
+			method = MethodSMS
+		}
+		out[method] = c
+	}
+	return out, nil
+}
+
+// contacts returns the verified primary email address and mobile number of
+// the user that the sender reaches.
+func (s Service) contacts(ctx context.Context, userHK string) ([]contactOf, error) {
 	//nolint:gosec // G202: the columns are constants of rowseal; the value is an argument.
 	rows, err := s.DB.QueryContext(ctx, `SELECT id, type::text, value, value_enc, `+rowseal.UserContacts.Fields("c")+`
 		FROM user_contacts c WHERE user_hk = $1 AND is_primary AND verified_at IS NOT NULL AND removed_at IS NULL
@@ -150,6 +184,7 @@ func (s Service) available(ctx context.Context, userHK string) (map[Method]conta
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read the contacts: %w", err)
 	}
+	var out []contactOf
 	for _, r := range all {
 		// A contact changed in SQL, such as an address swapped for an
 		// attacker's, receives no code (#139).
@@ -162,18 +197,11 @@ func (s Service) available(ctx context.Context, userHK string) (map[Method]conta
 		if !s.Sender.Supports(r.typ) {
 			continue
 		}
-		method := MethodEmail
-		if r.typ == "mobile" {
-			if !s.SMSForWithdrawals {
-				continue
-			}
-			method = MethodSMS
-		}
 		value, err := db.OpenContact(r.id, r.plain, r.enc)
 		if err != nil {
 			return nil, err
 		}
-		out[method] = contactOf{typ: r.typ, value: value, masked: notify.MaskContact(r.typ, value)}
+		out = append(out, contactOf{typ: r.typ, value: value, masked: notify.MaskContact(r.typ, value)})
 	}
 	return out, nil
 }
@@ -413,7 +441,7 @@ func (s Service) Start(ctx context.Context, userHK string, p Purpose, digest []b
 		return Challenge{}, err
 	}
 	if session != nil {
-		if err := s.send(ctx, userHK, p, contact, code, details); err != nil {
+		if err := s.send(ctx, userHK, c.ID, p, contact, code, details); err != nil {
 			return Challenge{}, err
 		}
 	}
@@ -422,15 +450,25 @@ func (s Service) Start(ctx context.Context, userHK string, p Purpose, digest []b
 
 const sha256Size = 32
 
-// send sends a code to a verified contact of userHK. An email shows the
-// user's anti-phishing code (#375).
-func (s Service) send(ctx context.Context, userHK string, p Purpose, to contactOf, code string, details Details) error {
+// send sends a code of the confirmation id to a verified contact of
+// userHK, with the "this was not me" link of the message (#374). An email
+// shows the user's anti-phishing code (#375).
+func (s Service) send(ctx context.Context, userHK, id string, p Purpose, to contactOf, code string, details Details) error {
 	purpose := ""
 	if p == PurposeWithdrawal {
 		purpose = notify.PurposeWithdrawal
 	}
 	msg := notify.OTPMessage{ContactType: to.typ, Contact: to.value, MaskedContact: to.masked,
 		Code: code, Purpose: purpose, Details: details.String(), Amount: details.Amount, Destination: details.Destination}
+	if s.Links != nil {
+		link, err := s.Links.Issue(ctx, userHK, id)
+		if err != nil {
+			// A code never goes out without its link; the user can ask
+			// for it again.
+			return fmt.Errorf("issue the link of the message: %w", err)
+		}
+		msg.DenyToken, msg.DenyLink = link.Token, link.URL
+	}
 	if s.AntiPhishing != nil {
 		var err error
 		if msg.AntiPhishingCode, err = s.AntiPhishing.ShowTo(ctx, userHK, to.typ, to.value); err != nil {
@@ -454,6 +492,9 @@ type stored struct {
 	expired                     bool
 	// usable is whether a confirmed confirmation may still be consumed.
 	usable bool
+	// denied is a confirmation that its user denied with the link of its
+	// message (#374).
+	denied bool
 }
 
 // load reads the user's confirmation id in tx, locked, and checks its seal.
@@ -482,14 +523,15 @@ func (s Service) read(ctx context.Context, q rowReader, userHK, id string, lock 
 	row := rowseal.OperationConfirmations.NewRow()
 	query := `SELECT id::text, user_hk::text, purpose, amount, destination, method, digest, code_session, sent_to,
 			failed_attempts, expires_at, confirmed_at IS NOT NULL, consumed_at IS NOT NULL, expires_at <= NOW(),
-			COALESCE(confirmed_at + make_interval(secs => $3) > NOW(), false), ` + rowseal.OperationConfirmations.Fields("") + `
+			COALESCE(confirmed_at + make_interval(secs => $3) > NOW(), false), denied_at IS NOT NULL, ` +
+		rowseal.OperationConfirmations.Fields("") + `
 		FROM operation_confirmations WHERE id = $1 AND user_hk = $2`
 	if lock {
 		query += ` FOR UPDATE`
 	}
 	err := q.QueryRowContext(ctx, query, id, userHK, s.ttl().Seconds()).
 		Scan(append([]any{&c.id, &c.userHK, &c.purpose, &c.details.Amount, &c.details.Destination, &c.method, &c.digest, &c.session, &c.sentTo,
-			&c.failed, &c.expiresAt, &c.confirmed, &c.consumed, &c.expired, &c.usable}, row.Dest()...)...)
+			&c.failed, &c.expiresAt, &c.confirmed, &c.consumed, &c.expired, &c.usable, &c.denied}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return stored{}, ErrNotFound
 	}
@@ -586,6 +628,8 @@ func (s Service) Confirm(ctx context.Context, userHK, id string, proof Proof, or
 // confirmable refuses a confirmation that can no longer be confirmed.
 func (s Service) confirmable(c stored) error {
 	switch {
+	case c.denied:
+		return ErrDenied
 	case c.confirmed:
 		return ErrAlreadyConfirmed
 	case c.expired:
@@ -706,12 +750,14 @@ func (s Service) Resend(ctx context.Context, userHK, id, client string) (Challen
 	if err := tx.Commit(); err != nil {
 		return Challenge{}, err
 	}
-	return out, s.send(ctx, userHK, Purpose(c.purpose), contact, issued.Code, c.details)
+	return out, s.send(ctx, userHK, c.id, Purpose(c.purpose), contact, issued.Code, c.details)
 }
 
 // resendable refuses a confirmation that has nothing to send again.
 func (s Service) resendable(c stored) error {
 	switch {
+	case c.denied:
+		return ErrDenied
 	case c.confirmed:
 		return ErrAlreadyConfirmed
 	case c.failed >= s.maxAttempts():
@@ -788,6 +834,8 @@ func (s Service) Consume(ctx context.Context, tx *sql.Tx, userHK, id string, p P
 		return ErrMismatch
 	}
 	switch {
+	case c.denied:
+		return ErrDenied
 	case c.consumed:
 		return ErrConsumed
 	case !c.confirmed:
@@ -799,4 +847,72 @@ func (s Service) Consume(ctx context.Context, tx *sql.Tx, userHK, id string, p P
 		return fmt.Errorf("consume the confirmation: %w", err)
 	}
 	return rowseal.Reseal(ctx, tx, rowseal.OperationConfirmations, "id = $1", id)
+}
+
+// Deny marks the confirmation id of the user denied, in tx, the
+// transaction of a "this was not me" link (#374): it can no longer be
+// confirmed, sent again, or consumed. A confirmation that an operation
+// consumed already is marked too, for the record; stopping what the
+// operation did is the caller's part. It returns what the confirmation
+// was for. A confirmation that does not match its seal is not changed:
+// the error wraps ErrUnverified.
+func (s Service) Deny(ctx context.Context, tx *sql.Tx, userHK, id string) (Details, error) {
+	c, err := s.load(ctx, tx, userHK, id)
+	if err != nil {
+		return Details{}, err
+	}
+	if c.denied {
+		return c.details, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operation_confirmations SET denied_at = NOW() WHERE id = $1`, id); err != nil {
+		return Details{}, fmt.Errorf("deny the confirmation: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.OperationConfirmations, "id = $1", id); err != nil {
+		return Details{}, err
+	}
+	return c.details, nil
+}
+
+// Denial is what a "this was not me" link did (#374), as its notice tells
+// the user.
+type Denial struct {
+	// Details are what the denied confirmation was for.
+	Details Details
+	// Cancelled counts the withdrawals that were cancelled, and InProgress
+	// those that were being paid already, which only support can follow.
+	Cancelled, InProgress int
+	// HoldHours is the length of the security hold that started.
+	HoldHours int
+}
+
+// NotifyDenied tells the user, at the verified email address of the
+// account, what a "this was not me" link did (#374), and how to reach
+// support. The email shows the anti-phishing code (#375). The notice
+// carries no link of its own.
+func (s Service) NotifyDenied(ctx context.Context, userHK string, d Denial) error {
+	if s.Sender == nil || !s.Sender.Supports(notify.ContactEmail) {
+		return nil
+	}
+	contacts, err := s.contacts(ctx, userHK)
+	if err != nil {
+		return err
+	}
+	for _, to := range contacts {
+		if to.typ != notify.ContactEmail {
+			continue
+		}
+		msg := notify.OTPMessage{ContactType: to.typ, Contact: to.value, MaskedContact: to.masked, Purpose: notify.PurposeDenied,
+			Details: d.Details.String(), Amount: d.Details.Amount, Destination: d.Details.Destination,
+			Cancelled: d.Cancelled, InProgress: d.InProgress, HoldHours: d.HoldHours}
+		if s.AntiPhishing != nil {
+			if msg.AntiPhishingCode, err = s.AntiPhishing.ShowTo(ctx, userHK, to.typ, to.value); err != nil {
+				log.Printf("Failed to read the anti-phishing code of user %s for a denial notice: %v", userHK, err)
+				msg.AntiPhishingCode = ""
+			}
+		}
+		if err := s.Sender.SendOTP(ctx, msg); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -21,12 +21,14 @@ import (
 const SMSIRName = "smsir"
 
 // The parameters of the sms.ir templates: #CODE# in each template of a
-// code, #AMOUNT# and #DEST# in the one of withdrawals, and #COUNT# in the
-// reminder to change the anti-phishing code.
+// code; #AMOUNT#, #DEST#, and, when the links are on, #DENY#, the token of
+// the "this was not me" link (#374), in the one of withdrawals; and #COUNT#
+// in the reminder to change the anti-phishing code.
 const (
 	SMSIRParamCode   = "CODE"
 	SMSIRParamAmount = "AMOUNT"
 	SMSIRParamDest   = "DEST"
+	SMSIRParamDeny   = "DENY"
 	SMSIRParamCount  = "COUNT"
 )
 
@@ -84,7 +86,10 @@ func (s *SMSIRDeliverer) Supports(purpose string) bool {
 	case PurposeAntiPhishingReminder:
 		return s.reminderTemplate > 0
 	}
-	return true
+	// A message of another purpose, such as the notice of a denial
+	// (#374), has no template here: it must never go out with the
+	// sign-in text.
+	return purpose == ""
 }
 
 // smsirParam is a parameter of a template.
@@ -129,18 +134,24 @@ func (s *SMSIRDeliverer) params(msg OTPMessage) (int, []smsirParam, error) {
 			return 0, nil, errors.New("smsir: no withdrawal_template_id for the codes that confirm withdrawals")
 		}
 		// A code that confirms a withdrawal never goes out with the
-		// sign-in text (#161), and says what it confirms.
-		return s.withdrawalTemplate, []smsirParam{
-			{SMSIRParamCode, msg.Code}, {SMSIRParamAmount, msg.Amount}, {SMSIRParamDest, msg.Destination},
-		}, nil
+		// sign-in text (#161), and says what it confirms. The token of
+		// its "this was not me" link (#374) follows the exchange's own
+		// domain in the template.
+		params := []smsirParam{{SMSIRParamCode, msg.Code}, {SMSIRParamAmount, msg.Amount}, {SMSIRParamDest, msg.Destination}}
+		if msg.DenyToken != "" {
+			params = append(params, smsirParam{SMSIRParamDeny, msg.DenyToken})
+		}
+		return s.withdrawalTemplate, params, nil
 	case PurposeAntiPhishingReminder:
 		if s.reminderTemplate <= 0 {
 			return 0, nil, errors.New("smsir: no anti_phishing_reminder_template_id for the reminders")
 		}
 		// The reminder carries the number of emails, never the code.
 		return s.reminderTemplate, []smsirParam{{SMSIRParamCount, strconv.FormatInt(msg.Uses, 10)}}, nil
+	case "":
+		return s.otpTemplate, []smsirParam{{SMSIRParamCode, msg.Code}}, nil
 	}
-	return s.otpTemplate, []smsirParam{{SMSIRParamCode, msg.Code}}, nil
+	return 0, nil, fmt.Errorf("smsir: no template for messages of %q", msg.Purpose)
 }
 
 // Deliver sends msg; it is Send without the ID, for sms.ir alone.

@@ -35,6 +35,10 @@ type EmailDeliverer struct {
 	// anti-phishing code (#375).
 	reminderSubject *template.Template
 	reminderBody    *template.Template
+	// deniedSubject and deniedBody render the notice of a "this was not
+	// me" link that was used (#374).
+	deniedSubject *template.Template
+	deniedBody    *template.Template
 	// html renders the HTML part beside the text; nil is text only.
 	html    *htmlTemplates
 	codeTTL time.Duration
@@ -59,11 +63,26 @@ type emailData struct {
 	// code, the emails that have shown it and its age in days.
 	Uses    int64
 	AgeDays int
+	// DenyLink is the "this was not me" link of a withdrawal code (#374),
+	// or "" when the links are off.
+	DenyLink string
+	// Cancelled, InProgress, and HoldHours are, in the notice of a denial,
+	// the withdrawals that were cancelled, those that were being paid
+	// already, and the length of the security hold.
+	Cancelled, InProgress, HoldHours int
 }
 
 // antiPhishingLabel introduces the anti-phishing code that the text part of
 // an email gains when its template does not show it.
 const antiPhishingLabel = "Anti-phishing code / کد ضدفیشینگ: "
+
+// denyLinkLabel introduces the "this was not me" link that the text part of
+// an email gains when its template does not show it (#374).
+const denyLinkLabel = "Not you? This link cancels it and secures your account / این من نبودم: "
+
+// sampleDenyLink is the link of the sample that each template renders at
+// startup: an HTML template of a code must show it.
+const sampleDenyLink = "https://example.invalid/d/SAMPLE000000"
 
 // NewEmailDeliverer validates cfg and returns a deliverer for it. codeTTL is
 // the lifetime of sign-in codes, shown to templates as {{.TTLSeconds}}.
@@ -83,12 +102,15 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	templates["otp_subject"], templates["otp_body"] = &d.subject, &d.body
 	templates["withdrawal_subject"], templates["withdrawal_body"] = &d.withdrawalSubject, &d.withdrawalBody
 	templates["anti_phishing_reminder_subject"], templates["anti_phishing_reminder_body"] = &d.reminderSubject, &d.reminderBody
+	templates["denied_subject"], templates["denied_body"] = &d.deniedSubject, &d.deniedBody
 	for name, text := range map[string]string{
 		"otp_subject": cfg.OTPSubject, "otp_body": cfg.OTPBody,
 		"withdrawal_subject":             orDefault(cfg.WithdrawalSubject, config.DefaultWithdrawalEmailSubject),
 		"withdrawal_body":                orDefault(cfg.WithdrawalBody, config.DefaultWithdrawalEmailBody),
 		"anti_phishing_reminder_subject": orDefault(cfg.AntiPhishingReminderSubject, config.DefaultAntiPhishingReminderSubject),
 		"anti_phishing_reminder_body":    orDefault(cfg.AntiPhishingReminderBody, config.DefaultAntiPhishingReminderBody),
+		"denied_subject":                 orDefault(cfg.DeniedSubject, config.DefaultDeniedEmailSubject),
+		"denied_body":                    orDefault(cfg.DeniedBody, config.DefaultDeniedEmailBody),
 	} {
 		t, err := template.New(name).Parse(text)
 		if err != nil {
@@ -106,21 +128,29 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	}
 	// Render once, so that a template that fails, for example by using an
 	// unknown field, stops the server at startup instead of every delivery.
-	for _, purpose := range []string{"", PurposeWithdrawal, PurposeAntiPhishingReminder} {
+	for _, purpose := range []string{"", PurposeWithdrawal, PurposeAntiPhishingReminder, PurposeDenied} {
 		sample := OTPMessage{Code: "000000", Purpose: purpose, Details: "1 USDT to T...0000", Amount: "1 USDT", Destination: "T...0000",
 			AntiPhishingCode: "sample-phrase-7q", Uses: 200, AgeDays: 180}
-		if purpose == PurposeAntiPhishingReminder {
+		switch purpose {
+		case PurposeWithdrawal:
+			sample.DenyToken, sample.DenyLink = "SAMPLE000000", sampleDenyLink
+		case PurposeAntiPhishingReminder:
 			sample.Code, sample.Details, sample.Amount, sample.Destination = "", "", "", ""
+		case PurposeDenied:
+			sample.Code, sample.Cancelled, sample.InProgress, sample.HoldHours = "", 1, 1, 24
 		}
 		_, _, html, err := d.render(sample)
 		if err != nil {
 			return nil, err
 		}
-		// An HTML template must show the anti-phishing code itself (#375):
-		// a place in the HTML cannot be guessed, as the text's first line
-		// can.
+		// An HTML template must show the anti-phishing code itself (#375),
+		// and the HTML of a code its "this was not me" link (#374): a place
+		// in the HTML cannot be guessed, as one in the text can.
 		if html != "" && !strings.Contains(html, sample.AntiPhishingCode) {
 			return nil, fmt.Errorf("html_templates: %s must show {{.AntiPhishingCode}}", htmlTemplateName(purpose))
+		}
+		if html != "" && sample.DenyLink != "" && !strings.Contains(html, sample.DenyLink) {
+			return nil, fmt.Errorf("html_templates: %s must show {{.DenyLink}}", htmlTemplateName(purpose))
 		}
 	}
 	return d, nil
@@ -142,7 +172,8 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 	}
 	data := emailData{Code: msg.Code, TTLSeconds: int(d.codeTTL / time.Second), Details: msg.Details,
 		Amount: msg.Amount, Destination: msg.Destination, Sender: sender, AntiPhishingCode: msg.AntiPhishingCode,
-		Uses: msg.Uses, AgeDays: msg.AgeDays}
+		Uses: msg.Uses, AgeDays: msg.AgeDays, DenyLink: msg.DenyLink,
+		Cancelled: msg.Cancelled, InProgress: msg.InProgress, HoldHours: msg.HoldHours}
 	subjectT, bodyT, names := d.subject, d.body, [2]string{"otp_subject", "otp_body"}
 	switch msg.Purpose {
 	case PurposeWithdrawal:
@@ -150,6 +181,8 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 	case PurposeAntiPhishingReminder:
 		subjectT, bodyT = d.reminderSubject, d.reminderBody
 		names = [2]string{"anti_phishing_reminder_subject", "anti_phishing_reminder_body"}
+	case PurposeDenied:
+		subjectT, bodyT, names = d.deniedSubject, d.deniedBody, [2]string{"denied_subject", "denied_body"}
 	}
 	var buf bytes.Buffer
 	if err := subjectT.Execute(&buf, data); err != nil {
@@ -168,6 +201,11 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 	// the operator's that does not show it gets it on its first line.
 	if code := msg.AntiPhishingCode; code != "" && !strings.Contains(text, code) {
 		text = antiPhishingLabel + code + "\n\n" + text
+	}
+	// So is the link of a code (#374): a text template that does not show
+	// it gets it at the end.
+	if link := msg.DenyLink; link != "" && !strings.Contains(text, link) {
+		text = strings.TrimRight(text, "\n") + "\n\n" + denyLinkLabel + link + "\n"
 	}
 	if html, err = d.html.render(msg, data); err != nil {
 		return "", "", "", err

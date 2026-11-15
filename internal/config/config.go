@@ -327,6 +327,20 @@ type Configuration struct {
 		// email address, the mobile number, or the second factor of a user
 		// (#251).
 		ChangeHoldHours int `yaml:"change_hold_hours"`
+		// DenyLinks configures the "this was not me" links that the
+		// messages of confirmation codes carry (#374). Using one denies the
+		// confirmation, cancels the user's withdrawals that are not being
+		// paid yet, ends every session, and starts the security hold.
+		DenyLinks struct {
+			// BaseURL starts each link, and the token completes it, such as
+			// "https://ex.ir/d/": a page of the exchange's own site that
+			// asks the user and posts the token to POST /public/deny/{token}.
+			// An SMS template holds the same start, since only the token is
+			// a parameter. Empty sends no links.
+			BaseURL string `yaml:"base_url"`
+			// TTLHours is how long a link can be used: a day by default.
+			TTLHours int `yaml:"ttl_hours"`
+		} `yaml:"deny_links"`
 		// Password configures the account password of users, the second
 		// step of their sign-in (#307).
 		Password struct {
@@ -792,9 +806,11 @@ type EmailConfig struct {
 	OTPBody    string `yaml:"otp_body"`
 	// WithdrawalSubject and WithdrawalBody are the templates of the codes
 	// that confirm a withdrawal (#161). They can use {{.Code}},
-	// {{.TTLSeconds}}, and {{.Details}}, what the code confirms, such as
-	// "100 USDT to TR7NHq...gjLj6t". A withdrawal code never goes out with
-	// the sign-in text, so that it cannot pass for one.
+	// {{.TTLSeconds}}, {{.Details}}, what the code confirms, such as
+	// "100 USDT to TR7NHq...gjLj6t", and {{.DenyLink}}, the "this was not
+	// me" link (#374), which a body that does not show it gets at its end.
+	// A withdrawal code never goes out with the sign-in text, so that it
+	// cannot pass for one.
 	WithdrawalSubject string `yaml:"withdrawal_subject"`
 	WithdrawalBody    string `yaml:"withdrawal_body"`
 	// AntiPhishingReminderSubject and AntiPhishingReminderBody are the
@@ -803,14 +819,21 @@ type EmailConfig struct {
 	// shown it, and {{.AgeDays}}, its age in days.
 	AntiPhishingReminderSubject string `yaml:"anti_phishing_reminder_subject"`
 	AntiPhishingReminderBody    string `yaml:"anti_phishing_reminder_body"`
+	// DeniedSubject and DeniedBody are the templates of the notice of a
+	// "this was not me" link that was used (#374). They can use
+	// {{.Details}}, what the denied code was for, {{.Cancelled}} and
+	// {{.InProgress}}, the withdrawals cancelled and those being paid
+	// already, and {{.HoldHours}}, the length of the security hold.
+	DeniedSubject string `yaml:"denied_subject"`
+	DeniedBody    string `yaml:"denied_body"`
 	// HTMLTemplates chooses the HTML part of the emails, beside the text:
 	// "en" (the default) or "fa" for the templates in config/email, "none"
-	// for text only, or a directory with otp.html, withdrawal.html, and
-	// anti_phishing_reminder.html, Go html/template templates that can use
-	// {{.Code}}, {{.TTLSeconds}}, {{.Sender}}, {{.AntiPhishingCode}}, and,
-	// for withdrawals, {{.Amount}}, {{.Destination}}, and {{.Details}}, and
-	// for the reminder, {{.Uses}} and {{.AgeDays}}. Each must show
-	// {{.AntiPhishingCode}} (#375).
+	// for text only, or a directory with otp.html, withdrawal.html,
+	// anti_phishing_reminder.html, and denied.html, Go html/template
+	// templates that can use the fields of the text templates and
+	// {{.Sender}}, and, for withdrawals, {{.Amount}} and {{.Destination}}.
+	// Each must show {{.AntiPhishingCode}} (#375), and withdrawal.html
+	// {{.DenyLink}} (#374).
 	HTMLTemplates string `yaml:"html_templates"`
 }
 
@@ -1830,6 +1853,7 @@ func setDefaults() {
 		{&Config.Favorites.MaxPerUser, DefaultMaxFavoritesPerUser},
 		{&Config.Contacts.NewContactCooldownHours, DefaultNewContactCooldownHours},
 		{&Config.Security.ChangeHoldHours, DefaultSecurityChangeHoldHours},
+		{&Config.Security.DenyLinks.TTLHours, DefaultDenyLinkTTLHours},
 		{&Config.Security.Password.MinLength, DefaultPasswordMinLength},
 		{&Config.Security.Password.MaxFailures, DefaultPasswordMaxFailures},
 		{&Config.Security.Password.LockMinutes, DefaultPasswordLockMinutes},
@@ -2038,7 +2062,16 @@ const (
 		"If you did not request this code, you can ignore this email. Never share it with anyone.\n"
 	DefaultWithdrawalEmailSubject = "Confirm your withdrawal"
 	DefaultWithdrawalEmailBody    = "Your code to confirm the withdrawal of {{.Details}} is {{.Code}}. It expires in {{.TTLSeconds}} seconds.\n\n" +
-		"If you did not request this withdrawal, do not enter or share the code: sign in, change your password, and contact support.\n"
+		"If you did not request this withdrawal, do not enter or share the code." +
+		"{{if .DenyLink}} Open this link to cancel it and secure your account. The link can only stop, never approve:\n" +
+		"{{.DenyLink}}\n\nThen sign in, change your password, and contact support.\n" +
+		"{{else}} Sign in, change your password, and contact support.\n{{end}}"
+	DefaultDeniedEmailSubject = "We stopped a withdrawal and secured your account"
+	DefaultDeniedEmailBody    = "The \"this was not me\" link in the message about the withdrawal of {{.Details}} was used.\n\n" +
+		"{{if .Cancelled}}We cancelled {{.Cancelled}} withdrawal(s) that had not been sent, and returned their funds to your balance. {{end}}" +
+		"We signed you out on every device, and withdrawals are held for {{.HoldHours}} hours.\n\n" +
+		"{{if .InProgress}}{{.InProgress}} withdrawal(s) were already being paid and could not be stopped: contact support at once.\n\n{{end}}" +
+		"If you did not use the link, someone else can read your messages: sign in, change your password, and contact support.\n"
 	DefaultAntiPhishingReminderSubject = "Time to change your anti-phishing code"
 	DefaultAntiPhishingReminderBody    = "Your anti-phishing code {{.AntiPhishingCode}} was set {{.AgeDays}} days ago, " +
 		"and {{.Uses}} emails from us have shown it.\n\n" +
@@ -2072,6 +2105,12 @@ func setNotificationDefaults(n *NotificationsConfig) {
 	}
 	if n.Email.AntiPhishingReminderBody == "" {
 		n.Email.AntiPhishingReminderBody = DefaultAntiPhishingReminderBody
+	}
+	if n.Email.DeniedSubject == "" {
+		n.Email.DeniedSubject = DefaultDeniedEmailSubject
+	}
+	if n.Email.DeniedBody == "" {
+		n.Email.DeniedBody = DefaultDeniedEmailBody
 	}
 	if n.SMS.Kavenegar.BaseURL == "" {
 		n.SMS.Kavenegar.BaseURL = DefaultKavenegarBaseURL
@@ -2242,6 +2281,11 @@ const (
 	// thirty.
 	DefaultSecurityChangeHoldHours = 24
 	MaxSecurityChangeHoldHours     = 720
+	// DefaultDenyLinkTTLHours and MaxDenyLinkTTLHours bound
+	// security.deny_links.ttl_hours (#374): a day by default, and at most a
+	// week.
+	DefaultDenyLinkTTLHours = 24
+	MaxDenyLinkTTLHours     = 168
 	// The defaults and bounds of security.password (#307). The least
 	// length follows NIST SP 800-63B, which allows no less than 8.
 	DefaultPasswordMinLength   = 10

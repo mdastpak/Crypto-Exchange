@@ -86,7 +86,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // @Failure 400 {object} models.APIResponse "validation_failed, or idempotency_key_required"
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, account_frozen, operation_restricted, asset_restricted, or security_hold"
-// @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, or row_unverified"
+// @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, confirmation_denied, or row_unverified"
 // @Failure 503 {object} models.APIResponse "withdrawals_unavailable or feature_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/withdrawals [post]
@@ -281,7 +281,7 @@ func sendWithdrawalError(c *gin.Context, userHK string, err error) {
 // sendConfirmationError answers.
 func isConfirmationError(err error) bool {
 	for _, target := range []error{confirm.ErrNotFound, confirm.ErrExpired, confirm.ErrNoMethod, confirm.ErrMethodUnavailable,
-		confirm.ErrTooManyAttempts} {
+		confirm.ErrTooManyAttempts, confirm.ErrDenied} {
 		if errors.Is(err, target) {
 			return true
 		}

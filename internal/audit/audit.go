@@ -124,6 +124,11 @@ const (
 	// (#161). The target is the confirmation; a wrong code is a failure.
 	// The event never holds the code.
 	ActionUserOperationConfirm = "user.operation_confirm"
+	// A "this was not me" link that was used (#374): the confirmation it
+	// denied, the withdrawals it cancelled, the sessions it ended, and the
+	// security hold it started. The target is the confirmation; the actor
+	// is the user the link was sent to.
+	ActionUserOperationDeny = "user.operation_deny"
 	// A user requesting a withdrawal, which locks its funds, and cancelling
 	// one before it is paid (#70). The target is the withdrawal; the event
 	// holds the currency, network, destination, amount, and fee.

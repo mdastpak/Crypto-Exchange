@@ -26,7 +26,9 @@
 <tr><td align="center" style="padding:0 28px 20px;font-size:13px;color:#616e7c;">It expires in {{.TTLSeconds}} seconds.</td></tr>
 <tr><td style="padding:0 28px 28px;">
 <div style="padding:12px 16px;border-radius:10px;background:#fdecea;border:1px solid #f5b5ae;font-size:13px;line-height:1.6;color:#8a1c12;">
-If you did not request this withdrawal, do not enter or share this code. Sign in, change your password, and contact support. We will never ask you for this code.
+If you did not request this withdrawal, do not enter or share this code.{{if .DenyLink}} The button below cancels it and secures your account: it can only stop, never approve.{{end}} Then sign in, change your password, and contact support. We will never ask you for this code.
+{{if .DenyLink}}<div style="padding-top:14px;text-align:center;"><a href="{{.DenyLink}}" style="display:inline-block;padding:10px 20px;border-radius:8px;background:#b42318;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">This was not me</a></div>
+<div style="padding-top:8px;font-size:12px;color:#8a1c12;text-align:center;word-break:break-all;" dir="ltr">{{.DenyLink}}</div>{{end}}
 </div>
 </td></tr>
 </table>

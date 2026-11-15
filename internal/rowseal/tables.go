@@ -208,11 +208,13 @@ var (
 		timestamptz("usable_from"), timestamptz("removed_at"),
 	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
-	// whether it was confirmed and consumed (#161): one marked confirmed in
-	// SQL runs nothing.
+	// whether it was confirmed, consumed, or denied by its link (#161,
+	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
+	// in SQL is detected.
 	OperationConfirmations = &Table{Name: "operation_confirmations", Key: "id", KeyType: "uuid", Columns: []Column{
 		text("user_hk"), text("purpose"), sealedBytes("digest"), text("method"), secret("code_session"),
 		text("failed_attempts"), timestamptz("expires_at"), timestamptz("confirmed_at"), timestamptz("consumed_at"),
+		optional(timestamptz("denied_at")),
 	}, SealedFromStart: true}
 	// UserConfirmationMethods covers the method a user chose to confirm
 	// withdrawals (#161): one changed in SQL is ignored.
@@ -276,6 +278,13 @@ var (
 		text("idempotency_key"), text("provider_ref"), text("tracking_id"), timestamptz("submitted_at"),
 		timestamptz("completed_at"), timestamptz("failed_at"),
 	}, SealedFromStart: true}
+	// DenyLinks covers a "this was not me" link (#374): the hash of its
+	// token, whose confirmation it denies, until when, and whether it was
+	// used. A link raised or renewed in SQL denies nothing. Its rows are
+	// sealed from the first one.
+	DenyLinks = &Table{Name: "deny_links", Key: "id", KeyType: "uuid", Columns: []Column{
+		sealedBytes("token_hash"), text("user_hk"), text("confirmation_id"), timestamptz("expires_at"), timestamptz("used_at"),
+	}, SealedFromStart: true}
 )
 
 // Tables lists the protected tables.
@@ -283,7 +292,7 @@ var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
-	IntegrityFindings, WithdrawalPayouts,
+	IntegrityFindings, WithdrawalPayouts, DenyLinks,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an
