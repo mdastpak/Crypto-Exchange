@@ -226,6 +226,12 @@ func TestSend_AnswersTheRefusals(t *testing.T) {
 	assert.Equal(t, map[string]any{"action": "withdraw_fiat", "level": float64(1), "currency_hk": "hk", "period": "24h",
 		"limit": "1000", "used": "800", "remaining": "200"}, body["info"])
 
+	status, body = send(&Refusal{Code: CodeWithdrawalLimitUnconfigured, Action: WithdrawCrypto, Level: Level2, CurrencyHK: "hk"})
+	assert.Equal(t, http.StatusForbidden, status)
+	assert.Equal(t, CodeWithdrawalLimitUnconfigured, body["code"])
+	assert.Equal(t, map[string]any{"action": "withdraw_crypto", "level": float64(2), "currency_hk": "hk"}, body["info"],
+		"no limit to show, and no remaining amount")
+
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	assert.False(t, Send(c, assert.AnError), "another error is not answered")
