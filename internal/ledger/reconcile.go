@@ -35,6 +35,10 @@ type CurrencyReport struct {
 	// Actual - Expected; both are nil when Holdings does not know.
 	Expected           shared.Decimal
 	Actual, Difference *shared.Decimal
+	// Problems are the accounts of the exchange that no sequence of the
+	// ledger's operations can leave as they are (#404), such as fees below
+	// zero: an entry that balances but was not written by the ledger.
+	Problems []string
 }
 
 // Mismatch is a balance whose stored values differ from the replay of its
@@ -61,11 +65,45 @@ func (r Report) OK() bool {
 		return false
 	}
 	for _, c := range r.Currencies {
-		if !c.Imbalance.IsZero() || (c.Difference != nil && !c.Difference.IsZero()) {
+		if !c.Balanced() {
 			return false
 		}
 	}
 	return true
+}
+
+// Balanced reports books of the currency without a problem: they sum to
+// zero, custody holds what it must where it is known, and the accounts of
+// the exchange are ones that the ledger's operations can leave.
+func (c CurrencyReport) Balanced() bool {
+	return c.Imbalance.IsZero() && (c.Difference == nil || c.Difference.IsZero()) && len(c.Problems) == 0
+}
+
+// accountProblems checks the accounts of the exchange against what the
+// operations of the ledger can leave in them (#404). Each entry kind has
+// its shape, which the database checks at commit, so:
+//
+//   - fees only grow, from the fees of trades and withdrawals: never below
+//     zero;
+//   - custody holds the negative of what custody must hold, which deposits
+//     raise and withdrawals lower: never above zero;
+//   - deposits_pending is the negative of the deposits detected and not
+//     credited or failed yet, which is what users hold as pending: exactly
+//     the opposite of Pending.
+//
+// The inventory may go either way, as the exchange trades.
+func accountProblems(c CurrencyReport) []string {
+	var problems []string
+	if fees := c.Accounts[AccountFees]; fees.IsNegative() {
+		problems = append(problems, fmt.Sprintf("the fees account is %s, below zero", fees))
+	}
+	if custody := c.Accounts[AccountCustody]; custody.IsPositive() {
+		problems = append(problems, fmt.Sprintf("the custody account is %s, above zero", custody))
+	}
+	if pending := c.Accounts[AccountDepositsPending]; !pending.Equal(c.Pending.Neg()) {
+		problems = append(problems, fmt.Sprintf("the deposits_pending account is %s, and users hold %s pending", pending, c.Pending))
+	}
+	return problems
 }
 
 // replayBatchSize is how many balances Reconcile replays at a time.
@@ -78,7 +116,8 @@ const replayBatchSize = 500
 //     and be the transition its type and amount describe; the result must
 //     be the stored balance;
 //   - in every currency, the positions of users and the accounts of the
-//     exchange must sum to zero;
+//     exchange must sum to zero, and each account of the exchange must be
+//     one that the operations of the ledger can leave (accountProblems);
 //   - what custody must hold is compared with what holdings reports, when
 //     holdings is set and knows the currency.
 //
@@ -294,6 +333,7 @@ func sums(ctx context.Context, q querier) ([]CurrencyReport, error) {
 		}
 		c.Imbalance = total
 		c.Expected = c.Accounts[AccountCustody].Neg()
+		c.Problems = accountProblems(*c)
 		if err := q.QueryRowContext(ctx, `SELECT COALESCE(info->>'symbol', '') FROM currencies WHERE hk = $1`, c.Currency).
 			Scan(&c.Symbol); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("read the currency: %w", err)

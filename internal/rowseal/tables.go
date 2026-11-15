@@ -16,6 +16,11 @@ type Table struct {
 	// from text.
 	Key, KeyType string
 	Columns      []Column
+	// SealedFromStart marks a table whose rows were sealed from the first
+	// one (#404), such as the balances: a row that fails its check is
+	// never one written before its seals, so it is refused in every mode,
+	// and the verifier never adopts it in report mode.
+	SealedFromStart bool
 }
 
 // Column is a protected column.
@@ -193,7 +198,7 @@ var (
 	Balances = &Table{Name: "balances", Key: "id", KeyType: "uuid", Columns: []Column{
 		text("user_id"), text("sub_account_id"), text("currency_hk"),
 		text("available"), text("locked"), text("pending_deposit"), text("version"),
-	}}
+	}, SealedFromStart: true}
 	// WithdrawalDestinations covers whose destination it is, its number or
 	// address and memo, encrypted, and when it is usable (#160): a
 	// destination swapped or made usable in SQL is refused, not paid.
@@ -201,14 +206,14 @@ var (
 		text("user_hk"), text("kind"), sealedBytes("value_enc"), sealedBytes("value_bidx"), text("masked"),
 		text("bank"), text("network"), sealedBytes("memo_enc"), text("verified_by"),
 		timestamptz("usable_from"), timestamptz("removed_at"),
-	}}
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed and consumed (#161): one marked confirmed in
 	// SQL runs nothing.
 	OperationConfirmations = &Table{Name: "operation_confirmations", Key: "id", KeyType: "uuid", Columns: []Column{
 		text("user_hk"), text("purpose"), sealedBytes("digest"), text("method"), secret("code_session"),
 		text("failed_attempts"), timestamptz("expires_at"), timestamptz("confirmed_at"), timestamptz("consumed_at"),
-	}}
+	}, SealedFromStart: true}
 	// UserConfirmationMethods covers the method a user chose to confirm
 	// withdrawals (#161): one changed in SQL is ignored.
 	UserConfirmationMethods = &Table{Name: "user_confirmation_methods", Key: "user_hk", KeyType: "uuid", Columns: []Column{
@@ -251,6 +256,16 @@ var (
 		text("user_id"), text("currency_hk"), text("network"), text("destination_id"), text("amount"), text("fee"),
 		text("status"), text("confirmation_id"), text("reviewed_by"), timestamptz("reviewed_at"),
 		timestamptz("completed_at"), timestamptz("cancelled_at"),
+	}, SealedFromStart: true}
+	// IntegrityFindings covers the resolution of a finding (#404): which
+	// row it is about, and whether, when, how, and by whom it was closed. A
+	// finding closed in SQL, which would hide the row from the
+	// administrators, is itself a finding. Its counts and the request of a
+	// re-seal are not sealed: every detection changes the counts, and a
+	// request counts only with its sealed audit event.
+	IntegrityFindings = &Table{Name: "integrity_findings", Key: "id", KeyType: "bigint", Columns: []Column{
+		text("table_name"), text("row_key"), timestamptz("detected_at"), timestamptz("resolved_at"),
+		text("resolution"), text("resolved_by"), text("reason"),
 	}}
 )
 
@@ -259,6 +274,7 @@ var Tables = []*Table{
 	Users, UserContacts, Sessions, UserPasswords, UserPasskeys, UserTOTP, AccountRecoveries, SessionStepUps,
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
+	IntegrityFindings,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

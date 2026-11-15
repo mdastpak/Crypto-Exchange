@@ -70,8 +70,8 @@ func (a *ledgerAuditor) pass() {
 	}
 	recordAudit(report)
 	if !report.OK() {
-		log.Printf("SECURITY: the ledger does not reconcile: %d of %d balances differ from the replay of their changes, %d currencies do not balance; see admin ledger reconcile",
-			len(report.Mismatches), report.Balances, imbalanced(report))
+		log.Printf("SECURITY: the ledger does not reconcile: %d of %d balances differ from the replay of their changes, %d currencies do not balance, %d accounts of the exchange have a problem; see admin ledger reconcile",
+			len(report.Mismatches), report.Balances, imbalanced(report), accountProblems(report))
 	} else if snapshots > 0 {
 		log.Printf("Audited the ledger: %d balances replayed, %d snapshots recorded", report.Balances, snapshots)
 	}
@@ -81,17 +81,26 @@ func (a *ledgerAuditor) pass() {
 func recordAudit(report ledger.Report) {
 	metrics.LedgerMismatches.Set(float64(len(report.Mismatches)))
 	metrics.LedgerImbalancedCurrencies.Set(float64(imbalanced(report)))
+	metrics.LedgerAccountProblems.Set(float64(accountProblems(report)))
 	metrics.LedgerLastReconciliation.SetToCurrentTime()
 }
 
-// imbalanced counts the currencies whose books do not sum to zero, or
-// whose custody holds other than it must.
+// imbalanced counts the currencies whose books have a problem.
 func imbalanced(report ledger.Report) int {
 	n := 0
 	for _, c := range report.Currencies {
-		if !c.Imbalance.IsZero() || (c.Difference != nil && !c.Difference.IsZero()) {
+		if !c.Balanced() {
 			n++
 		}
+	}
+	return n
+}
+
+// accountProblems counts the problems of the accounts of the exchange.
+func accountProblems(report ledger.Report) int {
+	n := 0
+	for _, c := range report.Currencies {
+		n += len(c.Problems)
 	}
 	return n
 }
