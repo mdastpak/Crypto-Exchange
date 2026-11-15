@@ -405,9 +405,22 @@ func Cancel(ctx context.Context, db *sql.DB, targetHK, hk string, version *int64
 // Advance applies the phases that are due at now, each exactly once on all
 // instances, at most limit of them, and then converts at most limit
 // holdings of the forced migrations that are converting (ConvertHoldings).
-// It is a currencies.Advancer.
+// When it converted some, it applies the phases again, so that a migration
+// whose last holding it converted completes in the same run. It is a
+// currencies.Advancer.
 func Advance(ctx context.Context, db *sql.DB, now time.Time, limit int) ([]currencies.Change, error) {
-	var changes []currencies.Change
+	changes, err := advance(ctx, db, now, limit, nil)
+	if err != nil {
+		return changes, err
+	}
+	converted, err := ConvertHoldings(ctx, db, limit)
+	if err != nil || converted == 0 {
+		return changes, err
+	}
+	return advance(ctx, db, now, limit, changes)
+}
+
+func advance(ctx context.Context, db *sql.DB, now time.Time, limit int, changes []currencies.Change) ([]currencies.Change, error) {
 	for applied := 0; applied < limit; applied++ {
 		c, ok, err := advanceOne(ctx, db, now)
 		if err != nil {
@@ -417,9 +430,6 @@ func Advance(ctx context.Context, db *sql.DB, now time.Time, limit int) ([]curre
 			break
 		}
 		changes = append(changes, c...)
-	}
-	if _, err := ConvertHoldings(ctx, db, limit); err != nil {
-		return changes, err
 	}
 	return changes, nil
 }
