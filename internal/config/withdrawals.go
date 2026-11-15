@@ -1,7 +1,6 @@
 package config
 
 import (
-	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -49,7 +48,11 @@ type WithdrawalsConfig struct {
 	CryptoDestinationWaitHours *int `yaml:"crypto_destination_wait_hours"`
 	// ReviewAbove holds, by currency symbol, the amount from which a
 	// withdrawal waits for an administrator before it is paid (#70). A
-	// currency left out is never held for review.
+	// previous symbol of a currency still names it, and the key
+	// AnyCurrency, "*", holds the threshold of the currencies without an
+	// entry (#406). While it has any entry, a currency that has none, and
+	// no default, is held for review whatever the amount, rather than
+	// never; an empty map holds nothing for review.
 	ReviewAbove map[string]string `yaml:"review_above"`
 	// Payouts configures how a withdrawal is paid (#70).
 	Payouts PayoutsConfig `yaml:"payouts"`
@@ -112,8 +115,8 @@ func (c *Configuration) withdrawalProblems(p *problems) {
 	}
 	c.payoutProblems(p)
 	for symbol, amount := range w.ReviewAbove {
-		if symbol == "" || strings.ToUpper(symbol) != symbol {
-			p.add("withdrawals.review_above", "has %q; the keys are currency symbols, upper case", symbol)
+		if symbol != AnyCurrency && !currencySymbol.MatchString(symbol) {
+			p.add("withdrawals.review_above", "has %q; the keys are currency symbols, upper case, or \"*\" for every other currency", symbol)
 		}
 		if d, err := decimal.NewFromString(amount); err != nil || !d.IsPositive() {
 			p.add("withdrawals.review_above."+symbol, "is %q; it must be a positive decimal", amount)

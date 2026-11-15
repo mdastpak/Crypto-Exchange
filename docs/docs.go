@@ -11054,7 +11054,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "The verification level of the signed-in user, from 0 to 2, and the KYC tier and status it comes from. Only an approved tier counts. actions lists every action (deposit_fiat, deposit_crypto, trade_otc, trade_market, withdraw_fiat, withdraw_crypto), whether the level allows it, and the level it needs. withdrawal_limits lists the limits of the currencies that the level may withdraw: per transaction, and in any 24 hours in all the user's accounts, the fee included, with what the user has requested and what remains. An action that the level does not allow answers 403 verification_required; a withdrawal above a limit answers 403 withdrawal_limit_exceeded.",
+                "description": "The verification level of the signed-in user, from 0 to 2, and the KYC tier and status it comes from. Only an approved tier counts. actions lists every action (deposit_fiat, deposit_crypto, trade_otc, trade_market, withdraw_fiat, withdraw_crypto), whether the level allows it, and the level it needs. withdrawal_limits lists the limits of the currencies that the level may withdraw: per transaction, and in any 24 hours in all the user's accounts, the fee included, with what the user has requested and what remains. An action that the level does not allow answers 403 verification_required; a withdrawal above a limit answers 403 withdrawal_limit_exceeded, and one of a currency without a limit at a level that limits others answers 403 withdrawal_limit_unconfigured (#406). A limit configured by a previous symbol of a currency is listed under its current symbol.",
                 "produces": [
                     "application/json"
                 ],
@@ -11386,7 +11386,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
+                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a \"*\" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
                 "consumes": [
                     "application/json"
                 ],
@@ -11483,7 +11483,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "verification_required, withdrawal_limit_exceeded, account_frozen, operation_restricted, asset_restricted, or security_hold",
+                        "description": "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -17544,7 +17544,8 @@ const docTemplate = `{
                     "description": "ReviewReason is why it waits, or waited, for an administrator.",
                     "type": "string",
                     "enum": [
-                        "amount"
+                        "amount",
+                        "no_threshold"
                     ]
                 },
                 "reviewed_at": {

@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 )
@@ -60,9 +61,41 @@ const (
 // the status: no payout has started.
 func (s Status) Cancellable() bool { return s == StatusReview || s == StatusQueued }
 
-// ReviewAmount is the reason of a withdrawal held for review because of
-// its amount.
-const ReviewAmount = "amount"
+// The reasons of a withdrawal held for review.
+const (
+	// ReviewAmount is a withdrawal at or above the review threshold of its
+	// currency.
+	ReviewAmount = "amount"
+	// ReviewUnconfigured is a withdrawal of a currency that has no review
+	// threshold, under none of its symbols, and no default (#406): it is
+	// held whatever the amount, rather than never.
+	ReviewUnconfigured = "no_threshold"
+)
+
+// reviewOf returns why a withdrawal of amount of the currency known by
+// symbols, its current symbol first, waits for an administrator, or ""
+// (#406). The threshold of any symbol of the currency applies, the current
+// one's first, so a rename keeps it; a currency without one takes the
+// config.AnyCurrency default. Without either, it is held, unless no
+// threshold is configured at all.
+func (s Service) reviewOf(symbols []string, amount shared.Decimal) string {
+	if len(s.ReviewAbove) == 0 {
+		return ""
+	}
+	threshold, ok := shared.Decimal{}, false
+	for _, symbol := range append(symbols, config.AnyCurrency) {
+		if threshold, ok = s.ReviewAbove[symbol]; ok {
+			break
+		}
+	}
+	switch {
+	case !ok:
+		return ReviewUnconfigured
+	case amount.GreaterThanOrEqual(threshold):
+		return ReviewAmount
+	}
+	return ""
+}
 
 // Withdrawal is a withdrawal of a user.
 type Withdrawal struct {
@@ -84,7 +117,7 @@ type Withdrawal struct {
 	Total  shared.Decimal `json:"total" swaggertype:"string" example:"101"`
 	Status Status         `json:"status" enums:"review,queued,processing,partially_paid,completed,cancelled,rejected,failed" example:"queued"`
 	// ReviewReason is why it waits, or waited, for an administrator.
-	ReviewReason string `json:"review_reason,omitempty" enums:"amount"`
+	ReviewReason string `json:"review_reason,omitempty" enums:"amount,no_threshold"`
 	// Reason is why it was rejected or failed.
 	Reason      string     `json:"reason,omitempty"`
 	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`

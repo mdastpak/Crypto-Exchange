@@ -63,6 +63,7 @@ An error response contains only a fixed message for each error. Internal details
 | `operation_restricted`, `asset_restricted` | `403` | A [restriction](#restrictions) blocks the operation; `info` names it |
 | `verification_required` | `403` | The user's [verification level](#verification-levels) does not allow the action; `info.required_level` is the level it needs |
 | `withdrawal_limit_exceeded` | `403` | The withdrawal is above a limit of the user's [verification level](#verification-levels); `info` has the limit and, for the daily one, what remains |
+| `withdrawal_limit_unconfigured` | `403` | The currency has no withdrawal limit at the user's level, which limits other currencies: a configuration error, refused rather than unlimited ([#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); `info` has `action`, `level`, and `currency_hk` |
 | `destination_not_owned` | `403` | The card, IBAN, or account of a new [withdrawal destination](#withdrawal-destinations) is not the user's |
 | `destination_invalid` | `400` | Not a card number, an IBAN, an account number, or an address of its network; `info.reason` says why |
 | `destination_exists`, `destination_taken`, `destination_limit_reached` | `409` | The [withdrawal destination](#withdrawal-destinations) is in the user's list already, is another user's card, IBAN, or account, or the list is full |
@@ -1373,6 +1374,7 @@ What a user may do depends on their verification level ([#157](https://github.co
 
 - An action below its level answers `403 verification_required`. `info` has `action`, the user's `level`, and `required_level`.
 - A withdrawal above a limit answers `403 withdrawal_limit_exceeded`. `info` has `action`, `level`, `currency_hk`, `period` (`transaction` or `24h`), and `limit`. For the daily limit, it also has `used` and `remaining`.
+- A withdrawal of a currency without a limit at a level that limits other currencies answers `403 withdrawal_limit_unconfigured`, with `action`, `level`, and `currency_hk` ([#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)). The limits follow a currency through a rename by its previous symbols, and `"*"` gives every other currency a default; see [the settings](configuration.md#verification).
 
 The deposit, withdrawal (#70), OTC (#61, #62), and order (#76) paths all check through the same component, `internal/verification`. A withdrawal request checks its level and limits in its own transaction, under a lock of the user's withdrawals of the currency, and locks its funds in that same transaction. Two requests of the same user therefore never pass the limit together.
 
@@ -1400,7 +1402,7 @@ Returns the signed-in user's verification:
 
 - `level`, and the `kyc_tier` and `kyc_status` it comes from;
 - `actions`: every action, with `allowed` and `required_level`;
-- `withdrawal_limits`: the limits of the currencies the user may withdraw at their level. Each has `currency_hk`, `symbol`, and `daily` and `per_transaction`, each absent when there is no bound. It also has `used` in the last 24 hours, `remaining`, and `window_hours`.
+- `withdrawal_limits`: the limits of the currencies the user may withdraw at their level, each configured currency once, under its current symbol, also when the limit is configured by a previous one. The `"*"` default is not listed. Each has `currency_hk`, `symbol`, and `daily` and `per_transaction`, each absent when there is no bound. It also has `used` in the last 24 hours, `remaining`, and `window_hours`.
 
 A client uses it to show what each level unlocks, and what remains of the daily limits.
 
@@ -1575,7 +1577,7 @@ The checks:
 - The user's restrictions and security hold (`403`, as for the other operations), and the `withdrawals` lockdown (`503 feature_locked`).
 - The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, or `confirmation_mismatch` for one of another request.
 
-A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
+A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`). While thresholds are configured, a currency that has none, under any of its symbols, and no `"*"` default, waits whatever the amount (`review_reason: no_threshold`, [#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
 
 **The withdrawal:**
 

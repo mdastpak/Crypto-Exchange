@@ -179,6 +179,12 @@ func TestValidateServer_Rules(t *testing.T) {
 		"lower-case symbol": {func(c *Configuration) {
 			c.Verification.WithdrawalLimits["usdt"] = map[int]WithdrawalLimit{1: {Daily: "100"}}
 		}, "verification.withdrawal_limits.usdt is not a currency symbol"},
+		"lower-case review symbol": {func(c *Configuration) {
+			c.Withdrawals.ReviewAbove = map[string]string{"usdt": "100"}
+		}, `withdrawals.review_above has "usdt"; the keys are currency symbols`},
+		"default limit of level 3": {func(c *Configuration) {
+			c.Verification.WithdrawalLimits[AnyCurrency] = map[int]WithdrawalLimit{3: {Daily: "100"}}
+		}, "verification.withdrawal_limits.*.3 names level 3"},
 
 		// The withdrawal destinations (#160).
 		"unknown bank ownership provider": {func(c *Configuration) { c.Identity.BankOwnership.Provider = "jibit" }, `identity.bank_ownership.provider is "jibit"; it must be none or stub`},
@@ -665,6 +671,15 @@ func TestValidate_Legal(t *testing.T) {
 	assert.Contains(t, problemsOf(nil, LegalDocument{Kind: "terms", Version: "1", URL: "legal/terms"}), "not an http or https URL")
 	assert.Contains(t, problemsOf([]string{"ir"}), "ISO 3166-1")
 	assert.Contains(t, problemsOf([]string{"IRN"}), "ISO 3166-1")
+}
+
+// The default "*" of the withdrawal limits and of the review thresholds is
+// accepted (#406).
+func TestValidate_TheDefaultOfEveryOtherCurrency(t *testing.T) {
+	c := secureRelease(t)
+	c.Verification.WithdrawalLimits[AnyCurrency] = map[int]WithdrawalLimit{1: {Daily: "100"}}
+	c.Withdrawals.ReviewAbove = map[string]string{"USDT": "10000", AnyCurrency: "500"}
+	assert.Empty(t, problemsOf(c))
 }
 
 func TestValidateServer_PriceSignatures(t *testing.T) {

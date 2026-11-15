@@ -452,6 +452,7 @@
   "WITHDRAWAL_CONFIRMATION_SENT": "Confirm the withdrawal with the code.",
   "WITHDRAWAL_FAILED": "The withdrawal could not be processed.",
   "WITHDRAWAL_LIMIT_EXCEEDED": "This withdrawal is above the limit of your verification level. info.remaining is what you can still withdraw now.",
+  "WITHDRAWAL_LIMIT_UNCONFIGURED": "Withdrawals of this currency are not available at your verification level yet: no limit is configured for it. Please contact support.",
   "WITHDRAWAL_NOT_CANCELLABLE": "This withdrawal can no longer be cancelled.",
   "WITHDRAWAL_NOT_FOUND": "Withdrawal not found.",
   "WITHDRAWAL_NOT_IN_REVIEW": "This withdrawal does not wait for review.",
