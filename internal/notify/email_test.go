@@ -392,6 +392,10 @@ func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
 	_, err = NewEmailDeliverer(cfg, time.Minute)
 	require.ErrorContains(t, err, "denied.html")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "denied.html"), []byte(`<p>{{.Cancelled}} {{.AntiPhishingCode}}</p>`), 0o600))
+	// And without the notices of a delisting (#216).
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	require.ErrorContains(t, err, "delisting_notice.html")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "delisting_notice.html"), []byte(`<p>{{.Currency}} {{.Stage}} {{.AntiPhishingCode}}</p>`), 0o600))
 	_, html = send(dir, testEmailMessage)
 	assert.Contains(t, html, "<p>Exchange: 482913 </p>", "the sender is the name of the from address")
 

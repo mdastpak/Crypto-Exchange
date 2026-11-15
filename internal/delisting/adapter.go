@@ -40,3 +40,8 @@ func (s Store) Override(ctx context.Context, currencyHK string, k currencies.Cap
 func (s Store) Report(ctx context.Context, currencyHK, hk string) (SettlementReport, error) {
 	return Report(ctx, s.DB, currencyHK, hk)
 }
+
+// Notices is Notices on s.DB.
+func (s Store) Notices(ctx context.Context, currencyHK, hk string) ([]NoticeReport, error) {
+	return Notices(ctx, s.DB, currencyHK, hk)
+}

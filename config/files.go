@@ -18,8 +18,10 @@ var Example []byte
 
 // EmailTemplates are the HTML templates of the emails, in email/<language>:
 // otp.html for a sign-in code, withdrawal.html for the code that
-// confirms a withdrawal (#161), and anti_phishing_reminder.html for the
-// reminder to change the anti-phishing code (#375).
+// confirms a withdrawal (#161), anti_phishing_reminder.html for the
+// reminder to change the anti-phishing code (#375), denied.html for the
+// notice of a "this was not me" link (#374), and delisting_notice.html for
+// the notices of a delisting (#216).
 // notifications.email.html_templates chooses
 // the language.
 //

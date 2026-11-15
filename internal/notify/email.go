@@ -39,6 +39,10 @@ type EmailDeliverer struct {
 	// me" link that was used (#374).
 	deniedSubject *template.Template
 	deniedBody    *template.Template
+	// delistingSubject and delistingBody render the notices of a
+	// delisting (#216).
+	delistingSubject *template.Template
+	delistingBody    *template.Template
 	// html renders the HTML part beside the text; nil is text only.
 	html    *htmlTemplates
 	codeTTL time.Duration
@@ -70,6 +74,12 @@ type emailData struct {
 	// the withdrawals that were cancelled, those that were being paid
 	// already, and the length of the security hold.
 	Cancelled, InProgress, HoldHours int
+	// The fields of a notice of a delisting; see DelistingNotice.
+	Currency, Stage, Deadline      string
+	DaysLeft                       int
+	Holder                         bool
+	Settlement, SettlementCurrency string
+	ClaimDays                      int
 }
 
 // antiPhishingLabel introduces the anti-phishing code that the text part of
@@ -112,6 +122,8 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 		{"anti_phishing_reminder_body", orDefault(cfg.AntiPhishingReminderBody, config.DefaultAntiPhishingReminderBody), &d.reminderBody},
 		{"denied_subject", orDefault(cfg.DeniedSubject, config.DefaultDeniedEmailSubject), &d.deniedSubject},
 		{"denied_body", orDefault(cfg.DeniedBody, config.DefaultDeniedEmailBody), &d.deniedBody},
+		{"delisting_notice_subject", orDefault(cfg.DelistingNoticeSubject, config.DefaultDelistingNoticeSubject), &d.delistingSubject},
+		{"delisting_notice_body", orDefault(cfg.DelistingNoticeBody, config.DefaultDelistingNoticeBody), &d.delistingBody},
 	} {
 		t, err := template.New(tmpl.name).Parse(tmpl.text)
 		if err != nil {
@@ -129,7 +141,7 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	}
 	// Render once, so that a template that fails, for example by using an
 	// unknown field, stops the server at startup instead of every delivery.
-	for _, purpose := range []string{"", PurposeWithdrawal, PurposeAntiPhishingReminder, PurposeDenied} {
+	for _, purpose := range emailPurposes {
 		sample := OTPMessage{Code: "000000", Purpose: purpose, Details: "1 USDT to T...0000", Amount: "1 USDT", Destination: "T...0000",
 			AntiPhishingCode: "sample-phrase-7q", Uses: 200, AgeDays: 180}
 		switch purpose {
@@ -139,10 +151,24 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 			sample.Code, sample.Details, sample.Amount, sample.Destination = "", "", "", ""
 		case PurposeDenied:
 			sample.Code, sample.Cancelled, sample.InProgress, sample.HoldHours = "", 1, 1, 24
+		case PurposeDelistingNotice:
+			sample.Code, sample.Details, sample.Amount, sample.Destination = "", "", "", ""
 		}
 		_, _, html, err := d.render(sample)
 		if err != nil {
 			return nil, err
+		}
+		// Each stage of a delisting renders, as a holder and not.
+		if purpose == PurposeDelistingNotice {
+			for _, stage := range sampleDelistingStages {
+				for _, holder := range []bool{true, false} {
+					sample.Delisting = DelistingNotice{Currency: "ABC", Stage: stage, Deadline: "2026-12-01 12:00 UTC", DaysLeft: 7,
+						Holder: holder, Settlement: "convert", SettlementCurrency: "USDT", ClaimDays: 180}
+					if _, _, _, err := d.render(sample); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 		// An HTML template must show the anti-phishing code itself (#375),
 		// and the HTML of a code its "this was not me" link (#374): a place
@@ -156,6 +182,14 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 	}
 	return d, nil
 }
+
+// emailPurposes are the purposes of the emails, in the order that their
+// templates are checked at startup.
+var emailPurposes = []string{"", PurposeWithdrawal, PurposeAntiPhishingReminder, PurposeDenied, PurposeDelistingNotice}
+
+// sampleDelistingStages are the stages of a notice of a delisting.
+var sampleDelistingStages = []string{"delist_announced", "deposits_disabled", "sell_only", "trading_halted",
+	"withdrawal_only", "frozen", "delisted", DelistingStageReminder, DelistingStageCancelled}
 
 func orDefault(s, fallback string) string {
 	if s == "" {
@@ -174,7 +208,10 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 	data := emailData{Code: msg.Code, TTLSeconds: int(d.codeTTL / time.Second), Details: msg.Details,
 		Amount: msg.Amount, Destination: msg.Destination, Sender: sender, AntiPhishingCode: msg.AntiPhishingCode,
 		Uses: msg.Uses, AgeDays: msg.AgeDays, DenyLink: msg.DenyLink,
-		Cancelled: msg.Cancelled, InProgress: msg.InProgress, HoldHours: msg.HoldHours}
+		Cancelled: msg.Cancelled, InProgress: msg.InProgress, HoldHours: msg.HoldHours,
+		Currency: msg.Delisting.Currency, Stage: msg.Delisting.Stage, Deadline: msg.Delisting.Deadline,
+		DaysLeft: msg.Delisting.DaysLeft, Holder: msg.Delisting.Holder, Settlement: msg.Delisting.Settlement,
+		SettlementCurrency: msg.Delisting.SettlementCurrency, ClaimDays: msg.Delisting.ClaimDays}
 	subjectT, bodyT, names := d.subject, d.body, [2]string{"otp_subject", "otp_body"}
 	switch msg.Purpose {
 	case PurposeWithdrawal:
@@ -184,6 +221,9 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 		names = [2]string{"anti_phishing_reminder_subject", "anti_phishing_reminder_body"}
 	case PurposeDenied:
 		subjectT, bodyT, names = d.deniedSubject, d.deniedBody, [2]string{"denied_subject", "denied_body"}
+	case PurposeDelistingNotice:
+		subjectT, bodyT = d.delistingSubject, d.delistingBody
+		names = [2]string{"delisting_notice_subject", "delisting_notice_body"}
 	}
 	var buf bytes.Buffer
 	if err := subjectT.Execute(&buf, data); err != nil {

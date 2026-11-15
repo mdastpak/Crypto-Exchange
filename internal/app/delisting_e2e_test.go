@@ -134,6 +134,15 @@ func TestCurrencyDelisting_EndToEnd(t *testing.T) {
 	assert.Equal(t, delisting.SettlementConvert, report.Info.Settlement)
 	assert.Zero(t, report.Info.Holders)
 	assert.Equal(t, "0", report.Info.Remaining)
+
+	status, raw = env.call(t, http.MethodGet, path+"/"+scheduled.Info.ID+"/notices", nil, admin)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var notices struct {
+		Info []delisting.NoticeReport `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &notices))
+	status, _ = env.call(t, http.MethodGet, path+"/00000000-0000-4000-8000-000000000000/notices", nil, admin)
+	assert.Equal(t, http.StatusNotFound, status)
 }
 
 // DelistingListBody is the info of a list of delistings.

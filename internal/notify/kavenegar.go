@@ -30,8 +30,10 @@ type KavenegarDeliverer struct {
 	// reminderTemplate is the template of the reminder to change the
 	// anti-phishing code (#375); empty is none, and reminders are refused.
 	reminderTemplate string
-	baseURL          string
-	client           *http.Client
+	// delistingTemplate is the template of the notices of a delisting.
+	delistingTemplate string
+	baseURL           string
+	client            *http.Client
 }
 
 var _ SMSProvider = (*KavenegarDeliverer)(nil)
@@ -57,6 +59,7 @@ func NewKavenegarDeliverer(cfg config.KavenegarConfig) (*KavenegarDeliverer, err
 		template:           cfg.OTPTemplate,
 		withdrawalTemplate: cfg.WithdrawalTemplate,
 		reminderTemplate:   cfg.AntiPhishingReminderTemplate,
+		delistingTemplate:  cfg.DelistingNoticeTemplate,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
 		client:             &http.Client{Timeout: timeout},
 	}, nil
@@ -72,6 +75,8 @@ func (k *KavenegarDeliverer) Supports(purpose string) bool {
 		return k.withdrawalTemplate != ""
 	case PurposeAntiPhishingReminder:
 		return k.reminderTemplate != ""
+	case PurposeDelistingNotice:
+		return k.delistingTemplate != ""
 	}
 	// A message of another purpose, such as the notice of a denial
 	// (#374), has no template here: it must never go out with the
@@ -165,6 +170,15 @@ func (k *KavenegarDeliverer) Send(ctx context.Context, msg OTPMessage) (string, 
 		}
 		form.Set("template", k.reminderTemplate)
 		form.Set("token", strconv.FormatInt(msg.Uses, 10))
+	case PurposeDelistingNotice:
+		// The notice of a delisting carries the symbol and the date of
+		// the freeze, neither with a space; the text is the template's.
+		if k.delistingTemplate == "" {
+			return "", permanent(errors.New("kavenegar: no delisting_notice_template for the notices of delistings"))
+		}
+		form.Set("template", k.delistingTemplate)
+		form.Set("token", msg.Delisting.Currency)
+		form.Set("token2", deadlineDate(msg.Delisting))
 	case "":
 	default:
 		return "", permanent(fmt.Errorf("kavenegar: no template for messages of %q", msg.Purpose))

@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The notices of delistings ([#216](https://github.com/mdastpak/Crypto-Exchange/issues/216)). See [Delisting notices](docs/api.md#delisting-notices).
+  - Each stage that a delisting reaches is told to every user by email, and to the users who hold the currency also by SMS; holders are reminded of the freeze on `delisting.notices.reminder_days` (30, 14, 7, 3, and 1 days before), by email and SMS; a cancel is told by email. Push and the in-app inbox join with [#170](https://github.com/mdastpak/Crypto-Exchange/issues/170).
+  - The emails show the anti-phishing code and have no link: `notifications.email.delisting_notice_subject`/`_body` and `delisting_notice.html` in `en` and `fa`. A directory of HTML templates must now hold `delisting_notice.html`. SMS needs a template of its own: `notifications.sms.kavenegar.delisting_notice_template` (`%token` the symbol, `%token2` the date of the freeze) or `smsir.delisting_notice_template_id` (`#CURRENCY#`, `#DATE#`).
+  - The scheduler of every instance writes each notice once, its recipients once, and sends each recipient at least once, holders first, claimed with `SKIP LOCKED`, with retries; the channels sent are recorded. Migration 36 adds `currency_delisting_notices` and `currency_delisting_notice_recipients`.
+  - `GET /admin/currencies/{hk}/delistings/{id}/notices` shows each notice with its recipients by outcome. `delisting.notices.enabled` (`DELISTING_NOTICES_ENABLED`) turns them off.
 - `admin verification grant` sets the verification level of a user, for the testnet run of M2 and for manual review, until the identity checks and the KYC review grant levels ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)).
   - `-user` takes the user's ID, email address, or mobile number; `-level` is 0 to 2, down as well as up. `-reason` and `-operator` are required, and `-dry-run` reports the change without making it.
   - The level is written as an approved KYC tier in the user's row, which is sealed again, so the command needs the data keys. A row whose seal does not match, an administrator, and an account that is not active are refused.

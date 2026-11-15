@@ -1280,6 +1280,94 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/currencies/{hk}/delistings/{id}/notices": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The notices that the delisting sent its users (#216): one for the last stage that each run of the scheduler applied (step:\u003cstate\u003e), a reminder of the freeze on each of delisting.notices.reminder_days (reminder:\u003cdays\u003ed), and one for its cancel. Each stage and the cancel go to every user by email, and to the users who hold the currency also by SMS when a provider has a template for it; a reminder goes to the holders only. Each notice shows when it was due, when its recipients were written, how many there are and how many held the currency, and its recipients by outcome: sent, no_contact (no verified contact that a channel reaches), stale (the delisting was cancelled, or the account deleted, before it went), failed (after the last attempt), and pending.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Show the notices of a delisting",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The delisting's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/delisting.NoticeReport"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/currencies/{hk}/delistings/{id}/settlement": {
             "get": {
                 "security": [
@@ -12901,6 +12989,50 @@ const docTemplate = `{
                 "KindStandard",
                 "KindEmergency"
             ]
+        },
+        "delisting.NoticeReport": {
+            "type": "object",
+            "properties": {
+                "due_at": {
+                    "type": "string"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "holders": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "description": "Kind is step:\u003cstate\u003e, reminder:\u003cdays\u003ed, or cancelled.",
+                    "type": "string",
+                    "example": "step:deposits_disabled"
+                },
+                "no_contact": {
+                    "type": "integer"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "prepared_at": {
+                    "description": "PreparedAt is when the recipients were written; nil until then.",
+                    "type": "string"
+                },
+                "recipients": {
+                    "description": "Recipients are the users that it goes to, and Holders those of them\nwho held the currency.",
+                    "type": "integer"
+                },
+                "sent": {
+                    "description": "The recipients by outcome, and those still to send.",
+                    "type": "integer"
+                },
+                "stage": {
+                    "type": "string",
+                    "example": "deposits_disabled"
+                },
+                "stale": {
+                    "type": "integer"
+                }
+            }
         },
         "delisting.Plan": {
             "type": "object",

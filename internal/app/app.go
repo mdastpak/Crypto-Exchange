@@ -8,6 +8,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -277,7 +278,7 @@ func run() error {
 	var priceWorker worker
 	handlers.Prices, priceWorker = startPrices(services.Postgres.DB, services.Redis.Client, handlers)
 	workers = append(workers, priceWorker)
-	scheduler := newDelistingScheduler(services, handlers, relay)
+	scheduler := newDelistingScheduler(services, handlers, relay, otpSender)
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
@@ -622,10 +623,10 @@ func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers, wat
 
 // newDelistingScheduler returns the scheduler that applies the steps of
 // delistings (#216), with the settlement of the balances that they leave, and the phases of migrations (#215)
-// that are due. Every instance runs one; each step is applied once. After a change of the public view, it drops the cached
+// that are due, and then sends the notices of the delistings through sender. Every instance runs one; each step is applied once. After a change of the public view, it drops the cached
 // currency list and nudges the relay, which publishes the currency event
 // and drops the list again.
-func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandlers, relay *outbox.Relay) *currencies.Scheduler {
+func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandlers, relay *outbox.Relay, sender notify.OTPSender) *currencies.Scheduler {
 	interval := time.Duration(config.Config.Delisting.IntervalSeconds) * time.Second
 	// The settlements of delistings convert at the reference prices.
 	settler := delisting.Settler{}
@@ -642,7 +643,20 @@ func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandle
 			}
 		}
 		relay.Nudge()
-	}, settler.Advance, rebrand.Advance)
+	}, settler.Advance, rebrand.Advance, delistingNotifier(services.Postgres.DB, sender).Advance)
+}
+
+// delistingNotifier is the notifier of the delistings (#216): email to
+// every user, and SMS to the holders when a provider has a template for
+// it. Without a sender, or with delisting.notices.enabled false, it sends
+// nothing.
+func delistingNotifier(conn *sql.DB, sender notify.OTPSender) delisting.Notifier {
+	cfg := config.Config.Delisting.Notices
+	if !cfg.On() {
+		sender = nil
+	}
+	return delisting.Notifier{Sender: sender, Phrases: antiPhishingStore(conn), ReminderDays: cfg.ReminderDays,
+		SMS: config.Config.Notifications.SMS.HasTemplate("delisting_notice") || config.Config.OTP.Auth.DevLogCodes}
 }
 
 // useRowSeals seals the protected rows with the row-mac data keys (#139),
@@ -1297,6 +1311,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.POST("/currencies/:hk/delistings", ih.Admin.ScheduleDelisting)
 		adminGroup.POST("/currencies/:hk/delistings/:id/cancel", ih.Admin.CancelDelisting)
 		adminGroup.GET("/currencies/:hk/delistings/:id/settlement", ih.Admin.GetDelistingSettlement)
+		adminGroup.GET("/currencies/:hk/delistings/:id/notices", ih.Admin.GetDelistingNotices)
 		adminGroup.PUT("/currencies/:hk/capabilities/:capability", ih.Admin.OverrideCapability)
 		adminGroup.DELETE("/currencies/:hk/capabilities/:capability", ih.Admin.RemoveCapabilityOverride)
 		adminGroup.GET("/users/:hk/restrictions", ih.Admin.ListRestrictions)

@@ -46,12 +46,14 @@ type otpJob struct {
 	// DenyToken and DenyLink are the "this was not me" link of a code
 	// (#374); Cancelled, InProgress, and HoldHours are the counts of the
 	// notice of a denial.
-	DenyToken  string    `json:"deny_token,omitempty"`
-	DenyLink   string    `json:"deny_link,omitempty"`
-	Cancelled  int       `json:"cancelled,omitempty"`
-	InProgress int       `json:"in_progress,omitempty"`
-	HoldHours  int       `json:"hold_hours,omitempty"`
-	ExpiresAt  time.Time `json:"expires_at"`
+	DenyToken  string `json:"deny_token,omitempty"`
+	DenyLink   string `json:"deny_link,omitempty"`
+	Cancelled  int    `json:"cancelled,omitempty"`
+	InProgress int    `json:"in_progress,omitempty"`
+	HoldHours  int    `json:"hold_hours,omitempty"`
+	// Delisting is the notice of a delisting.
+	Delisting *delistingJob `json:"delisting,omitempty"`
+	ExpiresAt time.Time     `json:"expires_at"`
 }
 
 // deliveryID is the key of the job in the delivery log: its ID, or, for a
@@ -65,8 +67,25 @@ func (j otpJob) deliveryID(body []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// delistingJob is DelistingNotice on the queue.
+type delistingJob struct {
+	Currency           string `json:"currency"`
+	Stage              string `json:"stage"`
+	Deadline           string `json:"deadline,omitempty"`
+	DaysLeft           int    `json:"days_left,omitempty"`
+	Holder             bool   `json:"holder,omitempty"`
+	Settlement         string `json:"settlement,omitempty"`
+	SettlementCurrency string `json:"settlement_currency,omitempty"`
+	ClaimDays          int    `json:"claim_days,omitempty"`
+}
+
 func (j otpJob) message() OTPMessage {
+	var delisting DelistingNotice
+	if d := j.Delisting; d != nil {
+		delisting = DelistingNotice(*d)
+	}
 	return OTPMessage{
+		Delisting:        delisting,
 		ContactType:      j.ContactType,
 		Contact:          j.Contact,
 		MaskedContact:    j.MaskedContact,
@@ -160,6 +179,10 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 		Cancelled:        msg.Cancelled,
 		InProgress:       msg.InProgress,
 		HoldHours:        msg.HoldHours,
+	}
+	if msg.Purpose == PurposeDelistingNotice {
+		d := delistingJob(msg.Delisting)
+		job.Delisting = &d
 	}
 	publishing := amqp.Publishing{
 		ContentType: "application/json",
