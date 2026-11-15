@@ -260,6 +260,8 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	handlers.User.OTPSender = sender
 	useConfirmationSender(handlers, sender)
 	require.NoError(t, useWithdrawals(handlers, services.Postgres.DB, &config.Config))
+	_, _, err = newPayouts(handlers, services.Postgres.DB, &config.Config)
+	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, sender))
 	require.NoError(t, handlers.Socket.StartConsumer(context.Background()))
 	watcher, err := startPlatform(services, handlers)

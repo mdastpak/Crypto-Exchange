@@ -539,6 +539,21 @@ withdrawals:
   review_above: {}
   #   USDT: "10000"
   #   IRR: "5000000000"
+  # How a withdrawal is paid (#70). manual: an administrator pays each
+  # transfer and records it (GET /admin/payouts). The limits of the rails
+  # come from the documents of the banks and the payment provider, in
+  # rials; a rail left out is not used, so without rails no rial withdrawal
+  # is paid. Crypto withdrawals are one transfer on chain.
+  payouts:
+    provider: manual
+    interval_seconds: 15
+    timezone: "Asia/Tehran"
+    rail_order: [account, satna, paya, pol, card]
+    rails: {}
+    #   account: {banks: [mellat], max: "5000000000"}
+    #   satna: {min: "1500000000", hours: "08:00-14:00"}
+    #   paya: {max: "1500000000", daily_per_destination: "1500000000"}
+    #   card: {max: "100000000", daily_per_destination: "100000000"}
 
 # The asset registry (#57): the currencies, their networks, and the markets.
 # An empty registry_path is the registry built into the release

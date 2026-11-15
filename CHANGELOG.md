@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The payouts of withdrawals ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)), the second part of the withdrawal workflow.
+  - Every instance plans the queued withdrawals, sends the payouts that are due, and checks those sent, every `withdrawals.payouts.interval_seconds`. Each claims its rows with `FOR UPDATE SKIP LOCKED`.
+  - The plan is recorded before anything is sent. A crypto withdrawal is one transfer on chain. A rial one is split across the bank rails that reach its destination (`card`, `paya`, `satna`, `pol`, `account`), in `withdrawals.payouts.rail_order`, within each rail's minimum and maximum and the destination's daily maximum, over later days when today is full. The fee is split across the payouts.
+  - A payout is marked submitted before it reaches the provider, with an idempotency key of its own, so it is never sent twice. A result that is unknown is asked of the provider first.
+  - A paid payout is a withdrawal in the ledger for its amount and share of the fee, in the transaction that records it (`ledger.Tx.Withdraw`). A failed one goes to the rails that have not failed, or is released alone. The withdrawal is `processing`, `partially_paid`, `completed`, or `failed`.
+  - The manual provider is an administrator: `GET /admin/payouts`, `GET /admin/payouts/{id}` with the destination in the clear (audited), and the sensitive `POST /admin/payouts/{id}/complete` and `/fail`.
+  - `GET /user/withdrawals/{id}` shows the payouts, with the bank's tracking number or the hash on chain.
+  - Migration 30 adds `withdrawal_payouts`, sealed. `destinations.Store.Resolve` opens the destination of a withdrawal for its payouts, even after the user removed it from the book.
 - Withdrawal requests ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)), the first part of the withdrawal workflow.
   - `POST /user/withdrawals` runs in two steps under one `Idempotency-Key`. Without `confirmation_id`, it checks the request and starts a confirmation of the second factor bound to it (#161), answering `202`. With the confirmed one, it consumes the confirmation, records the withdrawal, and locks the amount and the fee of the network in the ledger, in one transaction under a lock of the user, answering `201`. A retry of the key answers `200` with the same withdrawal.
   - The checks are the user's restrictions and security hold, the lifecycle of the currency, the network's state, decimals, and limits, a usable destination of the kind and network of the currency, the limits of the user's level, and the available balance.
@@ -15,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `withdrawals.review_above` holds large withdrawals for an administrator: `GET /admin/withdrawals`, and `POST /admin/withdrawals/{id}/approve` and `/reject`. Both are sensitive routes; a rejection releases the funds.
   - Migration 29 replaces the `withdrawals` table of the baseline, which nothing wrote and which refuses to run with rows, with one row per request, sealed. The `withdrawal_status_type` enum goes with it.
   - Audited as `user.withdrawal_request`, `user.withdrawal_cancel`, `withdrawal.approve`, and `withdrawal.reject`.
-  - The payouts are the next part.
+  - The payouts are the second part, above.
 - `assets.auto_sync`, an import of the asset registry at startup ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)).
   - It adds what the registry has and the database lacks: currencies, networks, and markets. It never changes what exists, so a restart does not undo what administrators changed. `admin assets import` still applies a change of the file to what exists.
   - Each entry is written in a savepoint. One it cannot add, such as a currency whose symbol a deleted currency holds, is logged and left out. A registry that fails its checks keeps the server from starting.

@@ -92,6 +92,8 @@ type Withdrawal struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
+	// Payouts are the transfers that pay it, in the view of one withdrawal.
+	Payouts []Payout `json:"payouts,omitempty"`
 }
 
 // Errors of the withdrawals.

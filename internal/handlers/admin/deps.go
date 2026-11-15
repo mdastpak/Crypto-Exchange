@@ -55,6 +55,15 @@ type WithdrawalReviews interface {
 	Reject(ctx context.Context, id, adminHK, reason string, origin audit.Event) (withdrawals.Withdrawal, error)
 }
 
+// PayoutDesk is where administrators pay the payouts of withdrawals by
+// hand (#70): withdrawals.Payouts.
+type PayoutDesk interface {
+	List(ctx context.Context, status withdrawals.PayoutStatus, limit int) ([]withdrawals.Payout, error)
+	Detail(ctx context.Context, id string, origin audit.Event) (withdrawals.PayoutDetail, error)
+	Complete(ctx context.Context, id, trackingID string, origin audit.Event) (withdrawals.Payout, error)
+	Fail(ctx context.Context, id, reason string, origin audit.Event) (withdrawals.Payout, error)
+}
+
 // CatalogCache is the cached list of public currencies, which a change
 // drops: *currencies.Catalog.
 type CatalogCache interface {

@@ -262,6 +262,11 @@ func (l Ledger) SettleTrade(ctx context.Context, key string, a Account, t Trade,
 // when it was requested: the amount leaves custody, and the fee goes to the
 // fees account. A fee of zero is none.
 func (l Ledger) Withdraw(ctx context.Context, key string, a Account, amount Amount, fee shared.Decimal, ref Ref) (Result, error) {
+	return l.record(ctx, withdrawal(key, a, amount, fee, ref))
+}
+
+// withdrawal is the entry of a completed withdrawal.
+func withdrawal(key string, a Account, amount Amount, fee shared.Decimal, ref Ref) entry {
 	e := entry{kind: KindWithdrawal, key: key, ref: ref,
 		moves:    []move{{a, amount.Currency, balance.BalanceChangeWithdrawal, amount.Value}},
 		postings: []posting{{AccountCustody, amount.Currency, amount.Value}},
@@ -270,7 +275,7 @@ func (l Ledger) Withdraw(ctx context.Context, key string, a Account, amount Amou
 		e.moves = append(e.moves, move{a, amount.Currency, balance.BalanceChangeFee, fee})
 		e.postings = append(e.postings, posting{AccountFees, amount.Currency, fee})
 	}
-	return l.record(ctx, e)
+	return e
 }
 
 // validate checks an entry before it touches the database.

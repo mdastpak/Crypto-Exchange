@@ -43,6 +43,12 @@ func (t Tx) Release(ctx context.Context, key string, a Account, amount Amount, r
 	})
 }
 
+// Withdraw is Ledger.Withdraw within the transaction: a payout of a
+// withdrawal (#70) that completes together with the row of its payout.
+func (t Tx) Withdraw(ctx context.Context, key string, a Account, amount Amount, fee shared.Decimal, ref Ref) (Result, error) {
+	return t.record(ctx, withdrawal(key, a, amount, fee, ref))
+}
+
 func (t Tx) record(ctx context.Context, e entry) (Result, error) {
 	start := time.Now()
 	res, err := func() (Result, error) {

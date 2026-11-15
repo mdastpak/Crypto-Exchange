@@ -317,6 +317,13 @@ func run() error {
 	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
 		return err
 	}
+	payouts, err := startPayouts(handlers, services.Postgres.DB, &config.Config)
+	if err != nil {
+		return err
+	}
+	if payouts != nil {
+		workers = append(workers, *payouts)
+	}
 	if w := startAntiPhishingReminders(services.Postgres.DB, otpSender); w != nil {
 		workers = append(workers, *w)
 	}
@@ -1252,6 +1259,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/withdrawals", ih.Admin.ListWithdrawals)
 		adminGroup.POST("/withdrawals/:id/approve", ih.Admin.ApproveWithdrawal)
 		adminGroup.POST("/withdrawals/:id/reject", ih.Admin.RejectWithdrawal)
+		// The payouts that administrators pay by hand (#70).
+		adminGroup.GET("/payouts", ih.Admin.ListPayouts)
+		adminGroup.GET("/payouts/:id", ih.Admin.GetPayout)
+		adminGroup.POST("/payouts/:id/complete", ih.Admin.CompletePayout)
+		adminGroup.POST("/payouts/:id/fail", ih.Admin.FailPayout)
 		adminGroup.GET("/currencies/:hk/migrations", ih.Admin.ListMigrations)
 		adminGroup.POST("/currencies/:hk/migrations", ih.Admin.ScheduleMigration)
 		adminGroup.POST("/currencies/:hk/migrations/:id/cancel", ih.Admin.CancelMigration)

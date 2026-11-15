@@ -44,6 +44,11 @@ var adminRoutes = map[string]admin.RouteClass{
 	"POST /withdrawals/:id/approve": admin.RouteSensitive,
 	"POST /withdrawals/:id/reject":  admin.RouteSensitive,
 
+	// Recording a payout of a withdrawal as paid, which moves the funds in
+	// the ledger, or as failed (#70).
+	"POST /payouts/:id/complete": admin.RouteSensitive,
+	"POST /payouts/:id/fail":     admin.RouteSensitive,
+
 	// Freezing users and locking the platform.
 	"POST /users/:hk/restrictions":          admin.RouteSensitive,
 	"POST /users/:hk/restrictions/:id/lift": admin.RouteSensitive,

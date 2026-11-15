@@ -51,6 +51,8 @@ type WithdrawalsConfig struct {
 	// withdrawal waits for an administrator before it is paid (#70). A
 	// currency left out is never held for review.
 	ReviewAbove map[string]string `yaml:"review_above"`
+	// Payouts configures how a withdrawal is paid (#70).
+	Payouts PayoutsConfig `yaml:"payouts"`
 }
 
 // The defaults of the withdrawal destinations.
@@ -108,6 +110,7 @@ func (c *Configuration) withdrawalProblems(p *problems) {
 			p.add(key, "is %d; it must be from 0 to %d", *hours, MaxDestinationWaitHours)
 		}
 	}
+	c.payoutProblems(p)
 	for symbol, amount := range w.ReviewAbove {
 		if symbol == "" || strings.ToUpper(symbol) != symbol {
 			p.add("withdrawals.review_above", "has %q; the keys are currency symbols, upper case", symbol)

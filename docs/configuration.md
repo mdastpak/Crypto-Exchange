@@ -588,6 +588,11 @@ The [withdrawal destinations](api.md#withdrawal-destinations) of users ([#160](h
 | `fiat_destination_wait_hours` | `0` | From 0 to 720. How long a new card, IBAN, or account waits before a withdrawal may use it. It must be the user's own, so by default it does not wait. |
 | `crypto_destination_wait_hours` | `24` | From 0 to 720. How long a new crypto address waits before a withdrawal may use it, so that a hijacked session cannot add an address and withdraw to it at once. |
 | `review_above` | none | By currency symbol, the amount from which a withdrawal waits for an administrator before it is paid, such as `USDT: "10000"` and `IRR: "5000000000"`. The amount is what the destination receives, without the fee. A currency left out is never held for review. Each value is a positive decimal; a key must be an upper-case symbol. |
+| `payouts.provider` | `manual` | Who pays the transfers. `manual` is an administrator, who pays each one by bank or on chain and records it with [`GET /admin/payouts`](api.md#payouts). The APIs of the banks and payment providers, such as Jibit's and Finnotech's, are added as their contracts arrive. |
+| `payouts.interval_seconds` | `15` | From 1 to 3600. How often each instance plans the queued withdrawals, sends the payouts that are due, and checks those sent. Every instance runs it, and each claims the rows it works on, so a withdrawal is planned once and a payout sent once. |
+| `payouts.timezone` | `Asia/Tehran` | The zone of the rails' hours and of the days of their daily limits. |
+| `payouts.rail_order` | `[account, satna, paya, pol, card]` | The bank rails in the order they are tried, of `account` (between two accounts of one bank), `satna`, `paya`, `pol`, and `card`. A card is paid by `card`, an IBAN by `paya`, `satna`, or `pol`, and an account by `account`, at the banks it lists. |
+| `payouts.rails.<rail>` | none | The limits of a rail, in rials, from the provider's documents: `min` and `max` per transfer, `daily_per_destination`, `banks` for `account`, and `hours`, such as `08:00-17:30`, when it takes transfers. An empty bound is none. A rail left out is not used, so without rails no rial withdrawal is paid; it waits as `queued`, and the user may cancel it. |
 
 ### `keys`
 

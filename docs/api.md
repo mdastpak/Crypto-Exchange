@@ -630,6 +630,7 @@ The sensitive routes:
 | `PUT /admin/currencies/{hk}/networks/{network}` | How a currency moves on a network: its contract, limits, and fees ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) |
 | `PUT /admin/markets/{base}/{quote}` | The status, rules, and fees of a market ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)) |
 | `POST /admin/withdrawals/{id}/approve`, `POST …/reject` | Withdrawals held for review ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) |
+| `POST /admin/payouts/{id}/complete`, `POST …/fail` | Recording a payout of a withdrawal as paid, which moves the funds, or as failed ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) |
 | `PUT /admin/notifications/sms` | The routing of SMS through the providers ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
 
@@ -1370,7 +1371,7 @@ Sends a new code of an SMS or email confirmation, or begins a new ceremony of a 
 
 ## Withdrawals
 
-A user withdraws a currency, on one of its [networks](#networks), to a destination of their [book](#withdrawal-destinations), confirmed with their second factor ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). The payouts that pay a withdrawal, by bank or on chain, are the next part of #70; until then, a withdrawal waits as `queued`.
+A user withdraws a currency, on one of its [networks](#networks), to a destination of their [book](#withdrawal-destinations), confirmed with their second factor ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). Once recorded, it is [paid](#payouts) by one or more transfers: on chain for a crypto currency, or across the bank rails for rials.
 
 ### `POST /user/withdrawals`
 
@@ -1408,6 +1409,7 @@ A withdrawal of at least `withdrawals.review_above` of its currency ([configurat
 | `amount`, `fee`, `total` | What the destination receives, the fee of the network, and their sum |
 | `status` | `review`, `queued`, `processing`, `partially_paid`, `completed`, `cancelled`, `rejected`, or `failed` |
 | `review_reason`, `reviewed_at` | Why and when an administrator reviewed it |
+| `payouts` | In `GET /user/withdrawals/{id}`, the [transfers](#payouts) that pay it |
 | `reason` | Why it was rejected, or failed |
 | `created_at`, `updated_at`, `completed_at`, `cancelled_at` | Times |
 
@@ -1418,6 +1420,26 @@ The user's withdrawals, newest first, at most `limit` (100). `before`, an RFC 33
 ### `POST /user/withdrawals/{id}/cancel`
 
 Cancels a withdrawal whose payouts have not started (`review` or `queued`), and releases its total. `409 withdrawal_not_cancellable` otherwise. Audited as `user.withdrawal_cancel`.
+
+### Payouts
+
+A withdrawal is paid by one or more transfers, its payouts. Every instance plans, sends, and checks them every `withdrawals.payouts.interval_seconds` ([configuration](configuration.md#withdrawals)), and each claims the rows it works on, so a withdrawal is planned once and a payout sent once.
+
+- **The plan.** A queued withdrawal is split into payouts before anything is sent, so a restart resumes the plan. A crypto one is one transfer on chain. A rial one goes on the bank rails that reach its destination, in the configured order of preference: `card` for a card, `paya`, `satna`, or `pol` for an IBAN, and `account` for an account at a bank where the exchange holds one. The amount is cut within each rail's minimum and maximum per transfer, and within what remains of the destination's daily maximum on the rail. What today cannot take is scheduled for the next days, and the user sees it as `planned`. The withdrawal's fee is split across its payouts in proportion to their amounts. The withdrawal is `processing`, and can no longer be cancelled.
+- **Sending.** A payout is sent when its day comes and its rail is open (`hours`). It is marked `submitted` before it reaches the provider, with an idempotency key of its own, so it is never sent twice. One whose result is unknown, such as after a timeout, is asked of the provider before anything is sent again.
+- **Paid.** A completed payout is a withdrawal in the [ledger](architecture.md#the-ledger), for its amount and its share of the fee, in the transaction that records it. The withdrawal is `partially_paid` while some payouts are paid, and `completed` when every one is.
+- **Failed.** A failed payout's amount is planned again on the rails of the destination that have not failed for the withdrawal. When none can take it, its amount and fee are released to the user alone (`released`), and the payouts paid stay paid. A withdrawal that ends with none paid is `failed`. One that ends with some paid and the rest released stays `partially_paid`, with `completed_at` and a `reason`.
+
+A payout has `id`, `seq`, `rail`, `amount`, `fee`, `status` (`planned`, `submitted`, `completed`, `failed`, or `released`), `scheduled_for`, `tracking_id` (the bank's tracking number, or the hash on chain), and its times.
+
+**The manual provider** is an administrator, until the APIs of the banks and payment providers are added:
+
+- `GET /admin/payouts` lists the payouts of a `status`, `submitted` by default, with the user, the currency, and the destination masked.
+- `GET /admin/payouts/{id}` returns one with its destination in the clear (`destination_value`, `destination_memo`), to pay it by hand. The reading is audited as `withdrawal.payout_view`.
+- `POST /admin/payouts/{id}/complete` with `{"tracking_id": "…"}` records it paid. Audited as `withdrawal.payout_complete`.
+- `POST /admin/payouts/{id}/fail` with `{"reason": "…"}` records it failed, as above. Audited as `withdrawal.payout_fail`.
+
+Both are sensitive routes: they need a [step-up](#post-adminstep-up). `409 payout_not_open` for a payout that is not planned or submitted, so a payout is never paid twice. Payouts are sealed: one raised, completed, or released in SQL is not acted on.
 
 ### Review (admin)
 
