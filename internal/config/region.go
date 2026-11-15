@@ -20,7 +20,7 @@ import (
 // IranianSources are the market data sources of the Iranian exchanges,
 // whose venues have the region ir. The tests of the exchange sources check
 // that the two lists agree.
-var IranianSources = []string{"nobitex", "wallex"}
+var IranianSources = []string{"nobitex", "wallex", "ramzinex", "tabdeal"}
 
 // regionFeature is a feature of one market.
 type regionFeature struct {
@@ -76,6 +76,20 @@ var regionFeatures = []regionFeature{
 			for _, name := range slices.Sorted(maps.Keys(c.MarketData.Sources)) {
 				if c.MarketData.Sources[name].Enabled && slices.Contains(IranianSources, name) {
 					out = append(out, regionSetting{"market_data.sources." + name + ".enabled", "true", "set it to false"})
+				}
+			}
+			return out
+		},
+	},
+	{
+		what:    "the Iranian exchanges as price providers (#58)",
+		regions: []region.Region{region.Iran},
+		worker:  true,
+		on: func(c *Configuration) []regionSetting {
+			var out []regionSetting
+			for i, p := range c.PriceAggregator.Providers {
+				if p.Enabled && slices.Contains(IranianSources, p.Name) {
+					out = append(out, regionSetting{fmt.Sprintf("price_aggregator.providers[%d].enabled", i), "true", "set it to false"})
 				}
 			}
 			return out

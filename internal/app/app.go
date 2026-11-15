@@ -54,6 +54,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
 	"github.com/mdastpak/crypto-exchange/internal/passwordhash"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
+	"github.com/mdastpak/crypto-exchange/internal/price"
 	"github.com/mdastpak/crypto-exchange/internal/rabbitmq"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/redisutil"
@@ -80,9 +81,11 @@ type InfraHandlers struct {
 	MarketData *marketdataapi.Handler
 	// MarketDataAdmin administers the catalog (#270).
 	MarketDataAdmin *marketdataadmin.Handler
-	Redis           *db.RedisService
-	TokenBlacklist  *auth.TokenBlacklist
-	Sessions        auth.SessionStore
+	// Prices reads the reference prices of the markets (#59).
+	Prices         *price.Reader
+	Redis          *db.RedisService
+	TokenBlacklist *auth.TokenBlacklist
+	Sessions       auth.SessionStore
 	// DataKeys holds the data-protection keys for row seals (#139) and
 	// field encryption (#140). It is nil without keys.provider.
 	DataKeys *keys.Live
@@ -275,6 +278,10 @@ func run() error {
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
 	// The snapshots and the reconciliation of the books (#60).
 	workers = append(workers, startLedgerAudit(services.Postgres.DB))
+	// The reference prices and their overrides (#59).
+	var priceWorker worker
+	handlers.Prices, priceWorker = startPrices(services.Postgres.DB, services.Redis.Client, handlers)
+	workers = append(workers, priceWorker)
 	if otpWorker != nil {
 		workers = append(workers, worker{"OTP delivery worker", otpWorker.Stop})
 	}
@@ -315,6 +322,9 @@ func run() error {
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
 	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
+		return err
+	}
+	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config); err != nil {
 		return err
 	}
 	payouts, err := startPayouts(handlers, services.Postgres.DB, &config.Config)
@@ -1258,6 +1268,12 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/markets", ih.Admin.ListMarkets)
 		adminGroup.GET("/markets/:base/:quote", ih.Admin.GetMarket)
 		adminGroup.PUT("/markets/:base/:quote", ih.Admin.SetMarket)
+		// The reference prices, and the prices that administrators set in
+		// their place (#59).
+		adminGroup.GET("/markets/:base/:quote/price", ih.Admin.GetMarketPrice)
+		adminGroup.POST("/markets/:base/:quote/price-override", ih.Admin.SetPriceOverride)
+		adminGroup.GET("/price-overrides", ih.Admin.ListPriceOverrides)
+		adminGroup.POST("/price-overrides/:id/end", ih.Admin.EndPriceOverride)
 		// The withdrawals held for review (#70).
 		adminGroup.GET("/withdrawals", ih.Admin.ListWithdrawals)
 		adminGroup.POST("/withdrawals/:id/approve", ih.Admin.ApproveWithdrawal)
@@ -1364,6 +1380,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/withdrawals", ih.User.ListWithdrawals)
 		activeGroup.GET("/withdrawals/:id", ih.User.GetWithdrawal)
 		activeGroup.POST("/withdrawals/:id/cancel", ih.User.CancelWithdrawal)
+		// The OTC quotes (#61), with a limit of their own per user, on top
+		// of the trading limit of every user route.
+		activeGroup.POST("/otc/quote", gate.Require(platform.FeatureTrading), rl.OTCQuoteRateLimit(), ih.User.RequestQuote)
 		// The anti-phishing code that the emails show (#375). Changing it
 		// needs a fresh proof of the second factor.
 		activeGroup.GET("/anti-phishing-code", ih.User.GetAntiPhishingCode)

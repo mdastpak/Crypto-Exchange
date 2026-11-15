@@ -192,6 +192,12 @@ const (
 	// target is the sms notification channel.
 	ActionNotificationSMSRoutingSet = "notification.sms_routing_set"
 
+	// An administrator setting the price of a market in place of the
+	// aggregated reference until a time, or ending it early (#59). The
+	// target is the override.
+	ActionPriceOverrideSet = "price.override_set"
+	ActionPriceOverrideEnd = "price.override_end"
+
 	// The commands of cmd/admin (#195). Their actor is the system, and the
 	// operator who ran them is named in the user agent; see Operator.
 	ActionAdminCreate    = "admin.create"
@@ -276,6 +282,8 @@ const (
 	// TargetNotificationChannel is a channel of notifications, such as sms
 	// (#371).
 	TargetNotificationChannel = "notification_channel"
+	// TargetPriceOverride is an administrator's price of a market (#59).
+	TargetPriceOverride = "price_override"
 )
 
 // Operator returns the origin of the changes that an operator makes with a

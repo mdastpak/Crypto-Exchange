@@ -163,6 +163,8 @@ The ticker jobs ([#267](https://github.com/mdastpak/Crypto-Exchange/issues/267))
 | `coinbase` | global | `/api/v3/brokerage/market/products?product_type=SPOT` | Last price and 24-hour volume only; no time |
 | `nobitex` | ir | `/market/stats` | Rial markets are reported in tomans (`IRT`), divided by 10 exactly |
 | `wallex` | ir | `/v1/markets` | `TMN` markets are reported as `IRT` |
+| `ramzinex` | ir | `/exchange/api/v1.0/exchange/pairs` | `buy` is the bid and `sell` the ask; rial pairs (`irr`) in tomans. Pairs are named by Ramzinex's `pair_id` |
+| `tabdeal` | ir | `/api/v1/exchangeInfo` (read once an hour), `/api/v1/depth` per pair | No ticker of every pair is documented, so a run reads the depth of at most 60 trading pairs quoted in `IRT` or `USDT`, four at a time; the last price is the middle of the book, with no 24-hour figures ([#443](https://github.com/mdastpak/Crypto-Exchange/issues/443)) |
 
 Where a venue gives no time, the time the ticker is read is its time. A ticker with no positive last price is skipped, and a bid above the ask, which a book shows between two updates, is left out.
 
@@ -209,6 +211,8 @@ The pairs are the active pairs of the venue whose base is in the catalog, whose 
 | `coinbase` | `/api/v3/brokerage/market/products/{id}/candles` | 350 | |
 | `nobitex` | `/market/udf/history` | 500 | Intraday resolutions only, since its days are Tehran's; rials in tomans |
 | `wallex` | `/v1/udf/history` | 500 | Intraday resolutions only |
+
+Ramzinex and Tabdeal have no candles here yet.
 
 ### Partitions and retention
 
@@ -268,7 +272,7 @@ The hot pairs get their tickers seconds old from the venues' public WebSocket st
 | `kraken` | `wss://ws.kraken.com/v2` | `ticker`, by `BTC/USD` |
 | `coinbase` | `wss://advanced-trade-ws.coinbase.com` | `ticker`, with `heartbeats` |
 
-Nobitex and Wallex have no public ticker stream that this follows; their pairs keep their REST tickers. The protocols are written from the venues' documentation and tested against recorded messages only, so try a stream in `dry_run` first.
+Nobitex, Wallex, Ramzinex, and Tabdeal have no public ticker stream that this follows; their pairs keep their REST tickers. The protocols are written from the venues' documentation and tested against recorded messages only, so try a stream in `dry_run` first.
 
 - **One worker per stream.** Each venue's stream is a job, `stream:binance`, so its lease lets one worker at a time hold it, and another worker takes it over once that worker dies or loses the database: the old holder's next write fails its fence, and it stops. A run holds the connection for `streams.run_minutes` (60), then ends, and the stream is due again at once on whichever worker claims it, so that the workers share the streams.
 - **Own slots.** The streams run in a runner of their own, at most `streams.max_per_worker` (2) on a worker, so that they never take the slots of `max_concurrent_jobs`.

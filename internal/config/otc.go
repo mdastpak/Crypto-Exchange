@@ -1,0 +1,179 @@
+package config
+
+import (
+	"fmt"
+	"maps"
+	"math/big"
+	"regexp"
+	"slices"
+)
+
+// The bounds and defaults of the OTC quotes (#61).
+const (
+	MinOTCQuoteTTLSeconds     = 5
+	MaxOTCQuoteTTLSeconds     = 10
+	DefaultOTCQuoteTTLSeconds = 8
+	DefaultOTCQuotesPerSecond = 5
+	DefaultOTCQuoteBurst      = 10
+	// MaxOTCPriceBPS bounds the sum of the components of a quote, so that
+	// a sell is always quoted at a positive price.
+	MaxOTCPriceBPS = 5000
+)
+
+// OTCConfig configures the OTC quotes (#61). See
+// docs/configuration.md#otc.
+type OTCConfig struct {
+	// QuoteTTLSeconds is how long a quote is firm, from 5 to 10 seconds.
+	QuoteTTLSeconds int `yaml:"quote_ttl_seconds"`
+	// QuotesPerSecond and Burst limit the quote requests of each user, in
+	// Redis, so that the limit holds over every instance.
+	QuotesPerSecond int `yaml:"quotes_per_second"`
+	Burst           int `yaml:"burst"`
+	// Markets are the markets that are quoted, by their symbol, such as
+	// "BTC/USDT". A market without an entry is not quoted.
+	Markets map[string]OTCMarket `yaml:"markets"`
+}
+
+// OTCMarket prices the quotes of one market. A buy is quoted at
+// reference × (1 + spread/2 + hedge cost + margin + risk premium +
+// slippage), and a sell at reference × (1 − the same). Every part in basis
+// points is of the reference price: 100 is 1%.
+type OTCMarket struct {
+	// Reference is the market of the price engine (#58) that gives the
+	// reference price; empty is the market itself. ReferenceMultiplier
+	// converts its price to the quote currency: 10 for a rial market whose
+	// reference is in tomans, such as USDT/IRR from USDT/IRT. Empty is 1.
+	Reference           string `yaml:"reference"`
+	ReferenceMultiplier string `yaml:"reference_multiplier"`
+	// SpreadBPS is the whole spread; each side takes half of it.
+	SpreadBPS int `yaml:"spread_bps"`
+	// HedgeCostBPS is what covering the trade on the hedging venue costs:
+	// its taker fee and the transfer fees, in basis points. HedgeCostFixed
+	// is a fixed part of it per quote, in the quote currency, which is
+	// spread over the quantity.
+	HedgeCostBPS   int    `yaml:"hedge_cost_bps"`
+	HedgeCostFixed string `yaml:"hedge_cost_fixed"`
+	// MarginBPS is the profit margin over the hedge cost. MarginBands may
+	// lower or raise it from a quantity on. No quote has a margin under
+	// MinMarginBPS: a lower one is widened to it.
+	MarginBPS    int             `yaml:"margin_bps"`
+	MinMarginBPS int             `yaml:"min_margin_bps"`
+	MarginBands  []OTCMarginBand `yaml:"margin_bands"`
+	// RiskPremiumBPS covers volatility and inventory far from its target.
+	RiskPremiumBPS int `yaml:"risk_premium_bps"`
+	// The slippage is sqrt(SlippageK × quantity / Liquidity), a fraction of
+	// the reference, with Liquidity in units of the base currency. Empty or
+	// zero has no slippage. A quote whose slippage would be above
+	// MaxSlippageBPS is refused as too large; 0 is no bound.
+	SlippageK      string `yaml:"slippage_k"`
+	Liquidity      string `yaml:"liquidity"`
+	MaxSlippageBPS int    `yaml:"max_slippage_bps"`
+}
+
+// OTCMarginBand sets the margin of the quotes from a quantity on, in units
+// of the base currency.
+type OTCMarginBand struct {
+	MinQuantity string `yaml:"min_quantity"`
+	MarginBPS   int    `yaml:"margin_bps"`
+}
+
+// applyOTCDefaults sets the TTL and the rate limit when they are unset.
+func (c *Configuration) applyOTCDefaults() {
+	o := &c.OTC
+	if o.QuoteTTLSeconds == 0 {
+		o.QuoteTTLSeconds = DefaultOTCQuoteTTLSeconds
+	}
+	if o.QuotesPerSecond == 0 {
+		o.QuotesPerSecond = DefaultOTCQuotesPerSecond
+	}
+	if o.Burst == 0 {
+		o.Burst = DefaultOTCQuoteBurst
+	}
+}
+
+var otcMarketSymbol = regexp.MustCompile(`^[A-Z0-9]{1,15}/[A-Z0-9]{1,15}$`)
+
+// otcProblems reports a TTL out of range, a limit that is not positive, and
+// markets whose settings cannot price a quote.
+func (c *Configuration) otcProblems(p *problems) {
+	o := c.OTC
+	if o.QuoteTTLSeconds < MinOTCQuoteTTLSeconds || o.QuoteTTLSeconds > MaxOTCQuoteTTLSeconds {
+		p.add("otc.quote_ttl_seconds", "is %d; it must be from %d to %d", o.QuoteTTLSeconds, MinOTCQuoteTTLSeconds, MaxOTCQuoteTTLSeconds)
+	}
+	if o.QuotesPerSecond < 1 {
+		p.add("otc.quotes_per_second", "is %d; it must be at least 1", o.QuotesPerSecond)
+	}
+	if o.Burst < 1 {
+		p.add("otc.burst", "is %d; it must be at least 1", o.Burst)
+	}
+	for _, symbol := range slices.Sorted(maps.Keys(o.Markets)) {
+		key := "otc.markets." + symbol
+		if !otcMarketSymbol.MatchString(symbol) {
+			p.add(key, "is not a market symbol: BASE/QUOTE in upper-case letters and digits")
+			continue
+		}
+		otcMarketProblems(p, key, o.Markets[symbol])
+	}
+}
+
+func otcMarketProblems(p *problems, key string, m OTCMarket) {
+	if m.Reference != "" && !otcMarketSymbol.MatchString(m.Reference) {
+		p.add(key+".reference", "is %q; it must be a market of the price engine, BASE/QUOTE", m.Reference)
+	}
+	if s := m.ReferenceMultiplier; s != "" {
+		if r, ok := new(big.Rat).SetString(s); !ok || r.Sign() <= 0 || !plainDecimal.MatchString(s) {
+			p.add(key+".reference_multiplier", "is %q; it must be a positive decimal number, such as \"10\"", s)
+		}
+	}
+	bps := func(name string, v int) {
+		if v < 0 || v > MaxOTCPriceBPS {
+			p.add(key+"."+name, "is %d; it must be from 0 to %d basis points", v, MaxOTCPriceBPS)
+		}
+	}
+	bps("spread_bps", m.SpreadBPS)
+	bps("hedge_cost_bps", m.HedgeCostBPS)
+	bps("margin_bps", m.MarginBPS)
+	bps("min_margin_bps", m.MinMarginBPS)
+	bps("risk_premium_bps", m.RiskPremiumBPS)
+	bps("max_slippage_bps", m.MaxSlippageBPS)
+	nonNegativeAmount(p, key+".hedge_cost_fixed", m.HedgeCostFixed)
+	nonNegativeAmount(p, key+".slippage_k", m.SlippageK)
+	nonNegativeAmount(p, key+".liquidity", m.Liquidity)
+	highest := max(m.MarginBPS, m.MinMarginBPS)
+	var last string
+	for i, band := range m.MarginBands {
+		bandKey := fmt.Sprintf("%s.margin_bands.%d", key, i)
+		bps(fmt.Sprintf("margin_bands.%d.margin_bps", i), band.MarginBPS)
+		highest = max(highest, band.MarginBPS)
+		q, ok := positiveAmount(p, bandKey+".min_quantity", band.MinQuantity)
+		if ok && q == nil {
+			p.add(bandKey+".min_quantity", "must be set")
+			continue
+		}
+		if ok && last != "" {
+			prev, _ := positiveAmount(&problems{}, "", last)
+			if prev != nil && q.Cmp(prev) <= 0 {
+				p.add(bandKey+".min_quantity", "is %s; the bands must go up in quantity, after %s", band.MinQuantity, last)
+			}
+		}
+		if ok {
+			last = band.MinQuantity
+		}
+	}
+	// The sell side subtracts every part: their sum must leave a positive
+	// price. The slippage counts at its bound, when it has one.
+	if sum := m.SpreadBPS/2 + m.HedgeCostBPS + highest + m.RiskPremiumBPS + m.MaxSlippageBPS; sum >= MaxOTCPriceBPS {
+		p.add(key, "adds up to %d basis points over the reference; it must stay under %d", sum, MaxOTCPriceBPS)
+	}
+}
+
+// nonNegativeAmount reports an amount that is set and is not a decimal
+// number of zero or more.
+func nonNegativeAmount(p *problems, key, s string) {
+	if s == "" || s == "0" {
+		return
+	}
+	if !plainDecimal.MatchString(s) {
+		p.add(key, "is %q; it must be a decimal amount of zero or more, such as \"0.5\"", s)
+	}
+}

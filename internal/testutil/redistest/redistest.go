@@ -40,4 +40,9 @@ const (
 	MarketData
 	// Confirm is the database of internal/confirm.
 	Confirm
+	// Price is the database of internal/price.
+	Price
+	// OTC is the database of internal/otc, the last of the default
+	// configuration.
+	OTC
 )

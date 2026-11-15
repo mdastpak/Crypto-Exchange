@@ -58,7 +58,7 @@ In an international release, the server and the market data worker refuse to sta
 | --- | --- | --- |
 | The Shahkar check of Iranian mobile numbers ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) | `identity.mobile_ownership.provider` other than `none` | server |
 | Codes by SMS through Kavenegar or sms.ir ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) | `kavenegar` or `smsir` in `notifications.sms.providers` (or `notifications.sms.provider`). An international release has no SMS until a provider outside Iran is added. | server |
-| The Iranian exchanges, Nobitex and Wallex | `market_data.sources.nobitex.enabled`, `market_data.sources.wallex.enabled` | market data worker |
+| The Iranian exchanges, Nobitex, Wallex, Ramzinex, and Tabdeal | `market_data.sources.<name>.enabled`, and `price_aggregator.providers[].enabled` of the same names | market data worker, price aggregator |
 | The Iranian venues on the public market data routes | `ir` in `market_data.api.regions` | server |
 | Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
 | A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
@@ -517,7 +517,7 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `catalog.details_per_run` | `200` | From 1 to 10000. The full records (description, links, contracts) read in one run. |
 | `catalog.details_max_age_days` | `30` | From 1 to 365. When a full record is read again. |
 | `catalog.deactivate_after_days` | `14` | From 1 to 365. Assets that no source listed for this long are marked inactive; only with the `all` coverage. |
-| `tickers.interval_seconds` | `120` | From 30 to 3600. The time between two runs of the tickers of a venue. The venues are the sources `binance`, `okx`, `kraken`, `coinbase`, `nobitex`, and `wallex`; see [Tickers](market-data.md#tickers). |
+| `tickers.interval_seconds` | `120` | From 30 to 3600. The time between two runs of the tickers of a venue. The venues are the sources `binance`, `okx`, `kraken`, `coinbase`, `nobitex`, `wallex`, `ramzinex`, and `tabdeal`; see [Tickers](market-data.md#tickers). |
 | `tickers.stale_after_seconds` | `600` | From `interval_seconds` to 86400. A ticker observed longer ago is stale. |
 | `tickers.outlier_percent` | `5` | From 1 to 100. A price further than this from the median of the venues is an outlier. |
 | `tickers.min_venues` | `3` | From 2 to 20. The fewest venues with a fresh price of the same quote that make a median. |
@@ -546,6 +546,37 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `api.regions` | `[]` (every region) | The regions of the venues that the public routes show: `global`, `ir`. An international release sets `[global]`. |
 | `api.cache_seconds` | `30` | From 1 to 3600. How long an answer of the public routes is cached in Redis, shared by every instance, and by clients (`Cache-Control: max-age`). |
 
+### `price_aggregator`
+
+[`cmd/price-aggregator`](price-engine.md), the price engine ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). The server does not read it: it reads the prices from Redis, and the overrides of administrators from PostgreSQL.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` in the example | Follows the providers. An aggregator that is not enabled only answers its probes. |
+| `health_addr` | `:8082` | The address of `/system/live`, `/system/ready`, `/metrics`, `/prices`, and `/providers`. Keep it internal. |
+| `aggregation_interval_ms` | `100` | From 10 to 60000. The time between two aggregations. |
+| `vwap_windows_seconds` | `[1, 5, 60, 300]` | From 1 to 86400 each. The windows of the VWAP and the TWAP. Each must be a multiple of a tenth of the shortest. |
+| `outlier_threshold_mad` | `3.0` | Above 0. A provider's mid further than this many median absolute deviations from the median is an outlier. |
+| `outlier_floor_bps` | `10` | From 0 to 10000. No deviation within this many basis points of the median makes an outlier. |
+| `min_providers` | `2` | At least 1. The quorum of a live price; below it, the price is stale. |
+| `stale_threshold_ms` | `5000` | Above 0. A provider's book older than this does not count. |
+| `publish_to_redis` | `true` | Writes the live prices to Redis and publishes the updates to the stream `price:stream` ([Distribution](price-engine.md#distribution), [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). Needs `redis`. |
+| `publish_to_rabbitmq` | `true` | The leader also publishes the updates to `rabbitmq.exchanges.price_updates`, which the WebSocket forwards to clients. Needs `publish_to_redis`, whose lease elects the leader, and `rabbitmq`. |
+| `cache_ttl_ms` | `500` | From 10 to 60000, and at least `aggregation_interval_ms`. The life of a price's key in Redis: a price not written again within it is gone. |
+| `lease_ttl_ms` | `2000` | From three intervals to 60000. The life of the publisher's lease: how long the updates stop when the leader dies. |
+| `stream_max_len` | `10000` | About how many updates `price:stream` keeps. |
+| `providers[].name` | | The provider, unique: `binance`, `coinbase`, `kraken` (with a stream), or `okx`, `nobitex`, `wallex`, `ramzinex`, `tabdeal` (REST only). See [Providers](price-engine.md#providers). |
+| `providers[].enabled` | `false` | Whether this node follows it. `nobitex`, `wallex`, `ramzinex`, and `tabdeal` are of the Iran region only. |
+| `providers[].type` | | `websocket` (the stream, and REST while it is down) or `rest`. |
+| `providers[].symbols` | | The markets it follows, `BASE/QUOTE` or `BASE-QUOTE`, such as `BTC/USDT`. |
+| `providers[].ws_endpoint`, `rest_endpoint` | the provider's | Override the addresses: `wss://` and `https://` only. |
+| `providers[].timeout_seconds` | `5` | Bounds one REST read. |
+| `providers[].reconnect_delay_seconds` | `5` | A tenth of it is the first wait before a reconnection, which doubles up to 30 seconds. |
+| `providers[].poll_ms` | `5000` | The time between two REST reads. |
+| `providers[].stale_threshold_ms` | | Overrides `stale_threshold_ms` for the provider, such as one read through REST only. |
+| `providers[].egress` | `market_data.egress.default` | `direct`, or `proxy` through `market_data.egress.proxy_url`, as in [Egress per node](market-data.md#egress-per-node). |
+| `providers[].api_key`, `api_secret`, `passphrase`, `rate_limit` | | Not read: the public streams and tickers need no key. |
+
 ### `platform`
 
 The [maintenance and lockdown controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). The controls themselves are in the database, created through the admin API or `cmd/admin platform`; these settings say how each instance applies them.
@@ -569,6 +600,35 @@ What each [verification level](api.md#verification-levels) of a user may do ([#1
 Until the identity checks grant levels, an operator grants them with [`admin verification grant`](api.md#granting-a-level).
 
 The default rial limit of level 1, 100 million tomans a day, is a placeholder: set it to the limit that applies to the exchange. Level 2 has no limit of the exchange by default: the payouts of a rial withdrawal follow the transfer limits of the banks and the payment providers, and are split into several transfers when one cannot carry the amount ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70), [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74)). A currency's own limits per network, `min_withdrawal` and `max_withdrawal` in the [asset registry](#settings-reserved-for-roadmap-features), apply as well.
+
+### `otc`
+
+The [OTC quotes](api.md#otc-quotes) ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)). Every instance reads the same file, so set them the same on each one.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `quote_ttl_seconds` | `8` | From 5 to 10. How long a quote is firm. |
+| `quotes_per_second` | `5` | At least 1. The quote requests of each user, per second, over every instance. |
+| `burst` | `10` | At least 1. The requests a user may send at once. |
+| `markets` | none | The quoted markets, by symbol such as `BTC/USDT`. A market without an entry is not quoted, so without entries there are no quotes. |
+
+Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin_bps + risk_premium_bps + slippage))`, plus for a buy and minus for a sell. Every part is in basis points of the reference, from 0 to 5000, and their sum must stay under 5000, so that a sell has a positive price.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `reference` | the market | The market of the [price engine](price-engine.md) whose price is the reference. |
+| `reference_multiplier` | `1` | Converts the reference to the quote currency: `10` for a rial market whose reference is in tomans, such as `USDT/IRR` from `USDT/IRT`. |
+| `spread_bps` | `0` | The whole spread; each side takes half. |
+| `hedge_cost_bps` | `0` | What covering the trade on the hedging venue costs: its taker fee and the transfer fees. |
+| `hedge_cost_fixed` | `0` | A fixed hedge cost per quote, in the quote currency, spread over the notional: it weighs less on a larger quote. |
+| `margin_bps` | `0` | The margin over the hedge cost. |
+| `margin_bands` | none | `min_quantity` and `margin_bps` from a quantity on, in the base currency, in increasing quantity. |
+| `min_margin_bps` | `0` | No quote has a margin under it: a lower margin, of a band or `margin_bps`, is widened to it, so that no quote is given at a loss. |
+| `risk_premium_bps` | `0` | Volatility, and inventory far from its target. |
+| `slippage_k`, `liquidity` | none | The slippage is `sqrt(slippage_k × quantity / liquidity)`, a fraction of the reference, with `liquidity` in the base currency. Unset is no slippage. |
+| `max_slippage_bps` | `0` | A quantity whose slippage would be above it is refused with `quote_too_large`. `0` is no bound. |
+
+Each quote records its parts, so that the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) knows the margin of every trade. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
 
 ### `anti_phishing`
 
@@ -684,7 +744,6 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | --- | --- | --- |
 | `exchange` | Display name and time zone. The maintenance window that was reserved here is replaced by the scheduled [maintenance controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)); `exchange.maintenance_window` is no longer read. | none |
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
-| `price_aggregator` | Price providers, VWAP windows, outlier threshold, quorum, staleness | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
 | `compliance` | Sanctions providers, AML rules path (`config/aml_rules.yaml`), KYC providers | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
@@ -879,8 +938,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `RATE_LIMITS_AUTH_ON_ERROR` | `rate_limits.auth.on_error` |
 | `LOG_LEVEL` | `observability.logging.level` |
 | `OTEL_ENDPOINT` | `observability.tracing.endpoint` |
-| `BINANCE_API_KEY` | `api_key` of the `binance` provider in `price_aggregator` |
-| `BINANCE_API_SECRET` | `api_secret` of the `binance` provider in `price_aggregator` |
+| `BINANCE_API_KEY` | `api_key` of the `binance` provider in `price_aggregator` (not read yet) |
+| `BINANCE_API_SECRET` | `api_secret` of the `binance` provider in `price_aggregator` (not read yet) |
 | `FIAT_PROVIDER_API_KEY` | `api_key` of every provider in `fiat` |
 | `FIAT_PROVIDER_API_SECRET` | `api_secret` of every provider in `fiat` |
 | `CHAINALYSIS_API_KEY` | `api_key` of the `chainalysis` provider in `compliance.sanctions` |

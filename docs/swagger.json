@@ -4103,6 +4103,194 @@
                 }
             }
         },
+        "/api/v1/admin/markets/{base}/{quote}/price": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The price that quotes use now (#59): an administrator's override in force (status override), or the price engine's aggregated price when it is live and fresh (status live), with its sources and time. 404 price_unavailable when there is none: the engine has no quorum for the market, or Redis has no fresh price.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin prices"
+                ],
+                "summary": "Show the reference price of a market",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "BTC",
+                        "description": "The symbol of the base currency",
+                        "name": "base",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "USDT",
+                        "description": "The symbol of the quote currency",
+                        "name": "quote",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/price.Price"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "price_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "prices_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/markets/{base}/{quote}/price-override": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the reference price of a market in place of the price engine's until expires_in_seconds pass (#59), for when the providers are wrong or down. Bid and ask default to mid; bid \u003c= mid \u003c= ask. The market must exist. A market has one override in force at most: 409 price_override_exists until it ends. Every instance of the server serves it within a second, and stops at its expiry. A sensitive route: it needs a step-up. Audited as price.override_set, with the prices, the expiry, and the reason. The row is sealed: an override changed in SQL is not served.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin prices"
+                ],
+                "summary": "Set the price of a market",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "BTC",
+                        "description": "The symbol of the base currency",
+                        "name": "base",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "USDT",
+                        "description": "The symbol of the quote currency",
+                        "name": "quote",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The price",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.priceOverrideRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/priceoverride.Override"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "market_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "price_override_exists or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "prices_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/notifications/sms": {
             "get": {
                 "security": [
@@ -4977,6 +5165,175 @@
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/price-overrides": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The prices that administrators set (#59), newest first: those in force with in_force=true, or the last limit (100) of every state.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin prices"
+                ],
+                "summary": "List the price overrides",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Only those in force",
+                        "name": "in_force",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "At most 100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/priceoverride.Override"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "prices_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/price-overrides/{id}/end": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ends an override in force before its expiry (#59): the market takes the price engine's price again, on every instance within a second. A sensitive route: it needs a step-up. Audited as price.override_end.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin prices"
+                ],
+                "summary": "End a price override",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The override",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/priceoverride.Override"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "price_override_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "price_override_ended or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "prices_unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -8941,6 +9298,105 @@
                 }
             }
         },
+        "/api/v1/user/otc/quote": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A firm price for a buy or a sell of the market, valid until expires_at (otc.quote_ttl_seconds, 5 to 10 seconds), for the signed-in user (and sub-account) only. The price is the reference price of the price engine raised for a buy, and lowered for a sell, by half the spread, the hedge cost, the margin, the risk premium, and a slippage that grows with the square root of the quantity; it is rounded to the tick size against the user. The fee is the taker fee of the market, in the quote currency, apart from the price: a buy pays total + fee, a sell receives total − fee. The quote is refused while the price is stale, the market does not trade, or the user's level, restrictions, currencies, or balance do not allow the trade; the balance is a pre-check, and the execution checks again. Limited per user by otc.quotes_per_second.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-otc"
+                ],
+                "summary": "Request an OTC quote",
+                "parameters": [
+                    {
+                        "description": "The request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.quoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/otc.Quote"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed, quantity_below_minimum, quantity_above_maximum, notional_below_minimum, or quote_too_large",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "verification_required, account_frozen, operation_restricted, asset_restricted, security_hold, or currency_operation_disabled",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "otc_market_unavailable, or price_unavailable: the reference price is stale",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "market_inactive or insufficient_balance",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many quote requests",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "otc_unavailable or feature_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/passkey-registration": {
             "post": {
                 "security": [
@@ -11471,6 +11927,34 @@
                 }
             }
         },
+        "admin.priceOverrideRequest": {
+            "type": "object",
+            "properties": {
+                "ask": {
+                    "type": "string",
+                    "example": "64100"
+                },
+                "bid": {
+                    "type": "string",
+                    "example": "64000"
+                },
+                "expires_in_seconds": {
+                    "description": "ExpiresInSeconds is how long it lasts: 1 to 86400.",
+                    "type": "integer",
+                    "example": 900
+                },
+                "mid": {
+                    "description": "Mid is the reference price; Bid and Ask default to it.",
+                    "type": "string",
+                    "example": "64050"
+                },
+                "reason": {
+                    "description": "Reason is why, 1 to 500 characters.",
+                    "type": "string",
+                    "example": "Binance and Kraken are down"
+                }
+            }
+        },
         "admin.stepUpRequest": {
             "type": "object",
             "properties": {
@@ -13859,6 +14343,78 @@
                 }
             }
         },
+        "otc.Quote": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "string",
+                    "example": "65"
+                },
+                "fee_bps": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "fee_currency": {
+                    "description": "FeeCurrency is the quote currency.",
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "price": {
+                    "type": "string",
+                    "example": "65000.12"
+                },
+                "quantity": {
+                    "description": "Quantity is in the base currency, and Price, Total, and Fee in the\nquote currency. Total is Quantity × Price. A buy pays Total + Fee,\nand a sell receives Total − Fee.",
+                    "type": "string",
+                    "example": "0.5"
+                },
+                "side": {
+                    "enum": [
+                        "buy",
+                        "sell"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/otc.Side"
+                        }
+                    ],
+                    "example": "buy"
+                },
+                "sub_account_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "total": {
+                    "type": "string",
+                    "example": "32500.06"
+                }
+            }
+        },
+        "otc.Side": {
+            "type": "string",
+            "enum": [
+                "buy",
+                "sell"
+            ],
+            "x-enum-varnames": [
+                "SideBuy",
+                "SideSell"
+            ]
+        },
         "passkey.Options": {
             "type": "object",
             "properties": {
@@ -14137,6 +14693,124 @@
                     "items": {
                         "$ref": "#/definitions/platform.PublicControl"
                     }
+                }
+            }
+        },
+        "price.Price": {
+            "type": "object",
+            "properties": {
+                "ask": {
+                    "type": "number"
+                },
+                "at": {
+                    "description": "At is when the price was computed, and Updated when its newest input\nwas observed; for a stale price, Updated is that of its last live\nprice.",
+                    "type": "string"
+                },
+                "bid": {
+                    "description": "Bid and Ask are the best bid and ask over the providers; they may\ncross when the venues disagree.",
+                    "type": "number"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "mid": {
+                    "description": "Mid is the reference price: the median of the providers' mids.",
+                    "type": "number"
+                },
+                "outliers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sources": {
+                    "description": "Sources are the providers of the figures, and Outliers those\nrejected at this interval.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "$ref": "#/definitions/price.Status"
+                },
+                "twap": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number"
+                    }
+                },
+                "updated": {
+                    "type": "string"
+                },
+                "vwap": {
+                    "description": "VWAP and TWAP are by window, such as \"60s\"; a window without trades\nhas no VWAP.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number"
+                    }
+                }
+            }
+        },
+        "price.Status": {
+            "type": "string",
+            "enum": [
+                "live",
+                "stale",
+                "override"
+            ],
+            "x-enum-varnames": [
+                "StatusLive",
+                "StatusStale",
+                "StatusOverride"
+            ]
+        },
+        "priceoverride.Override": {
+            "type": "object",
+            "properties": {
+                "ask": {
+                    "type": "string",
+                    "example": "64100"
+                },
+                "bid": {
+                    "type": "string",
+                    "example": "64000"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "description": "CreatedBy and EndedBy are the administrators' hk.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "ended_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "in_force": {
+                    "description": "InForce is whether it is served now.",
+                    "type": "boolean"
+                },
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "mid": {
+                    "type": "string",
+                    "example": "64050"
+                },
+                "reason": {
+                    "type": "string"
                 }
             }
         },
@@ -15648,6 +16322,38 @@
                         "system"
                     ],
                     "example": "dark"
+                }
+            }
+        },
+        "user.quoteRequest": {
+            "type": "object",
+            "properties": {
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "quantity": {
+                    "description": "Quantity is rounded down to the lot size of the market.",
+                    "type": "string",
+                    "example": "0.5"
+                },
+                "quote_amount": {
+                    "description": "QuoteAmount buys or sells the most lots whose total stays within it.",
+                    "type": "string",
+                    "example": "1000"
+                },
+                "side": {
+                    "type": "string",
+                    "enum": [
+                        "buy",
+                        "sell"
+                    ],
+                    "example": "buy"
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID binds the quote to a sub-account of the user; empty is\nthe main account.",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

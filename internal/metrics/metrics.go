@@ -129,6 +129,94 @@ var (
 		Name: "notification_sms_delivery_reports_total",
 		Help: "Delivery reports of SMS, by provider and state.",
 	}, []string{"provider", "state"})
+	// PriceTicks counts the ticks that the price providers sent and the
+	// aggregator kept, by provider and kind (book or trade) (#58).
+	PriceTicks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_ticks_total",
+		Help: "Ticks of the price providers that the aggregator kept, by provider and kind.",
+	}, []string{"provider", "kind"})
+	// PriceTicksRejected counts the ticks that the aggregator rejected, by
+	// provider and reason.
+	PriceTicksRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_ticks_rejected_total",
+		Help: "Ticks of the price providers that the aggregator rejected, by provider and reason.",
+	}, []string{"provider", "reason"})
+	// PriceProviderLag is the delay of a provider's last tick that carried
+	// the provider's time, and PriceProviderAge the time since its last
+	// tick of any kind.
+	PriceProviderLag = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_lag_seconds",
+		Help: "Delay between a price provider's time of its last tick and its receipt.",
+	}, []string{"provider"})
+	PriceProviderAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_last_tick_age_seconds",
+		Help: "Time since the last tick of a price provider.",
+	}, []string{"provider"})
+	// PriceProviderConnected is 1 while a provider's stream is open, and
+	// PriceProviderFallback 1 while its REST API is read instead.
+	PriceProviderConnected = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_connected",
+		Help: "1 while the stream of a price provider is open.",
+	}, []string{"provider"})
+	PriceProviderFallback = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_provider_rest_fallback",
+		Help: "1 while a price provider is read through its REST API.",
+	}, []string{"provider"})
+	// PriceAggregation is the time of one aggregation of every market.
+	PriceAggregation = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "price_aggregation_duration_seconds",
+		Help:    "Time of one aggregation of the prices of every market.",
+		Buckets: []float64{.0001, .00025, .0005, .001, .0025, .005, .01, .025, .05, .1},
+	})
+	// PriceMarketLive is 1 while a market's price is live, and
+	// PriceMarketSources the providers that make it.
+	PriceMarketLive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_market_live",
+		Help: "1 while the reference price of a market is live, 0 while it is stale.",
+	}, []string{"market"})
+	PriceMarketSources = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "price_market_sources",
+		Help: "Providers that make the reference price of a market.",
+	}, []string{"market"})
+	// PricePublisherLeader is 1 on the replica that publishes the updates
+	// (#59), and PricePublishErrors counts the failed writes, by target
+	// (cache, lease, stream, rabbitmq).
+	PricePublisherLeader = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "price_publisher_leader",
+		Help: "1 on the replica of the price aggregator that publishes the updates.",
+	})
+	PricePublishErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "price_publish_errors_total",
+		Help: "Failed writes of the prices, by target: cache, lease, stream, rabbitmq.",
+	}, []string{"target"})
+	// PriceDelivery is the time from a price's newest tick to its send to
+	// the WebSocket clients of an instance (#59).
+	PriceDelivery = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "price_delivery_latency_seconds",
+		Help:    "Time from the newest provider tick of a price to its send to the WebSocket clients.",
+		Buckets: []float64{.005, .01, .025, .05, .1, .15, .2, .25, .5, 1, 2.5, 5},
+	})
+	// OTCQuotes counts the quote requests (#61), by market and outcome:
+	// quoted, or the code of the refusal. A market that is not quoted is
+	// "other", so that a client cannot add labels.
+	OTCQuotes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "otc_quotes_total",
+		Help: "OTC quote requests, by market and outcome: quoted, or the code of the refusal.",
+	}, []string{"market", "outcome"})
+	// OTCQuoteDuration is the time to price and store a quote.
+	OTCQuoteDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "otc_quote_duration_seconds",
+		Help:    "Time to answer an OTC quote request.",
+		Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1},
+	})
+	// OTCQuotedMargin is the margin of the quotes given, in basis points,
+	// by market and side: with the realized margin of the execution (#62),
+	// it shows whether the quotes earn what they should.
+	OTCQuotedMargin = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "otc_quoted_margin_bps",
+		Help:    "Margin of the OTC quotes given, in basis points of the reference, by market and side.",
+		Buckets: []float64{0, 5, 10, 20, 30, 50, 75, 100, 150, 200, 500},
+	}, []string{"market", "side"})
 )
 
 func init() {
@@ -138,6 +226,9 @@ func init() {
 		HTTPRequests, HTTPDuration, RateLimitRejections, PublishDuration, SealFindings,
 		LedgerMismatches, LedgerImbalancedCurrencies, LedgerAccountProblems, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
+		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
+		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceDelivery,
+		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin,
 	)
 }
 

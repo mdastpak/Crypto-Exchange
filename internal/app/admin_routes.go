@@ -40,6 +40,11 @@ var adminRoutes = map[string]admin.RouteClass{
 	"PUT /currencies/:hk/networks/:network": admin.RouteSensitive,
 	"PUT /markets/:base/:quote":             admin.RouteSensitive,
 
+	// Setting the reference price of a market in place of the price
+	// engine's, which quotes use (#59), or ending it.
+	"POST /markets/:base/:quote/price-override": admin.RouteSensitive,
+	"POST /price-overrides/:id/end":             admin.RouteSensitive,
+
 	// Letting a withdrawal held for review be paid, or refusing it (#70).
 	"POST /withdrawals/:id/approve": admin.RouteSensitive,
 	"POST /withdrawals/:id/reject":  admin.RouteSensitive,

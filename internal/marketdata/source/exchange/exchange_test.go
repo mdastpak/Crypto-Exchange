@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,6 +62,10 @@ func setNow(src source.VenueSource, now func() time.Time) {
 	case *nobitex:
 		v.now = now
 	case *wallex:
+		v.now = now
+	case *ramzinex:
+		v.now = now
+	case *tabdeal:
 		v.now = now
 	}
 }
@@ -176,6 +182,80 @@ func TestWallex(t *testing.T) {
 	assert.Equal(t, "6800000000", got["BTCTMN"].Last.String())
 	assert.Equal(t, "99990", got["USDTTMN"].Bid.String(), "numbers too")
 	assert.Nil(t, got["ETHUSDT"].Bid, "a dash is missing")
+}
+
+func TestRamzinex_RialsAreTomans(t *testing.T) {
+	src, asked := venue(t, Ramzinex, map[string]string{"/exchange/api/v1.0/exchange/pairs": "ramzinex_pairs.json"})
+	sourcetest.CheckVenue(t, src)
+	got := bySymbol(t, src)
+	assert.Equal(t, []string{"11", "2", "272"}, keys(got), "not a pair without a price")
+	btc := got["2"]
+	assert.Equal(t, "BTC", btc.Base)
+	assert.Equal(t, Toman, btc.Quote)
+	assert.Equal(t, "6800000000", btc.Last.String())
+	assert.Equal(t, "6799000000", btc.Bid.String(), "buy is the bid")
+	assert.Equal(t, "6801000000", btc.Ask.String(), "sell is the ask")
+	assert.Equal(t, "85000000000", btc.VolumeQuote.String())
+	assert.Equal(t, "12.5", btc.VolumeBase.String(), "the base volume is not in rials")
+	usdt := got["11"]
+	assert.Equal(t, "100001", usdt.Last.String(), "the middle of the book without a close, in tomans")
+	assert.Equal(t, "100000.5", usdt.Bid.String(), "strings too, exact")
+	eth := got["272"]
+	assert.Equal(t, "USDT", eth.Quote, "a symbol as a string")
+	assert.Nil(t, eth.Bid, "crossed sides are dropped")
+	assert.Equal(t, "/exchange/api/v1.0/exchange/pairs", (*asked)[0])
+}
+
+func TestTabdeal_ReadsTheDepths(t *testing.T) {
+	files := map[string]string{"/api/v1/exchangeInfo": "tabdeal_exchangeinfo.json"}
+	var (
+		mu     sync.Mutex
+		depths []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		file, ok := files[r.URL.Path]
+		if r.URL.Path == "/api/v1/depth" {
+			mu.Lock()
+			depths = append(depths, r.URL.Query().Get("symbol"))
+			mu.Unlock()
+			file, ok = "tabdeal_depth_"+strings.ToLower(r.URL.Query().Get("symbol"))+".json", true
+		}
+		body, err := os.ReadFile("testdata/" + file)
+		if !ok || err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := source.NewClient(source.ClientOptions{Source: Tabdeal, BaseURL: srv.URL, Timeout: 5 * time.Second})
+	require.NoError(t, err)
+	src, err := New(Tabdeal, client)
+	require.NoError(t, err)
+	setNow(src, func() time.Time { return readAt })
+	sourcetest.CheckVenue(t, src)
+
+	got := bySymbol(t, src)
+	assert.Equal(t, []string{"BTCIRT", "USDTIRT"}, keys(got), "not a pair out of trading, nor one without a bid")
+	btc := got["BTCIRT"]
+	assert.Equal(t, Toman, btc.Quote)
+	assert.Equal(t, "6799000000", btc.Bid.String())
+	assert.Equal(t, "6801000000", btc.Ask.String())
+	assert.Equal(t, "6800000000", btc.Last.String(), "the middle of the book")
+	assert.Equal(t, readAt, btc.ObservedAt)
+
+	mu.Lock()
+	depths = nil
+	mu.Unlock()
+	pairs, err := src.(interface {
+		PairTickers(context.Context, [][2]string) ([]source.Ticker, error)
+	}).PairTickers(context.Background(), [][2]string{{"USDT", "IRT"}})
+	require.NoError(t, err)
+	require.Len(t, pairs, 1)
+	assert.Equal(t, "99990", pairs[0].Bid.String())
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"USDTIRT"}, depths, "only the pairs asked for")
 }
 
 func TestVenueErrors(t *testing.T) {

@@ -16,6 +16,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
+	"github.com/mdastpak/crypto-exchange/internal/price"
+	"github.com/mdastpak/crypto-exchange/internal/priceoverride"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -166,4 +168,22 @@ type SMSRouter interface {
 // smsrouting.Store.
 type SMSRoutingStore interface {
 	Set(ctx context.Context, routing notify.SMSRouting, adminHK string, origin audit.Event) error
+}
+
+// PriceReader reads the current price of a market: *price.Reader.
+type PriceReader interface {
+	Get(ctx context.Context, market string) (price.Price, error)
+}
+
+// PriceOverrideStore keeps the overrides: priceoverride.Store.
+type PriceOverrideStore interface {
+	Set(ctx context.Context, n priceoverride.New, adminHK string, origin audit.Event) (priceoverride.Override, error)
+	End(ctx context.Context, id, adminHK string, origin audit.Event) (priceoverride.Override, error)
+	List(ctx context.Context, inForce bool, limit int) ([]priceoverride.Override, error)
+}
+
+// OverrideRefresher reads the overrides again on this instance, so that a
+// change applies here at once: *priceoverride.Watcher.
+type OverrideRefresher interface {
+	Refresh(ctx context.Context) error
 }
