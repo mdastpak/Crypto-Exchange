@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The price engine, `cmd/price-aggregator` ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). See [docs/price-engine.md](docs/price-engine.md).
+  - Binance, Coinbase, and Kraken are followed by their streams (best bid and ask, and trades), reconnecting with backoff, and through the REST tickers of the market data venues while a stream is silent. OKX, Nobitex, and Wallex are read by REST; the Iranian venues, for the rial reference, only in the Iran region.
+  - Every `aggregation_interval_ms`, per market: the fresh providers, the outliers rejected by the median absolute deviation, the best bid and ask, the median mid, and VWAP and TWAP over `vwap_windows_seconds`, from running sums. Below `min_providers`, the price is `stale` with its last live figures.
+  - Decimals only; times to the nanosecond, reported to the microsecond.
+  - Metrics of each provider (ticks, rejections, lag, stream and REST state) and market, and `GET /prices` and `GET /providers` for operators, on `price_aggregator.health_addr`. No database: replicas run side by side.
+  - New settings `price_aggregator.health_addr`, `outlier_floor_bps`, and per provider `poll_ms`, `stale_threshold_ms`, and `egress`. `symbols` are `BASE/QUOTE` now, and `bybit` is no provider.
 - The payouts of withdrawals ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)), the second part of the withdrawal workflow.
   - Every instance plans the queued withdrawals, sends the payouts that are due, and checks those sent, every `withdrawals.payouts.interval_seconds`. Each claims its rows with `FOR UPDATE SKIP LOCKED`.
   - The plan is recorded before anything is sent. A crypto withdrawal is one transfer on chain. A rial one is split across the bank rails that reach its destination (`card`, `paya`, `satna`, `pol`, `account`), in `withdrawals.payouts.rail_order`, within each rail's minimum and maximum and the destination's daily maximum, over later days when today is full. The fee is split across the payouts.

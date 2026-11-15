@@ -82,6 +82,20 @@ var regionFeatures = []regionFeature{
 		},
 	},
 	{
+		what:    "the Iranian exchanges as price providers (#58)",
+		regions: []region.Region{region.Iran},
+		worker:  true,
+		on: func(c *Configuration) []regionSetting {
+			var out []regionSetting
+			for i, p := range c.PriceAggregator.Providers {
+				if p.Enabled && slices.Contains(IranianSources, p.Name) {
+					out = append(out, regionSetting{fmt.Sprintf("price_aggregator.providers[%d].enabled", i), "true", "set it to false"})
+				}
+			}
+			return out
+		},
+	},
+	{
 		what:    "the Iranian exchanges in the market data API",
 		regions: []region.Region{region.Iran},
 		on: func(c *Configuration) []regionSetting {

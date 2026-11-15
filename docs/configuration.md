@@ -543,6 +543,33 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `api.regions` | `[]` (every region) | The regions of the venues that the public routes show: `global`, `ir`. An international release sets `[global]`. |
 | `api.cache_seconds` | `30` | From 1 to 3600. How long an answer of the public routes is cached in Redis, shared by every instance, and by clients (`Cache-Control: max-age`). |
 
+### `price_aggregator`
+
+[`cmd/price-aggregator`](price-engine.md), the price engine ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). The server does not read it.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` in the example | Follows the providers. An aggregator that is not enabled only answers its probes. |
+| `health_addr` | `:8082` | The address of `/system/live`, `/system/ready`, `/metrics`, `/prices`, and `/providers`. Keep it internal. |
+| `aggregation_interval_ms` | `100` | From 10 to 60000. The time between two aggregations. |
+| `vwap_windows_seconds` | `[1, 5, 60, 300]` | From 1 to 86400 each. The windows of the VWAP and the TWAP. Each must be a multiple of a tenth of the shortest. |
+| `outlier_threshold_mad` | `3.0` | Above 0. A provider's mid further than this many median absolute deviations from the median is an outlier. |
+| `outlier_floor_bps` | `10` | From 0 to 10000. No deviation within this many basis points of the median makes an outlier. |
+| `min_providers` | `2` | At least 1. The quorum of a live price; below it, the price is stale. |
+| `stale_threshold_ms` | `5000` | Above 0. A provider's book older than this does not count. |
+| `publish_to_redis`, `publish_to_rabbitmq` | `true` | Reserved for the distribution of [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59). |
+| `providers[].name` | | The provider, unique: `binance`, `coinbase`, `kraken` (with a stream), or `okx`, `nobitex`, `wallex` (REST only). See [Providers](price-engine.md#providers). |
+| `providers[].enabled` | `false` | Whether this node follows it. `nobitex` and `wallex` are of the Iran region only. |
+| `providers[].type` | | `websocket` (the stream, and REST while it is down) or `rest`. |
+| `providers[].symbols` | | The markets it follows, `BASE/QUOTE` or `BASE-QUOTE`, such as `BTC/USDT`. |
+| `providers[].ws_endpoint`, `rest_endpoint` | the provider's | Override the addresses: `wss://` and `https://` only. |
+| `providers[].timeout_seconds` | `5` | Bounds one REST read. |
+| `providers[].reconnect_delay_seconds` | `5` | A tenth of it is the first wait before a reconnection, which doubles up to 30 seconds. |
+| `providers[].poll_ms` | `5000` | The time between two REST reads. |
+| `providers[].stale_threshold_ms` | | Overrides `stale_threshold_ms` for the provider, such as one read through REST only. |
+| `providers[].egress` | `market_data.egress.default` | `direct`, or `proxy` through `market_data.egress.proxy_url`, as in [Egress per node](market-data.md#egress-per-node). |
+| `providers[].api_key`, `api_secret`, `passphrase`, `rate_limit` | | Not read: the public streams and tickers need no key. |
+
 ### `platform`
 
 The [maintenance and lockdown controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)). The controls themselves are in the database, created through the admin API or `cmd/admin platform`; these settings say how each instance applies them.
@@ -679,7 +706,6 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | --- | --- | --- |
 | `exchange` | Display name and time zone. The maintenance window that was reserved here is replaced by the scheduled [maintenance controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)); `exchange.maintenance_window` is no longer read. | none |
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
-| `price_aggregator` | Price providers, VWAP windows, outlier threshold, quorum, staleness | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
 | `compliance` | Sanctions providers, AML rules path (`config/aml_rules.yaml`), KYC providers | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
@@ -872,8 +898,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `RATE_LIMITS_AUTH_ON_ERROR` | `rate_limits.auth.on_error` |
 | `LOG_LEVEL` | `observability.logging.level` |
 | `OTEL_ENDPOINT` | `observability.tracing.endpoint` |
-| `BINANCE_API_KEY` | `api_key` of the `binance` provider in `price_aggregator` |
-| `BINANCE_API_SECRET` | `api_secret` of the `binance` provider in `price_aggregator` |
+| `BINANCE_API_KEY` | `api_key` of the `binance` provider in `price_aggregator` (not read yet) |
+| `BINANCE_API_SECRET` | `api_secret` of the `binance` provider in `price_aggregator` (not read yet) |
 | `FIAT_PROVIDER_API_KEY` | `api_key` of every provider in `fiat` |
 | `FIAT_PROVIDER_API_SECRET` | `api_secret` of every provider in `fiat` |
 | `CHAINALYSIS_API_KEY` | `api_key` of the `chainalysis` provider in `compliance.sanctions` |

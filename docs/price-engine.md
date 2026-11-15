@@ -1,0 +1,92 @@
+# Price engine
+
+`cmd/price-aggregator` computes the reference price of each market from the books and trades of several providers ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). The reference prices quote the OTC trades ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)) and feed the market-making bots ([#369](https://github.com/mdastpak/Crypto-Exchange/issues/369)). The code is in `internal/price`.
+
+| Part | Issue | State |
+| --- | --- | --- |
+| Providers, aggregation, `cmd/price-aggregator`, metrics | [#58](https://github.com/mdastpak/Crypto-Exchange/issues/58) | Done |
+| Price cache in Redis, distribution, consumer library, admin override | [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59) | Planned |
+
+## Running
+
+```bash
+go run ./cmd/price-aggregator -config config/config.local.yaml
+```
+
+The Docker image holds it as `/app/price-aggregator`; run it with `--entrypoint /app/price-aggregator`. It reads the same configuration file as the server, and needs only the [`price_aggregator`](configuration.md#price_aggregator) section, with `market_data.egress.proxy_url` for a provider reached through a proxy. It needs no database.
+
+It answers on `price_aggregator.health_addr` (`:8082`), an internal address that must not be reachable from the public network:
+
+| Route | What |
+| --- | --- |
+| `GET /system/live` | `200` while the process runs. |
+| `GET /system/ready` | `200`, and `503` once it stops. |
+| `GET /metrics` | The [metrics](#metrics). |
+| `GET /prices` | The prices of the last interval, for operators. |
+| `GET /providers` | The state of each provider: stream open, REST fallback on, last tick, lag, reconnections, last error. |
+
+## Several replicas
+
+The engine keeps no shared state. Each replica follows the providers and computes the prices on its own, from the same configuration, so that a replica that dies loses nothing and needs no takeover. Two replicas may differ by the ticks that reached one of them first; [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59) has one replica at a time publish, so that consumers see one series. Each replica opens its own connections to the providers, so run two or three, not one per node.
+
+## Providers
+
+A provider is a venue, named as in the [market data catalog](market-data.md#tickers). Each follows the markets of its `symbols`, written `BASE/QUOTE` (or `BASE-QUOTE`). The aliases of the venues are read as the assets they name: `XBT/USD` is `BTC/USD`.
+
+| Provider | Type | Stream | REST |
+| --- | --- | --- | --- |
+| `binance` | `websocket` | `<symbol>@bookTicker` and `<symbol>@trade` | 24-hour tickers |
+| `coinbase` | `websocket` | The `ticker` channel of the Exchange feed, each a trade with the best bid and ask after it | Tickers |
+| `kraken` | `websocket` | The `ticker` channel of WebSocket v2 on each change of the best bid and ask, and the `trade` channel without its snapshot | Tickers |
+| `okx`, `nobitex`, `wallex` | `rest` | None | Tickers |
+
+A `websocket` provider follows its stream. It reconnects when the connection drops or stays silent for 30 seconds, after a wait that starts at a tenth of `reconnect_delay_seconds` and doubles with each failure in a row, up to 30 seconds, with a jitter of ±20 %. While its stream sent no tick for 3 seconds, its REST API is read every `poll_ms` instead, and the reads stop once the stream sends again. A `rest` provider is read every `poll_ms` only. A REST ticker without both sides of its book gives nothing, and REST gives no trades, so a provider read through REST adds to the mid and the best bid and ask, not to the VWAP.
+
+The Iranian venues give the reference of the rial markets, since no global venue quotes IRR. They have no stream, so their `stale_threshold_ms` is longer than the default. They are providers of the [Iran region](configuration.md#region-of-a-release) only: an international release refuses to start with one enabled. They often answer only from Iran: give them `egress: direct` on a node there, and `proxy` elsewhere.
+
+## Aggregation
+
+Every `aggregation_interval_ms` (100 ms), for each market:
+
+1. The **fresh** providers are those whose last book is at most `stale_threshold_ms` old, or the provider's own `stale_threshold_ms`. A book's time is the provider's, unless the provider gives none or its clock is ahead of ours; then it is the time of receipt.
+2. The **outliers** are rejected by the median absolute deviation (MAD) of the fresh providers' mids: a mid further from their median than `outlier_threshold_mad` MADs is out, unless it is within `outlier_floor_bps` of the median, so that providers that agree to the tick are not rejected for noise when the MAD is zero. Of two providers, neither is an outlier: each is as far from their median.
+3. The **quorum**: with at least `min_providers` providers left, the price is `live`. Below it, the price is `stale`. It keeps the figures of its last live price, with that price's time in `updated`, and must not be served as current. A market with no live price yet is stale with zero figures.
+4. The figures of a live price:
+   - `bid` and `ask`: the best bid and the best ask of the providers. They may cross when the venues disagree.
+   - `mid`: the median of the providers' mids, the reference price.
+   - `vwap`: for each of `vwap_windows_seconds`, the volume-weighted average price of the providers' trades in the window. A window without trades has none.
+   - `twap`: for each window, the time-weighted average of the mid over the live time in it. The time below the quorum does not count.
+   - `sources` and `outliers`: the providers of the figures, and those rejected.
+   - `at`: when it was computed; `updated`: the time of its newest book.
+
+The windows keep running sums in buckets of a tenth of the shortest window, so an interval costs the same whatever the number of trades in the longest window. Each window must be a multiple of that bucket. Every amount is a decimal, never a floating-point number, and VWAP and TWAP are rounded to 18 places. Times are kept to the nanosecond and reported to the microsecond.
+
+A tick is rejected, and counted in `price_ticks_rejected_total`, when its market is not followed (`unknown_market`), an amount is not positive (`invalid`), its bid is above its ask (`crossed_book`), a book is older than the provider's last one (`out_of_order`), or a trade is older than the longest window (`too_old`).
+
+### Performance
+
+`TestAggregator_Load` runs three providers at 1,000 ticks per second each over 20 markets, for the 300 seconds of the longest window: an aggregation of every market takes about 0.1 ms at the median and well under 1 ms at the 99th percentile, within the budget of 10 ms, and a tick about 0.5 µs.
+
+## Metrics
+
+On `GET /metrics`, with the metrics of the Go runtime and of the process:
+
+| Metric | Type | Labels | What |
+| --- | --- | --- | --- |
+| `price_ticks_total` | counter | `provider`, `kind` | Ticks kept, `book` or `trade`. Their rate is the message rate of the provider. |
+| `price_ticks_rejected_total` | counter | `provider`, `reason` | Ticks rejected, by the reasons above. |
+| `price_provider_lag_seconds` | gauge | `provider` | Delay between the provider's time of its last tick and its receipt. |
+| `price_provider_last_tick_age_seconds` | gauge | `provider` | Time since the last tick of the provider. |
+| `price_provider_connected` | gauge | `provider` | 1 while its stream is open. |
+| `price_provider_rest_fallback` | gauge | `provider` | 1 while its REST API is read. |
+| `price_aggregation_duration_seconds` | histogram | | Time of one aggregation of every market. |
+| `price_market_live` | gauge | `market` | 1 while the price of the market is live, 0 while it is stale. |
+| `price_market_sources` | gauge | `market` | Providers that make the price. |
+
+The labels take only the configured providers and markets.
+
+| Alert | Expression | What to do |
+| --- | --- | --- |
+| Market stale | `max by (market) (price_market_live) == 0` for 1 minute | No replica has the quorum of the market: quotes of it stop. Check `GET /providers` for the providers that are down. |
+| Provider silent | `min by (provider) (price_provider_last_tick_age_seconds) > 30` | No replica receives the provider, through its stream or REST. |
+| Aggregation slow | `histogram_quantile(0.99, rate(price_aggregation_duration_seconds_bucket[5m])) > 0.01` | The 99th percentile is past the budget of 10 ms. |
