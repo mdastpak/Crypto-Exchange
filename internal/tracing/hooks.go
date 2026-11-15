@@ -5,6 +5,8 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/mdastpak/crypto-exchange/internal/httpmethod"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
@@ -17,7 +19,8 @@ import (
 // Middleware starts the span of every request, a child of the traceparent
 // of the client when it sends one, named by the method and the pattern of
 // its route, such as "POST /api/v1/admin/currencies", so that a value of
-// the path never names a span. The handlers run under it: the queries and
+// the path never names a span. The method is one of the standard ones, or
+// "other" (#403), so that a client cannot name spans either. The handlers run under it: the queries and
 // the commands of a request are its children. A server error marks the
 // span as failed.
 func Middleware() gin.HandlerFunc {
@@ -27,9 +30,10 @@ func Middleware() gin.HandlerFunc {
 		if route == "" {
 			route = "unmatched"
 		}
-		ctx, span := Tracer().Start(ctx, c.Request.Method+" "+route, trace.WithSpanKind(trace.SpanKindServer),
+		method := httpmethod.Normalize(c.Request.Method)
+		ctx, span := Tracer().Start(ctx, method+" "+route, trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
-				attribute.String("http.request.method", c.Request.Method),
+				attribute.String("http.request.method", method),
 				attribute.String("http.route", route),
 			))
 		defer span.End()
