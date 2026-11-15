@@ -20,7 +20,8 @@ const (
 // the recovery codes that came with it.
 func (e *e2eEnv) withRecoveryCodes(t *testing.T, token string) []string {
 	t.Helper()
-	status, resp := e.put(t, passwordRoute, map[string]string{"new_password": testPassword}, token)
+	code := e.passwordCode(t, token)
+	status, resp := e.put(t, passwordRoute, map[string]string{"new_password": testPassword, "contact_code": code}, token)
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	raw, _ := resp.Info["recovery_codes"].([]interface{})
 	require.Len(t, raw, 10)

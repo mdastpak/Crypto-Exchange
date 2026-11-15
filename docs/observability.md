@@ -45,6 +45,7 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 | `ledger_operation_duration_seconds` | histogram | `kind` | Time of an operation of the ledger, to its commit. |
 | `ledger_reconciliation_mismatches` | gauge | | Balances that differed from the replay of their changes at the last reconciliation, on the instance that ran it. |
 | `ledger_reconciliation_imbalanced_currencies` | gauge | | Currencies whose books did not sum to zero, or whose custody held other than it must, at the last reconciliation. |
+| `ledger_reconciliation_account_problems` | gauge | | Accounts of the exchange in a state that the operations of the ledger cannot leave, such as fees below zero, at the last reconciliation ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)). |
 | `ledger_reconciliation_last_success_timestamp_seconds` | gauge | | Unix time of the last completed reconciliation. One instance at a time runs it, every hour. |
 | `db_connections_open`, `db_connections_in_use`, `db_connections_idle` | gauge | | The PostgreSQL pool of the instance. |
 | `db_connection_waits`, `db_connection_wait_seconds` | gauge | | Waits for a connection of the pool, and their time, since the start. |
@@ -63,7 +64,7 @@ The metrics are meant for these alerts, at least:
 
 | Alert | Rule | Why |
 | --- | --- | --- |
-| Ledger does not reconcile | `max(ledger_reconciliation_mismatches) > 0` or `max(ledger_reconciliation_imbalanced_currencies) > 0` | A balance or a currency of the books changed outside the ledger. Page someone; `admin ledger reconcile` lists them. |
+| Ledger does not reconcile | `max(ledger_reconciliation_mismatches) > 0`, `max(ledger_reconciliation_imbalanced_currencies) > 0`, or `max(ledger_reconciliation_account_problems) > 0` | A balance or a currency of the books changed outside the ledger. Page someone; `admin ledger reconcile` lists them. |
 | Ledger not reconciled | `time() - max(ledger_reconciliation_last_success_timestamp_seconds) > 3 * 3600` | No instance completed the hourly reconciliation for three hours. |
 | Integrity finding | `increase(row_seal_findings_total[5m]) > 0` | A row changed outside the backend, or a seal missing in `enforce` mode. Page someone; see [Integrity findings](data-protection.md#integrity-findings). |
 | Server errors | `sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01` | More than one request in a hundred fails. |

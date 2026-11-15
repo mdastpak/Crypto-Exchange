@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"log"
+	"strconv"
 	"testing"
 	"time"
 
@@ -200,7 +201,7 @@ func TestVerifyAll_EnforceModeReportsAndLeavesTheRows(t *testing.T) {
 
 	report, err := sealer.VerifyAll(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 3, report.Checked)
+	assert.Equal(t, 5, report.Checked, "the three users, and the two findings the pass opened, which are sealed (#404)")
 	assert.Equal(t, 2, report.Findings)
 	assert.Zero(t, report.Resealed)
 	findings := e.openFindings(t)
@@ -553,4 +554,57 @@ func TestReviewReseal_ARequestWrittenInSQLCountsAsNone(t *testing.T) {
 	assert.False(t, waits)
 	assert.Equal(t, "resealed", resolved.Resolution)
 	require.NoError(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)))
+}
+
+// TestVerifyAll_AFindingClosedInSQLIsAFinding checks that the resolution of
+// a finding is sealed (#404): a role that may write the findings cannot
+// close one without the backend's key and hide its row.
+func TestVerifyAll_AFindingClosedInSQLIsAFinding(t *testing.T) {
+	e := newEnv(t)
+	sealer := e.sealer(rowseal.ModeEnforce)
+	ctx := context.Background()
+	hk := e.newUser(t)
+	_, err := e.conn.Exec(`UPDATE users SET status = 'BANNED' WHERE hk = $1`, hk)
+	require.NoError(t, err)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, hk)), rowseal.ErrUnverified)
+	finding := e.openFindings(t)[0]
+
+	report, err := sealer.VerifyAll(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Findings, "only the user: a finding the backend wrote is sealed")
+
+	_, err = e.conn.Exec(`UPDATE integrity_findings SET resolved_at = NOW(), resolution = 'resealed' WHERE id = $1`, finding.ID)
+	require.NoError(t, err)
+	report, err = sealer.VerifyAll(ctx)
+	require.NoError(t, err)
+	tables := map[string]string{}
+	for _, f := range e.openFindings(t) {
+		tables[f.Table] = f.RowKey
+	}
+	assert.Equal(t, map[string]string{"users": hk, "integrity_findings": strconv.FormatInt(finding.ID, 10)}, tables,
+		"the user is still a finding, and so is the finding closed in SQL")
+
+	// A finding the backend closes stays closed.
+	admin := e.newUser(t)
+	origin := audit.Event{ActorType: audit.ActorAdmin, ActorID: admin}
+	for _, f := range e.openFindings(t) {
+		if f.Table == "users" {
+			_, err = sealer.ResealFinding(ctx, f.ID, origin, "Reviewed")
+			require.NoError(t, err)
+		}
+	}
+	report, err = sealer.VerifyAll(ctx)
+	require.NoError(t, err)
+	assert.Len(t, e.openFindings(t), 1, "only the finding closed in SQL is open")
+}
+
+// TestTables_TheMoneyTablesAreSealedFromStart lists the tables whose rows
+// were sealed from the first one (#404), which every mode refuses and the
+// verifier never adopts; TestLedger_ReportModeDoesNotAdoptABalance runs it.
+func TestTables_TheMoneyTablesAreSealedFromStart(t *testing.T) {
+	for _, table := range []*rowseal.Table{rowseal.Balances, rowseal.Withdrawals, rowseal.WithdrawalPayouts, rowseal.WithdrawalDestinations, rowseal.OperationConfirmations} {
+		assert.True(t, table.SealedFromStart, table.Name)
+	}
+	assert.False(t, rowseal.Users.SealedFromStart)
+	assert.False(t, rowseal.IntegrityFindings.SealedFromStart, "the findings of before have no seal")
 }

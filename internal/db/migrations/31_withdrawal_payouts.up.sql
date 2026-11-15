@@ -56,5 +56,5 @@ ALTER TABLE integrity_findings
             'user_totp', 'account_recoveries', 'session_step_ups',
             'admin_sessions', 'user_restrictions', 'platform_controls', 'user_recovery_codes',
             'balances', 'withdrawal_destinations', 'operation_confirmations', 'user_confirmation_methods',
-            'user_anti_phishing_codes', 'sms_routing', 'currency_networks', 'markets', 'withdrawals',
+            'user_anti_phishing_codes', 'sms_routing', 'currency_networks', 'markets', 'withdrawals', 'integrity_findings',
             'withdrawal_payouts'));

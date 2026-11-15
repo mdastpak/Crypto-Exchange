@@ -148,6 +148,9 @@ func (h *UserHandler) StepUp(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), passwordTimeout)
 	defer cancel()
 	event := auth.SessionEvent(c, audit.ActionUserStepUp, claims.UUID, claims.SessionID)
+	// A proof in this session cancels only a recovery that began after it
+	// (#401).
+	ctx = userauth.InSession(ctx, claims.SessionID)
 
 	var err error
 	if byPasskey {

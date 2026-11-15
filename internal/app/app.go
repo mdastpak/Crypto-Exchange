@@ -1323,6 +1323,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/security", ih.User.GetSecurity)
 		// A password change checks the current password, so it has the
 		// limit of a sign-in on top of the lock of the password.
+		// The first password needs a code sent to a verified contact
+		// (#401), which has the limit of a code request.
+		activeGroup.POST("/password/code", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.SendPasswordCode)
 		activeGroup.PUT("/password", rl.AuthRateLimit(middleware.AuthLogin), profileChanges, ih.User.SetPassword)
 		activeGroup.POST("/step-up", rl.AuthRateLimit(middleware.AuthLogin), ih.User.StepUp)
 		activeGroup.POST("/recovery-codes", profileChanges, ih.User.RequireSecondFactor(false), ih.User.GenerateRecoveryCodes)

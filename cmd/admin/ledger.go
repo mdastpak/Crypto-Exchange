@@ -97,6 +97,11 @@ func printReconciliation(stdout io.Writer, report ledger.Report) {
 			c.Accounts[ledger.AccountInventory], c.Expected, c.Imbalance)
 	}
 	_ = w.Flush()
+	for _, c := range report.Currencies {
+		for _, problem := range c.Problems {
+			fmt.Fprintf(stdout, "  %s: %s\n", c.Symbol, problem)
+		}
+	}
 	fmt.Fprintf(stdout, "Replayed %d balances: %d differ from their changes.\n", report.Balances, len(report.Mismatches))
 	for _, m := range report.Mismatches {
 		fmt.Fprintf(stdout, "  balance %s: %s\n", m.BalanceID, m.Reason)

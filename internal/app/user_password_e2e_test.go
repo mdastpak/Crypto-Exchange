@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	passwordRoute   = "/api/v1/user/password"
-	secondStepRoute = "/api/v1/public/auth/second-step"
-	testPassword    = "correct horse battery"
+	passwordRoute     = "/api/v1/user/password"
+	passwordCodeRoute = "/api/v1/user/password/code"
+	secondStepRoute   = "/api/v1/public/auth/second-step"
+	testPassword      = "correct horse battery"
 )
 
 // put sends a PUT with a token and returns the status and the envelope.
@@ -33,10 +34,23 @@ func (e *e2eEnv) put(t *testing.T, path string, body interface{}, token string) 
 	return status, resp
 }
 
-// setPassword gives the user of token a first password.
+// passwordCode asks for the code of the first password and returns it.
+func (e *e2eEnv) passwordCode(t *testing.T, token string) string {
+	t.Helper()
+	status, resp := e.post(t, passwordCodeRoute, map[string]string{}, token)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	require.NotEmpty(t, resp.Info["code_sent_to"])
+	code := e.sender.lastSent()
+	require.NotEmpty(t, code)
+	return code
+}
+
+// setPassword gives the user of token a first password, with the code of
+// a verified contact (#401).
 func (e *e2eEnv) setPassword(t *testing.T, token, password string) {
 	t.Helper()
-	status, resp := e.put(t, passwordRoute, map[string]string{"new_password": password}, token)
+	code := e.passwordCode(t, token)
+	status, resp := e.put(t, passwordRoute, map[string]string{"new_password": password, "contact_code": code}, token)
 	require.Equal(t, http.StatusOK, status, resp.Message)
 	// A new second factor holds withdrawals (#251).
 	require.NotEmpty(t, resp.Info["security_hold_until"])

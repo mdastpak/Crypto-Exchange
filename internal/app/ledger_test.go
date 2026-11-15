@@ -20,14 +20,17 @@ func TestRecordAudit_SetsTheMetricsOfAReconciliation(t *testing.T) {
 			{Symbol: "BTC"},
 			{Symbol: "USDT", Imbalance: shared.MustNewDecimalFromString("1")},
 			{Symbol: "TRX", Difference: &off},
+			{Symbol: "ETH", Problems: []string{"the fees account is -1, below zero", "another"}},
 		},
 	}
 	recordAudit(report)
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.LedgerMismatches))
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.LedgerImbalancedCurrencies), "an imbalance and a custody difference")
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.LedgerImbalancedCurrencies), "an imbalance, a custody difference, and account problems")
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.LedgerAccountProblems))
 	assert.Positive(t, testutil.ToFloat64(metrics.LedgerLastReconciliation))
 
 	recordAudit(ledger.Report{Currencies: []ledger.CurrencyReport{{Symbol: "BTC"}}})
 	assert.Zero(t, testutil.ToFloat64(metrics.LedgerMismatches))
 	assert.Zero(t, testutil.ToFloat64(metrics.LedgerImbalancedCurrencies))
+	assert.Zero(t, testutil.ToFloat64(metrics.LedgerAccountProblems))
 }

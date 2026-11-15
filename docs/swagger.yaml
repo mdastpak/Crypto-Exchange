@@ -3340,6 +3340,29 @@ definitions:
         example: 1
         type: integer
     type: object
+  user.PasswordCodeRequest:
+    properties:
+      send_to:
+        description: |-
+          SendTo is the verified contact that receives the code: email or
+          mobile. By default, the first verified contact of the account.
+        enum:
+        - email
+        - mobile
+        example: email
+        type: string
+    type: object
+  user.PasswordCodeSent:
+    properties:
+      code_sent_to:
+        description: CodeSentTo is the masked contact that received the code.
+        example: ali*****@example.com
+        type: string
+      expires_in:
+        description: ExpiresIn is the number of seconds the code is valid.
+        example: 60
+        type: integer
+    type: object
   user.Profile:
     properties:
       contact:
@@ -3452,6 +3475,12 @@ definitions:
     type: object
   user.SetPasswordRequest:
     properties:
+      contact_code:
+        description: |-
+          ContactCode is required to set the first password: the code that
+          POST /user/password/code sent to a verified contact of the account.
+        example: "123456"
+        type: string
       current_password:
         description: |-
           CurrentPassword is required to change a password, and left out to
@@ -10077,12 +10106,15 @@ paths:
       consumes:
       - application/json
       description: 'The account password is a second step of the sign-in, after the
-        code, never a replacement for it. The first password needs only the session;
-        a change needs current_password. A new password has at least security.password.min_length
-        characters (10 by default) and at most 256 bytes, and at least five different
-        characters. A change ends every other session of the user. A wrong current
-        password answers 403 password_invalid and counts toward the lock of the password:
-        429 password_locked with Retry-After.'
+        code, never a replacement for it. The first password needs contact_code, the
+        code that POST /user/password/code sent to a verified contact of the account:
+        403 contact_proof_required without one, 403 contact_code_invalid for a wrong
+        or expired one, and 429 rate_limited after too many. A change needs current_password.
+        A new password has at least security.password.min_length characters (10 by
+        default) and at most 256 bytes, and at least five different characters. A
+        change ends every other session of the user. A wrong current password answers
+        403 password_invalid and counts toward the lock of the password: 429 password_locked
+        with Retry-After.'
       parameters:
       - description: The new password, and the current one for a change
         in: body
@@ -10125,6 +10157,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Set or change the account password
+      tags:
+      - user security
+  /api/v1/user/password/code:
+    post:
+      consumes:
+      - application/json
+      description: 'Sends a code to a verified contact of the account (send_to, or
+        the first one), which PUT /user/password needs as contact_code to set the
+        first password. The code is valid for expires_in seconds and works only in
+        this session; a new request replaces it. 409 password_set answers an account
+        that has a password: a change needs current_password instead.'
+      parameters:
+      - description: The contact that receives the code
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/user.PasswordCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.PasswordCodeSent'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: password_set, contact_not_found, or channel_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Send the code of the first password
       tags:
       - user security
   /api/v1/user/profile:

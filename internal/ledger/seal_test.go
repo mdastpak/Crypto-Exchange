@@ -65,3 +65,32 @@ func TestLedger_CountsItsOperations(t *testing.T) {
 	assert.Equal(t, replayed+1, count(KindLock, "replayed"))
 	assert.Equal(t, insufficient+1, count(KindLock, "insufficient"))
 }
+
+// TestLedger_ReportModeDoesNotAdoptABalance checks that a balance changed
+// in SQL cannot move in report mode either, and that the verifier keeps
+// its finding open instead of sealing it again (#404): balances are sealed
+// from their first write, so a mismatch is never a row of before.
+func TestLedger_ReportModeDoesNotAdoptABalance(t *testing.T) {
+	ctx := context.Background()
+	b := newBooks(t)
+	sealer := sealtest.Use(t, b.DB, rowseal.ModeReport)
+	alice, usdt := b.user(), b.currency("USDT")
+	b.fund(alice, usdt, "100")
+	_, err := b.DB.Exec(`UPDATE balances SET available = available + 1000`)
+	require.NoError(t, err)
+
+	report, err := sealer.VerifyAll(ctx)
+	require.NoError(t, err)
+	var open, closed int
+	require.NoError(t, b.DB.QueryRow(`SELECT COUNT(*) FILTER (WHERE resolved_at IS NULL), COUNT(*) FILTER (WHERE resolved_at IS NOT NULL)
+		FROM integrity_findings WHERE table_name = 'balances'`).Scan(&open, &closed))
+	assert.Equal(t, 1, open, "the finding stays open")
+	assert.Zero(t, closed)
+	assert.Positive(t, report.Resealed, "the user rows of the test, written in SQL, are adopted")
+
+	_, err = b.Lock(ctx, "report:lock", alice, amount(usdt, "500"), Ref{})
+	require.ErrorIs(t, err, ErrUnverified, "the extra funds cannot be locked")
+	bob := b.user()
+	_, err = b.Transfer(ctx, "report:transfer", alice, bob, amount(usdt, "50"), Ref{})
+	require.ErrorIs(t, err, ErrUnverified, "nor moved")
+}

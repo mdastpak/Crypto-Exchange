@@ -114,13 +114,16 @@ func GetFinding(ctx context.Context, q Querier, id int64) (Finding, error) {
 	return f, err
 }
 
-// resolve closes the open finding of a row.
-func resolve(ctx context.Context, q Querier, id int64, resolution, resolvedBy, reason string) error {
-	_, err := q.ExecContext(ctx, `
+// resolve closes the open finding of a row, and seals the resolution
+// (#404).
+func (s *Sealer) resolve(ctx context.Context, q Querier, id int64, resolution, resolvedBy, reason string) error {
+	if _, err := q.ExecContext(ctx, `
 		UPDATE integrity_findings SET resolved_at = NOW(), resolution = $2,
 			resolved_by = NULLIF($3, '')::uuid, reason = NULLIF($4, '')
-		WHERE id = $1 AND resolved_at IS NULL`, id, resolution, resolvedBy, reason)
-	return err
+		WHERE id = $1 AND resolved_at IS NULL`, id, resolution, resolvedBy, reason); err != nil {
+		return err
+	}
+	return s.Reseal(ctx, q, IntegrityFindings, "id = $1", id)
 }
 
 // ResealFinding re-seals the row of an open finding after a review, and
@@ -165,6 +168,7 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		PlatformControls.Name: "NULL", Balances.Name: "user_id", WithdrawalDestinations.Name: "user_hk", OperationConfirmations.Name: "user_hk", UserConfirmationMethods.Name: "user_hk", AntiPhishingCodes.Name: "user_hk", SMSRouting.Name: "NULL",
 		CurrencyNetworks.Name: "NULL", Markets.Name: "NULL", Withdrawals.Name: "user_id",
 		WithdrawalPayouts.Name: "(SELECT w.user_id FROM withdrawals w WHERE w.id = withdrawal_payouts.withdrawal_id)",
+		IntegrityFindings.Name: "NULL",
 	}[t.Name]
 	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)
@@ -282,7 +286,7 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 	default:
 		after = t.Shown(r)
 	}
-	if err := resolve(ctx, tx, id, resolution, origin.ActorID, reason); err != nil {
+	if err := s.resolve(ctx, tx, id, resolution, origin.ActorID, reason); err != nil {
 		return Finding{}, false, err
 	}
 	e := audit.Of(origin, audit.ActionIntegrityReseal, t.Name, f.RowKey)
@@ -395,7 +399,7 @@ func (s *Sealer) verifyRecords(ctx context.Context, report *Report) error {
 	}
 	for _, hk := range missing {
 		report.Findings++
-		id, created, err := recordFinding(ctx, tx, UserPasswords, hk, CheckRowMissing, DetectedByVerifier)
+		id, created, err := s.recordFinding(ctx, tx, UserPasswords, hk, CheckRowMissing, DetectedByVerifier)
 		if err != nil {
 			return err
 		}
@@ -469,7 +473,7 @@ func (s *Sealer) verifyBatch(ctx context.Context, t *Table, after string, report
 			continue
 		}
 		report.Findings++
-		id, created, err := recordFinding(ctx, tx, t, r.Key, v, DetectedByVerifier)
+		id, created, err := s.recordFinding(ctx, tx, t, r.Key, v, DetectedByVerifier)
 		if err != nil {
 			return "", false, err
 		}
@@ -483,13 +487,15 @@ func (s *Sealer) verifyBatch(ctx context.Context, t *Table, after string, report
 				return "", false, err
 			}
 		}
-		if s.mode == ModeReport {
+		// A table sealed from its first row has no row of before to adopt:
+		// its finding stays open for a person to review (#404).
+		if s.mode == ModeReport && !t.SealedFromStart {
 			// The version in the condition leaves a row that a request
 			// wrote meanwhile to that write, which sealed it.
 			if err := s.Reseal(ctx, tx, t, where, r.Key, r.Version); err != nil {
 				return "", false, err
 			}
-			if err := resolve(ctx, tx, id, "report_mode", "", "sealed by the verifier in report mode"); err != nil {
+			if err := s.resolve(ctx, tx, id, "report_mode", "", "sealed by the verifier in report mode"); err != nil {
 				return "", false, err
 			}
 			report.Resealed++

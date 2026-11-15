@@ -449,7 +449,7 @@ Response `200`, with ten new `recovery_codes`, shown this once, and `hold_until`
 - The new password follows the policy of `PUT /user/password`.
 - **Every** session of the user ends, the earlier recovery codes stop working, and the [security hold](#security-hold) starts, so an account that was recovered cannot withdraw at once.
 
-**The password cancels a recovery.** Whenever the account password is proved, at the second step of a sign-in, at `POST /user/step-up`, or for a password change, an open recovery of the account is cancelled, on every instance, since its state is in PostgreSQL. The owner sees a recovery in progress in `recovery` of the `202` answer to a code and of `GET /user/security`.
+**The password cancels a recovery.** Whenever the account password is proved at the second step of a sign-in, an open recovery of the account is cancelled, on every instance, since its state is in PostgreSQL. A proof in a session, at `POST /user/step-up`, for a password change, or to confirm an operation, cancels it only when the session began after the recovery did ([#401](https://github.com/mdastpak/Crypto-Exchange/issues/401)): a session older than the recovery may be the one that the recovery takes the account back from, and whoever stole it must not be able to cancel every recovery the owner opens. The owner of the account cancels one by signing in again. The owner sees a recovery in progress in `recovery` of the `202` answer to a code and of `GET /user/security`.
 
 Audited as `user.recovery_start`, `user.recovery_identity` (a failed identity check), `user.recovery_cancel` (with the reason: `password_proven`, `password_reset`, or `identity_failed`), and `user.recovery_complete`, each in the transaction of its change, with the recovery as the target.
 
@@ -1676,6 +1676,7 @@ A user may set a password on the account ([#307](https://github.com/mdastpak/Cry
 ```
 
 - `current_password` is required for a change and left out for the first password.
+- **The first password needs a code sent to a verified contact** ([#401](https://github.com/mdastpak/Crypto-Exchange/issues/401)). A session alone cannot give an account its first second factor: the password ends every other session and becomes the second step of the sign-in, so whoever stole a session would lock the owner out. `POST /user/password/code` sends the code to `send_to` (`email` or `mobile`, by default the first verified contact) and answers the masked `code_sent_to` and `expires_in`; `PUT /user/password` then takes it as `contact_code`. Without one it answers `403 contact_proof_required`, and with a wrong or expired one `403 contact_code_invalid`, both audited as a denied `user.password_change`; too many wrong codes answer `429 rate_limited`. A code works once, only in the session that asked for it, on any instance, since its binding is in Redis; a new request replaces it. A password that the policy refuses does not use it up. `409 password_set` answers a request for a code by an account that has a password.
 - A new password has at least `security.password.min_length` characters (10 by default), at most 256 bytes, and at least five different characters. No character classes are asked for (NIST SP 800-63B). A password that is refused answers `400 validation_failed` with the reason under `errors.new_password`.
 - `403 password_invalid`: the current password is wrong. It counts toward the lock of the password, and `429 password_locked` answers while it is locked.
 - The answer has `sessions_ended`: setting or changing the password ends every other session of the user, which signed in without it.
@@ -1706,7 +1707,7 @@ Once it is on:
 - [`POST /public/auth/second-step`](#post-publicauthsecond-step) takes `totp_code` instead of `password`. The session's `auth_method` is `OTP+TOTP`.
 - `POST /user/step-up` takes `totp_code` instead of `password`.
 - [`POST /public/auth/password-reset`](#post-publicauthpassword-reset) takes `totp_code` instead of `recovery_code`, and uses no recovery code.
-- A right code cancels an [account recovery](#account-recovery), as the password does.
+- A right code cancels an [account recovery](#account-recovery), as the password does, and in a session only when the session began after the recovery.
 
 A code is accepted once: the time step of the last accepted code is stored, so a code that was seen cannot be replayed, on any instance. Wrong codes are counted in PostgreSQL with the limits of the password, `security.password.max_failures` and `lock_minutes`, but separately from it: `429 totp_locked` with `Retry-After` locks the authenticator, and the password still works. A wrong code answers `401 totp_invalid` at a sign-in and `403 totp_invalid` in a session.
 
@@ -1727,7 +1728,7 @@ Each ceremony has two calls: the first answers the options for the browser, unde
 - **Step up.** `POST /user/step-up/passkey` answers the options, and `POST /user/step-up` takes the answer as `passkey`. `403 passkey_invalid`.
 - **Reset a forgotten password.** [`POST /public/auth/password-reset`](#post-publicauthpassword-reset) takes `passkey`, from the options of `POST /public/auth/second-step/passkey`, instead of `recovery_code`.
 
-A proof is bound to what it began for: one sign-in challenge, or one session. A right proof cancels an [account recovery](#account-recovery), as the password does. A credential whose signature counter goes back may have been copied: it is refused, and the refusal is audited with the reason `passkey_cloned`.
+A proof is bound to what it began for: one sign-in challenge, or one session. A right proof cancels an [account recovery](#account-recovery), as the password does, and in a session only when the session began after the recovery. A credential whose signature counter goes back may have been copied: it is refused, and the refusal is audited with the reason `passkey_cloned`.
 
 The rows of `user_passkeys` are [sealed](data-protection.md) like the account: a credential that is written or moved in SQL is left out, and proves nothing. Adding or removing a passkey is a change of the second factor, so it starts the [security hold](#security-hold); both are audited, as `user.passkey_add` and `user.passkey_remove`.
 
@@ -1742,7 +1743,7 @@ The account password is the second factor of a user ([#307](https://github.com/m
 ```
 
 - **Funds need a second factor.** With `security.second_factor.mode: required_for_funds`, the default, a user must set a password before the first deposit or withdrawal, fiat or crypto: without one, those operations answer `403 second_factor_required`. With `optional`, a user without a password is not asked for one.
-- **Protected operations need a fresh proof.** A user who has a password must have proved it in the same session within `security.second_factor.step_up_minutes` (5 by default); otherwise the operation answers `403 step_up_required`. A sign-in with the password counts as the proof. Setting a password does not: a stolen session could set one.
+- **Protected operations need a fresh proof.** A user who has a password must have proved it in the same session within `security.second_factor.step_up_minutes` (5 by default); otherwise the operation answers `403 step_up_required`. A sign-in with the password counts as the proof. Setting a password does not, although the first one needs a code sent to a verified contact.
 - `POST /user/step-up` with `{"password": "…"}` renews the proof and answers `200` with `elevated_until`. `403 password_invalid` and `429 password_locked` are as for a password change; `409 second_factor_not_set` answers a user without a password. Audited as `user.step_up`.
 - Today the protected operations are the [contact changes](#contacts). Deposits, withdrawals, and API keys call the same guard (`userauth.Guard.Check`, in the transaction of the change) when they are built.
 - The proof belongs to one session and is kept in PostgreSQL, so every instance sees it. Its row has a [row seal](data-protection.md#row-seals): in `enforce` mode, a proof lengthened in SQL counts as none, and the operation answers `403 step_up_required` until the user proves the factor again.
