@@ -323,3 +323,34 @@ func TestWithdrawals_AreSealed(t *testing.T) {
 	_, locked := f.balance()
 	assert.Equal(t, "101", locked)
 }
+
+// A fee that changed between the confirmation and step two is not charged
+// unconfirmed (#408): the request is refused, and nothing is locked.
+func TestRequest_RefusesAFeeThatChangedAfterTheConfirmation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "")
+	r := f.request("100", "key-fee")
+
+	out, err := f.Request(ctx, f.user, r, "client", origin)
+	require.NoError(t, err)
+	require.NotNil(t, out.Challenge)
+	assert.Equal(t, "1 USDT", out.Challenge.Details.Fee, "the user is told the fee")
+	require.NoError(t, f.confirm.Confirm(ctx, f.user, out.Challenge.ID, confirm.Proof{Code: "123456"}, origin))
+
+	_, err = f.DB.ExecContext(ctx, `UPDATE currency_networks SET withdrawal_fee = 5 WHERE currency_hk = $1 AND network = 'tron'`, f.usdt)
+	require.NoError(t, err)
+	require.NoError(t, rowseal.Reseal(ctx, f.DB, rowseal.CurrencyNetworks, "currency_hk = $1 AND network = 'tron'", f.usdt))
+
+	r.ConfirmationID = out.Challenge.ID
+	_, err = f.Request(ctx, f.user, r, "client", origin)
+	require.ErrorIs(t, err, confirm.ErrMismatch)
+	available, locked := f.balance()
+	assert.Equal(t, "1000", available, "nothing is locked")
+	assert.Equal(t, "0", locked)
+
+	// The user confirms again, and the new fee is what they confirm.
+	r.ConfirmationID, r.IdempotencyKey = "", "key-fee-2"
+	w, err := f.withdraw(r)
+	require.NoError(t, err)
+	assert.Equal(t, "5", w.Fee.String())
+}

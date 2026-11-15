@@ -1545,7 +1545,7 @@ In two steps, with the same `Idempotency-Key` header: 1 to 100 letters, digits, 
 }
 ```
 
-1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, and key. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
+1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, key, and the network fee that it would be charged. The fee is part of `details` (`fee`), and of the message of the code. If an administrator changes the fee before step two, the confirmation no longer matches (`409`, `confirmation_mismatch`), nothing is locked, and the user confirms again. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
 2. **Confirm it** with `POST /user/confirmations/{id}`.
 3. **Send the same request with `confirmation_id`.** It runs in one transaction, under a lock of the user: the checks again, the confirmation consumed, the withdrawal recorded, and its amount and fee locked in the [ledger](architecture.md#the-ledger). The answer is `201` with the withdrawal. The same request again answers `200` with it, and locks nothing more; another request with the key answers `409 idempotency_key_reused`.
 
