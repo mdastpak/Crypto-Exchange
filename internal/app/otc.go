@@ -8,7 +8,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
-	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
@@ -39,7 +38,7 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 	for symbol := range settings.OTC.Markets {
 		markets = append(markets, symbol)
 	}
-	checks := otc.DBChecks{DB: db, Verification: levels, Ledger: ledger.Ledger{DB: db}}
+	checks := otc.DBChecks{DB: db, Verification: levels}
 	s, err := otc.New(settings.OTC, h.Prices, h.Public.Markets, checks, store, otc.NewMetrics(markets))
 	if err != nil {
 		return fmt.Errorf("otc: %w", err)

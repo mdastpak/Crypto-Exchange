@@ -255,6 +255,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- An OTC quote held up to six connections of the pool at once, one per check, so that a few quotes at once made sign-ins, withdrawals, and the schedulers wait ([#455](https://github.com/mdastpak/Crypto-Exchange/issues/455)). The checks now run in order on one connection, and stop at the first refusal, which is the same as before. The load test still meets its p99 of 10 ms (about 2 ms locally).
+- Tests guard the migrations that branches write in parallel ([#455](https://github.com/mdastpak/Crypto-Exchange/issues/455)): the findings check must accept every table of `rowseal.Tables` and no other, the migrations from 38 on spell time columns `TIMESTAMPTZ`, and each number has one up and one down migration. See [Database migrations](CONTRIBUTING.md#database-migrations).
 - `cmd/price-aggregator` ran none of the release checks of its dependencies, served the operators' view on every interface, and accepted a quorum of one ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)).
   - In release mode it refuses the settings of Redis and RabbitMQ that the server refuses, with the same messages: no Redis password, the `guest` account, and a connection without TLS that is not acknowledged as a private network.
   - Release mode needs a host in `price_aggregator.health_addr` and `price_aggregator.min_providers` of at least 2. The example now listens on `127.0.0.1:8082` with a quorum of 3.

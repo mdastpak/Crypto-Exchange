@@ -111,6 +111,13 @@ Nothing is deployed before version 1.0, so there is nobody to stay compatible wi
 - Verify the full cycle on a fresh database: up, down, then up again.
 - Do not reference tables that a later migration creates. Add deferred foreign keys in the migration that creates the referenced table.
 
+Branches write migrations in parallel, so these rules keep one from undoing another ([#455](https://github.com/mdastpak/Crypto-Exchange/issues/455)):
+
+- **Take the next free number** on `main` when you start, and check it again right before the merge. If another branch merged that number first, renumber yours, up and down, and its mentions in the CHANGELOG and the docs. `TestMigrations_ComeInPairs` refuses a number taken twice and an up migration without its down migration.
+- **Keep every name of the findings list.** A migration that adds a sealed table restates `integrity_findings_table_name_check` in full. Start from the list of the latest migration on `main`, not of the one your branch started from, and add your table. `TestSchema_FindingsAcceptEverySealedTable` checks that the list matches `rowseal.Tables`.
+- **Spell time columns `TIMESTAMPTZ`**, not `timestamp with time zone`, and never a bare `timestamp`, which has no time zone. `TestMigrations_SpellTimestampTZ` checks the migrations from 38 on.
+- **A down migration for every up migration**, and **never edit a merged migration**, as above.
+
 ## Tests
 
 - Add or update tests for every change. Bug fixes need a regression test.

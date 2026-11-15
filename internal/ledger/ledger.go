@@ -639,8 +639,20 @@ func (l Ledger) Balance(ctx context.Context, a Account, currency shared.UUID) (b
 	return balanceIn(ctx, l.DB, a, currency)
 }
 
+// RowQuerier reads one row: the database, a transaction, or one connection
+// of the pool.
+type RowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// BalanceIn is Balance in q, such as one connection of the pool that a
+// request holds for its reads (#455).
+func BalanceIn(ctx context.Context, q RowQuerier, a Account, currency shared.UUID) (balance.Balance, error) {
+	return balanceIn(ctx, q, a, currency)
+}
+
 // balanceIn is Balance in q, the database or a transaction.
-func balanceIn(ctx context.Context, q querier, a Account, currency shared.UUID) (balance.Balance, error) {
+func balanceIn(ctx context.Context, q RowQuerier, a Account, currency shared.UUID) (balance.Balance, error) {
 	b := balance.Balance{UserID: a.UserHK, SubAccountID: a.SubAccountID, CurrencyHK: currency, Version: 1}
 	err := q.QueryRowContext(ctx, `SELECT id, available, locked, pending_deposit, version FROM balances
 		WHERE user_id = $1 AND sub_account_id IS NOT DISTINCT FROM $2 AND currency_hk = $3`, a.UserHK, a.SubAccountID, currency).
