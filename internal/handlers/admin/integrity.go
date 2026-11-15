@@ -41,7 +41,7 @@ type findingPosition struct {
 // ListIntegrityFindings lists the rows that did not match their seal.
 //
 // @Summary List the integrity findings
-// @Description The protected rows (accounts, contacts, sessions) that did not match their seal (#139), found by a request or by the background verifier, newest first: open ones only, unless all is true. Pages follow the pagination convention of docs/api.md.
+// @Description The protected rows (accounts, contacts, sessions) that did not match their seal (#139), found by a request or by the background verifier, newest first: open ones only, unless all is true. A finding with a re-seal request shows the row version and the values, secret ones masked, that the request reviewed and an approval would seal (#411). Pages follow the pagination convention of docs/api.md.
 // @Tags admin integrity
 // @Produce json
 // @Security BearerAuth
@@ -95,7 +95,7 @@ func (h *AdminHandler) ListIntegrityFindings(c *gin.Context) {
 // ResealIntegrityFinding seals the row of a finding again after a review.
 //
 // @Summary Re-seal the row of an integrity finding
-// @Description After a review found the current values of a row that did not match its seal right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. It needs two administrators: the first request records the reason and answers 202 with the finding and who asked; the same request by another administrator within 24 hours re-seals the row and answers 200. The approval needs the sealed integrity.reseal_request audit event of the request; a request without it, such as one written in SQL, counts as none, and the call asks again with 202. The administrator who asked cannot approve (403 second_approval_required), and neither step is open to the administrator whose account the row belongs to (403 own_row). The reason is required. Audited as integrity.reseal_request and integrity.reseal, with the values sealed now, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503. The route needs a step-up.
+// @Description After a review found the current values of a row that did not match its seal right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. It needs two administrators: the first request records the reason and answers 202 with the finding and who asked; the same request by another administrator within 24 hours re-seals the row and answers 200. The approval needs the sealed integrity.reseal_request audit event of the request; a request without it, such as one written in SQL, counts as none, and the call asks again with 202. The administrator who asked cannot approve (403 second_approval_required), and neither step is open to the administrator whose account the row belongs to (403 own_row). The request records the row as the first administrator reviewed it: its row_version, a keyed digest of every sealed column, secret ones included, and its values, secret ones masked, which the 202 answer and the list show as reseal_values (#411). The approval re-seals only that state: when the row changed since, it answers 409 row_changed, and the row stays unsealed and its finding open; the administrator who asked can then ask again for the current values. The 200 answer shows the values sealed. The reason is required. Audited as integrity.reseal_request and integrity.reseal, with the values reviewed and sealed, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503. The route needs a step-up.
 // @Tags admin integrity
 // @Accept json
 // @Produce json
@@ -148,6 +148,8 @@ func (h *AdminHandler) ResealIntegrityFinding(c *gin.Context) {
 		helpers.SendError(c, http.StatusForbidden, "own_row", i18n.M("RESEAL_OWN_ROW"), nil)
 	case errors.Is(err, rowseal.ErrNotFound):
 		helpers.SendResponse(c, http.StatusNotFound, i18n.M("INTEGRITY_FINDING_NOT_FOUND"), nil)
+	case errors.Is(err, rowseal.ErrRowChanged):
+		helpers.SendError(c, http.StatusConflict, "row_changed", i18n.M("RESEAL_ROW_CHANGED"), nil)
 	case errors.Is(err, rowseal.ErrResolved):
 		helpers.SendError(c, http.StatusConflict, "already_resolved", i18n.M("INTEGRITY_FINDING_ALREADY_RESOLVED"), nil)
 	case err != nil:

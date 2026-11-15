@@ -358,6 +358,7 @@
   "REFRESH_TOKEN_NOT_PROVIDED": "Refresh token not provided",
   "REQUEST_BODY_TOO_LARGE": "Request body too large",
   "RESEAL_OWN_ROW": "An administrator cannot re-seal a row of their own account.",
+  "RESEAL_ROW_CHANGED": "The row changed since the re-seal was requested. Review it again and ask for a new re-seal.",
   "RESEAL_REQUESTED": "Re-seal requested. Another administrator must approve it.",
   "RESEAL_SECOND_APPROVAL_REQUIRED": "The re-seal must be approved by another administrator.",
   "RESTRICTIONS_RETRIEVED_SUCCESSFULLY": "Restrictions retrieved successfully.",

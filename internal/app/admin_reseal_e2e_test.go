@@ -118,3 +118,61 @@ func TestAdminReseal_ARequestWrittenInSQLApprovesNothing(t *testing.T) {
 	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, row), rowseal.ErrUnverified, "nothing is sealed")
 	assert.Empty(t, auditEvents(t, env.db, audit.ActionIntegrityReseal))
 }
+
+// TestAdminReseal_TheApprovalSealsOnlyTheReviewedRow raises the KYC tier of
+// a user in SQL between the request of a re-seal and its approval (#411).
+// The approval answers 409 row_changed, and the row stays unsealed and its
+// finding open; the request after the change shows the new values, and the
+// approval of that one seals them.
+func TestAdminReseal_TheApprovalSealsOnlyTheReviewedRow(t *testing.T) {
+	env := newE2EEnv(t)
+	sealer := rowseal.New(env.db, env.handlers.DataKeys, rowseal.ModeEnforce)
+	t.Cleanup(rowseal.Use(sealer))
+	t.Cleanup(audit.UseSealer(sealer))
+	ctx := context.Background()
+	asks, err := env.accounts.Create(ctx, "asks@example.com")
+	require.NoError(t, err)
+	approves, err := env.accounts.Create(ctx, "approves@example.com")
+	require.NoError(t, err)
+	changed, err := env.accounts.Create(ctx, "victim@example.com")
+	require.NoError(t, err)
+	asksToken, approvesToken := env.signInAdmin(t, asks), env.signInAdmin(t, approves)
+	check := func() error {
+		row := rowseal.Users.NewRow()
+		require.NoError(t, env.db.QueryRow(`SELECT `+rowseal.Users.Fields("")+` FROM users WHERE hk = $1`, changed.AdminID).Scan(row.Dest()...))
+		return rowseal.Check(ctx, rowseal.Users, row)
+	}
+
+	_, err = env.db.Exec(`UPDATE users SET first_name = 'Changed' WHERE hk = $1`, changed.AdminID)
+	require.NoError(t, err)
+	require.ErrorIs(t, check(), rowseal.ErrUnverified)
+	var finding int64
+	require.NoError(t, env.db.QueryRow(`SELECT id FROM integrity_findings
+		WHERE table_name = 'users' AND row_key = $1 AND resolved_at IS NULL`, changed.AdminID).Scan(&finding))
+	path := fmt.Sprintf("/api/v1/admin/integrity/findings/%d/reseal", finding)
+
+	status, resp := env.post(t, path, map[string]string{"reason": "Reviewed fix of ticket 30"}, asksToken)
+	require.Equal(t, http.StatusAccepted, status, resp.Message)
+	values, ok := resp.Info["reseal_values"].(map[string]interface{})
+	require.True(t, ok, "the request shows what would be sealed")
+	assert.Equal(t, "Changed", values["first_name"])
+	assert.NotNil(t, resp.Info["reseal_row_version"])
+
+	_, err = env.db.Exec(`UPDATE users SET kyc_tier = 'ENHANCED', kyc_status = 'APPROVED' WHERE hk = $1`, changed.AdminID)
+	require.NoError(t, err)
+	status, resp = env.post(t, path, map[string]string{"reason": "Confirmed"}, approvesToken)
+	require.Equal(t, http.StatusConflict, status, resp.Message)
+	assert.Equal(t, "row_changed", resp.Code)
+	require.ErrorIs(t, check(), rowseal.ErrUnverified, "nothing is sealed")
+	assert.Empty(t, auditEvents(t, env.db, audit.ActionIntegrityReseal))
+
+	status, resp = env.post(t, path, map[string]string{"reason": "Reviewed again with the KYC team"}, asksToken)
+	require.Equal(t, http.StatusAccepted, status, resp.Message)
+	values, _ = resp.Info["reseal_values"].(map[string]interface{})
+	assert.Equal(t, "ENHANCED", values["kyc_tier"])
+	status, resp = env.post(t, path, map[string]string{"reason": "Confirmed with the KYC team"}, approvesToken)
+	require.Equal(t, http.StatusOK, status, resp.Message)
+	values, _ = resp.Info["reseal_values"].(map[string]interface{})
+	assert.Equal(t, "ENHANCED", values["kyc_tier"], "the answer shows what was sealed")
+	require.NoError(t, check())
+}

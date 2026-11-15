@@ -2,7 +2,10 @@ package rowseal
 
 import (
 	"context"
+	"crypto/hmac"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -33,6 +36,20 @@ type Finding struct {
 	ResealRequestedBy   string     `json:"reseal_requested_by,omitempty"`
 	ResealRequestedAt   *time.Time `json:"reseal_requested_at,omitempty"`
 	ResealRequestReason string     `json:"reseal_request_reason,omitempty"`
+	// ResealRowVersion is the row_version of the row that the administrator
+	// who asked reviewed (#411), -1 when the row was gone. The approval
+	// re-seals only that state.
+	ResealRowVersion *int64 `json:"reseal_row_version,omitempty"`
+	// ResealValues are the values of the row that the administrator who
+	// asked reviewed, secret ones masked: what the approval would seal.
+	ResealValues map[string]interface{} `json:"reseal_values,omitempty"`
+
+	// resealDigest is the keyed digest of the reviewed row, made with
+	// version resealKeyVersion of the row-mac key, and resealValuesText the
+	// stored text of ResealValues, as the request event must hold it.
+	resealDigest     []byte
+	resealKeyVersion sql.NullInt64
+	resealValuesText string
 }
 
 // ErrResolved reports a finding that is already resolved.
@@ -41,6 +58,13 @@ var ErrResolved = errors.New("the finding is already resolved")
 // ErrSameApprover refuses the approval of a re-seal by the administrator who
 // asked for it.
 var ErrSameApprover = errors.New("the re-seal must be approved by another administrator")
+
+// ErrRowChanged refuses the approval of a re-seal when the row is no
+// longer the one that the administrator who asked reviewed (#411): its
+// row_version or its values changed, or it appeared or went away. The row
+// stays unsealed and its finding open; the administrator who asked can ask
+// again for the current values.
+var ErrRowChanged = errors.New("the row changed since the re-seal was requested")
 
 // ErrOwnRow refuses an administrator who asks for, or approves, the re-seal
 // of a row of their own account.
@@ -55,13 +79,27 @@ const MaxReasonLength = 1000
 
 const findingFields = `id, table_name, row_key, check_failed, detected_by, detected_at, last_seen_at, seen_count,
 	resolved_at, COALESCE(resolution, ''), COALESCE(resolved_by::text, ''), COALESCE(reason, ''),
-	COALESCE(reseal_requested_by::text, ''), reseal_requested_at, COALESCE(reseal_request_reason, '')`
+	COALESCE(reseal_requested_by::text, ''), reseal_requested_at, COALESCE(reseal_request_reason, ''),
+	reseal_row_version, reseal_row_digest, reseal_digest_key_version, COALESCE(reseal_row_values::text, '')`
 
 func scanFinding(scan func(...any) error) (Finding, error) {
 	var f Finding
 	var resolved, requested sql.NullTime
+	var version sql.NullInt64
 	err := scan(&f.ID, &f.Table, &f.RowKey, &f.Check, &f.DetectedBy, &f.DetectedAt, &f.LastSeenAt, &f.SeenCount,
-		&resolved, &f.Resolution, &f.ResolvedBy, &f.Reason, &f.ResealRequestedBy, &requested, &f.ResealRequestReason)
+		&resolved, &f.Resolution, &f.ResolvedBy, &f.Reason, &f.ResealRequestedBy, &requested, &f.ResealRequestReason,
+		&version, &f.resealDigest, &f.resealKeyVersion, &f.resealValuesText)
+	if err != nil {
+		return f, err
+	}
+	if version.Valid {
+		f.ResealRowVersion = &version.Int64
+	}
+	if f.resealValuesText != "" {
+		if err := json.Unmarshal([]byte(f.resealValuesText), &f.ResealValues); err != nil {
+			return f, fmt.Errorf("read the reviewed values of finding %d: %w", f.ID, err)
+		}
+	}
 	if resolved.Valid {
 		f.ResolvedAt = &resolved.Time
 	}
@@ -191,12 +229,94 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 // row, with the same reason. The request columns of integrity_findings have
 // no seal, so without the event, a request written in SQL in the name of
 // another administrator would let one approve a re-seal alone.
+//
+// The event also holds the state that the administrator reviewed (#411):
+// its row_version, its digest, the key version of the digest, and its
+// masked values. A request made before the state was recorded, or one whose
+// state columns were changed in SQL, counts as none.
 func (s *Sealer) requestRecorded(ctx context.Context, tx *sql.Tx, f Finding) (bool, error) {
+	if f.ResealRowVersion == nil || !f.resealKeyVersion.Valid || f.resealValuesText == "" {
+		return false, nil
+	}
 	return s.EventRecorded(ctx, tx, EventMatch{
 		Action: audit.ActionIntegrityResealRequest, TargetType: f.Table, TargetID: f.RowKey,
 		ActorID: f.ResealRequestedBy, At: *f.ResealRequestedAt,
-		After: map[string]string{"finding": strconv.FormatInt(f.ID, 10), "reason": f.ResealRequestReason},
+		After: map[string]string{
+			"finding": strconv.FormatInt(f.ID, 10), "reason": f.ResealRequestReason,
+			"row_version": strconv.FormatInt(*f.ResealRowVersion, 10), "row_digest": hex.EncodeToString(f.resealDigest),
+			"digest_key_version": strconv.FormatInt(f.resealKeyVersion.Int64, 10), "values": f.resealValuesText,
+		},
 	})
+}
+
+// lockRow reads the row of a finding in tx and locks it, so that it cannot
+// change between the comparison with the reviewed state and its re-seal.
+// It returns nil when the row is gone.
+func lockRow(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (*Row, error) {
+	r := t.NewRow()
+	err := tx.QueryRowContext(ctx, `SELECT `+t.Fields("")+` FROM `+t.Name+` WHERE `+t.Key+` = $1::`+t.KeyType+` FOR UPDATE`,
+		rowKey).Scan(r.Dest()...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// reviewed is the state of a row that an administrator reviews for a
+// re-seal (#411).
+type reviewed struct {
+	version    int64
+	digest     []byte
+	keyVersion int
+	values     map[string]interface{}
+}
+
+// review describes r, nil when the row is gone, with the current row-mac
+// key: its row_version, the digest of its canonical encoding under
+// reviewTag, which covers every sealed column, the secret ones too, and its
+// values as an administrator may see them.
+func (s *Sealer) review(ctx context.Context, t *Table, r *Row) (reviewed, error) {
+	key, err := s.keys.Current(keys.PurposeRowMAC)
+	if err != nil {
+		return reviewed{}, err
+	}
+	if r == nil {
+		return reviewed{version: -1, digest: []byte{}, keyVersion: key.Version(), values: map[string]interface{}{}}, nil
+	}
+	digest, err := tagged(key, reviewTag, t, r)
+	if err != nil {
+		return reviewed{}, err
+	}
+	return reviewed{version: r.Version, digest: digest, keyVersion: key.Version(), values: t.Shown(r)}, nil
+}
+
+// unchanged reports whether r, nil when the row is gone, is still the state
+// that the request of f reviewed.
+func (s *Sealer) unchanged(ctx context.Context, f Finding, t *Table, r *Row) (bool, error) {
+	if f.ResealRowVersion == nil || !f.resealKeyVersion.Valid {
+		return false, nil
+	}
+	if r == nil {
+		return *f.ResealRowVersion == -1, nil
+	}
+	if r.Version != *f.ResealRowVersion {
+		return false, nil
+	}
+	key, err := s.keys.Version(ctx, keys.PurposeRowMAC, int(f.resealKeyVersion.Int64))
+	if errors.Is(err, keys.ErrNoKey) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	digest, err := tagged(key, reviewTag, t, r)
+	if err != nil {
+		return false, err
+	}
+	return hmac.Equal(digest, f.resealDigest), nil
 }
 
 func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reason string, twoPerson bool) (Finding, bool, error) {
@@ -212,6 +332,29 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 		return Finding{}, false, err
 	}
 	defer tx.Rollback()
+	// The row of the finding is locked before the finding (#411): a request
+	// that holds the row, such as the user row, records its finding after
+	// it, so the other order could wait on it for ever. The table and the
+	// key of a finding never change, and are read first without a lock.
+	var table, rowKey string
+	err = tx.QueryRowContext(ctx, `SELECT table_name, row_key FROM integrity_findings WHERE id = $1`, id).Scan(&table, &rowKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Finding{}, false, ErrNotFound
+	}
+	if err != nil {
+		return Finding{}, false, err
+	}
+	t := TableNamed(table)
+	if t == nil {
+		return Finding{}, false, fmt.Errorf("finding %d names the unknown table %q", id, table)
+	}
+	// The row as it is now, locked until the commit: what a request
+	// records, what an approval compares with the request, and what is
+	// sealed.
+	row, err := lockRow(ctx, tx, t, rowKey)
+	if err != nil {
+		return Finding{}, false, err
+	}
 	f, err := scanFinding(tx.QueryRowContext(ctx, `SELECT `+findingFields+` FROM integrity_findings WHERE id = $1 FOR UPDATE`, id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Finding{}, false, ErrNotFound
@@ -222,9 +365,8 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 	if f.ResolvedAt != nil {
 		return Finding{}, false, ErrResolved
 	}
-	t := TableNamed(f.Table)
-	if t == nil {
-		return Finding{}, false, fmt.Errorf("finding %d names the unknown table %q", id, f.Table)
+	if f.Table != table || f.RowKey != rowKey {
+		return Finding{}, false, fmt.Errorf("finding %d changed its row while it was re-sealed", id)
 	}
 	extra := map[string]interface{}{}
 	if twoPerson {
@@ -236,9 +378,6 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 			return Finding{}, false, ErrOwnRow
 		}
 		waiting := f.ResealRequestedAt != nil && time.Since(*f.ResealRequestedAt) < ResealApprovalTTL
-		if waiting && f.ResealRequestedBy == origin.ActorID {
-			return Finding{}, false, ErrSameApprover
-		}
 		if waiting {
 			// The request columns have no seal; the request counts only with
 			// its sealed audit event (#337).
@@ -252,14 +391,44 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 				waiting = false
 			}
 		}
+		if waiting {
+			same := f.ResealRequestedBy == origin.ActorID
+			matches, err := s.unchanged(ctx, f, t, row)
+			if err != nil {
+				return Finding{}, false, err
+			}
+			switch {
+			case !matches && same:
+				// The row changed since this administrator asked: they ask
+				// again, for the values as they are now.
+				waiting = false
+			case !matches:
+				s.logf("SECURITY: the row of finding %d changed since %s asked for its re-seal; the approval is refused",
+					id, f.ResealRequestedBy)
+				return Finding{}, false, ErrRowChanged
+			case same:
+				return Finding{}, false, ErrSameApprover
+			}
+		}
 		if !waiting {
+			state, err := s.review(ctx, t, row)
+			if err != nil {
+				return Finding{}, false, err
+			}
+			values, err := json.Marshal(state.values)
+			if err != nil {
+				return Finding{}, false, err
+			}
 			if _, err := tx.ExecContext(ctx, `
-				UPDATE integrity_findings SET reseal_requested_by = $2::uuid, reseal_requested_at = NOW(), reseal_request_reason = $3
-				WHERE id = $1`, id, origin.ActorID, reason); err != nil {
+				UPDATE integrity_findings SET reseal_requested_by = $2::uuid, reseal_requested_at = NOW(), reseal_request_reason = $3,
+					reseal_row_version = $4, reseal_row_digest = $5, reseal_digest_key_version = $6, reseal_row_values = $7::jsonb
+				WHERE id = $1`, id, origin.ActorID, reason, state.version, state.digest, state.keyVersion, string(values)); err != nil {
 				return Finding{}, false, err
 			}
 			e := audit.Of(origin, audit.ActionIntegrityResealRequest, t.Name, f.RowKey)
-			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "check": f.Check, "reason": reason}}
+			e.Changes = &audit.Changes{After: map[string]interface{}{"finding": id, "check": f.Check, "reason": reason,
+				"row_version": state.version, "row_digest": hex.EncodeToString(state.digest),
+				"digest_key_version": state.keyVersion, "values": state.values}}
 			if err := audit.Record(ctx, tx, e); err != nil {
 				return Finding{}, false, err
 			}
@@ -270,6 +439,7 @@ func (s *Sealer) reseal(ctx context.Context, id int64, origin audit.Event, reaso
 			return pending, true, err
 		}
 		extra["requested_by"], extra["request_reason"] = f.ResealRequestedBy, f.ResealRequestReason
+		extra["row_version"] = *f.ResealRowVersion
 	}
 	where := t.Key + " = $1::" + t.KeyType
 	if err := s.Reseal(ctx, tx, t, where, f.RowKey); err != nil {

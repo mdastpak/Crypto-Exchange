@@ -531,7 +531,9 @@ func TestReviewReseal_ARequestWrittenInSQLCountsAsNone(t *testing.T) {
 	forge("Reviewed")
 	_, err = e.conn.Exec(`INSERT INTO audit_events (hk, actor_type, actor_id, action, target_type, target_id, outcome, changes, occurred_at)
 		SELECT gen_random_uuid(), 'admin', reseal_requested_by, $2, table_name, row_key, 'success',
-			jsonb_build_object('after', jsonb_build_object('finding', id, 'reason', reseal_request_reason)), reseal_requested_at
+			jsonb_build_object('after', jsonb_build_object('finding', id, 'reason', reseal_request_reason,
+				'row_version', reseal_row_version, 'row_digest', encode(reseal_row_digest, 'hex'),
+				'digest_key_version', reseal_digest_key_version, 'values', reseal_row_values)), reseal_requested_at
 		FROM integrity_findings WHERE id = $1`, id, audit.ActionIntegrityResealRequest)
 	require.NoError(t, err)
 	approveAlone("a request with an event that nobody sealed")
@@ -607,4 +609,100 @@ func TestTables_TheMoneyTablesAreSealedFromStart(t *testing.T) {
 	}
 	assert.False(t, rowseal.Users.SealedFromStart)
 	assert.False(t, rowseal.IntegrityFindings.SealedFromStart, "the findings of before have no seal")
+}
+
+// TestReviewReseal_SealsOnlyTheReviewedState changes the row of a finding
+// between the request of a re-seal and its approval (#411): a raised KYC
+// tier, a changed secret that the masked values do not show, and a
+// row_version moved alone. Each time the approval is refused, the row stays
+// unsealed, and its finding open. The administrator who asked can ask
+// again for the current values, and the approval then seals those.
+func TestReviewReseal_SealsOnlyTheReviewedState(t *testing.T) {
+	e := newEnv(t)
+	sealer := e.sealer(rowseal.ModeEnforce)
+	t.Cleanup(audit.UseSealer(sealer))
+	ctx := context.Background()
+	asker := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	approver := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	victim := e.newUser(t)
+	_, err := e.conn.Exec(`UPDATE users SET first_name = 'Fixed', totp_secret = 'sealed-secret' WHERE hk = $1`, victim)
+	require.NoError(t, err)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified)
+	id := e.openFindings(t)[0].ID
+
+	for _, change := range []string{
+		`kyc_tier = 'ENHANCED', kyc_status = 'APPROVED'`,
+		`totp_secret = 'attacker'`,
+		`row_version = row_version + 1`,
+	} {
+		t.Run(change, func(t *testing.T) {
+			pending, waits, err := sealer.ReviewReseal(ctx, id, asker, "Reviewed fix of ticket 9")
+			require.NoError(t, err)
+			require.True(t, waits)
+			require.NotNil(t, pending.ResealRowVersion)
+			assert.Equal(t, "Fixed", pending.ResealValues["first_name"], "the request shows what would be sealed")
+			assert.Equal(t, "[secret]", pending.ResealValues["totp_secret"])
+
+			_, err = e.conn.Exec(`UPDATE users SET `+change+` WHERE hk = $1`, victim)
+			require.NoError(t, err)
+			_, _, err = sealer.ReviewReseal(ctx, id, approver, "Looks right")
+			require.ErrorIs(t, err, rowseal.ErrRowChanged)
+
+			f, err := rowseal.GetFinding(ctx, e.conn, id)
+			require.NoError(t, err)
+			assert.Nil(t, f.ResolvedAt, "the finding stays open")
+			require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified, "nothing is sealed")
+			assert.Equal(t, 0, e.events(t, audit.ActionIntegrityReseal))
+		})
+	}
+
+	// The asker asks again for the row as it is now, which the approval seals.
+	pending, waits, err := sealer.ReviewReseal(ctx, id, asker, "Reviewed again, the tier is right")
+	require.NoError(t, err)
+	require.True(t, waits, "the asker's call on a changed row is a new request")
+	assert.Equal(t, "ENHANCED", pending.ResealValues["kyc_tier"])
+	resolved, waits, err := sealer.ReviewReseal(ctx, id, approver, "Confirmed")
+	require.NoError(t, err)
+	assert.False(t, waits)
+	assert.Equal(t, "resealed", resolved.Resolution)
+	assert.Equal(t, "ENHANCED", resolved.ResealValues["kyc_tier"], "the answer shows what was sealed")
+	require.NoError(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)))
+}
+
+// TestReviewReseal_TheReviewedStateCannotBeRewrittenInSQL changes the row
+// after a request, and then rewrites the request columns in SQL so that
+// they describe the changed row: its row_version and its values. Without
+// the row-mac key, the digest cannot follow, and the sealed request event
+// still holds the reviewed state, so the request counts as none: the
+// approval asks again in its own name, and nothing is sealed.
+func TestReviewReseal_TheReviewedStateCannotBeRewrittenInSQL(t *testing.T) {
+	e := newEnv(t)
+	sealer := e.sealer(rowseal.ModeEnforce)
+	t.Cleanup(audit.UseSealer(sealer))
+	ctx := context.Background()
+	asker := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	approver := audit.Event{ActorType: audit.ActorAdmin, ActorID: e.newUser(t)}
+	victim := e.newUser(t)
+	_, err := e.conn.Exec(`UPDATE users SET first_name = 'Fixed' WHERE hk = $1`, victim)
+	require.NoError(t, err)
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified)
+	id := e.openFindings(t)[0].ID
+
+	_, waits, err := sealer.ReviewReseal(ctx, id, asker, "Reviewed")
+	require.NoError(t, err)
+	require.True(t, waits)
+	_, err = e.conn.Exec(`UPDATE users SET kyc_tier = 'ENHANCED', row_version = row_version + 1 WHERE hk = $1`, victim)
+	require.NoError(t, err)
+	_, err = e.conn.Exec(`UPDATE integrity_findings f SET reseal_row_version = u.row_version,
+			reseal_row_values = jsonb_set(f.reseal_row_values, '{kyc_tier}', '"ENHANCED"')
+		FROM users u WHERE f.id = $1 AND u.hk = $2`, id, victim)
+	require.NoError(t, err)
+
+	pending, waits, err := sealer.ReviewReseal(ctx, id, approver, "Approve")
+	require.NoError(t, err)
+	assert.True(t, waits, "the rewritten request counts as none")
+	assert.Equal(t, approver.ActorID, pending.ResealRequestedBy)
+	assert.Equal(t, "ENHANCED", pending.ResealValues["kyc_tier"], "the new request shows the row as it is")
+	require.ErrorIs(t, rowseal.Check(ctx, rowseal.Users, e.readUser(t, victim)), rowseal.ErrUnverified, "nothing is sealed")
+	assert.Equal(t, 0, e.events(t, audit.ActionIntegrityReseal))
 }
