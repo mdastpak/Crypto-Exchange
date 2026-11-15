@@ -440,13 +440,8 @@ func (c *Configuration) releaseProblems(p *problems) {
 	if c.Postgres.Migrations.Password != "" {
 		p.add("postgres.migrations.password", "is set; in release mode only the release step that runs \"admin migrate\" may hold the migration role's password, never a server instance")
 	}
-	if c.Redis.Password == "" {
-		p.add("redis.password", "is empty; release mode needs Redis to require a password")
-	}
-	if c.RabbitMQ.Username == "guest" || c.RabbitMQ.Password == "guest" {
-		p.add("rabbitmq.username", "and rabbitmq.password (%s) use the default guest account; release mode needs a user of its own",
-			envVarFor("rabbitmq.password"))
-	}
+	c.redisReleaseProblems(p)
+	c.rabbitMQReleaseProblems(p)
 
 	for _, origins := range []struct {
 		key  string
@@ -479,6 +474,36 @@ func (c *Configuration) releaseProblems(p *problems) {
 		if writable, mode := writableByOthers(key.path); writable {
 			p.add(key.setting, "is %s with mode %v, writable by other users; allow writing only to its owner (chmod go-w)", key.path, mode)
 		}
+	}
+}
+
+// redisReleaseProblems is the release check of Redis, shared by every
+// binary that uses it: the server and cmd/price-aggregator (#454).
+func (c *Configuration) redisReleaseProblems(p *problems) {
+	if c.Redis.Password == "" {
+		p.add("redis.password", "is empty; release mode needs Redis to require a password")
+	}
+}
+
+// rabbitMQReleaseProblems is the release check of RabbitMQ, shared by every
+// binary that uses it.
+func (c *Configuration) rabbitMQReleaseProblems(p *problems) {
+	if c.RabbitMQ.Username == "guest" || c.RabbitMQ.Password == "guest" {
+		p.add("rabbitmq.username", "and rabbitmq.password (%s) use the default guest account; release mode needs a user of its own",
+			envVarFor("rabbitmq.password"))
+	}
+}
+
+// listenHostProblems refuses, in release mode, an address that listens on
+// every interface: it must name a host, such as 127.0.0.1 or a private
+// address.
+func listenHostProblems(p *problems, key, addr string) {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return // reported by validListenAddr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		p.add(key, "is %q, which listens on every interface; release mode needs a host, such as 127.0.0.1:8082 or a private address", addr)
 	}
 }
 

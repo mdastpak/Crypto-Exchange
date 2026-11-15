@@ -48,6 +48,8 @@ At start the server logs one line with its posture: the mode, the region, the ro
 | `keys.provider` | Set, not `local`, and a Transit address with `https`. The data keys protect the sign-in codes, the authenticator secrets of administrators, and the row seals, and every instance must share them. |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
 
+`cmd/price-aggregator` runs the same checks of Redis and RabbitMQ, with the same messages, when it publishes to them: `redis.password`, `rabbitmq.username` and `rabbitmq.password`, and the TLS of each, with `price_aggregator.signing_key`. It also needs a host in `price_aggregator.health_addr` and `price_aggregator.min_providers` of at least 2 ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)).
+
 ## Region of a release
 
 A release is built for one region, set by `deployment.region` (`DEPLOYMENT_REGION`): `ir` (the default outside release mode; release mode needs it named) for Iran, or `international` for everywhere else. The binaries are the same; the region decides which features may be configured, and some defaults. A feature of one region is still turned on by its own settings, so an Iranian release can leave any of them off.
@@ -558,12 +560,13 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | Key | Default | Description |
 | --- | --- | --- |
 | `enabled` | `true` in the example | Follows the providers. An aggregator that is not enabled only answers its probes. |
-| `health_addr` | `:8082` | The address of `/system/live`, `/system/ready`, `/metrics`, `/prices`, and `/providers`. Keep it internal. |
+| `health_addr` | `:8082` | The address of `/system/live`, `/system/ready`, `/metrics`, `/prices`, and `/providers`. Keep it internal. Release mode needs it to name a host, such as `127.0.0.1:8082`, a private address, or a host name, and refuses `:8082`, `0.0.0.0`, and `[::]`, which listen on every interface ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)). |
+| `admin_token` | none | The bearer token of `GET /prices` and `GET /providers` (`Authorization: Bearer <token>`); without it they answer `401`. Without a token, release mode turns them off (`404`), and outside release mode they are open, with a warning. The probes and the metrics stay open. `PRICE_AGGREGATOR_ADMIN_TOKEN` overrides it; keep it in a secret. |
 | `aggregation_interval_ms` | `100` | From 10 to 60000. The time between two aggregations. |
 | `vwap_windows_seconds` | `[1, 5, 60, 300]` | From 1 to 86400 each. The windows of the VWAP and the TWAP. Each must be a multiple of a tenth of the shortest. |
 | `outlier_threshold_mad` | `3.0` | Above 0. A provider's mid further than this many median absolute deviations from the median is an outlier. |
 | `outlier_floor_bps` | `10` | From 0 to 10000. No deviation within this many basis points of the median makes an outlier. |
-| `min_providers` | `2` | At least 1. The quorum of a live price; below it, the price is stale. |
+| `min_providers` | `2` | At least 1, and at least 2 in release mode, so that one venue never sets the reference price on its own ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)). The quorum of a live price; below it, the price is stale. Use 3 for a market that quotes real money: with 2, the outlier test cannot tell which venue is wrong, and the median moves halfway towards a manipulated one. |
 | `stale_threshold_ms` | `5000` | Above 0. A provider's book older than this does not count. |
 | `publish_to_redis` | `true` | Writes the live prices to Redis and publishes the updates to the stream `price:stream` ([Distribution](price-engine.md#distribution), [#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). Needs `redis`. |
 | `publish_to_rabbitmq` | `true` | The leader also publishes the updates to `rabbitmq.exchanges.price_updates`, which the WebSocket forwards to clients. Needs `publish_to_redis`, whose lease elects the leader, and `rabbitmq`. |
@@ -909,6 +912,7 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `I18N_DEFAULT_LOCALE` | `i18n.default_locale` |
 | `I18N_LOCALES` | `i18n.locales`, as a comma-separated list |
 | `PRICE_AGGREGATOR_SIGNING_KEY` | `price_aggregator.signing_key` |
+| `PRICE_AGGREGATOR_ADMIN_TOKEN` | `price_aggregator.admin_token` |
 | `PRICE_VERIFY_KEYS` | `price.verify_keys` |
 | `PRICE_SIGNATURES` | `price.signatures` |
 | `PRICE_OVERRIDES_MAX_DEVIATION_BPS` | `price.overrides.max_deviation_bps` |

@@ -690,7 +690,12 @@ markets:
 # "price_aggregator" in docs/configuration.md.
 price_aggregator:
   enabled: true
-  health_addr: ":8082"         # Probes, metrics, and GET /prices; internal only
+  # Probes, metrics, and GET /prices; internal only. Release mode needs a
+  # host here, such as 127.0.0.1 or a private address (#454).
+  health_addr: "127.0.0.1:8082"
+  # The bearer token of GET /prices and GET /providers. Without it, release
+  # mode turns them off, and development leaves them open.
+  admin_token: ""              # Or set PRICE_AGGREGATOR_ADMIN_TOKEN
   providers:
     # type websocket follows the stream, and reads the REST API while the
     # stream is down; type rest reads the REST API every poll_ms.
@@ -756,7 +761,11 @@ price_aggregator:
   vwap_windows_seconds: [1, 5, 60, 300]  # Also the TWAP windows
   outlier_threshold_mad: 3.0   # Median absolute deviations from the median
   outlier_floor_bps: 10        # No deviation under 0.1 % makes an outlier
-  min_providers: 2             # Quorum of a live price; below it, stale
+  # The quorum of a live price; below it, stale. At least 2 in release
+  # mode; 3 for a market that quotes real money, since of two venues the
+  # outlier test cannot tell which is wrong. TRX/USDT has two venues here,
+  # so it stays stale until a third quotes it.
+  min_providers: 3
   stale_threshold_ms: 5000
   # The distribution (docs/price-engine.md#distribution): each replica writes
   # price:<market> with this TTL; one replica, the holder of the lease,

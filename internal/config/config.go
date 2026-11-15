@@ -584,6 +584,11 @@ type Configuration struct {
 		// to Redis by anyone else is refused. Release mode requires it
 		// with publish_to_redis.
 		SigningKey KeyPath `yaml:"signing_key"`
+		// AdminToken is the bearer token of the operators' view of the
+		// prices, GET /prices and GET /providers, on HealthAddr (#454).
+		// Without it, release mode turns that view off; outside release
+		// mode it is open.
+		AdminToken string `yaml:"admin_token"`
 	} `yaml:"price_aggregator"`
 
 	// Price configures how the servers read the reference prices (#450).

@@ -255,6 +255,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `cmd/price-aggregator` ran none of the release checks of its dependencies, served the operators' view on every interface, and accepted a quorum of one ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)).
+  - In release mode it refuses the settings of Redis and RabbitMQ that the server refuses, with the same messages: no Redis password, the `guest` account, and a connection without TLS that is not acknowledged as a private network.
+  - Release mode needs a host in `price_aggregator.health_addr` and `price_aggregator.min_providers` of at least 2. The example now listens on `127.0.0.1:8082` with a quorum of 3.
+  - `GET /prices` and `GET /providers` need the bearer token `price_aggregator.admin_token` (`PRICE_AGGREGATOR_ADMIN_TOKEN`) when it is set; without it, release mode turns them off. The probes and the metrics stay open.
 - One administrator could set any reference price ([#453](https://github.com/mdastpak/Crypto-Exchange/issues/453)). See [Overrides](docs/price-engine.md#overrides).
   - An override applies at once only within `price.overrides.max_deviation_bps` (300 by default, `PRICE_OVERRIDES_MAX_DEVIATION_BPS`) of the live reference mid. Beyond it, or with no live price, it waits for a second administrator, `POST /admin/price-overrides/{id}/approve`, for `price.overrides.approval_minutes` (30 by default, `PRICE_OVERRIDES_APPROVAL_MINUTES`), and lapses unapproved. Audited as `price.override_request` and `price.override_approve`.
   - A delisting settles only at an approved override, and each settlement price and OTC quote names the override it used.
