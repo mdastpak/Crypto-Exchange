@@ -320,6 +320,37 @@ func TestFeed_RESTOnly(t *testing.T) {
 	assert.Error(t, err, "a stream without a dialer")
 }
 
+// pairTickers serves only the pairs asked for, and records them.
+type pairTickers struct {
+	fakeTickers
+	mu    sync.Mutex
+	asked [][2]string
+}
+
+func (p *pairTickers) PairTickers(_ context.Context, pairs [][2]string) ([]source.Ticker, error) {
+	p.mu.Lock()
+	p.asked = pairs
+	p.mu.Unlock()
+	return p.tickers, nil
+}
+
+// A provider that reads a request per pair is asked for the feed's markets
+// only (#443).
+func TestFeed_ReadsOnlyItsPairsWhenTheProviderCan(t *testing.T) {
+	rest := &pairTickers{fakeTickers: fakeTickers{tickers: []source.Ticker{{Base: "USDT", Quote: "IRT", Bid: ptr("90000"), Ask: ptr("90100"), ObservedAt: t0}}}}
+	f, err := NewFeed(FeedOptions{Name: "tabdeal", Markets: []string{"USDT/IRT"}, REST: rest, PollEvery: 10 * time.Millisecond, Logger: log.New(io.Discard, "", 0)})
+	require.NoError(t, err)
+	got := &ticks{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go f.Run(ctx, got.add)
+	require.Eventually(t, func() bool { return len(got.all()) >= 1 }, time.Second, 5*time.Millisecond)
+	rest.mu.Lock()
+	defer rest.mu.Unlock()
+	assert.Equal(t, [][2]string{{"USDT", "IRT"}}, rest.asked)
+	assert.Zero(t, rest.Calls(), "never every ticker")
+}
+
 type recordingSink struct {
 	mu     sync.Mutex
 	prices [][]Price

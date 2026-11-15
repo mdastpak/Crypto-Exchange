@@ -1,0 +1,8 @@
+[
+  {"symbol": "BTCIRT", "tabdealSymbol": "BTC_IRT", "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "IRT",
+   "baseAssetPrecision": 6, "quoteAssetPrecision": 0,
+   "filters": [{"filterType": "PRICE_FILTER", "minPrice": "300.00000000", "maxPrice": "99999999999.00000000", "tickSize": "1.00000000"}]},
+  {"symbol": "USDTIRT", "tabdealSymbol": "USDT_IRT", "status": "TRADING", "baseAsset": "USDT", "quoteAsset": "IRT"},
+  {"symbol": "ETHUSDT", "tabdealSymbol": "ETH_USDT", "status": "TRADING", "baseAsset": "ETH", "quoteAsset": "USDT"},
+  {"symbol": "MANAUSDT", "tabdealSymbol": "MANA_USDT", "status": "BREAK", "baseAsset": "MANA", "quoteAsset": "USDT"}
+]

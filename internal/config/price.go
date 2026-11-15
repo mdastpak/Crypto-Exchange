@@ -13,7 +13,7 @@ import (
 // that the lists agree with its protocols and with the venue sources.
 var (
 	PriceStreamProviders = []string{"binance", "coinbase", "kraken"}
-	PriceRESTProviders   = []string{"binance", "okx", "kraken", "coinbase", "nobitex", "wallex"}
+	PriceRESTProviders   = []string{"binance", "okx", "kraken", "coinbase", "nobitex", "wallex", "ramzinex", "tabdeal"}
 )
 
 // priceSymbol is a market of a provider: BASE/QUOTE or BASE-QUOTE.

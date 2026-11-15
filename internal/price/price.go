@@ -96,6 +96,10 @@ const (
 	// its last live price, or zero when it never had one, and must not be
 	// served as current.
 	StatusStale Status = "stale"
+	// StatusOverride is a price that an administrator set (#59). It is
+	// declared with the others so that the OpenAPI document lists the
+	// statuses in one order.
+	StatusOverride Status = "override"
 )
 
 // Price is the reference price of a market at one interval.

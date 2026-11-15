@@ -20,7 +20,7 @@ import (
 // IranianSources are the market data sources of the Iranian exchanges,
 // whose venues have the region ir. The tests of the exchange sources check
 // that the two lists agree.
-var IranianSources = []string{"nobitex", "wallex"}
+var IranianSources = []string{"nobitex", "wallex", "ramzinex", "tabdeal"}
 
 // regionFeature is a feature of one market.
 type regionFeature struct {

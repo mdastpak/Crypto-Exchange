@@ -2464,14 +2464,14 @@ definitions:
     type: object
   price.Status:
     enum:
-    - override
     - live
     - stale
+    - override
     type: string
     x-enum-varnames:
-    - StatusOverride
     - StatusLive
     - StatusStale
+    - StatusOverride
   priceoverride.Override:
     properties:
       ask:

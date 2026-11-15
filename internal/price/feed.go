@@ -38,6 +38,13 @@ type Tickers interface {
 	Tickers(ctx context.Context) ([]source.Ticker, error)
 }
 
+// PairTickers reads the tickers of the named pairs only, as base and
+// quote: a provider whose every ticker costs a request of its own, such as
+// Tabdeal (#443), implements it, and a feed then reads only its markets.
+type PairTickers interface {
+	PairTickers(ctx context.Context, pairs [][2]string) ([]source.Ticker, error)
+}
+
 // Defaults of FeedOptions.
 const (
 	DefaultBackoffMin    = 500 * time.Millisecond
@@ -202,7 +209,7 @@ func (f *Feed) poll(ctx context.Context, sink func(Tick)) {
 		}
 		f.update(func(h *Health) { h.Fallback = true })
 		readCtx, cancel := context.WithTimeout(ctx, max(f.opts.PollEvery, time.Second))
-		tickers, err := f.opts.REST.Tickers(readCtx)
+		tickers, err := f.readTickers(readCtx)
 		cancel()
 		if err != nil {
 			if ctx.Err() == nil {
@@ -213,6 +220,19 @@ func (f *Feed) poll(ctx context.Context, sink func(Tick)) {
 		}
 		f.emit(f.fromTickers(tickers, f.opts.Now()), sink)
 	}
+}
+
+// readTickers reads the REST tickers: only those of the followed markets
+// when the provider can.
+func (f *Feed) readTickers(ctx context.Context) ([]source.Ticker, error) {
+	if p, ok := f.opts.REST.(PairTickers); ok {
+		pairs := make([][2]string, 0, len(f.byBase))
+		for pair := range f.byBase {
+			pairs = append(pairs, pair)
+		}
+		return p.PairTickers(ctx, pairs)
+	}
+	return f.opts.REST.Tickers(ctx)
 }
 
 // streamSilent reports whether the stream sent no tick for FallbackAfter.

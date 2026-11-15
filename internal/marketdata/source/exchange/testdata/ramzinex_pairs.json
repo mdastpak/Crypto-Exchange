@@ -1,0 +1,52 @@
+{
+  "status": 0,
+  "data": [
+    {
+      "pair_id": 2,
+      "url_name": "btcirr",
+      "base_currency_symbol": {"fa": "بیت کوین", "en": "btc"},
+      "quote_currency_symbol": {"fa": "ریال", "en": "irr"},
+      "buy": 67990000000,
+      "sell": 68010000000,
+      "price_precision": 0,
+      "financial": {
+        "last24h": {
+          "open": 67000000000,
+          "close": 68000000000,
+          "highest": 68500000000,
+          "lowest": 66900000000,
+          "change_percent": 1.49,
+          "base_volume": 12.5,
+          "quote_volume": 850000000000
+        }
+      }
+    },
+    {
+      "pair_id": 11,
+      "url_name": "usdtirr",
+      "base_currency_symbol": {"fa": "تتر", "en": "usdt"},
+      "quote_currency_symbol": {"fa": "ریال", "en": "irr"},
+      "buy": "1000005",
+      "sell": "1000015",
+      "financial": {"last24h": {}}
+    },
+    {
+      "pair_id": 272,
+      "url_name": "ethusdt",
+      "base_currency_symbol": "eth",
+      "quote_currency_symbol": "usdt",
+      "buy": 3501,
+      "sell": 3500,
+      "financial": {"last24h": {"close": 3500.5}}
+    },
+    {
+      "pair_id": 300,
+      "url_name": "newirr",
+      "base_currency_symbol": {"en": "new"},
+      "quote_currency_symbol": {"en": "irr"},
+      "buy": 0,
+      "sell": 0,
+      "financial": {"last24h": {"close": 0}}
+    }
+  ]
+}
