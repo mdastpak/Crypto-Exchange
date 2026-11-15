@@ -213,12 +213,29 @@ notifications:
       If you did not request this code, you can ignore this email. Never share it with anyone.
     # The codes that confirm a withdrawal (#161), never sent with the
     # sign-in text. They can also use {{.Details}}, such as
-    # "100 USDT to TR7NHq...gjLj6t".
+    # "100 USDT to TR7NHq...gjLj6t", and {{.DenyLink}}, the "this was not
+    # me" link (#374), which a body without it gets at its end.
     withdrawal_subject: "Confirm your withdrawal"
     withdrawal_body: |
       Your code to confirm the withdrawal of {{.Details}} is {{.Code}}. It expires in {{.TTLSeconds}} seconds.
 
-      If you did not request this withdrawal, do not enter or share the code: sign in, change your password, and contact support.
+      If you did not request this withdrawal, do not enter or share the code.{{if .DenyLink}} Open this link to cancel it and secure your account. The link can only stop, never approve:
+      {{.DenyLink}}
+
+      Then sign in, change your password, and contact support.
+      {{else}} Sign in, change your password, and contact support.
+      {{end}}
+    # The notice that a "this was not me" link was used (#374). It can use
+    # {{.Details}}, {{.Cancelled}}, {{.InProgress}}, and {{.HoldHours}}.
+    denied_subject: "We stopped a withdrawal and secured your account"
+    denied_body: |
+      The "this was not me" link in the message about the withdrawal of {{.Details}} was used.
+
+      {{if .Cancelled}}We cancelled {{.Cancelled}} withdrawal(s) that had not been sent, and returned their funds to your balance. {{end}}We signed you out on every device, and withdrawals are held for {{.HoldHours}} hours.
+
+      {{if .InProgress}}{{.InProgress}} withdrawal(s) were already being paid and could not be stopped: contact support at once.
+
+      {{end}}If you did not use the link, someone else can read your messages: sign in, change your password, and contact support.
     # The reminder to change the anti-phishing code (#375). It can use
     # {{.AntiPhishingCode}}, {{.Uses}}, the emails that have shown it, and
     # {{.AgeDays}}. A text without the code gets it on its first line.
@@ -228,8 +245,9 @@ notifications:
 
       The more emails show it, the more places it can be seen. Sign in to the exchange yourself, not through a link, and choose a new code in the security settings.
     # The HTML part beside the text: en or fa (config/email), none for text
-    # only, or a directory with otp.html, withdrawal.html, and
-    # anti_phishing_reminder.html, each showing {{.AntiPhishingCode}}.
+    # only, or a directory with otp.html, withdrawal.html,
+    # anti_phishing_reminder.html, and denied.html, each showing
+    # {{.AntiPhishingCode}}, and withdrawal.html {{.DenyLink}}.
     html_templates: en
   sms:
     # The SMS providers in the order that messages try them (#371): when one
@@ -240,14 +258,14 @@ notifications:
     kavenegar:
       api_key: ""           # Or set KAVENEGAR_API_KEY
       otp_template: ""      # A verify template approved in the Kavenegar panel; the code fills %token
-      withdrawal_template: ""  # For withdrawal codes: %token the code, %token10 what it confirms; empty is no SMS for them
+      withdrawal_template: ""  # For withdrawal codes: %token the code, %token10 what it confirms, %token2 the token of the "this was not me" link; empty is no SMS for them
       anti_phishing_reminder_template: ""  # The reminder to change the anti-phishing code: %token the emails that showed it; empty is no SMS reminder
       base_url: "https://api.kavenegar.com"
       timeout_seconds: 10
     smsir:
       api_key: ""           # Or set SMSIR_API_KEY
       otp_template_id: 0    # A quick-send (verify) template of the panel with #CODE#
-      withdrawal_template_id: 0  # With #CODE#, #AMOUNT#, and #DEST#; 0 sends withdrawal codes through other providers
+      withdrawal_template_id: 0  # With #CODE#, #AMOUNT#, #DEST#, and #DENY#, the token of the "this was not me" link; 0 sends withdrawal codes through other providers
       anti_phishing_reminder_template_id: 0  # With #COUNT#, the emails that showed the code; 0 is none
       base_url: "https://api.sms.ir"
       timeout_seconds: 10
@@ -289,6 +307,13 @@ contacts:
 # What follows a change of the email, the mobile, or the second factor.
 security:
   change_hold_hours: 24  # Withdrawals and other second-factor operations are held this long
+  # The "this was not me" links of the messages of withdrawal codes (#374):
+  # base_url and a token of 12 letters and digits, on the exchange's own
+  # domain. The SMS templates hold the same start, with the token as a
+  # parameter. Empty sends no links.
+  deny_links:
+    base_url: ""         # Such as https://ex.ir/d/: a page that posts the token to POST /public/deny/{token}
+    ttl_hours: 24        # How long a link can be used; at most 168
   # The account password of users, the second step of their sign-in.
   password:
     min_length: 10       # Characters; at least 8

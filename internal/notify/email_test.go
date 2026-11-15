@@ -381,13 +381,17 @@ func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
 	// A directory of the operator's own templates.
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Sender}}: {{.Code}} {{.AntiPhishingCode}}</p>`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}} {{.AntiPhishingCode}}</p>`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}} {{.AntiPhishingCode}} {{.DenyLink}}</p>`), 0o600))
 	// Without the reminder's template, the directory is refused (#375).
 	cfg := server.emailConfig()
 	cfg.HTMLTemplates = dir
 	_, err := NewEmailDeliverer(cfg, time.Minute)
 	require.ErrorContains(t, err, "anti_phishing_reminder.html")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "anti_phishing_reminder.html"), []byte(`<p>{{.Uses}} {{.AntiPhishingCode}}</p>`), 0o600))
+	// And without the notice of a denial (#374).
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	require.ErrorContains(t, err, "denied.html")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "denied.html"), []byte(`<p>{{.Cancelled}} {{.AntiPhishingCode}}</p>`), 0o600))
 	_, html = send(dir, testEmailMessage)
 	assert.Contains(t, html, "<p>Exchange: 482913 </p>", "the sender is the name of the from address")
 
@@ -395,10 +399,15 @@ func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
 	_, err = NewEmailDeliverer(cfg, time.Minute)
 	require.Error(t, err)
 	// An HTML template that does not show the anti-phishing code (#375).
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}}</p>`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}} {{.DenyLink}}</p>`), 0o600))
 	cfg.HTMLTemplates = dir
 	_, err = NewEmailDeliverer(cfg, time.Minute)
 	require.ErrorContains(t, err, "withdrawal.html must show {{.AntiPhishingCode}}")
+	// Nor one of a code that does not show its "this was not me" link
+	// (#374).
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Code}} {{.AntiPhishingCode}}</p>`), 0o600))
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	require.ErrorContains(t, err, "withdrawal.html must show {{.DenyLink}}")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "otp.html"), []byte(`<p>{{.Nope}}</p>`), 0o600))
 	cfg.HTMLTemplates = dir
 	_, err = NewEmailDeliverer(cfg, time.Minute)

@@ -73,7 +73,10 @@ func (k *KavenegarDeliverer) Supports(purpose string) bool {
 	case PurposeAntiPhishingReminder:
 		return k.reminderTemplate != ""
 	}
-	return true
+	// A message of another purpose, such as the notice of a denial
+	// (#374), has no template here: it must never go out with the
+	// sign-in text.
+	return purpose == ""
 }
 
 // kavenegarResponse is the response envelope: the result, and the messages
@@ -149,6 +152,11 @@ func (k *KavenegarDeliverer) Send(ctx context.Context, msg OTPMessage) (string, 
 		}
 		form.Set("template", k.withdrawalTemplate)
 		form.Set("token10", msg.Details)
+		// %token2 is the token of the "this was not me" link (#374),
+		// which the template places after the exchange's own domain.
+		if msg.DenyToken != "" {
+			form.Set("token2", msg.DenyToken)
+		}
 	case PurposeAntiPhishingReminder:
 		// The reminder carries no code: %token is the number of emails
 		// that have shown the anti-phishing code, never the code itself.
@@ -157,6 +165,9 @@ func (k *KavenegarDeliverer) Send(ctx context.Context, msg OTPMessage) (string, 
 		}
 		form.Set("template", k.reminderTemplate)
 		form.Set("token", strconv.FormatInt(msg.Uses, 10))
+	case "":
+	default:
+		return "", permanent(fmt.Errorf("kavenegar: no template for messages of %q", msg.Purpose))
 	}
 
 	body, err := k.call(ctx, http.MethodPost, "verify/lookup.json", form)

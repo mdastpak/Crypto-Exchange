@@ -14,9 +14,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/crypto/field"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
+	"github.com/mdastpak/crypto-exchange/internal/denylink"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
+	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
@@ -240,4 +242,49 @@ func TestAdminPayouts(t *testing.T) {
 	assert.Empty(t, got.Info.Payouts[0].UserHK, "the user's view has no fields of the administrators")
 	assert.Equal(t, "899", u.available(t), "paid: the amount and the fee left")
 	assert.Len(t, auditEvents(t, env.db, audit.ActionWithdrawalPayoutComplete), 1)
+}
+
+// TestDenyLink walks through the "this was not me" link of #374 on the
+// routes: the code of a withdrawal goes out with its link; opening the
+// link's route changes nothing; the page's POST cancels the withdrawal,
+// releases its funds, ends the user's sessions, starts the security hold,
+// and emails the notice; and the link works once.
+func TestDenyLink(t *testing.T) {
+	env := newE2EEnv(t, func(c *config.Configuration) {
+		c.Security.DenyLinks.BaseURL, c.Security.DenyLinks.TTLHours = "https://ex.example/d/", 24
+	})
+	u := newWithdrawer(t, env, "deny@example.com")
+	w := u.withdraw(t, "100", "e2e-deny-1")
+	msg, ok := env.sender.lastOf(u.email, notify.PurposeWithdrawal)
+	require.True(t, ok)
+	require.Len(t, msg.DenyToken, denylink.TokenLength)
+	assert.Equal(t, "https://ex.example/d/"+msg.DenyToken, msg.DenyLink)
+	assert.Equal(t, "899", u.available(t))
+
+	status, _ := env.call(t, http.MethodGet, "/api/v1/public/deny/"+msg.DenyToken, nil, "")
+	assert.Equal(t, http.StatusMethodNotAllowed, status, "opening the link changes nothing")
+	assert.Equal(t, "899", u.available(t))
+
+	status, raw := env.call(t, http.MethodPost, "/api/v1/public/deny/"+msg.DenyToken, nil, "")
+	require.Equal(t, http.StatusOK, status, string(raw))
+	var denied struct {
+		Info denylink.Outcome `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &denied))
+	assert.Equal(t, 1, denied.Info.WithdrawalsCancelled)
+	assert.Equal(t, 1, denied.Info.SessionsEnded)
+	assert.NotContains(t, string(raw), u.email, "the answer names no account")
+	assert.Equal(t, "1000", u.available(t), "released")
+
+	status, _ = env.call(t, http.MethodGet, "/api/v1/user/withdrawals/"+w.ID, nil, u.token)
+	assert.Equal(t, http.StatusUnauthorized, status, "the session ended")
+	notice, ok := env.sender.lastOf(u.email, notify.PurposeDenied)
+	require.True(t, ok, "the user is told by email")
+	assert.Equal(t, 1, notice.Cancelled)
+	assert.Equal(t, 24, notice.HoldHours)
+	assert.Len(t, auditEvents(t, env.db, audit.ActionUserOperationDeny), 1)
+
+	status, raw = env.call(t, http.MethodPost, "/api/v1/public/deny/"+msg.DenyToken, nil, "")
+	assert.Equal(t, http.StatusNotFound, status, "once")
+	assert.Contains(t, string(raw), "deny_link_invalid")
 }

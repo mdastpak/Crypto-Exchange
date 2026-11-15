@@ -18,6 +18,10 @@
 //     limits.
 //  3. Consume: the operation, once, before the confirmation expires.
 //
+// Each message of a code carries a "this was not me" link (#374), which
+// denies the confirmation: once denied, it can no longer be confirmed,
+// sent again, or consumed. The link never approves anything.
+//
 // The rows are sealed (#139), so a confirmation marked confirmed in SQL
 // runs nothing.
 package confirm
@@ -99,6 +103,9 @@ var (
 	ErrConsumed = errors.New("the confirmation was used already")
 	// ErrMismatch is a confirmation of another operation.
 	ErrMismatch = errors.New("the confirmation is of another operation")
+	// ErrDenied is a confirmation that its user denied with the link of
+	// its message (#374).
+	ErrDenied = errors.New("the confirmation was denied by its user")
 	// ErrUnverified is a confirmation that does not match its seal.
 	ErrUnverified = rowseal.ErrUnverified
 )

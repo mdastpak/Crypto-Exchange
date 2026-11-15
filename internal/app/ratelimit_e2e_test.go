@@ -91,6 +91,14 @@ func TestRateLimits_PerRouteGroup(t *testing.T) {
 		assert.Equal(t, 3, allowed)
 	})
 
+	t.Run("the deny links have the limit of a sign-in per address", func(t *testing.T) {
+		// A guess at the tokens of the "this was not me" links (#374)
+		// meets the limit of a sign-in.
+		allowed, rejected := allowedBeforeLimit(http.MethodPost, "/api/v1/public/deny/Ab3xK9q2LmPq", "198.51.100.9", 5)
+		require.NotNil(t, rejected)
+		assert.Equal(t, 3, allowed)
+	})
+
 	t.Run("refresh and logout have no sign-in limit", func(t *testing.T) {
 		for _, path := range []string{"/api/v1/public/auth/refresh", "/api/v1/public/auth/logout"} {
 			allowed, _ := allowedBeforeLimit(http.MethodPost, path, signIn, 6)

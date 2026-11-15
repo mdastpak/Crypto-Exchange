@@ -40,10 +40,18 @@ type otpJob struct {
 	Destination   string `json:"destination,omitempty"`
 	// AntiPhishingCode is personal data like the contact: the queue is
 	// internal, and the job is never logged.
-	AntiPhishingCode string    `json:"anti_phishing_code,omitempty"`
-	Uses             int64     `json:"uses,omitempty"`
-	AgeDays          int       `json:"age_days,omitempty"`
-	ExpiresAt        time.Time `json:"expires_at"`
+	AntiPhishingCode string `json:"anti_phishing_code,omitempty"`
+	Uses             int64  `json:"uses,omitempty"`
+	AgeDays          int    `json:"age_days,omitempty"`
+	// DenyToken and DenyLink are the "this was not me" link of a code
+	// (#374); Cancelled, InProgress, and HoldHours are the counts of the
+	// notice of a denial.
+	DenyToken  string    `json:"deny_token,omitempty"`
+	DenyLink   string    `json:"deny_link,omitempty"`
+	Cancelled  int       `json:"cancelled,omitempty"`
+	InProgress int       `json:"in_progress,omitempty"`
+	HoldHours  int       `json:"hold_hours,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 // deliveryID is the key of the job in the delivery log: its ID, or, for a
@@ -70,6 +78,11 @@ func (j otpJob) message() OTPMessage {
 		AntiPhishingCode: j.AntiPhishingCode,
 		Uses:             j.Uses,
 		AgeDays:          j.AgeDays,
+		DenyToken:        j.DenyToken,
+		DenyLink:         j.DenyLink,
+		Cancelled:        j.Cancelled,
+		InProgress:       j.InProgress,
+		HoldHours:        j.HoldHours,
 	}
 }
 
@@ -142,6 +155,11 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 		AntiPhishingCode: msg.AntiPhishingCode,
 		Uses:             msg.Uses,
 		AgeDays:          msg.AgeDays,
+		DenyToken:        msg.DenyToken,
+		DenyLink:         msg.DenyLink,
+		Cancelled:        msg.Cancelled,
+		InProgress:       msg.InProgress,
+		HoldHours:        msg.HoldHours,
 	}
 	publishing := amqp.Publishing{
 		ContentType: "application/json",
