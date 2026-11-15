@@ -2201,6 +2201,60 @@ definitions:
         example: 15
         type: integer
     type: object
+  otc.Quote:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      fee:
+        example: "65"
+        type: string
+      fee_bps:
+        example: 20
+        type: integer
+      fee_currency:
+        description: FeeCurrency is the quote currency.
+        example: USDT
+        type: string
+      id:
+        format: uuid
+        type: string
+      market:
+        example: BTC/USDT
+        type: string
+      price:
+        example: "65000.12"
+        type: string
+      quantity:
+        description: |-
+          Quantity is in the base currency, and Price, Total, and Fee in the
+          quote currency. Total is Quantity × Price. A buy pays Total + Fee,
+          and a sell receives Total − Fee.
+        example: "0.5"
+        type: string
+      side:
+        allOf:
+        - $ref: '#/definitions/otc.Side'
+        enum:
+        - buy
+        - sell
+        example: buy
+      sub_account_id:
+        format: uuid
+        type: string
+      total:
+        example: "32500.06"
+        type: string
+    type: object
+  otc.Side:
+    enum:
+    - buy
+    - sell
+    type: string
+    x-enum-varnames:
+    - SideBuy
+    - SideSell
   passkey.Options:
     properties:
       publicKey:
@@ -3681,6 +3735,33 @@ definitions:
         - dark
         - system
         example: dark
+        type: string
+    type: object
+  user.quoteRequest:
+    properties:
+      market:
+        example: BTC/USDT
+        type: string
+      quantity:
+        description: Quantity is rounded down to the lot size of the market.
+        example: "0.5"
+        type: string
+      quote_amount:
+        description: QuoteAmount buys or sells the most lots whose total stays within
+          it.
+        example: "1000"
+        type: string
+      side:
+        enum:
+        - buy
+        - sell
+        example: buy
+        type: string
+      sub_account_id:
+        description: |-
+          SubAccountID binds the quote to a sub-account of the user; empty is
+          the main account.
+        format: uuid
         type: string
     type: object
   user.withdrawalChallenge:
@@ -10340,6 +10421,80 @@ paths:
       summary: Sign out
       tags:
       - sign-in
+  /api/v1/user/otc/quote:
+    post:
+      consumes:
+      - application/json
+      description: 'A firm price for a buy or a sell of the market, valid until expires_at
+        (otc.quote_ttl_seconds, 5 to 10 seconds), for the signed-in user (and sub-account)
+        only. The price is the reference price of the price engine raised for a buy,
+        and lowered for a sell, by half the spread, the hedge cost, the margin, the
+        risk premium, and a slippage that grows with the square root of the quantity;
+        it is rounded to the tick size against the user. The fee is the taker fee
+        of the market, in the quote currency, apart from the price: a buy pays total
+        + fee, a sell receives total − fee. The quote is refused while the price is
+        stale, the market does not trade, or the user''s level, restrictions, currencies,
+        or balance do not allow the trade; the balance is a pre-check, and the execution
+        checks again. Limited per user by otc.quotes_per_second.'
+      parameters:
+      - description: The request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.quoteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/otc.Quote'
+              type: object
+        "400":
+          description: validation_failed, quantity_below_minimum, quantity_above_maximum,
+            notional_below_minimum, or quote_too_large
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: verification_required, account_frozen, operation_restricted,
+            asset_restricted, security_hold, or currency_operation_disabled
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: 'otc_market_unavailable, or price_unavailable: the reference
+            price is stale'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: market_inactive or insufficient_balance
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: Too many quote requests
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: otc_unavailable or feature_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Request an OTC quote
+      tags:
+      - user-otc
   /api/v1/user/passkey-registration:
     post:
       description: 'Answers the options for navigator.credentials.create: a passkey

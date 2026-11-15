@@ -543,6 +543,62 @@ verification:
       # Level 2 has no limit of the exchange: payouts follow the transfer
       # limits of the banks and providers, split if needed (#70, #74).
 
+# The OTC quotes (#61): a firm price for TTL seconds, the reference price
+# of the price engine raised for a buy, and lowered for a sell, by half the
+# spread, the hedge cost, the margin, the risk premium, and a slippage of
+# sqrt(slippage_k × quantity / liquidity). All in basis points of the
+# reference. A market left out is not quoted. The figures are placeholders
+# that each deployment sets from its hedging costs.
+otc:
+  quote_ttl_seconds: 8      # 5 to 10
+  quotes_per_second: 5      # Per user, over every instance
+  burst: 10
+  markets:
+    "BTC/USDT":
+      spread_bps: 10
+      hedge_cost_bps: 12     # The hedging venue's taker fee and transfers
+      margin_bps: 15
+      min_margin_bps: 8      # A lower margin is widened to it: no quote at a loss
+      margin_bands:
+        - {min_quantity: "1", margin_bps: 10}
+      risk_premium_bps: 5
+      slippage_k: "0.0001"
+      liquidity: "50"        # BTC
+      max_slippage_bps: 100
+    "ETH/USDT":
+      spread_bps: 10
+      hedge_cost_bps: 12
+      margin_bps: 15
+      min_margin_bps: 8
+      slippage_k: "0.0001"
+      liquidity: "800"
+      max_slippage_bps: 100
+    # The rial markets take the reference of the Iranian venues, in
+    # tomans: 10 rials each.
+    "USDT/IRR":
+      reference: "USDT/IRT"
+      reference_multiplier: "10"
+      spread_bps: 30
+      hedge_cost_bps: 25
+      hedge_cost_fixed: "0"
+      margin_bps: 40
+      min_margin_bps: 20
+      risk_premium_bps: 10
+      slippage_k: "0.0001"
+      liquidity: "200000"    # USDT
+      max_slippage_bps: 150
+    "BTC/IRR":
+      reference: "BTC/IRT"
+      reference_multiplier: "10"
+      spread_bps: 40
+      hedge_cost_bps: 30
+      margin_bps: 40
+      min_margin_bps: 20
+      risk_premium_bps: 10
+      slippage_k: "0.0001"
+      liquidity: "5"
+      max_slippage_bps: 150
+
 # The anti-phishing code of users (#375), which every email to their
 # verified contacts shows. The exchange suggests a new one once it is
 # max_age_days old or max_uses emails have shown it, by email and SMS, and

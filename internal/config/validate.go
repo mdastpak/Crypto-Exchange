@@ -57,6 +57,7 @@ func (c *Configuration) validateServer() error {
 	c.redisModeProblems(&p)
 	c.observabilityProblems(&p)
 	c.verificationProblems(&p)
+	c.otcProblems(&p)
 	c.antiPhishingProblems(&p)
 	c.smsProblems(&p)
 	c.withdrawalProblems(&p)
