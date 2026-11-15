@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Ramzinex and Tabdeal, Iranian exchanges, as venues of the market data catalog and REST providers of the price engine ([#443](https://github.com/mdastpak/Crypto-Exchange/issues/443)), of the Iran region only and disabled in the example. Ramzinex is read from its list of pairs, with rial prices in tomans; Tabdeal from the depth of each pair, since it documents no ticker of every pair. The price engine asks Tabdeal only for its own markets. Both were written from the documented answers and must be checked from a node in Iran before they are enabled. Tetherland and Abantether wait for API access.
 - The distribution of the reference prices ([#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). See [Distribution](docs/price-engine.md#distribution).
   - Every replica of `cmd/price-aggregator` writes the live prices to `price:<BASE>/<QUOTE>` in Redis, for `price_aggregator.cache_ttl_ms`. One replica at a time, by a lease in Redis (`lease_ttl_ms`), publishes each update to the stream `price:stream` (`stream_max_len`) and to the `price_updates` exchange, transient and expiring after 2 s.
   - `price.Reader`, the consumer library: an administrator's override first, then a live price at most a second old, or an error; it never guesses a price.

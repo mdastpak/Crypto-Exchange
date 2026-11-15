@@ -392,6 +392,8 @@ market_data:
     coinbase: {enabled: false}
     nobitex: {enabled: false}  # Iranian venues often answer only from Iran: egress: direct on a node there
     wallex: {enabled: false}
+    ramzinex: {enabled: false}  # Written from the documented answers: check from Iran first (#443)
+    tabdeal: {enabled: false}   # A request per pair: depth only
   # The catalog of assets (docs/market-data.md#catalog).
   catalog:
     priority: [coingecko, coinmarketcap]  # Primary source first
@@ -653,6 +655,18 @@ price_aggregator:
       poll_ms: 5000
       stale_threshold_ms: 30000
     - name: "wallex"
+      enabled: false
+      type: "rest"
+      symbols: ["USDT/IRT", "BTC/IRT"]
+      poll_ms: 5000
+      stale_threshold_ms: 30000
+    - name: "ramzinex"
+      enabled: false
+      type: "rest"
+      symbols: ["USDT/IRT", "BTC/IRT"]
+      poll_ms: 5000
+      stale_threshold_ms: 30000
+    - name: "tabdeal"
       enabled: false
       type: "rest"
       symbols: ["USDT/IRT", "BTC/IRT"]

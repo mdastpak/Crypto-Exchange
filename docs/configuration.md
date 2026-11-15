@@ -58,7 +58,7 @@ In an international release, the server and the market data worker refuse to sta
 | --- | --- | --- |
 | The Shahkar check of Iranian mobile numbers ([#253](https://github.com/mdastpak/Crypto-Exchange/issues/253)) | `identity.mobile_ownership.provider` other than `none` | server |
 | Codes by SMS through Kavenegar or sms.ir ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) | `kavenegar` or `smsir` in `notifications.sms.providers` (or `notifications.sms.provider`). An international release has no SMS until a provider outside Iran is added. | server |
-| The Iranian exchanges, Nobitex and Wallex | `market_data.sources.nobitex.enabled`, `market_data.sources.wallex.enabled` | market data worker |
+| The Iranian exchanges, Nobitex, Wallex, Ramzinex, and Tabdeal | `market_data.sources.<name>.enabled`, and `price_aggregator.providers[].enabled` of the same names | market data worker, price aggregator |
 | The Iranian venues on the public market data routes | `ir` in `market_data.api.regions` | server |
 | Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
 | A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
@@ -517,7 +517,7 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `catalog.details_per_run` | `200` | From 1 to 10000. The full records (description, links, contracts) read in one run. |
 | `catalog.details_max_age_days` | `30` | From 1 to 365. When a full record is read again. |
 | `catalog.deactivate_after_days` | `14` | From 1 to 365. Assets that no source listed for this long are marked inactive; only with the `all` coverage. |
-| `tickers.interval_seconds` | `120` | From 30 to 3600. The time between two runs of the tickers of a venue. The venues are the sources `binance`, `okx`, `kraken`, `coinbase`, `nobitex`, and `wallex`; see [Tickers](market-data.md#tickers). |
+| `tickers.interval_seconds` | `120` | From 30 to 3600. The time between two runs of the tickers of a venue. The venues are the sources `binance`, `okx`, `kraken`, `coinbase`, `nobitex`, `wallex`, `ramzinex`, and `tabdeal`; see [Tickers](market-data.md#tickers). |
 | `tickers.stale_after_seconds` | `600` | From `interval_seconds` to 86400. A ticker observed longer ago is stale. |
 | `tickers.outlier_percent` | `5` | From 1 to 100. A price further than this from the median of the venues is an outlier. |
 | `tickers.min_venues` | `3` | From 2 to 20. The fewest venues with a fresh price of the same quote that make a median. |
@@ -565,8 +565,8 @@ The asset registry: the currencies, how each moves on its networks, and the mark
 | `cache_ttl_ms` | `500` | From 10 to 60000, and at least `aggregation_interval_ms`. The life of a price's key in Redis: a price not written again within it is gone. |
 | `lease_ttl_ms` | `2000` | From three intervals to 60000. The life of the publisher's lease: how long the updates stop when the leader dies. |
 | `stream_max_len` | `10000` | About how many updates `price:stream` keeps. |
-| `providers[].name` | | The provider, unique: `binance`, `coinbase`, `kraken` (with a stream), or `okx`, `nobitex`, `wallex` (REST only). See [Providers](price-engine.md#providers). |
-| `providers[].enabled` | `false` | Whether this node follows it. `nobitex` and `wallex` are of the Iran region only. |
+| `providers[].name` | | The provider, unique: `binance`, `coinbase`, `kraken` (with a stream), or `okx`, `nobitex`, `wallex`, `ramzinex`, `tabdeal` (REST only). See [Providers](price-engine.md#providers). |
+| `providers[].enabled` | `false` | Whether this node follows it. `nobitex`, `wallex`, `ramzinex`, and `tabdeal` are of the Iran region only. |
 | `providers[].type` | | `websocket` (the stream, and REST while it is down) or `rest`. |
 | `providers[].symbols` | | The markets it follows, `BASE/QUOTE` or `BASE-QUOTE`, such as `BTC/USDT`. |
 | `providers[].ws_endpoint`, `rest_endpoint` | the provider's | Override the addresses: `wss://` and `https://` only. |

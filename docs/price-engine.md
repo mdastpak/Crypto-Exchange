@@ -38,11 +38,12 @@ A provider is a venue, named as in the [market data catalog](market-data.md#tick
 | `binance` | `websocket` | `<symbol>@bookTicker` and `<symbol>@trade` | 24-hour tickers |
 | `coinbase` | `websocket` | The `ticker` channel of the Exchange feed, each a trade with the best bid and ask after it | Tickers |
 | `kraken` | `websocket` | The `ticker` channel of WebSocket v2 on each change of the best bid and ask, and the `trade` channel without its snapshot | Tickers |
-| `okx`, `nobitex`, `wallex` | `rest` | None | Tickers |
+| `okx`, `nobitex`, `wallex`, `ramzinex` | `rest` | None | Tickers |
+| `tabdeal` | `rest` | None | The depth of each followed market only, a request each ([#443](https://github.com/mdastpak/Crypto-Exchange/issues/443)) |
 
 A `websocket` provider follows its stream. It reconnects when the connection drops or stays silent for 30 seconds, after a wait that starts at a tenth of `reconnect_delay_seconds` and doubles with each failure in a row, up to 30 seconds, with a jitter of ±20 %. While its stream sent no tick for 3 seconds, its REST API is read every `poll_ms` instead, and the reads stop once the stream sends again. A `rest` provider is read every `poll_ms` only. A REST ticker without both sides of its book gives nothing, and REST gives no trades, so a provider read through REST adds to the mid and the best bid and ask, not to the VWAP.
 
-The Iranian venues give the reference of the rial markets, since no global venue quotes IRR. They have no stream, so their `stale_threshold_ms` is longer than the default. They are providers of the [Iran region](configuration.md#region-of-a-release) only: an international release refuses to start with one enabled. They often answer only from Iran: give them `egress: direct` on a node there, and `proxy` elsewhere.
+The Iranian venues give the reference of the rial markets, since no global venue quotes IRR. They have no stream, so their `stale_threshold_ms` is longer than the default. Ramzinex and Tabdeal were written from their documented answers and are disabled in the example: check them from a node in Iran before enabling them. Tetherland and Abantether wait for API access ([#443](https://github.com/mdastpak/Crypto-Exchange/issues/443)). They are providers of the [Iran region](configuration.md#region-of-a-release) only: an international release refuses to start with one enabled. They often answer only from Iran: give them `egress: direct` on a node there, and `proxy` elsewhere.
 
 ## Aggregation
 

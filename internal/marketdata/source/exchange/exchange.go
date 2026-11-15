@@ -1,7 +1,7 @@
 // Package exchange holds the venue sources of the market data worker
 // (#267): the public ticker endpoints of global exchanges (Binance, OKX,
-// Kraken, Coinbase) and Iranian exchanges (Nobitex, Wallex). None needs a
-// key. Each reports the latest ticker of every spot pair in one or two
+// Kraken, Coinbase) and Iranian exchanges (Nobitex, Wallex, Ramzinex,
+// Tabdeal). None needs a key. Each reports the latest ticker of every spot pair in one or two
 // requests, so that a run of a venue costs few requests of its limits.
 //
 // The Iranian exchanges quote in rials or tomans; their prices are reported
@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source"
 )
@@ -27,10 +29,12 @@ const (
 	Coinbase = "coinbase"
 	Nobitex  = "nobitex"
 	Wallex   = "wallex"
+	Ramzinex = "ramzinex"
+	Tabdeal  = "tabdeal"
 )
 
 // Names lists the venue sources.
-var Names = []string{Binance, OKX, Kraken, Coinbase, Nobitex, Wallex}
+var Names = []string{Binance, OKX, Kraken, Coinbase, Nobitex, Wallex, Ramzinex, Tabdeal}
 
 // settings are the public API addresses of the venues; none takes a key.
 var settings = map[string]source.Settings{
@@ -40,6 +44,8 @@ var settings = map[string]source.Settings{
 	Coinbase: {DefaultBaseURL: "https://api.coinbase.com"},
 	Nobitex:  {DefaultBaseURL: "https://api.nobitex.ir"},
 	Wallex:   {DefaultBaseURL: "https://api.wallex.ir"},
+	Ramzinex: {DefaultBaseURL: "https://publicapi.ramzinex.com"},
+	Tabdeal:  {DefaultBaseURL: "https://api1.tabdeal.org/r"},
 }
 
 // Settings returns the settings of the named venue source.
@@ -64,6 +70,10 @@ func New(name string, client *source.Client) (source.VenueSource, error) {
 		return &nobitex{base: b}, nil
 	case Wallex:
 		return &wallex{base: b}, nil
+	case Ramzinex:
+		return &ramzinex{base: b}, nil
+	case Tabdeal:
+		return &tabdeal{base: b}, nil
 	}
 	return nil, fmt.Errorf("exchange: unknown venue %q", name)
 }
@@ -141,6 +151,13 @@ func tomans(d *shared.Decimal) *shared.Decimal {
 	}
 	v := shared.Decimal(d.Decimal().Shift(-1))
 	return &v
+}
+
+var decimalTwo = decimal.NewFromInt(2)
+
+// midOf returns the middle of a bid and an ask.
+func midOf(bid, ask shared.Decimal) shared.Decimal {
+	return shared.Decimal(bid.Decimal().Add(ask.Decimal()).Div(decimalTwo))
 }
 
 // Toman is the quote symbol of the prices in tomans of the Iranian venues.
