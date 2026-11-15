@@ -582,8 +582,13 @@ func mapError(err error) error {
 
 // Balance returns the balance of a in a currency, zero when it has none.
 func (l Ledger) Balance(ctx context.Context, a Account, currency shared.UUID) (balance.Balance, error) {
+	return balanceIn(ctx, l.DB, a, currency)
+}
+
+// balanceIn is Balance in q, the database or a transaction.
+func balanceIn(ctx context.Context, q querier, a Account, currency shared.UUID) (balance.Balance, error) {
 	b := balance.Balance{UserID: a.UserHK, SubAccountID: a.SubAccountID, CurrencyHK: currency, Version: 1}
-	err := l.DB.QueryRowContext(ctx, `SELECT id, available, locked, pending_deposit, version FROM balances
+	err := q.QueryRowContext(ctx, `SELECT id, available, locked, pending_deposit, version FROM balances
 		WHERE user_id = $1 AND sub_account_id IS NOT DISTINCT FROM $2 AND currency_hk = $3`, a.UserHK, a.SubAccountID, currency).
 		Scan(&b.ID, &b.Available, &b.Locked, &b.PendingDeposit, &b.Version)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
