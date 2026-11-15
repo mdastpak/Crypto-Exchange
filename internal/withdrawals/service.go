@@ -117,6 +117,17 @@ func (r Request) digest() []byte {
 		strings.ToLower(r.DestinationID), r.IdempotencyKey)
 }
 
+// confirmationDigest is what the user's confirmation is bound to: the
+// digest of the request and the network fee that the withdrawal would be
+// charged (#408). A fee that changed since the user confirmed makes the
+// confirmation another operation's, so that step two is refused before it
+// locks anything. The stored request digest leaves the fee out: a retry of
+// a withdrawal that ran does not depend on today's fee.
+func (r Request) confirmationDigest(fee shared.Decimal) []byte {
+	return confirm.Digest(confirm.PurposeWithdrawal, strings.ToLower(r.CurrencyHK), r.Network, r.Amount.String(),
+		strings.ToLower(r.DestinationID), r.IdempotencyKey, "fee", fee.String())
+}
+
 // plan is a request as it would run.
 type plan struct {
 	currency    models.Currency
@@ -144,7 +155,7 @@ func (s Service) Request(ctx context.Context, userHK string, r Request, client s
 		if err != nil {
 			return Outcome{}, err
 		}
-		challenge, err := s.Confirm.Start(ctx, userHK, confirm.PurposeWithdrawal, digest, p.details, client)
+		challenge, err := s.Confirm.Start(ctx, userHK, confirm.PurposeWithdrawal, r.confirmationDigest(p.fee), p.details, client)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -198,7 +209,7 @@ func (s Service) run(ctx context.Context, userHK string, r Request, digest []byt
 	if err != nil {
 		return Outcome{}, err
 	}
-	if err := s.Confirm.Consume(ctx, tx, userHK, r.ConfirmationID, confirm.PurposeWithdrawal, digest); err != nil {
+	if err := s.Confirm.Consume(ctx, tx, userHK, r.ConfirmationID, confirm.PurposeWithdrawal, r.confirmationDigest(p.fee)); err != nil {
 		return Outcome{}, err
 	}
 	status := StatusQueued
@@ -334,8 +345,9 @@ func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request
 		return p, ErrInsufficientBalance
 	}
 
-	p.details = confirm.Details{Amount: r.Amount.String() + " " + cur.Info.Symbol, Destination: shortDestination(d)}
-	if utf8.RuneCountInString(p.details.Amount) > confirm.MaxDetailLength {
+	p.details = confirm.Details{Amount: r.Amount.String() + " " + cur.Info.Symbol, Destination: shortDestination(d),
+		Fee: p.fee.String() + " " + cur.Info.Symbol}
+	if utf8.RuneCountInString(p.details.Amount) > confirm.MaxDetailLength || utf8.RuneCountInString(p.details.Fee) > confirm.MaxDetailLength {
 		return p, invalid("amount", "has too many digits for the confirmation message")
 	}
 	if threshold, ok := s.ReviewAbove[cur.Info.Symbol]; ok && r.Amount.GreaterThanOrEqual(threshold) {
