@@ -307,6 +307,14 @@ func TestAggregator_Load(t *testing.T) {
 	perTick := ingest / time.Duration(n)
 	t.Logf("%d ticks, %s per tick; aggregation of %d markets: p50 %s, p99 %s, max %s",
 		n, perTick, len(markets), durations[len(durations)/2], p99, durations[len(durations)-1])
-	assert.Less(t, p99, 10*time.Millisecond, "p99 of an aggregation")
+	// The budget is 10 ms. The race detector, with which CI runs the
+	// tests, slows the code down up to 10 times, so the budget there is
+	// scaled by as much: the check still catches an aggregation that grows
+	// with the ticks instead of the markets.
+	budget := 10 * time.Millisecond
+	if raceEnabled {
+		budget *= 10
+	}
+	assert.Less(t, p99, budget, "p99 of an aggregation")
 	assert.Less(t, perTick, 300*time.Microsecond, "3,000 ticks a second must take well under a second")
 }
