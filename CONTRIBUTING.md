@@ -29,7 +29,11 @@ Every issue carries one label from each of these groups.
 | | `priority: P1 - high` | Required for a stable, secure baseline |
 | | `priority: P2 - medium` | Should be addressed within the planned milestone |
 | | `priority: P3 - low` | Nice to have |
-| Feature | `feature: auth`, `feature: otp-login`, `feature: assets`, `feature: websocket`, `feature: messaging`, `feature: database`, `feature: rate-limiting`, `feature: http-platform`, `feature: config`, `feature: devops`, `feature: domain-model`, `feature: accounts`, `feature: kyc-aml`, `feature: custody`, `feature: price-engine`, `feature: otc`, `feature: market-data`, `feature: admin-api`, `feature: spot-trading`, `feature: derivatives`, `feature: observability` | The area of the product. An issue can have more than one. |
+| Feature | `feature: auth`, `feature: otp-login`, `feature: assets`, `feature: websocket`, `feature: messaging`, `feature: database`, `feature: rate-limiting`, `feature: http-platform`, `feature: config`, `feature: devops`, `feature: domain-model`, `feature: accounts`, `feature: kyc-aml`, `feature: custody`, `feature: price-engine`, `feature: otc`, `feature: market-data`, `feature: admin-api`, `feature: spot-trading`, `feature: derivatives`, `feature: observability`, `feature: i18n` | The area of the product. An issue can have more than one. |
+
+Findings of the periodic audits of the whole repository also carry the `audit` label.
+
+**Priorities follow the order of work.** P1 is reserved for the critical path of the current milestone, in the [order of work](README.md#order-of-work-and-scope-freeze), and for bugs and security findings in code that already runs on the money or security paths. Work outside that path is P2, even when it belongs to the milestone. A decision of the owner that defers work, such as dependency updates, makes it P3. When the order of work changes, the priorities change with it.
 
 ## Development setup
 
