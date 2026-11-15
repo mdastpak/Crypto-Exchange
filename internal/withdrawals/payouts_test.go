@@ -95,6 +95,51 @@ func TestPayouts_ACryptoWithdrawalIsPaidOnChain(t *testing.T) {
 	assert.Equal(t, 1, views, "reading a destination in the clear is audited")
 }
 
+// TestPayouts_NeedOneConnectionOfThePool runs a pass, the detail, and the
+// completion of a payout with a pool of one connection (#405): a step that
+// held its transaction while it read on another connection would wait for
+// itself.
+func TestPayouts_NeedOneConnectionOfThePool(t *testing.T) {
+	f := newFixture(t, "")
+	now := time.Now()
+	p := f.payouts(config.PayoutsConfig{}, &now)
+	w, err := f.withdraw(f.request("100", "pool-payout"))
+	require.NoError(t, err)
+
+	f.DB.SetMaxOpenConns(1)
+	t.Cleanup(func() { f.DB.SetMaxOpenConns(0) })
+	done := make(chan error, 1)
+	go func() {
+		done <- func() error {
+			ctx := context.Background()
+			if _, err := p.Run(ctx); err != nil {
+				return err
+			}
+			list, err := payoutsOf(ctx, f.DB, w.ID)
+			if err != nil {
+				return err
+			}
+			if len(list) != 1 {
+				return fmt.Errorf("%d payouts, want 1", len(list))
+			}
+			if _, err := p.Detail(ctx, list[0].ID, admin); err != nil {
+				return err
+			}
+			_, err = p.Complete(ctx, list[0].ID, "0x9f2c", admin)
+			return err
+		}()
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("a step of the payouts waits for a second connection of the pool")
+	}
+	available, locked := f.balanceOf(f.usdt)
+	assert.Equal(t, "899", available)
+	assert.Equal(t, "0", locked)
+}
+
 func TestPayouts_ARialWithdrawalIsSplitAcrossRailsAndDays(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, "")
