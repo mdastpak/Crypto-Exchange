@@ -266,7 +266,7 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 }
 
 // @Summary Delete a currency
-// @Description Soft-deletes the currency. With version, the delete is refused with 409 version_conflict when the currency has changed since.
+// @Description Soft-deletes the currency. A currency that users still hold, available, locked, or pending, answers 409 currency_has_holders: delist it, which settles their balances. With version, the delete is refused with 409 version_conflict when the currency has changed since.
 // @Tags admin currencies
 // @Produce json
 // @Security BearerAuth
@@ -277,7 +277,7 @@ func (h *AdminHandler) UpdateCurrency(c *gin.Context) {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse
 // @Failure 404 {object} models.APIResponse
-// @Failure 409 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "version_conflict or currency_has_holders"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/currencies/{hk} [delete]
 func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
@@ -306,6 +306,9 @@ func (h *AdminHandler) DeleteCurrency(c *gin.Context) {
 		return
 	case errors.As(err, &conflict):
 		sendVersionConflict(c, conflict.Current)
+		return
+	case errors.Is(err, currencies.ErrHasHolders):
+		helpers.SendError(c, http.StatusConflict, "currency_has_holders", i18n.M("CURRENCY_HAS_HOLDERS"), nil)
 		return
 	case err != nil:
 		sendUnrecordedOr(c, err, "delete", i18n.M("CURRENCY_DELETE_FAILED"))

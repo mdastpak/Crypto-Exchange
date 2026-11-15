@@ -272,16 +272,17 @@ func run() error {
 	if metricsWorker != nil {
 		workers = append(workers, *metricsWorker)
 	}
+	// The reference prices and their overrides (#59), which the
+	// settlements of delistings read.
+	var priceWorker worker
+	handlers.Prices, priceWorker = startPrices(services.Postgres.DB, services.Redis.Client, handlers)
+	workers = append(workers, priceWorker)
 	scheduler := newDelistingScheduler(services, handlers, relay)
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
 	// The snapshots and the reconciliation of the books (#60).
 	workers = append(workers, startLedgerAudit(services.Postgres.DB))
-	// The reference prices and their overrides (#59).
-	var priceWorker worker
-	handlers.Prices, priceWorker = startPrices(services.Postgres.DB, services.Redis.Client, handlers)
-	workers = append(workers, priceWorker)
 	if otpWorker != nil {
 		workers = append(workers, worker{"OTP delivery worker", otpWorker.Stop})
 	}
@@ -620,12 +621,17 @@ func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers, wat
 }
 
 // newDelistingScheduler returns the scheduler that applies the steps of
-// delistings (#216) and the phases of migrations (#215) that are due. Every instance runs one; each step is
-// applied once. After a change of the public view, it drops the cached
+// delistings (#216), with the settlement of the balances that they leave, and the phases of migrations (#215)
+// that are due. Every instance runs one; each step is applied once. After a change of the public view, it drops the cached
 // currency list and nudges the relay, which publishes the currency event
 // and drops the list again.
 func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandlers, relay *outbox.Relay) *currencies.Scheduler {
 	interval := time.Duration(config.Config.Delisting.IntervalSeconds) * time.Second
+	// The settlements of delistings convert at the reference prices.
+	settler := delisting.Settler{}
+	if handlers.Prices != nil {
+		settler.Prices = handlers.Prices
+	}
 	return currencies.NewScheduler(services.Postgres.DB, interval, func(ctx context.Context, changes []currencies.Change) {
 		if !slices.ContainsFunc(changes, func(c currencies.Change) bool { return c.Public }) {
 			return
@@ -636,7 +642,7 @@ func newDelistingScheduler(services *models.InfraServices, handlers *InfraHandle
 			}
 		}
 		relay.Nudge()
-	}, delisting.Advance, rebrand.Advance)
+	}, settler.Advance, rebrand.Advance)
 }
 
 // useRowSeals seals the protected rows with the row-mac data keys (#139),
@@ -1290,6 +1296,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/currencies/:hk/delistings", ih.Admin.ListDelistings)
 		adminGroup.POST("/currencies/:hk/delistings", ih.Admin.ScheduleDelisting)
 		adminGroup.POST("/currencies/:hk/delistings/:id/cancel", ih.Admin.CancelDelisting)
+		adminGroup.GET("/currencies/:hk/delistings/:id/settlement", ih.Admin.GetDelistingSettlement)
 		adminGroup.PUT("/currencies/:hk/capabilities/:capability", ih.Admin.OverrideCapability)
 		adminGroup.DELETE("/currencies/:hk/capabilities/:capability", ih.Admin.RemoveCapabilityOverride)
 		adminGroup.GET("/users/:hk/restrictions", ih.Admin.ListRestrictions)

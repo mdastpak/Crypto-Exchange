@@ -212,6 +212,7 @@ The public currency routes of every instance read one list in Redis ([#52](https
 | `currency.migration_schedule`, `currency.migration_cancel` | An administrator schedules or cancels a migration of currencies; the target is the currency migrated into, and the event names the migration, its sources and ratios, and its phases | `success` |
 | `currency.migration_phase` | The scheduler applies a phase of a migration; the actor is the system | `success` |
 | `currency.lifecycle_change` | The scheduler applies a step of a delisting; the actor is the system, and the event holds the state before and after | `success` |
+| `currency.delisting_price` | The scheduler records the price that settles the balances left at `frozen`, once; the event holds the price, its source, and the market | `success` |
 | `admin.sign_in_code` | An administrator's sign-in code is requested | `success`; `failure` with `unknown_account`, without an actor; `denied` with `rate_limited` |
 | `admin.sign_in` | An administrator signs in | `success`, without which no token is issued; `failure` with `email_code_invalid`, `authenticator_code_invalid`, or `account_unavailable`; `denied` with `rate_limited`. The answer does not say which factor was wrong; the event does. |
 | `admin.logout` | An administrator signs out, in the transaction that ends the session; the target is the session (`admin_session`) | `success` |

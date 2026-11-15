@@ -23,6 +23,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/pagination"
@@ -356,6 +358,29 @@ func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_Success() {
 	assert.True(s.T(), deletedAt.Valid)
 
 	assert.False(s.T(), s.isPublic(hk), "the delete drops the cached list")
+}
+
+// TestDeleteCurrency_RefusedWhileHeld keeps a currency that a user holds
+// (#412): a delisting settles the balances first.
+func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_RefusedWhileHeld() {
+	hk := s.createCurrency("HELD", "native-held")
+	conn := s.postgresSvc.DB
+	var user shared.UUID
+	require.NoError(s.T(), conn.QueryRow(`INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk`).Scan(&user))
+	currency, err := shared.UUIDFromString(hk)
+	require.NoError(s.T(), err)
+	amount := ledger.Amount{Currency: currency, Value: shared.MustNewDecimalFromString("1")}
+	books := ledger.Ledger{DB: conn}
+	ref := ledger.Ref{Type: "deposit", ID: "d1"}
+	_, err = books.DetectDeposit(context.Background(), "held:detect", ledger.Account{UserHK: user}, amount, ref)
+	require.NoError(s.T(), err)
+
+	w := s.makeRequest(http.MethodDelete, "/currencies/"+hk, nil)
+	assert.Equal(s.T(), http.StatusConflict, w.Code, "a pending deposit is held too")
+	assert.Contains(s.T(), w.Body.String(), "currency_has_holders")
+	var deleted bool
+	require.NoError(s.T(), conn.QueryRow("SELECT deleted_at IS NOT NULL FROM currencies WHERE hk = $1", hk).Scan(&deleted))
+	assert.False(s.T(), deleted)
 }
 
 func (s *AdminCurrenciesTestSuite) TestDeleteCurrency_InvalidUUID() {

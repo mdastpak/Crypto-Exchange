@@ -728,7 +728,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Soft-deletes the currency. With version, the delete is refused with 409 version_conflict when the currency has changed since.",
+                "description": "Soft-deletes the currency. A currency that users still hold, available, locked, or pending, answers 409 currency_has_holders: delist it, which settles their balances. With version, the delete is refused with 409 version_conflict when the currency has changed since.",
                 "produces": [
                     "application/json"
                 ],
@@ -797,7 +797,7 @@
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "version_conflict or currency_has_holders",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -1083,7 +1083,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Schedules the steps that take an approved currency to delisted. A delisting that stopped before delisted, such as an emergency halt, stays scheduled, so that it can be cancelled to relist the currency; a new delisting supersedes it and takes the currency on from its state, with steps after it. A standard delisting starts with delist_announced; an emergency one, for a security or regulatory reason, at trading_halted or later. The steps follow the order of the lifecycle (delist_announced, deposits_disabled, sell_only, trading_halted, withdrawal_only, frozen, delisted), each at a later time, and any of them may be left out. Each step is applied at its time by the scheduler of the instances, exactly once, and changes the capabilities of the currency; a step that is due is applied at once. The settlement says what happens at frozen to the balances that are left: convert into another approved currency at a price, or hold for a claim; it is recorded and announced now, and carried out by the ledger. Audited as currency.delisting_schedule, and each step as currency.lifecycle_change.",
+                "description": "Schedules the steps that take an approved currency to delisted. A delisting that stopped before delisted, such as an emergency halt, stays scheduled, so that it can be cancelled to relist the currency; a new delisting supersedes it and takes the currency on from its state, with steps after it. A standard delisting starts with delist_announced; an emergency one, for a security or regulatory reason, at trading_halted or later. The steps follow the order of the lifecycle (delist_announced, deposits_disabled, sell_only, trading_halted, withdrawal_only, frozen, delisted), each at a later time, and any of them may be left out. Each step is applied at its time by the scheduler of the instances, exactly once, and changes the capabilities of the currency; a step that is due is applied at once. The settlement says what happens at frozen to the balances that are left: convert into another approved currency at a price, or hold for a claim. A conversion records its price once when the currency is frozen (the fixed price, or the reference price of the price engine: its mid for last_trade, its TWAP over the longest window for twap) and converts every available balance at it in the ledger, rounded down to the precision of the settlement currency; locked and pending funds convert once available. A delisting that reaches delisted passes through frozen, and its delisted step waits until no balance of the currency is left, so a claim holds the currency at frozen. Audited as currency.delisting_schedule, and each step as currency.lifecycle_change.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1260,6 +1260,91 @@
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/currencies/{hk}/delistings/{id}/settlement": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The settlement of the balances of the currency: before frozen, a preview of the holders and their remaining balances (available, locked, and pending), and, at a fixed price, the estimate of what they would be credited; from frozen on, the recorded price with its source and time, and from the ledger the conversions made, what they converted, what was credited, and the dust kept.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin currencies"
+                ],
+                "summary": "Show the settlement of a delisting",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The currency's UUID",
+                        "name": "hk",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The delisting's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/delisting.SettlementReport"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -12759,6 +12844,17 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "settlement_price": {
+                    "description": "SettlementPrice is the price that converts the balances left, which\nthe scheduler records once when the currency is frozen, with where it\ncame from and when.",
+                    "type": "string",
+                    "example": "0.0125"
+                },
+                "settlement_price_detail": {
+                    "type": "string"
+                },
+                "settlement_priced_at": {
+                    "type": "string"
+                },
                 "status": {
                     "enum": [
                         "scheduled",
@@ -12881,6 +12977,70 @@
                 "SettlementConvert",
                 "SettlementClaim"
             ]
+        },
+        "delisting.SettlementReport": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "string",
+                    "example": "1200"
+                },
+                "conversions": {
+                    "description": "Conversions are the balances converted, Converted what left them,\nCredited what the settlement currency received, and Dust what the\nexchange kept.",
+                    "type": "integer"
+                },
+                "converted": {
+                    "type": "string",
+                    "example": "50.5"
+                },
+                "credited": {
+                    "type": "string",
+                    "example": "0.63"
+                },
+                "dust": {
+                    "type": "string",
+                    "example": "0.00125"
+                },
+                "estimated": {
+                    "description": "Estimated is what Remaining would credit at Price, before the\nrounding of each balance.",
+                    "type": "string",
+                    "example": "15.63125"
+                },
+                "holders": {
+                    "description": "Holders are the balances of the currency that are left, available,\nlocked, or pending, and Remaining their sum, of which Available\nconverts now.",
+                    "type": "integer"
+                },
+                "price": {
+                    "description": "Price is the recorded price of a conversion, with where it came from\nand when; before it is recorded, the fixed price of the plan, if any.",
+                    "type": "string",
+                    "example": "0.0125"
+                },
+                "price_detail": {
+                    "type": "string",
+                    "example": "twap 300s of XYZ/USDT (live), 2026-12-08T00:00:00Z"
+                },
+                "price_recorded": {
+                    "type": "boolean"
+                },
+                "priced_at": {
+                    "type": "string"
+                },
+                "remaining": {
+                    "type": "string",
+                    "example": "1250.5"
+                },
+                "settlement": {
+                    "enum": [
+                        "convert",
+                        "claim"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/delisting.Settlement"
+                        }
+                    ]
+                }
+            }
         },
         "delisting.Status": {
             "type": "string",

@@ -25,6 +25,9 @@ type Store struct {
 var (
 	// ErrAlreadyDeleted refuses the delete of a deleted currency.
 	ErrAlreadyDeleted = errors.New("the currency is already deleted")
+	// ErrHasHolders refuses the delete of a currency that users still hold:
+	// a delisting settles their balances first.
+	ErrHasHolders = errors.New("users still hold the currency")
 	// ErrNotDeleted refuses the restore of a currency that is not deleted.
 	ErrNotDeleted = errors.New("the currency is not deleted")
 	// ErrNotPreviousSymbol refuses the release of a symbol that the
@@ -180,8 +183,8 @@ func (s Store) Update(ctx context.Context, hk string, expected *int64, edit Edit
 	return w, tx.Commit()
 }
 
-// Delete soft-deletes a currency. The row is locked from the read to the
-// write, so that the previous status, which decides the event, is the one
+// Delete soft-deletes a currency, which no user may hold (ErrHasHolders).
+// The row is locked from the read to the write, so that the previous status, which decides the event, is the one
 // this delete replaces, and concurrent deletes succeed only once.
 func (s Store) Delete(ctx context.Context, hk string, expected *int64, origin audit.Event) (Written, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -205,6 +208,17 @@ func (s Store) Delete(ctx context.Context, hk string, expected *int64, origin au
 	}
 	if expected != nil && *expected != version {
 		return Written{}, &VersionConflict{Current: version}
+	}
+	// A balance is credited only by a flow that checks the currency with a
+	// share lock, which this update lock waits for, so no holder appears
+	// between the check and the delete.
+	var held bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM balances WHERE currency_hk = $1
+		AND available::numeric + locked::numeric + pending_deposit::numeric <> 0)`, hk).Scan(&held); err != nil {
+		return Written{}, err
+	}
+	if held {
+		return Written{}, ErrHasHolders
 	}
 	w := Written{HK: hk}
 	if err := tx.QueryRowContext(ctx,
