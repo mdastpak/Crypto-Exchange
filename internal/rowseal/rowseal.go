@@ -143,8 +143,17 @@ func (s *Sealer) logf(format string, args ...any) {
 // apart, and so that a row-mac key never MACs anything else by accident.
 const sealTag = "crypto-exchange/row-seal/1"
 
+// reviewTag starts the digest of a row that an administrator reviewed for
+// a re-seal (#411). It differs from sealTag, so that the digest, which is
+// stored in a column of integrity_findings that has no seal, is never a
+// valid seal of the row it describes.
+const reviewTag = "crypto-exchange/reseal-review/1"
+
 // mac computes the seal of r in t with key.
-func mac(key keys.Key, t *Table, r *Row) ([]byte, error) {
+func mac(key keys.Key, t *Table, r *Row) ([]byte, error) { return tagged(key, sealTag, t, r) }
+
+// tagged computes the MAC of the canonical encoding of r in t, under tag.
+func tagged(key keys.Key, tag string, t *Table, r *Row) ([]byte, error) {
 	h, err := key.NewMAC()
 	if err != nil {
 		return nil, err
@@ -168,7 +177,7 @@ func mac(key keys.Key, t *Table, r *Row) ([]byte, error) {
 			sealed = append(sealed, i)
 		}
 	}
-	field([]byte(sealTag), false)
+	field([]byte(tag), false)
 	field([]byte(t.Name), false)
 	field([]byte(r.Key), false)
 	buf = binary.BigEndian.AppendUint64(buf, uint64(r.Version))   //nolint:gosec // G115: row_version is never negative.

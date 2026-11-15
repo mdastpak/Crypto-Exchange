@@ -2179,7 +2179,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "The protected rows (accounts, contacts, sessions) that did not match their seal (#139), found by a request or by the background verifier, newest first: open ones only, unless all is true. Pages follow the pagination convention of docs/api.md.",
+                "description": "The protected rows (accounts, contacts, sessions) that did not match their seal (#139), found by a request or by the background verifier, newest first: open ones only, unless all is true. A finding with a re-seal request shows the row version and the values, secret ones masked, that the request reviewed and an approval would seal (#411). Pages follow the pagination convention of docs/api.md.",
                 "produces": [
                     "application/json"
                 ],
@@ -2262,7 +2262,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "After a review found the current values of a row that did not match its seal right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. It needs two administrators: the first request records the reason and answers 202 with the finding and who asked; the same request by another administrator within 24 hours re-seals the row and answers 200. The approval needs the sealed integrity.reseal_request audit event of the request; a request without it, such as one written in SQL, counts as none, and the call asks again with 202. The administrator who asked cannot approve (403 second_approval_required), and neither step is open to the administrator whose account the row belongs to (403 own_row). The reason is required. Audited as integrity.reseal_request and integrity.reseal, with the values sealed now, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503. The route needs a step-up.",
+                "description": "After a review found the current values of a row that did not match its seal right, as after a reviewed data fix, seals the row again with the current row-mac key and closes the finding. It needs two administrators: the first request records the reason and answers 202 with the finding and who asked; the same request by another administrator within 24 hours re-seals the row and answers 200. The approval needs the sealed integrity.reseal_request audit event of the request; a request without it, such as one written in SQL, counts as none, and the call asks again with 202. The administrator who asked cannot approve (403 second_approval_required), and neither step is open to the administrator whose account the row belongs to (403 own_row). The request records the row as the first administrator reviewed it: its row_version, a keyed digest of every sealed column, secret ones included, and its values, secret ones masked, which the 202 answer and the list show as reseal_values (#411). The approval re-seals only that state: when the row changed since, it answers 409 row_changed, and the row stays unsealed and its finding open; the administrator who asked can then ask again for the current values. The 200 answer shows the values sealed. The reason is required. Audited as integrity.reseal_request and integrity.reseal, with the values reviewed and sealed, secret ones masked. A finding that is already resolved answers 409 already_resolved; without data keys, 503. The route needs a step-up.",
                 "consumes": [
                     "application/json"
                 ],
@@ -16166,6 +16166,15 @@ const docTemplate = `{
                 "reseal_requested_by": {
                     "description": "ResealRequestedBy is the administrator who asked for the re-seal that\nanother administrator must approve (#308), with when and why.",
                     "type": "string"
+                },
+                "reseal_row_version": {
+                    "description": "ResealRowVersion is the row_version of the row that the administrator\nwho asked reviewed (#411), -1 when the row was gone. The approval\nre-seals only that state.",
+                    "type": "integer"
+                },
+                "reseal_values": {
+                    "description": "ResealValues are the values of the row that the administrator who\nasked reviewed, secret ones masked: what the approval would seal.",
+                    "type": "object",
+                    "additionalProperties": true
                 },
                 "resolution": {
                     "type": "string",
