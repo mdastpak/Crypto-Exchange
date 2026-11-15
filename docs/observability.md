@@ -50,7 +50,7 @@ With `observability.metrics.enabled`, each instance serves its metrics at `http:
 | `db_connections_open`, `db_connections_in_use`, `db_connections_idle` | gauge | | The PostgreSQL pool of the instance. |
 | `db_connection_waits`, `db_connection_wait_seconds` | gauge | | Waits for a connection of the pool, and their time, since the start. |
 | `redis_up` | gauge | | 1 when Redis answers a ping within a second. |
-| `rabbitmq_up` | gauge | | 1 when the connection to RabbitMQ and its publishing channel are up. |
+| `rabbitmq_up` | gauge | | 1 when the connection to RabbitMQ and its publishing channel are up, and the broker does not block publishing for a resource alarm ([#402](https://github.com/mdastpak/Crypto-Exchange/issues/402)). |
 | `websocket_connections` | gauge | | Open WebSocket connections of the instance. |
 | `notification_sms_sends_total` | counter | `provider`, `result` | Messages handed to an [SMS provider](configuration.md#sms-providers) ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)): `accepted`, `provider_error` (the provider failed; the next one is tried), `refused` (the message itself, such as an invalid number). |
 | `notification_sms_fallbacks_total` | counter | `from`, `to`, `reason` | Messages sent through another provider than the first: `reason` `send` when the first failed to take it, `delivery` when it took it and did not deliver it. |

@@ -1895,7 +1895,7 @@ Readiness: checks PostgreSQL, Redis, and RabbitMQ at once, each within two secon
 }
 ```
 
-`status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored, also while the server moves to another node of a cluster. In release mode, the response has only `status`, without `details`, because the details describe the internals.
+`status` is `degraded` when any dependency fails, and that dependency's `status` is `error`. RabbitMQ is reported as `error` while its connection or its publishing channel is being restored, also while the server moves to another node of a cluster, and while the broker blocks publishing for a memory or disk alarm. Each check is cut at its timeout, also when the dependency does not answer ([#402](https://github.com/mdastpak/Crypto-Exchange/issues/402)). In release mode, the response has only `status`, without `details`, because the details describe the internals.
 
 Once the instance is shutting down, it answers `503` with `{"status": "draining"}` and checks no dependency, while it keeps serving the other routes for `server.drain_seconds`. See [Startup and shutdown](architecture.md#startup-and-shutdown).
 

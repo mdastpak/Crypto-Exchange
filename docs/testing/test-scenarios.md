@@ -315,6 +315,7 @@ Relevant code: `internal/handlers/socket/handler.go:354`, `internal/handlers/soc
 | W-21 | P0 / security | More connections than `websocket.max_connections_per_ip` from one address, or `websocket.max_connections` in total | Further upgrades get `429` or `503`; a closed connection frees its place | Passes ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)) |
 | W-22 | P0 / security | Upgrade with a user access token in `Authorization` or the `access_token` subprotocol; with an invalid token, a token of an ended session, or a disabled user | A valid token is bound to the connection; the others get `401` or `403` before the upgrade; a token in the URL is ignored | Passes, end to end with a real sign-in and logout ([#47](https://github.com/mdastpak/Crypto-Exchange/issues/47)) |
 | W-20 | P0 / contract | Several messages are queued before the write pump runs | Every frame holds exactly one JSON document | Passes ([#20](https://github.com/mdastpak/Crypto-Exchange/issues/20)) |
+| W-23 | P1 / integration | The broker blocks publishing for a memory or disk alarm, and stops reading the connection | Every publish returns at its context or the confirm timeout; the health check answers at once; readiness stays `200` with RabbitMQ degraded; `Close` is bounded | Passes with a TCP proxy that stops reading from the client, under the race detector, and with fed `connection.blocked` notifications (`TestBlocked_Broker_*`, `TestReadiness_ACheckThatIgnoresItsContextIsCutAtTheTimeout`, [#402](https://github.com/mdastpak/Crypto-Exchange/issues/402)) |
 
 ---
 
