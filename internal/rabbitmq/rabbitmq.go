@@ -52,6 +52,12 @@ type RabbitMQService struct {
 	// the supervisor to restore it.
 	ready chan struct{}
 
+	// blocked is true while the broker blocks the current connection, as it
+	// does during a memory or disk alarm (#402): it stops reading publishes
+	// but keeps the connection, so a publish would wait for the alarm.
+	// Publishes fail at once and IsHealthy is false meanwhile.
+	blocked atomic.Bool
+
 	closed   atomic.Bool
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -70,11 +76,16 @@ const (
 	// channelWait bounds how long a publish waits while the supervisor
 	// restores the publishing channel.
 	channelWait = 5 * time.Second
+	// closeTimeout bounds Close when the broker does not answer, or does not
+	// read, as during an alarm (#402).
+	closeTimeout = 5 * time.Second
 )
 
 var (
 	errServiceClosed      = errors.New("rabbitmq service closed")
 	errChannelUnavailable = errors.New("rabbitmq channel is not available")
+	errBrokerBlocked      = errors.New("rabbitmq broker blocks publishing (resource alarm)")
+	errPublishTimeout     = errors.New("publish confirm timeout")
 )
 
 // node is a broker that the service may dial.
@@ -101,6 +112,13 @@ var errChannelClosed = errors.New("rabbitmq channel closed before the publish wa
 // the publishes waiting for them, by delivery tag. Delivery tags start at 1 on
 // every channel and follow the order of publishes on it.
 type confirmTracker struct {
+	// slot serializes the publishes on the channel, so that delivery tags
+	// follow their order (#402). It is held for the socket write only, and
+	// the service's mu is not, so that a write that the broker does not
+	// read blocks the publishes of this channel, each until its own
+	// deadline, and nothing else.
+	slot chan struct{}
+
 	mu      sync.Mutex
 	lastTag uint64
 	waiters map[uint64]chan bool // delivery tag -> ack (true) or nack (false)
@@ -108,7 +126,7 @@ type confirmTracker struct {
 }
 
 func newConfirmTracker(ch *amqp.Channel) *confirmTracker {
-	t := &confirmTracker{waiters: make(map[uint64]chan bool)}
+	t := &confirmTracker{slot: make(chan struct{}, 1), waiters: make(map[uint64]chan bool)}
 	go t.dispatch(ch.NotifyPublish(make(chan amqp.Confirmation, confirmBufferSize)))
 	return t
 }
@@ -136,7 +154,7 @@ func (t *confirmTracker) dispatch(confirms <-chan amqp.Confirmation) {
 }
 
 // register reserves the delivery tag of the next publish on the channel. The
-// caller must publish right after, without another publish in between.
+// caller must hold the slot and publish right after.
 func (t *confirmTracker) register() (uint64, <-chan bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -300,11 +318,34 @@ func (r *RabbitMQService) install(conn *amqp.Connection, ch *amqp.Channel) bool 
 		return false
 	}
 	if r.conn != nil && r.conn != conn {
-		r.conn.Close()
+		old := r.conn
+		go func() { _ = old.CloseDeadline(time.Now().Add(closeTimeout)) }()
 	}
 	r.conn = conn
+	r.blocked.Store(false)
+	go r.watchBlocked(conn, conn.NotifyBlocked(make(chan amqp.Blocking, 4)))
 	r.setChannelLocked(ch)
 	return true
+}
+
+// watchBlocked follows the connection.blocked and connection.unblocked
+// notifications of conn while it is the current connection (#402). The
+// library closes blocks when conn closes.
+func (r *RabbitMQService) watchBlocked(conn *amqp.Connection, blocks <-chan amqp.Blocking) {
+	for b := range blocks {
+		r.mu.RLock()
+		current := r.conn == conn
+		r.mu.RUnlock()
+		if !current {
+			continue
+		}
+		r.blocked.Store(b.Active)
+		if b.Active {
+			log.Printf("RabbitMQ blocks publishing on %s: %s", r.ConnectedTo(), b.Reason)
+		} else {
+			log.Printf("RabbitMQ unblocked publishing on %s", r.ConnectedTo())
+		}
+	}
 }
 
 // setChannelLocked makes ch the publishing channel, or marks the channel
@@ -480,11 +521,12 @@ func (r *RabbitMQService) IsHealthy() bool {
 	r.mu.RLock()
 	conn, ch := r.conn, r.channel
 	r.mu.RUnlock()
-	return conn != nil && !conn.IsClosed() && ch != nil
+	return conn != nil && !conn.IsClosed() && ch != nil && !r.blocked.Load()
 }
 
-// Close stops the supervisor and closes the channel and the connection. It
-// is idempotent.
+// Close stops the supervisor and closes the connection, which closes its
+// channels. It is idempotent. It returns within about closeTimeout, also
+// when the broker does not answer or does not read (#402).
 func (r *RabbitMQService) Close() error {
 	r.closed.Store(true)
 	r.stopOnce.Do(func() {
@@ -494,15 +536,15 @@ func (r *RabbitMQService) Close() error {
 	})
 
 	r.mu.Lock()
-	ch, conn := r.channel, r.conn
+	conn := r.conn
 	r.setChannelLocked(nil)
 	r.conn = nil
 	r.mu.Unlock()
-	if ch != nil {
-		ch.Close()
-	}
 	if conn != nil {
-		conn.Close()
+		// The deadline also ends a socket write that waits for the broker,
+		// so a publish stuck in one returns. Closing the publishing channel
+		// first would wait for an answer without a deadline.
+		_ = conn.CloseDeadline(time.Now().Add(closeTimeout))
 	}
 
 	r.wg.Wait()
@@ -604,13 +646,80 @@ func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, m
 		msg.Timestamp = time.Now()
 	}
 
-	ch, tracker, tag, ack, sendErr := r.send(ctx, exchange, msg)
-	if sendErr != nil {
-		return sendErr
+	if r.blocked.Load() {
+		return errBrokerBlocked
+	}
+	return r.send(ctx, exchange, msg)
+}
+
+// send publishes msg on the publishing channel and waits for its
+// confirmation, for at most publishConfirmTimeout or until ctx ends,
+// whichever comes first (#402). The service's mu is held only to read the
+// channel, never across network I/O: the channel's slot orders the
+// publishes, and the socket write runs in its own goroutine, because the
+// library's write does not end with ctx. A write that the broker does not
+// read, as during an alarm, keeps the slot until the write ends, so the
+// later publishes on the channel fail at their deadline too, and the
+// health check and Close are not held.
+func (r *RabbitMQService) send(ctx context.Context, exchange string, msg amqp.Publishing) error {
+	var ch *amqp.Channel
+	var tracker *confirmTracker
+	for tracker == nil {
+		var err error
+		if ch, err = r.waitForChannel(ctx); err != nil {
+			return err
+		}
+		r.mu.RLock()
+		if r.channel == ch {
+			tracker = r.confirms
+		}
+		// Otherwise it was replaced in between; wait for the new one.
+		r.mu.RUnlock()
 	}
 
 	timer := time.NewTimer(publishConfirmTimeout)
 	defer timer.Stop()
+	select {
+	case tracker.slot <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errPublishTimeout
+	case <-r.stop:
+		return errServiceClosed
+	}
+	tag, ack, err := tracker.register()
+	if err != nil {
+		<-tracker.slot
+		r.dropChannel(ch)
+		return err
+	}
+	written := make(chan error, 1)
+	go func() {
+		err := ch.Publish(exchange, "", false, false, msg)
+		if err != nil {
+			// The tag was never used, so this channel's tags no longer line
+			// up; the supervisor replaces it with a new channel and tracker.
+			tracker.forget(tag)
+			r.dropChannel(ch)
+		}
+		<-tracker.slot
+		written <- err
+	}()
+
+	select {
+	case err := <-written:
+		if err != nil {
+			return err
+		}
+	case <-ctx.Done():
+		tracker.forget(tag)
+		return ctx.Err()
+	case <-timer.C:
+		tracker.forget(tag)
+		return errPublishTimeout
+	}
+
 	select {
 	case acked, ok := <-ack:
 		if !ok {
@@ -628,46 +737,7 @@ func (r *RabbitMQService) PublishMessage(ctx context.Context, exchange string, m
 		return ctx.Err()
 	case <-timer.C:
 		tracker.forget(tag)
-		return fmt.Errorf("publish confirm timeout")
-	}
-}
-
-// send reserves the delivery tag and publishes under mu, so that tags follow
-// the order of publishes on the channel and the channel cannot be swapped in
-// between. Waiting for the confirmation happens outside the lock, so
-// concurrent publishes are pipelined.
-func (r *RabbitMQService) send(ctx context.Context, exchange string, msg amqp.Publishing) (*amqp.Channel, *confirmTracker, uint64, <-chan bool, error) {
-	for {
-		ch, err := r.waitForChannel(ctx)
-		if err != nil {
-			return nil, nil, 0, nil, err
-		}
-
-		r.mu.Lock()
-		if r.channel != ch {
-			// Replaced while waiting for the lock.
-			r.mu.Unlock()
-			continue
-		}
-		tracker := r.confirms
-		tag, ack, err := tracker.register()
-		if err != nil {
-			r.setChannelLocked(nil)
-			r.mu.Unlock()
-			r.requestChannel()
-			return nil, nil, 0, nil, err
-		}
-		if err := ch.Publish(exchange, "", false, false, msg); err != nil {
-			// The tag was never used, so this channel's tags no longer line
-			// up; the supervisor replaces it with a new channel and tracker.
-			tracker.forget(tag)
-			r.setChannelLocked(nil)
-			r.mu.Unlock()
-			r.requestChannel()
-			return nil, nil, 0, nil, err
-		}
-		r.mu.Unlock()
-		return ch, tracker, tag, ack, nil
+		return errPublishTimeout
 	}
 }
 

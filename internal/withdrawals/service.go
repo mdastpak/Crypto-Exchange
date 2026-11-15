@@ -323,7 +323,10 @@ func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request
 	if err := s.Levels.CheckWithdrawal(ctx, tx, userHK, r.CurrencyHK, p.total); err != nil {
 		return p, err
 	}
-	b, err := s.Ledger.Balance(ctx, account(userHK), uuidOf(r.CurrencyHK))
+	// In the transaction: a read of the pool while it holds one would take
+	// a second connection, and enough requests at once would exhaust the
+	// pool (#405).
+	b, err := s.Ledger.In(tx).Balance(ctx, account(userHK), uuidOf(r.CurrencyHK))
 	if err != nil {
 		return p, err
 	}
