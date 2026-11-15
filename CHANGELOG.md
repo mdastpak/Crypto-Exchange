@@ -271,6 +271,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
+- The ledger and the row seals no longer accept a balanced entry that no operation writes ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)). A role that may insert into the ledger could credit a user, offset the credit against an account of the exchange, and have it pass the reconciliation and, in `report` mode, be sealed by the verifier.
+  - Migration 30 makes the balance trigger of the ledger check the shape of each entry: the change types, and the postings by account and sign, that its kind writes. An entry of another shape does not commit.
+  - The reconciliation reports the accounts of the exchange that the operations cannot leave as they are: fees below zero, custody above zero, and pending deposits that differ from what users hold as pending. New metric `ledger_reconciliation_account_problems`; `admin ledger reconcile` prints them.
+  - `balances`, `withdrawals`, `withdrawal_destinations`, and `operation_confirmations` were sealed from their first row: a row of theirs that fails its check is refused in `report` mode too, and the verifier leaves its finding open instead of sealing it.
+  - The resolution of an integrity finding is sealed (migration 30). A finding resolved in SQL is itself a finding. **Installations in `enforce` mode** see a `missing` finding for every finding of before; set `report` while deploying, as for any table that gains seals.
 - A session alone can no longer set an account's first password ([#401](https://github.com/mdastpak/Crypto-Exchange/issues/401)). The first password ends every other session and becomes the second step of the sign-in, so whoever stole a session could lock the owner out and control the factor that confirms withdrawals.
   - `PUT /user/password` needs `contact_code` for the first password: a code that the new `POST /user/password/code` sends to a verified contact of the account, bound to the session in Redis and used once. Without it, `403 contact_proof_required`; with a wrong one, `403 contact_code_invalid`. **Clients must ask for the code first.**
   - A proof of the second factor in a session (a step-up, a password change, the confirmation of an operation) cancels an account recovery only when the session began after the recovery. A sign-in still cancels it.

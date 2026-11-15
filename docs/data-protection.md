@@ -148,27 +148,32 @@ An `audit-mac` version that seals audit events must stay readable, since the eve
 - `report` (the default) records an [integrity finding](#integrity-findings) and serves the row. Use it while rolling out, since rows written before the release, or by an instance of the previous release, have no seal yet.
 - `enforce` records the finding and refuses the row until an administrator re-seals the row: a session that fails answers `401`, like a revoked one, and a sign-in or request of an account or contact that fails answers `403`, like a disabled account. Enforce needs `keys.provider`.
 
+The tables of the money path were sealed from their first row: `balances`, `withdrawals`, `withdrawal_destinations`, and `operation_confirmations` ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)). They have no row of before to adopt, so a row of theirs that fails its check is refused in both modes, and the verifier never seals it in `report` mode: its finding stays open until an administrator reviews it. Funds added to a balance in SQL cannot be locked, moved, or withdrawn in `report` mode either.
+
 Rows are sealed only when the server has data keys (`keys.provider` set). To roll out:
 
 1. Deploy the release with `report`. Every instance seals what it writes from then on.
 2. The verifier (below) seals every row that has no valid seal yet, and resolves its finding as `report_mode`. Wait until every instance runs the release and one verifier pass has finished after that: `admin row-seals findings` shows no open finding.
 3. Set `enforce` and roll it out.
 
-A release that seals another table needs the same steps. Migrations 13, 14, and 28 seal more tables from then on, and leave their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys them, until the verifier has sealed those rows. Otherwise, in `enforce` mode:
+A release that seals another table needs the same steps. Migrations 13, 14, 28, and 30 seal more tables from then on, and leave their older rows without a seal, so an installation in `enforce` mode sets `report` before it deploys them, until the verifier has sealed those rows. Otherwise, in `enforce` mode:
 
 - migration 13: every authenticator turned on before it stops proving codes, and every open recovery is refused;
 - migration 14: every admin session of before answers `401`, every user with a restriction counts as frozen, a recovery code resets nothing, and every instance closes its fail-closed features once its controls are stale;
-- migration 28 ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)): the public currency list shows no network and `GET /public/markets` no market, the admin lists of networks and markets answer `409 row_unverified`, and no network or market can be changed, by the admin routes or by `admin assets import`.
+- migration 28 ([#57](https://github.com/mdastpak/Crypto-Exchange/issues/57)): the public currency list shows no network and `GET /public/markets` no market, the admin lists of networks and markets answer `409 row_unverified`, and no network or market can be changed, by the admin routes or by `admin assets import`;
+- migration 30 ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)): every finding of before is itself recorded as a `missing` finding on `integrity_findings`, which an administrator re-seals.
 
 Before a rollback to a release without row seals, set `report`: an older release writes rows without sealing them, and its writes would be reported once the newer release returns.
 
 ### The verifier
 
-Every `keys.row_seals.verify_interval_minutes` (60), one instance checks every row of the protected tables, in batches of 500, under a PostgreSQL advisory lock, so that several instances do not repeat the pass; an instance that does not get the lock skips the pass. It records a finding for each row without a valid seal, and audits the first detection. In `report` mode it seals such a row and resolves the finding as `report_mode`, unless the row changed meanwhile. It also seals again every row sealed with an older `row-mac` version, so that the version can be retired after a rotation. `admin row-seals verify` runs one pass at once and prints what it checked, found, re-sealed, and rotated.
+Every `keys.row_seals.verify_interval_minutes` (60), one instance checks every row of the protected tables, in batches of 500, under a PostgreSQL advisory lock, so that several instances do not repeat the pass; an instance that does not get the lock skips the pass. It records a finding for each row without a valid seal, and audits the first detection. In `report` mode it seals such a row and resolves the finding as `report_mode`, unless the row changed meanwhile or its table was sealed from its first row. It also seals again every row sealed with an older `row-mac` version, so that the version can be retired after a rotation. `admin row-seals verify` runs one pass at once and prints what it checked, found, re-sealed, and rotated.
 
 ### Integrity findings
 
 A finding names the table, the row's key, and what failed: `missing` (no seal), `mismatch`, `unknown_key` (a key version the server does not have), or `row_missing` (a row that a sealed [record](#records-of-rows) says exists, and that is gone). A row has at most one open finding; each new detection, on a read or by the verifier, increments its `seen_count`. The first detection is audited as `integrity.seal_mismatch`.
+
+A finding is sealed too, from migration 30 ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)): which row it is about, and whether, when, how, and by whom it was resolved. The runtime role may write the findings, so a finding resolved in SQL, which would hide its row from the administrators, fails its own check, and the verifier records a finding on `integrity_findings` for it. Its counts and the columns of a re-seal request are not sealed. The findings of before migration 30 have no seal: the verifier seals them in `report` mode, as for any table that gains seals.
 
 An administrator checks the row, for example against the audit log and backups, and then either fixes it or confirms it:
 

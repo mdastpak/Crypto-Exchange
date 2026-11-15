@@ -365,13 +365,14 @@ func TestReconcile_ReplaysAStoredChangeThatIsNotItsTransition(t *testing.T) {
 	b := newBooks(t)
 	alice, usdt := b.user(), b.currency("USDT")
 	b.fund(alice, usdt, "100")
-	// A change written outside the code, balanced but with the wrong type:
-	// UNLOCK of 10 that moves funds from available to locked.
+	// A change written outside the code, balanced and of the shape of a
+	// release, but with the wrong transition: UNLOCK of 10 that moves funds
+	// from available to locked.
 	tx, err := b.DB.Begin()
 	require.NoError(t, err)
 	var entry string
 	require.NoError(t, tx.QueryRow(`INSERT INTO ledger_entries (kind, idempotency_key, request_hash)
-		VALUES ('lock', 'forged', sha256('x'::bytea)) RETURNING id`).Scan(&entry))
+		VALUES ('release', 'forged', sha256('x'::bytea)) RETURNING id`).Scan(&entry))
 	_, err = tx.Exec(`INSERT INTO balance_changes (entry_id, version, balance_id, user_id, currency_hk, change_type, amount,
 			old_available, new_available, old_locked, new_locked, old_pending, new_pending)
 		SELECT $1, version + 1, id, user_id, currency_hk, 'UNLOCK', 10, available, available - 10, locked, locked + 10, 0, 0

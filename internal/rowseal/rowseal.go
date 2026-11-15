@@ -237,11 +237,16 @@ func (s *Sealer) Check(ctx context.Context, t *Table, r *Row) error {
 		return nil
 	}
 	s.report(ctx, t, r.Key, v, DetectedByRead)
-	if s.mode == ModeEnforce {
+	if s.refuses(t) {
 		return fmt.Errorf("%w: %s %s: %s", ErrUnverified, t.Name, r.Key, v)
 	}
 	return nil
 }
+
+// refuses reports whether a row of t that fails its check is refused: in
+// enforce mode, and in every mode for a table sealed from its first row
+// (#404).
+func (s *Sealer) refuses(t *Table) bool { return s.mode == ModeEnforce || t.SealedFromStart }
 
 // Check checks r with the active sealer; see Sealer.Check.
 func Check(ctx context.Context, t *Table, r *Row) error { return Active().Check(ctx, t, r) }
@@ -256,7 +261,7 @@ func (s *Sealer) Missing(ctx context.Context, t *Table, key string) error {
 		return nil
 	}
 	s.report(ctx, t, key, CheckRowMissing, DetectedByRead)
-	if s.mode == ModeEnforce {
+	if s.refuses(t) {
 		return fmt.Errorf("%w: %s %s: %s", ErrUnverified, t.Name, key, CheckRowMissing)
 	}
 	return nil
@@ -270,7 +275,7 @@ func Missing(ctx context.Context, t *Table, key string) error { return Active().
 func (s *Sealer) report(ctx context.Context, t *Table, key string, v Verdict, by string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	id, created, err := recordFinding(ctx, s.db, t, key, v, by)
+	id, created, err := s.recordFindingNow(ctx, t, key, v, by)
 	if err != nil {
 		s.logf("SECURITY: %s %s fails its integrity check (%s), and the finding could not be recorded: %v", t.Name, key, v, err)
 		return
@@ -288,9 +293,24 @@ func (s *Sealer) report(ctx context.Context, t *Table, key string, v Verdict, by
 	}
 }
 
+// recordFindingNow is recordFinding in a transaction of its own.
+func (s *Sealer) recordFindingNow(ctx context.Context, t *Table, key string, v Verdict, by string) (int64, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
+	id, created, err := s.recordFinding(ctx, tx, t, key, v, by)
+	if err != nil {
+		return 0, false, err
+	}
+	return id, created, tx.Commit()
+}
+
 // recordFinding opens a finding for the row, or counts a detection on the
-// open one, and reports whether it opened one.
-func recordFinding(ctx context.Context, q Querier, t *Table, key string, v Verdict, by string) (int64, bool, error) {
+// open one, and reports whether it opened one. A new finding is sealed
+// (#404); a detection changes only its counts, which the seal leaves out.
+func (s *Sealer) recordFinding(ctx context.Context, q Querier, t *Table, key string, v Verdict, by string) (int64, bool, error) {
 	var id int64
 	var created bool
 	err := q.QueryRowContext(ctx, `
@@ -301,7 +321,10 @@ func recordFinding(ctx context.Context, q Querier, t *Table, key string, v Verdi
 			check_failed = EXCLUDED.check_failed
 		RETURNING id, xmax = 0`,
 		t.Name, key, string(v), by).Scan(&id, &created)
-	return id, created, err
+	if err != nil || !created {
+		return id, created, err
+	}
+	return id, created, s.Reseal(ctx, q, IntegrityFindings, "id = $1", id)
 }
 
 // Reseal seals, in q, the rows of t that where selects: it raises their

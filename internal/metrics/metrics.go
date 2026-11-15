@@ -65,8 +65,8 @@ var (
 	// LedgerMismatches is the number of balances that the last
 	// reconciliation of the ledger found differing from the replay of their
 	// changes (#60), and LedgerImbalancedCurrencies the number of
-	// currencies whose books did not sum to zero, or whose custody held
-	// other than it must. Any value above zero is a change made outside
+	// currencies whose books did not sum to zero, whose custody held
+	// other than it must, or whose accounts have a problem. Any value above zero is a change made outside
 	// the ledger: alert on it.
 	LedgerMismatches = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ledger_reconciliation_mismatches",
@@ -75,6 +75,14 @@ var (
 	LedgerImbalancedCurrencies = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ledger_reconciliation_imbalanced_currencies",
 		Help: "Currencies whose books do not sum to zero, or whose custody holds other than it must, at the last reconciliation.",
+	})
+	// LedgerAccountProblems is the number of accounts of the exchange that
+	// the last reconciliation found in a state that the operations of the
+	// ledger cannot leave (#404), such as fees below zero: a balanced entry
+	// written outside the ledger. Alert on any value above zero.
+	LedgerAccountProblems = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ledger_reconciliation_account_problems",
+		Help: "Accounts of the exchange in a state that the ledger's operations cannot leave, at the last reconciliation.",
 	})
 	// LedgerOperations counts the operations of the ledger (#60), by kind
 	// and outcome: applied, replayed (a retry of an applied key),
@@ -126,7 +134,7 @@ func init() {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		HTTPRequests, HTTPDuration, RateLimitRejections, PublishDuration, SealFindings,
-		LedgerMismatches, LedgerImbalancedCurrencies, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
+		LedgerMismatches, LedgerImbalancedCurrencies, LedgerAccountProblems, LedgerLastReconciliation, LedgerOperations, LedgerOperationDuration,
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
 	)
 }
