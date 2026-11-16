@@ -215,15 +215,18 @@ func (s *Store) RecordFailure(ctx context.Context, venue, kind string, err error
 
 // The reasons that a currency is not routable at a venue.
 const (
-	ReasonNoBalance        = "no_balance"
-	ReasonStaleBalance     = "stale_balance"
-	ReasonHold             = "reconciliation_hold"
-	ReasonNetworkUnknown   = "network_unknown"
-	ReasonNetworkStale     = "network_stale"
-	ReasonNetworkSuspended = "network_suspended"
-	ReasonMarketUnknown    = "market_unknown"
-	ReasonMarketStale      = "market_stale"
-	ReasonMarketHalted     = "market_halted"
+	ReasonNoBalance    = "no_balance"
+	ReasonStaleBalance = "stale_balance"
+	ReasonHold         = "reconciliation_hold"
+	// ReasonUnverifiedReservation is an open reservation of the balance
+	// that fails its seal: changed outside the backend.
+	ReasonUnverifiedReservation = "unverified_reservation"
+	ReasonNetworkUnknown        = "network_unknown"
+	ReasonNetworkStale          = "network_stale"
+	ReasonNetworkSuspended      = "network_suspended"
+	ReasonMarketUnknown         = "market_unknown"
+	ReasonMarketStale           = "market_stale"
+	ReasonMarketHalted          = "market_halted"
 )
 
 // Routability says whether the router may plan through a currency of a

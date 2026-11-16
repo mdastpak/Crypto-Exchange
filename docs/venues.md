@@ -141,7 +141,7 @@ Which venues report fees:
 - **Nobitex:** none. Its connector makes no withdrawals.
 - The trading commissions are not in either list: they belong to the fills of the routed orders.
 
-An operator clears a hold with `POST /api/v1/admin/venues/holds/{id}/clear` and a reason, with a step-up, audited as `admin.venue_hold_clear`. If the difference stays, the next runs hold the currency again.
+An operator clears a hold with `POST /api/v1/admin/venues/holds/{id}/clear` and a reason, with a step-up, audited as `admin.venue_hold_clear`. If the difference stays, the next runs hold the currency again. A hold means funds may be missing at the venue, so clearing one will need two administrators, as a re-seal does ([#521](https://github.com/mdastpak/Crypto-Exchange/issues/521), decided in [#504](https://github.com/mdastpak/Crypto-Exchange/issues/504)); until then, review every `admin.venue_hold_clear` in the audit log.
 
 ### Reservations
 
@@ -153,7 +153,9 @@ The reservations and the holds are sealed from their first row ([#404](https://g
 
 `GET /api/v1/admin/venues` shows each enabled venue: the time, freshness, and last failure of each snapshot; each balance with what the books say, the difference, the open reservations, what is still available, and whether it is routable; the networks; the count of markets and of those trading; and the open holds.
 
-Each API instance exports, from the database, so every one reports the same:
+An open reservation that fails its seal, changed outside the backend, marks only its balance: it shows `unverified_reservation` among the reasons it is not routable, with nothing reserved or available, as the router refuses it ([#504](https://github.com/mdastpak/Crypto-Exchange/issues/504)). The other balances and venues, and the metrics, still show.
+
+Each API instance exports, from the database, so every one reports the same. A read of the state costs about six queries per venue, with the holdings of the books, one more per open hold, and about five per balance; a read serves every scrape for 15 seconds, and concurrent scrapes wait for one read, so an instance reads at most once in 15 seconds however often it is scraped. A snapshot age is of the time of the read, so it lags by at most 15 seconds: keep the alerts above that. A failed read exports nothing and is not kept, so the next scrape reads again.
 
 | Metric | Labels | |
 | --- | --- | --- |
