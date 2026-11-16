@@ -125,3 +125,22 @@ func TestQueueSender_NoticesKeepLonger(t *testing.T) {
 	assert.Equal(t, now.Add(NoticeTTL), job.ExpiresAt)
 	assert.Equal(t, reminder, job.message(), "the reminder reaches the worker whole")
 }
+
+// A withdrawal code keeps the parts of what it confirms on the queue, the
+// fee included (#459), so the worker that sends it can render each provider's
+// text from them.
+func TestQueueSender_AWithdrawalKeepsItsFee(t *testing.T) {
+	publisher := &recordingPublisher{}
+	sender := NewQueueSender(publisher, "notifications", emailOnlyChannels(), 90*time.Second)
+	withdrawal := testEmailMessage
+	withdrawal.Purpose, withdrawal.Details = PurposeWithdrawal, "100 USDT to TR7NHq...gjLj6t (fee 1 USDT)"
+	withdrawal.Amount, withdrawal.Destination, withdrawal.Fee = "100 USDT", "TR7NHq...gjLj6t", "1 USDT"
+	require.NoError(t, sender.SendOTP(context.Background(), withdrawal))
+
+	var job otpJob
+	require.NoError(t, json.Unmarshal(publisher.messages()[0].msg.Body, &job))
+	got := job.message()
+	assert.Equal(t, "1 USDT", got.Fee)
+	assert.Equal(t, "100 USDT", got.Amount)
+	assert.Equal(t, "TR7NHq...gjLj6t", got.Destination)
+}

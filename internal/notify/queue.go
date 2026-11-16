@@ -38,6 +38,7 @@ type otpJob struct {
 	Details       string `json:"details,omitempty"`
 	Amount        string `json:"amount,omitempty"`
 	Destination   string `json:"destination,omitempty"`
+	Fee           string `json:"fee,omitempty"`
 	// AntiPhishingCode is personal data like the contact: the queue is
 	// internal, and the job is never logged.
 	AntiPhishingCode string `json:"anti_phishing_code,omitempty"`
@@ -94,6 +95,7 @@ func (j otpJob) message() OTPMessage {
 		Details:          j.Details,
 		Amount:           j.Amount,
 		Destination:      j.Destination,
+		Fee:              j.Fee,
 		AntiPhishingCode: j.AntiPhishingCode,
 		Uses:             j.Uses,
 		AgeDays:          j.AgeDays,
@@ -171,6 +173,7 @@ func (s *QueueSender) SendOTP(ctx context.Context, msg OTPMessage) error {
 		Details:          msg.Details,
 		Amount:           msg.Amount,
 		Destination:      msg.Destination,
+		Fee:              msg.Fee,
 		AntiPhishingCode: msg.AntiPhishingCode,
 		Uses:             msg.Uses,
 		AgeDays:          msg.AgeDays,

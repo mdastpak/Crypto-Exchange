@@ -266,7 +266,7 @@ notifications:
     kavenegar:
       api_key: ""           # Or set KAVENEGAR_API_KEY
       otp_template: ""      # A verify template approved in the Kavenegar panel; the code fills %token
-      withdrawal_template: ""  # For withdrawal codes: %token the code, %token10 what it confirms, %token2 the token of the "this was not me" link; empty is no SMS for them
+      withdrawal_template: ""  # For withdrawal codes: %token the code, %token10 what it confirms ("100 USDT to TR7NHq...gjLj6t (fee:1 USDT)", at most 5 spaces), %token2 the token of the "this was not me" link; empty is no SMS for them
       anti_phishing_reminder_template: ""  # The reminder to change the anti-phishing code: %token the emails that showed it; empty is no SMS reminder
       delisting_notice_template: ""  # The notices of a delisting to its holders: %token the symbol, %token2 the date of the freeze; empty is email only
       base_url: "https://api.kavenegar.com"
