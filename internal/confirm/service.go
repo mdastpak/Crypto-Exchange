@@ -469,7 +469,8 @@ func (s Service) send(ctx context.Context, userHK, id string, p Purpose, to cont
 		purpose = notify.PurposeWithdrawal
 	}
 	msg := notify.OTPMessage{ContactType: to.typ, Contact: to.value, MaskedContact: to.masked,
-		Code: code, Purpose: purpose, Details: details.String(), Amount: details.Amount, Destination: details.Destination}
+		Code: code, Purpose: purpose, Details: details.String(), Amount: details.Amount, Destination: details.Destination,
+		Fee: details.Fee}
 	if s.Links != nil {
 		link, err := s.Links.Issue(ctx, userHK, id)
 		if err != nil {

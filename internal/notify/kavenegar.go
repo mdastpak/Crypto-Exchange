@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 )
@@ -84,6 +85,50 @@ func (k *KavenegarDeliverer) Supports(purpose string) bool {
 	return purpose == ""
 }
 
+// The limits of the tokens of the verify lookup API, from Kavenegar's
+// documentation (https://kavenegar.com/rest.html, Lookup): %token, %token2,
+// and %token3 hold no space, %token10 at most five, %token20 at most eight,
+// and each at most 100 characters. A token that breaks them is refused
+// with 422 or 431, so it is never sent (#459).
+const kavenegarTokenLength = 100
+
+var kavenegarTokenSpaces = map[string]int{"token": 0, "token2": 0, "token3": 0, "token10": 5, "token20": 8}
+
+// checkKavenegarTokens checks every token of form against the limits of
+// Kavenegar. A message that breaks one is a permanent error: no provider
+// would send it either, and it is a fault of the code or of the data.
+func checkKavenegarTokens(form url.Values) error {
+	for name, spaces := range kavenegarTokenSpaces {
+		v := form.Get(name)
+		switch {
+		case v == "":
+		case strings.ContainsAny(v, "\r\n"):
+			return fmt.Errorf("kavenegar: %s has a line break", name)
+		case utf8.RuneCountInString(v) > kavenegarTokenLength:
+			return fmt.Errorf("kavenegar: %s has %d characters; Kavenegar allows %d", name, utf8.RuneCountInString(v), kavenegarTokenLength)
+		case strings.Count(v, " ") > spaces:
+			return fmt.Errorf("kavenegar: %s has %d spaces; Kavenegar allows %d", name, strings.Count(v, " "), spaces)
+		}
+	}
+	return nil
+}
+
+// kavenegarDetails is what a withdrawal code confirms, in at most five
+// spaces for %token10 (#459): "100 USDT to TR7NHq...gjLj6t (fee:1 USDT)".
+// The amount and the fee hold one space each, between the number and the
+// symbol, and "to" two; the destination is masked without spaces, and any
+// it had are dropped. A message queued without its parts keeps Details.
+func kavenegarDetails(msg OTPMessage) string {
+	if msg.Amount == "" || msg.Destination == "" {
+		return msg.Details
+	}
+	text := msg.Amount + " to " + strings.ReplaceAll(msg.Destination, " ", "")
+	if msg.Fee != "" {
+		text += " (fee:" + msg.Fee + ")"
+	}
+	return text
+}
+
 // kavenegarResponse is the response envelope: the result, and the messages
 // sent or reported. entries is an array of messages, or one message.
 type kavenegarResponse struct {
@@ -150,13 +195,13 @@ func (k *KavenegarDeliverer) Send(ctx context.Context, msg OTPMessage) (string, 
 	switch msg.Purpose {
 	case PurposeWithdrawal:
 		// A code that confirms a withdrawal never goes out with the
-		// sign-in text (#161). %token10 may hold spaces, so it carries
-		// what the code confirms.
+		// sign-in text (#161). %token10 may hold spaces, five at most, so
+		// it carries what the code confirms, in its compact form (#459).
 		if k.withdrawalTemplate == "" {
 			return "", permanent(errors.New("kavenegar: no withdrawal_template for the codes that confirm withdrawals"))
 		}
 		form.Set("template", k.withdrawalTemplate)
-		form.Set("token10", msg.Details)
+		form.Set("token10", kavenegarDetails(msg))
 		// %token2 is the token of the "this was not me" link (#374),
 		// which the template places after the exchange's own domain.
 		if msg.DenyToken != "" {
@@ -184,6 +229,9 @@ func (k *KavenegarDeliverer) Send(ctx context.Context, msg OTPMessage) (string, 
 		return "", permanent(fmt.Errorf("kavenegar: no template for messages of %q", msg.Purpose))
 	}
 
+	if err := checkKavenegarTokens(form); err != nil {
+		return "", permanent(err)
+	}
 	body, err := k.call(ctx, http.MethodPost, "verify/lookup.json", form)
 	if err != nil {
 		return "", err
