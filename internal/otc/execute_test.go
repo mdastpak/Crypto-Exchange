@@ -353,6 +353,16 @@ func TestExecutor_InventoryLimits(t *testing.T) {
 	_, err = f.execute(f.quote(t, SideSell, "0.3", "60000", "36"), "back")
 	require.NoError(t, err, "a sell brings the short back")
 	assert.Equal(t, "-0.1", f.position(t, f.market.BaseHK))
+
+	// A release build trades no currency without both bounds, such as one
+	// renamed after the configuration was written.
+	f.exec.RequireLimits = true
+	_, err = f.execute(f.quote(t, SideBuy, "0.01", "60000", "1.2"), "unbounded")
+	assert.Equal(t, CodeInventoryLimit, refusalCode(t, err), "the quote currency has no max_short")
+	f.exec.Limits[f.market.Quote] = InventoryLimit{MaxShort: &long, MaxLong: &long}
+	f.exec.Limits[f.market.Base] = InventoryLimit{MaxShort: &short, MaxLong: &long}
+	_, err = f.execute(f.quote(t, SideBuy, "0.01", "60000", "1.2"), "bounded")
+	require.NoError(t, err)
 }
 
 // TestExecutor_Precision refuses a quote finer than its currencies (#422).

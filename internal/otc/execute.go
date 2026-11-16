@@ -181,8 +181,12 @@ type Executor struct {
 	// requires none.
 	Legal func() config.LegalConfig
 	// Limits are the inventory limits by currency symbol. A currency
-	// without one is not bounded.
+	// without one is not bounded, unless RequireLimits.
 	Limits map[string]InventoryLimit
+	// RequireLimits refuses the trades of a currency without a limit with
+	// both bounds, as a release build does: a currency renamed after the
+	// configuration was written (#215) is not traded unbounded.
+	RequireLimits bool
 	// Committed runs after a trade commits, such as a nudge of the outbox
 	// relay. It may be nil.
 	Committed func()
@@ -630,7 +634,12 @@ func (e *Executor) move(ctx context.Context, tx *sql.Tx, s settlement) error {
 			return err
 		}
 		next := position.Add(d.amount)
-		if l, ok := e.Limits[strings.ToUpper(d.symbol)]; ok {
+		l, ok := e.Limits[strings.ToUpper(d.symbol)]
+		if e.RequireLimits && (!ok || l.MaxShort == nil || l.MaxLong == nil) {
+			log.Printf("OTC: %s has no inventory limit in otc.inventory_limits; its trades are refused", d.symbol)
+			return &Refusal{Code: CodeInventoryLimit}
+		}
+		if ok {
 			n := next.Decimal()
 			if d.amount.IsNegative() && l.MaxShort != nil && n.Neg().GreaterThan(*l.MaxShort) ||
 				d.amount.IsPositive() && l.MaxLong != nil && n.GreaterThan(*l.MaxLong) {
