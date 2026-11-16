@@ -255,6 +255,9 @@ const (
 	// An operator cleared the hold that a reconciliation put on a currency
 	// of a venue (#385), after reviewing its difference.
 	ActionAdminVenueHoldClear = "admin.venue_hold_clear"
+	// An administrator saved a new version of the OTC routing rules
+	// (#386).
+	ActionAdminOTCRoutingRules = "admin.otc_routing_rules"
 )
 
 // Target types.
@@ -275,6 +278,9 @@ const (
 	TargetOTCTrade = "otc_trade"
 	// TargetVenueHold is a hold of a currency of a venue (#385), by its id.
 	TargetVenueHold = "venue_hold"
+	// TargetOTCRoutingRules is a version of the OTC routing rules (#386),
+	// by its number.
+	TargetOTCRoutingRules = "otc_routing_rules"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"

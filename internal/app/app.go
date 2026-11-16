@@ -1289,6 +1289,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// The state of the external venues of the OTC trades (#385).
 		adminGroup.GET("/venues", ih.Admin.ListVenues)
 		adminGroup.POST("/venues/holds/:id/clear", ih.Admin.ClearVenueHold)
+		// The rules that route the OTC trades (#386).
+		adminGroup.GET("/otc/routing/rules", ih.Admin.GetRoutingRules)
+		adminGroup.PUT("/otc/routing/rules", ih.Admin.SaveRoutingRules)
+		adminGroup.POST("/otc/routing/explain", ih.Admin.ExplainRoute)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)

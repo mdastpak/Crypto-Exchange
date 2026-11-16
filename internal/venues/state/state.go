@@ -525,3 +525,42 @@ func MappingsOf(c config.VenuesConfig) map[string]venues.Mapping {
 	}
 	return out
 }
+
+// Instrument is a market of a venue as its last snapshot lists it.
+type Instrument struct {
+	Symbol                        string
+	Lot, MinQuantity, MinNotional shared.Decimal
+}
+
+// InstrumentOf returns the market of a venue whose base and quote are the
+// venue's assets base and quote; ok is false when none is listed. The
+// router (#386) checks it with MarketRoutable.
+func (s *Store) InstrumentOf(ctx context.Context, venue, base, quote string) (Instrument, bool, error) {
+	var in Instrument
+	err := s.DB.QueryRowContext(ctx, `SELECT symbol, lot_size, min_quantity, min_notional FROM venue_instruments
+		WHERE venue = $1 AND base = $2 AND quote = $3 ORDER BY symbol LIMIT 1`, venue, base, quote).
+		Scan(&in.Symbol, &in.Lot, &in.MinQuantity, &in.MinNotional)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Instrument{}, false, nil
+	}
+	if err != nil {
+		return Instrument{}, false, fmt.Errorf("venues: read the market %s/%s at %s: %w", base, quote, venue, err)
+	}
+	return in, true, nil
+}
+
+// WithdrawFee returns the fee of a withdrawal of asset on network at
+// venue, as its last snapshot of the networks has it; zero when it is not
+// listed, which Routable refuses.
+func (s *Store) WithdrawFee(ctx context.Context, venue, asset, network string) (shared.Decimal, error) {
+	var fee shared.Decimal
+	err := s.DB.QueryRowContext(ctx, `SELECT withdraw_fee FROM venue_networks WHERE venue = $1 AND asset = $2 AND network = $3`,
+		venue, asset, network).Scan(&fee)
+	if errors.Is(err, sql.ErrNoRows) {
+		return shared.Decimal{}, nil
+	}
+	if err != nil {
+		return shared.Decimal{}, fmt.Errorf("venues: read the network %s of %s at %s: %w", network, asset, venue, err)
+	}
+	return fee, nil
+}

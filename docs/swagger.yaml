@@ -182,6 +182,42 @@ definitions:
           $ref: '#/definitions/delisting.Delisting'
         type: array
     type: object
+  admin.ExplainRouteRequest:
+    properties:
+      level:
+        description: Level is the user's verification level (#157).
+        example: 2
+        type: integer
+      market:
+        example: BTC/USDT
+        type: string
+      network:
+        description: Network is our network of the user's destination, if any.
+        type: string
+      price:
+        example: "65000"
+        type: string
+      quantity:
+        description: Quantity is in the base currency, and Price in the quote currency.
+        example: "0.5"
+        type: string
+      region:
+        description: Region is the user's region; empty is the release's.
+        enum:
+        - ir
+        - international
+        type: string
+      side:
+        enum:
+        - buy
+        - sell
+        type: string
+    required:
+    - market
+    - price
+    - quantity
+    - side
+    type: object
   admin.FindingPage:
     properties:
       items:
@@ -246,6 +282,23 @@ definitions:
           $ref: '#/definitions/restrictions.Restriction'
         type: array
     type: object
+  admin.RoutingRulesView:
+    properties:
+      cache_seconds:
+        description: |-
+          CacheSeconds is how long a node keeps a version before it checks
+          for a new one.
+        type: integer
+      enabled:
+        description: |-
+          Enabled is otc.routing.enabled: off, the inventory takes every trade
+          and the rules only explain.
+        type: boolean
+      version:
+        allOf:
+        - $ref: '#/definitions/routing.Version'
+        description: Version is the highest version; none before the first save.
+    type: object
   admin.SMSRoutingRequest:
     properties:
       mode:
@@ -267,6 +320,19 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  admin.SaveRoutingRulesRequest:
+    properties:
+      reason:
+        description: Reason says why the rules change.
+        maxLength: 1000
+        type: string
+      rules:
+        items:
+          $ref: '#/definitions/routing.Rule'
+        type: array
+    required:
+    - reason
     type: object
   admin.StepUpInfo:
     properties:
@@ -3580,6 +3646,200 @@ definitions:
     - ScopeAccount
     - ScopeOperation
     - ScopeAsset
+  routing.Explanation:
+    properties:
+      reason:
+        description: Reason is why there is no route.
+        type: string
+      route:
+        $ref: '#/definitions/routing.Route'
+      rule_version:
+        type: integer
+      rules:
+        items:
+          $ref: '#/definitions/routing.RuleResult'
+        type: array
+    type: object
+  routing.Leg:
+    properties:
+      cost_bps:
+        description: |-
+          CostBPS is the venue fee, the slippage, and the withdrawal fee of the
+          leg, in basis points of its notional; 0 for the inventory.
+        type: number
+      notional:
+        type: number
+      quantity:
+        type: number
+      source:
+        type: string
+      symbol:
+        description: Symbol is the venue's symbol of the market.
+        type: string
+      venue:
+        type: string
+    type: object
+  routing.Route:
+    properties:
+      cost_bps:
+        description: |-
+          CostBPS is the cost of the legs, weighted by their notional, in
+          basis points of the trade's notional, rounded up to a hundredth.
+        type: number
+      legs:
+        items:
+          $ref: '#/definitions/routing.Leg'
+        type: array
+      lot:
+        description: Lot is the lot of our market that the legs are multiples of.
+        type: number
+      network:
+        description: |-
+          Network is the network of the user's destination that the route was
+          planned for, which the execution plans for again.
+        type: string
+      rule:
+        type: string
+      rule_version:
+        type: integer
+    type: object
+  routing.Rule:
+    properties:
+      markets:
+        description: Markets are our market symbols, such as BTC/USDT.
+        items:
+          type: string
+        type: array
+      max_cost_bps:
+        description: |-
+          MaxCostBPS bounds the cost of the route, in basis points of the
+          notional; 0 is no bound.
+        type: integer
+      max_notional:
+        type: string
+      min_level:
+        description: |-
+          MinLevel is the lowest verification level (#157) that the rule
+          serves.
+        type: integer
+      min_notional:
+        description: |-
+          MinNotional and MaxNotional bound the notional of the trade, in its
+          quote currency.
+        type: string
+      name:
+        type: string
+      networks:
+        description: Networks are our networks of the user's destination (#57).
+        items:
+          type: string
+        type: array
+      priority:
+        type: integer
+      regions:
+        description: Regions are the deployment regions (#272) that the rule serves.
+        items:
+          type: string
+        type: array
+      sides:
+        description: 'Sides are the user''s sides: buy or sell.'
+        items:
+          type: string
+        type: array
+      strategy:
+        description: Strategy is own_first (the default) or cheapest.
+        type: string
+      use_inventory:
+        description: UseInventory lets the exchange's own inventory fill the trade.
+        type: boolean
+      venues:
+        description: Venues are the external venues that may fill it.
+        items:
+          $ref: '#/definitions/routing.VenueRule'
+        type: array
+    type: object
+  routing.RuleResult:
+    properties:
+      failure:
+        description: Failure is why a matched rule gives no route.
+        type: string
+      matched:
+        type: boolean
+      rule:
+        type: string
+      skipped:
+        description: Skipped are why the rule does not match.
+        items:
+          type: string
+        type: array
+      sources:
+        description: Sources are the sources of a matched rule.
+        items:
+          $ref: '#/definitions/routing.SourceResult'
+        type: array
+    type: object
+  routing.SourceResult:
+    properties:
+      capacity:
+        description: |-
+          Capacity is the quantity of the base currency that it can fill;
+          empty is no bound.
+        type: number
+      cost_bps:
+        type: number
+      skipped:
+        items:
+          type: string
+        type: array
+      source:
+        type: string
+      venue:
+        type: string
+    type: object
+  routing.VenueRule:
+    properties:
+      max_balance_share_bps:
+        description: |-
+          MaxBalanceShareBPS is the share of the venue's available balance
+          that one trade may use; 0 is all of it.
+        type: integer
+      max_daily_notional:
+        description: |-
+          MaxDailyNotional bounds the notional that the venue takes in a day,
+          in the quote currency of the trade.
+        type: string
+      priority:
+        description: Priority orders the venues of a rule, lower first.
+        type: integer
+      reserve:
+        description: |-
+          Reserve is an amount of the asset that the venue spends, which no
+          trade takes.
+        type: string
+      venue:
+        type: string
+      weight:
+        description: |-
+          Weight splits a trade across the venues of one priority in
+          proportion; venues of a priority without weights fill in turn.
+        type: integer
+    type: object
+  routing.Version:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        format: uuid
+        type: string
+      reason:
+        type: string
+      rules:
+        items:
+          $ref: '#/definitions/routing.Rule'
+        type: array
+      version:
+        type: integer
+    type: object
   rowseal.Finding:
     properties:
       check:
@@ -8130,6 +8390,167 @@ paths:
       summary: Choose how SMS is routed
       tags:
       - admin notifications
+  /api/v1/admin/otc/routing/explain:
+    post:
+      consumes:
+      - application/json
+      description: Given a market, a side, a quantity at a price, and the user's verification
+        level, network, and region, shows each rule in order, why it matched or not,
+        what each source of a matching rule can fill and at what cost, and the route
+        of the first rule that gives one (#386), or why there is none. It reads the
+        latest version of the rules and the state of the venues now, and places nothing.
+      parameters:
+      - description: The trade
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.ExplainRouteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/routing.Explanation'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Explain the route of an OTC trade
+      tags:
+      - admin otc
+  /api/v1/admin/otc/routing/rules:
+    get:
+      description: The highest version of the rules that route the OTC trades to the
+        exchange's own inventory or to external venues (#386), with who saved it and
+        why, and whether otc.routing.enabled routes by them. A version changed outside
+        the backend answers 409 row_unverified. See docs/otc-routing.md.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.RoutingRulesView'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the OTC routing rules
+      tags:
+      - admin otc
+    put:
+      consumes:
+      - application/json
+      description: 'Saves the whole set of rules as a new version (#386), which every
+        node applies within otc.routing.cache_seconds, without a restart. The rules
+        are checked first: a venue without a connector, an Iranian venue in an international
+        release, or an amount that is not one answers 400 with the field of each problem.
+        The reason is required. Audited as admin.otc_routing_rules. The route needs
+        a step-up. See docs/otc-routing.md for the format.'
+      parameters:
+      - description: The rules, and why
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.SaveRoutingRulesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/routing.Version'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Save the OTC routing rules
+      tags:
+      - admin otc
   /api/v1/admin/payouts:
     get:
       description: 'The payouts of withdrawals of a status, by when they are due:

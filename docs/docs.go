@@ -4860,6 +4860,251 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/otc/routing/explain": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Given a market, a side, a quantity at a price, and the user's verification level, network, and region, shows each rule in order, why it matched or not, what each source of a matching rule can fill and at what cost, and the route of the first rule that gives one (#386), or why there is none. It reads the latest version of the rules and the state of the venues now, and places nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin otc"
+                ],
+                "summary": "Explain the route of an OTC trade",
+                "parameters": [
+                    {
+                        "description": "The trade",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.ExplainRouteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/routing.Explanation"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/otc/routing/rules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The highest version of the rules that route the OTC trades to the exchange's own inventory or to external venues (#386), with who saved it and why, and whether otc.routing.enabled routes by them. A version changed outside the backend answers 409 row_unverified. See docs/otc-routing.md.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin otc"
+                ],
+                "summary": "Show the OTC routing rules",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/admin.RoutingRulesView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Saves the whole set of rules as a new version (#386), which every node applies within otc.routing.cache_seconds, without a restart. The rules are checked first: a venue without a connector, an Iranian venue in an international release, or an amount that is not one answers 400 with the field of each problem. The reason is required. Audited as admin.otc_routing_rules. The route needs a step-up. See docs/otc-routing.md for the format.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin otc"
+                ],
+                "summary": "Save the OTC routing rules",
+                "parameters": [
+                    {
+                        "description": "The rules, and why",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.SaveRoutingRulesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/routing.Version"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/payouts": {
             "get": {
                 "security": [
@@ -12752,6 +12997,54 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.ExplainRouteRequest": {
+            "type": "object",
+            "required": [
+                "market",
+                "price",
+                "quantity",
+                "side"
+            ],
+            "properties": {
+                "level": {
+                    "description": "Level is the user's verification level (#157).",
+                    "type": "integer",
+                    "example": 2
+                },
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "network": {
+                    "description": "Network is our network of the user's destination, if any.",
+                    "type": "string"
+                },
+                "price": {
+                    "type": "string",
+                    "example": "65000"
+                },
+                "quantity": {
+                    "description": "Quantity is in the base currency, and Price in the quote currency.",
+                    "type": "string",
+                    "example": "0.5"
+                },
+                "region": {
+                    "description": "Region is the user's region; empty is the release's.",
+                    "type": "string",
+                    "enum": [
+                        "ir",
+                        "international"
+                    ]
+                },
+                "side": {
+                    "type": "string",
+                    "enum": [
+                        "buy",
+                        "sell"
+                    ]
+                }
+            }
+        },
         "admin.FindingPage": {
             "type": "object",
             "properties": {
@@ -12845,6 +13138,27 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.RoutingRulesView": {
+            "type": "object",
+            "properties": {
+                "cache_seconds": {
+                    "description": "CacheSeconds is how long a node keeps a version before it checks\nfor a new one.",
+                    "type": "integer"
+                },
+                "enabled": {
+                    "description": "Enabled is otc.routing.enabled: off, the inventory takes every trade\nand the rules only explain.",
+                    "type": "boolean"
+                },
+                "version": {
+                    "description": "Version is the highest version; none before the first save.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/routing.Version"
+                        }
+                    ]
+                }
+            }
+        },
         "admin.SMSRoutingRequest": {
             "type": "object",
             "properties": {
@@ -12867,6 +13181,25 @@ const docTemplate = `{
                         "smsir",
                         "kavenegar"
                     ]
+                }
+            }
+        },
+        "admin.SaveRoutingRulesRequest": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "description": "Reason says why the rules change.",
+                    "type": "string",
+                    "maxLength": 1000
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.Rule"
+                    }
                 }
             }
         },
@@ -17207,6 +17540,255 @@ const docTemplate = `{
                 "ScopeOperation",
                 "ScopeAsset"
             ]
+        },
+        "routing.Explanation": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "description": "Reason is why there is no route.",
+                    "type": "string"
+                },
+                "route": {
+                    "$ref": "#/definitions/routing.Route"
+                },
+                "rule_version": {
+                    "type": "integer"
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.RuleResult"
+                    }
+                }
+            }
+        },
+        "routing.Leg": {
+            "type": "object",
+            "properties": {
+                "cost_bps": {
+                    "description": "CostBPS is the venue fee, the slippage, and the withdrawal fee of the\nleg, in basis points of its notional; 0 for the inventory.",
+                    "type": "number"
+                },
+                "notional": {
+                    "type": "number"
+                },
+                "quantity": {
+                    "type": "number"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "description": "Symbol is the venue's symbol of the market.",
+                    "type": "string"
+                },
+                "venue": {
+                    "type": "string"
+                }
+            }
+        },
+        "routing.Route": {
+            "type": "object",
+            "properties": {
+                "cost_bps": {
+                    "description": "CostBPS is the cost of the legs, weighted by their notional, in\nbasis points of the trade's notional, rounded up to a hundredth.",
+                    "type": "number"
+                },
+                "legs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.Leg"
+                    }
+                },
+                "lot": {
+                    "description": "Lot is the lot of our market that the legs are multiples of.",
+                    "type": "number"
+                },
+                "network": {
+                    "description": "Network is the network of the user's destination that the route was\nplanned for, which the execution plans for again.",
+                    "type": "string"
+                },
+                "rule": {
+                    "type": "string"
+                },
+                "rule_version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "routing.Rule": {
+            "type": "object",
+            "properties": {
+                "markets": {
+                    "description": "Markets are our market symbols, such as BTC/USDT.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "max_cost_bps": {
+                    "description": "MaxCostBPS bounds the cost of the route, in basis points of the\nnotional; 0 is no bound.",
+                    "type": "integer"
+                },
+                "max_notional": {
+                    "type": "string"
+                },
+                "min_level": {
+                    "description": "MinLevel is the lowest verification level (#157) that the rule\nserves.",
+                    "type": "integer"
+                },
+                "min_notional": {
+                    "description": "MinNotional and MaxNotional bound the notional of the trade, in its\nquote currency.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "networks": {
+                    "description": "Networks are our networks of the user's destination (#57).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "regions": {
+                    "description": "Regions are the deployment regions (#272) that the rule serves.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sides": {
+                    "description": "Sides are the user's sides: buy or sell.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "strategy": {
+                    "description": "Strategy is own_first (the default) or cheapest.",
+                    "type": "string"
+                },
+                "use_inventory": {
+                    "description": "UseInventory lets the exchange's own inventory fill the trade.",
+                    "type": "boolean"
+                },
+                "venues": {
+                    "description": "Venues are the external venues that may fill it.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.VenueRule"
+                    }
+                }
+            }
+        },
+        "routing.RuleResult": {
+            "type": "object",
+            "properties": {
+                "failure": {
+                    "description": "Failure is why a matched rule gives no route.",
+                    "type": "string"
+                },
+                "matched": {
+                    "type": "boolean"
+                },
+                "rule": {
+                    "type": "string"
+                },
+                "skipped": {
+                    "description": "Skipped are why the rule does not match.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sources": {
+                    "description": "Sources are the sources of a matched rule.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.SourceResult"
+                    }
+                }
+            }
+        },
+        "routing.SourceResult": {
+            "type": "object",
+            "properties": {
+                "capacity": {
+                    "description": "Capacity is the quantity of the base currency that it can fill;\nempty is no bound.",
+                    "type": "number"
+                },
+                "cost_bps": {
+                    "type": "number"
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "source": {
+                    "type": "string"
+                },
+                "venue": {
+                    "type": "string"
+                }
+            }
+        },
+        "routing.VenueRule": {
+            "type": "object",
+            "properties": {
+                "max_balance_share_bps": {
+                    "description": "MaxBalanceShareBPS is the share of the venue's available balance\nthat one trade may use; 0 is all of it.",
+                    "type": "integer"
+                },
+                "max_daily_notional": {
+                    "description": "MaxDailyNotional bounds the notional that the venue takes in a day,\nin the quote currency of the trade.",
+                    "type": "string"
+                },
+                "priority": {
+                    "description": "Priority orders the venues of a rule, lower first.",
+                    "type": "integer"
+                },
+                "reserve": {
+                    "description": "Reserve is an amount of the asset that the venue spends, which no\ntrade takes.",
+                    "type": "string"
+                },
+                "venue": {
+                    "type": "string"
+                },
+                "weight": {
+                    "description": "Weight splits a trade across the venues of one priority in\nproportion; venues of a priority without weights fill in turn.",
+                    "type": "integer"
+                }
+            }
+        },
+        "routing.Version": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.Rule"
+                    }
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "rowseal.Finding": {
             "type": "object",

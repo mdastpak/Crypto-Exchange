@@ -25,6 +25,15 @@ var KnownVenues = []string{VenueBinance, VenueNobitex}
 // on (#272).
 var IranianVenues = []string{VenueNobitex}
 
+// IsKnownVenue reports whether name is one of KnownVenues. It names the
+// constants rather than read the variable, so that any package may call it
+// without reading the global state (#48); a test keeps the two alike.
+func IsKnownVenue(name string) bool { return name == VenueBinance || name == VenueNobitex }
+
+// IsIranianVenue reports whether name is one of IranianVenues, which only
+// a release of the ir region may use (#272).
+func IsIranianVenue(name string) bool { return name == VenueNobitex }
+
 // The modes of a venue, as internal/venues names them.
 const (
 	VenueModeTestnet = "testnet"
@@ -66,6 +75,8 @@ const (
 	DefaultVenueStateMaxAgeSeconds        = 300
 	DefaultVenueStateConfirmRuns          = 2
 	MaxVenueStateConfirmRuns              = 10
+	// MaxVenueCostBPS bounds the fee and the slippage of a venue.
+	MaxVenueCostBPS = 1000
 )
 
 // VenuesConfig configures the connectors of the external exchanges (#384).
@@ -150,6 +161,12 @@ type VenueConfig struct {
 	// Assets map the venue's assets, by its symbol, to our currencies and
 	// networks. An asset that is not here is not routable.
 	Assets map[string]VenueAsset `yaml:"assets"`
+	// FeeBPS is the taker fee of our account at the venue, and SlippageBPS
+	// the slippage that the routing rules expect of an order there, both
+	// in basis points of the notional: the cost of a leg routed there
+	// (#386) is their sum and the withdrawal fee of the network.
+	FeeBPS      int `yaml:"fee_bps"`
+	SlippageBPS int `yaml:"slippage_bps"`
 }
 
 // VenueAsset maps an asset of a venue to our currency, and its networks, by
@@ -285,6 +302,12 @@ func venueConfigProblems(p *problems, name string, e VenueConfig, proxyURL strin
 	}
 	if e.RequestsPerMinute < 1 {
 		p.add(key+".requests_per_minute", "is %d; it must be at least 1", e.RequestsPerMinute)
+	}
+	if e.FeeBPS < 0 || e.FeeBPS > MaxVenueCostBPS {
+		p.add(key+".fee_bps", "is %d; it must be from 0 to %d", e.FeeBPS, MaxVenueCostBPS)
+	}
+	if e.SlippageBPS < 0 || e.SlippageBPS > MaxVenueCostBPS {
+		p.add(key+".slippage_bps", "is %d; it must be from 0 to %d", e.SlippageBPS, MaxVenueCostBPS)
 	}
 	if e.TimeoutSeconds < 1 || e.TimeoutSeconds > MaxVenueTimeoutSeconds {
 		p.add(key+".timeout_seconds", "is %d; it must be from 1 to %d", e.TimeoutSeconds, MaxVenueTimeoutSeconds)

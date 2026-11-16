@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,6 +65,10 @@ func TestVenues_Problems(t *testing.T) {
 	}{
 		"an unknown venue": {func(c *Configuration) { venue(c, "kraken", func(*VenueConfig) {}) },
 			"venues.exchanges.kraken is not a venue with a connector"},
+		"a fee above the bound": {func(c *Configuration) { venue(c, "binance", func(v *VenueConfig) { v.FeeBPS = 1001 }) },
+			"venues.exchanges.binance.fee_bps is 1001; it must be from 0 to 1000"},
+		"a negative slippage": {func(c *Configuration) { venue(c, "binance", func(v *VenueConfig) { v.SlippageBPS = -1 }) },
+			"venues.exchanges.binance.slippage_bps is -1"},
 		"an unknown mode": {func(c *Configuration) { venue(c, "binance", func(v *VenueConfig) { v.Mode = "paper" }) },
 			`venues.exchanges.binance.mode is "paper"`},
 		"nobitex on a testnet": {func(c *Configuration) { venue(c, "nobitex", func(v *VenueConfig) { v.Mode = VenueModeTestnet }) },
@@ -144,4 +149,11 @@ func TestVenues_ADisabledVenueNeedsNoCredentials(t *testing.T) {
 	c.Venues = openBaoVenues(map[string]VenueConfig{"binance": liveVenue()})
 	c.Venues.Credentials.Provider, c.Venues.Credentials.File = VenueCredentialsFile, "venues.json"
 	assert.Empty(t, problemsOf(c), "development reads the keys from a file")
+}
+
+func TestVenues_TheChecksOfANameMatchTheLists(t *testing.T) {
+	for _, name := range []string{VenueBinance, VenueNobitex, "kraken", ""} {
+		assert.Equal(t, slices.Contains(KnownVenues, name), IsKnownVenue(name), name)
+		assert.Equal(t, slices.Contains(IranianVenues, name), IsIranianVenue(name), name)
+	}
 }

@@ -211,6 +211,7 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		CurrencyMigrations.Name: "NULL", CurrencyDelistings.Name: "NULL",
 		OTCTrades.Name: "user_id", OTCHousePositions.Name: "NULL",
 		VenueReservations.Name: "NULL", VenueHolds.Name: "NULL",
+		OTCRoutingRules.Name: "NULL", OTCRoutingUsage.Name: "NULL",
 	}[t.Name]
 	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)

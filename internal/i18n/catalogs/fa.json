@@ -489,5 +489,14 @@
   "VENUE_HOLD_NOT_FOUND": "توقف تطبیق صرافی پیدا نشد.",
   "VENUE_HOLD_ALREADY_CLEARED": "این توقف تطبیق صرافی پیش‌تر برداشته شده است.",
   "FAILED_TO_CLEAR_VENUE_HOLD": "برداشتن توقف تطبیق صرافی ناموفق بود.",
-  "VENUE_HOLD_CLEARED": "توقف تطبیق صرافی برداشته شد."
+  "VENUE_HOLD_CLEARED": "توقف تطبیق صرافی برداشته شد.",
+  "OTC_ROUTING_UNAVAILABLE": "مسیریابی OTC روی این سرور در دسترس نیست.",
+  "FAILED_TO_READ_ROUTING_RULES": "خواندن قواعد مسیریابی OTC ناموفق بود.",
+  "ROUTING_RULES_RETRIEVED": "قواعد مسیریابی OTC دریافت شد.",
+  "FAILED_TO_SAVE_ROUTING_RULES": "ذخیره قواعد مسیریابی OTC ناموفق بود.",
+  "ROUTING_RULES_SAVED": "قواعد مسیریابی OTC ذخیره شد.",
+  "ROUTE_EXPLAINED": "مسیر توضیح داده شد.",
+  "FAILED_TO_EXPLAIN_ROUTE": "توضیح مسیر ناموفق بود.",
+  "OTC_NO_ROUTE": "این معامله اکنون قابل انجام نیست. مقدار کمتری را امتحان کنید یا بعداً دوباره تلاش کنید.",
+  "OTC_QUOTE_NOT_ROUTABLE": "این قیمت دیگر قابل انجام نیست. قیمت تازه بگیرید."
 }

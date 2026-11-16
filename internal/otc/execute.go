@@ -192,6 +192,9 @@ type Executor struct {
 	Committed func()
 	// Now is the clock of the quotes' expiry; nil is time.Now.
 	Now func() time.Time
+	// Routing plans the route of each trade again at its execution (#386);
+	// nil trades from the inventory.
+	Routing *Routing
 
 	// fail injects a failure after a step, for the tests.
 	fail func(step string) error
@@ -295,6 +298,11 @@ func (e *Executor) run(ctx context.Context, r ExecuteRequest, digest []byte, ori
 	m, err := e.check(ctx, tx, r, q)
 	if err != nil {
 		return Execution{}, err
+	}
+	if e.Routing != nil {
+		if err := e.reroute(ctx, &q, m); err != nil {
+			return Execution{}, err
+		}
 	}
 	s, err := settlementOf(q, m)
 	if err != nil {

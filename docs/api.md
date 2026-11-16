@@ -659,6 +659,7 @@ The sensitive routes:
 | `PUT /admin/notifications/sms` | The routing of SMS through the providers ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
 | `POST /admin/venues/holds/{id}/clear` | Routing through a venue again after a difference with the books ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)) |
+| `PUT /admin/otc/routing/rules` | The rules that pick the inventory or a venue for each OTC trade ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)) |
 
 Every admin route that changes something is classified in one table, `adminRoutes` of `internal/app/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
 
@@ -1057,6 +1058,7 @@ Refusals:
 - `400` `quantity_below_minimum`, `quantity_above_maximum`, `notional_below_minimum`, or `quote_too_large`, with `info.limit`.
 - `403 verification_required` below the level of `trade_otc`, `account_frozen`, `operation_restricted`, or `asset_restricted` for a restriction of either currency, and `currency_operation_disabled` when a currency cannot be bought or sold now.
 - `409 insufficient_balance` when the available balance of the currency the user gives is under the total and the fee of a buy, or the quantity of a sell. It is a pre-check: the execution checks again.
+- `409 otc_no_route` with [routing](otc-routing.md) on, when no rule routes the trade; `info.limit` is the reason, such as `insufficient_liquidity`. The price of a routed quote includes the cost of its route.
 - `429` above `otc.quotes_per_second` per user, counted in Redis over every instance. The limit fails closed: without Redis there is no quote to give.
 
 The route closes with the `trading` feature (`503 feature_locked`).
@@ -1103,7 +1105,7 @@ The execution is one transaction of the database:
 
 A failure at any step rolls back all of it. Audited as `user.otc_trade`.
 
-Refusals: `404 quote_not_found`, `410 quote_expired`, `409 quote_invalid`, `409 market_inactive`, `409 insufficient_balance`, `409 quote_not_settleable`, `409 otc_inventory_limit`, `409 row_unverified`, `403 terms_update_required`, the refusals of the quote's levels and restrictions, and `503 feature_locked` or `maintenance`.
+Refusals: `404 quote_not_found`, `410 quote_expired`, `409 quote_invalid`, `409 market_inactive`, `409 insufficient_balance`, `409 quote_not_settleable`, `409 otc_inventory_limit`, `409 quote_not_routable` with [routing](otc-routing.md) on, when the route planned again at execution is gone or costs more than the quote charged (`info.limit` is the reason), `409 row_unverified`, `403 terms_update_required`, the refusals of the quote's levels and restrictions, and `503 feature_locked` or `maintenance`.
 
 ## Market data
 
@@ -1207,6 +1209,16 @@ The state of the external venues that cover the OTC trades ([#385](https://githu
 | --- | --- |
 | `GET /admin/venues` | Each enabled venue: `snapshots` (`kind`, `taken_at`, `fresh`, `failed_at`, `failure`), `balances` (`asset`, `currency`, `free`, `locked`, `reserved`, `available`, `booked`, `difference`, `mismatch_runs`, `taken_at`, and `routability` with its `reasons`), `networks`, the counts `instruments` and `trading`, and the open `holds`. `409 row_unverified` when a reservation was changed outside the backend; `503 venues_unavailable` without PostgreSQL. |
 | `POST /admin/venues/holds/{id}/clear` | `{"reason": "…"}`, required, at most 1000 characters. Clears the hold that a reconciliation put on a currency of a venue, after a review of its difference; the next runs hold it again if the difference stays. Answers the hold. Audited as `admin.venue_hold_clear`. `404` for an unknown hold, `409 already_cleared`, `409 row_unverified` for a hold changed outside the backend. Needs a [step-up](#post-adminstep-up). |
+
+## OTC routing rules
+
+The rules that decide where the liquidity of each OTC trade comes from ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)). See [`otc-routing.md`](otc-routing.md) for the format and examples.
+
+| Route | |
+| --- | --- |
+| `GET /admin/otc/routing/rules` | `enabled` (`otc.routing.enabled`), `cache_seconds`, and the highest `version`: its number, `rules`, `reason`, `created_by`, and `created_at`; no `version` before the first save. `409 row_unverified` for a version changed outside the backend. |
+| `PUT /admin/otc/routing/rules` | `{"rules": [...], "reason": "…"}`; the reason is required, at most 1000 characters. Saves the whole set as a new version, which every instance applies within `otc.routing.cache_seconds`. `400 validation_failed` lists each problem by its field, such as `rules[0].venues[0].venue` for a venue without a connector, or an Iranian venue in an international release. Answers the version. Audited as `admin.otc_routing_rules`. Needs a [step-up](#post-adminstep-up). |
+| `POST /admin/otc/routing/explain` | `{"market": "BTC/USDT", "side": "buy", "quantity": "0.5", "price": "65000", "level": 2, "network": "bitcoin", "region": "ir"}`; `level`, `network`, and `region` are optional, the region being the release's. Places nothing. Answers `rule_version`, `rules` (each with `matched`, `skipped`, its `sources` with their `capacity`, `cost_bps`, and `skipped`, and a `failure`), and the `route` (`rule`, `legs`, `cost_bps`) or the `reason` there is none. `404` for an unknown market. |
 
 ## Currency migrations
 

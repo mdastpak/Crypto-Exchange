@@ -129,6 +129,7 @@ var quoteRefusals = map[string]struct {
 	otc.CodeNotionalBelowMinimum: {http.StatusBadRequest, i18n.Key("OTC_NOTIONAL_BELOW_MINIMUM")},
 	otc.CodeQuoteTooLarge:        {http.StatusBadRequest, i18n.Key("OTC_QUOTE_TOO_LARGE")},
 	otc.CodeInsufficientBalance:  {http.StatusConflict, i18n.Key("INSUFFICIENT_BALANCE")},
+	otc.CodeNoRoute:              {http.StatusConflict, i18n.Key("OTC_NO_ROUTE")},
 }
 
 func sendQuoteError(c *gin.Context, userHK string, err error) {
@@ -258,6 +259,7 @@ var executeRefusals = map[string]struct {
 	otc.CodeInsufficientBalance:  {http.StatusConflict, i18n.Key("INSUFFICIENT_BALANCE")},
 	otc.CodeMarketInactive:       {http.StatusConflict, i18n.Key("OTC_MARKET_INACTIVE")},
 	otc.CodeMarketNotQuoted:      {http.StatusNotFound, i18n.Key("OTC_MARKET_UNAVAILABLE")},
+	otc.CodeQuoteNotRoutable:     {http.StatusConflict, i18n.Key("OTC_QUOTE_NOT_ROUTABLE")},
 }
 
 func sendExecuteError(c *gin.Context, userHK string, err error) {
