@@ -73,6 +73,7 @@ An error response contains only a fixed message for each error. Internal details
 | `confirmation_locked` | `429` | Too many wrong codes of a confirmation, or too many codes requested |
 | `confirmation_expired`, `confirmation_already_confirmed` | `409` | The confirmation is past its time, or was confirmed already |
 | `confirmation_denied` | `409` | The confirmation was stopped with its ["this was not me" link](#this-was-not-me-links) |
+| `withdrawal_fee_changed` | `409` | The network fee of a [withdrawal](#withdrawals) changed since the user confirmed it; `info.confirmed_fee` and `info.fee` are the two fees, and nothing is locked: the user confirms again ([#460](https://github.com/mdastpak/Crypto-Exchange/issues/460)) |
 | `deny_link_invalid` | `404` | The ["this was not me" link](#this-was-not-me-links) is unknown, expired, or used |
 | `confirmation_method_unavailable`, `confirmation_method_required` | `409` | The user cannot use that method now, or has no method to confirm withdrawals with |
 | `confirmations_unavailable` | `503` | The confirmations are not available now |
@@ -1591,7 +1592,7 @@ In two steps, with the same `Idempotency-Key` header: 1 to 100 letters, digits, 
 }
 ```
 
-1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, key, and the network fee that it would be charged. The fee is part of `details` (`fee`), and of the message of the code. If an administrator changes the fee before step two, the confirmation no longer matches (`409`, `confirmation_mismatch`), nothing is locked, and the user confirms again. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
+1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, key, and the network fee that it would be charged. The fee is part of `details` (`fee`), and of the message of the code. If an administrator changes the fee before step two, step two answers `409 withdrawal_fee_changed`, with `info.confirmed_fee`, the fee the user confirmed, and `info.fee`, the fee now ([#460](https://github.com/mdastpak/Crypto-Exchange/issues/460)): nothing is locked, and the user confirms again. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
 2. **Confirm it** with `POST /user/confirmations/{id}`.
 3. **Send the same request with `confirmation_id`.** It runs in one transaction, under a lock of the user: the checks again, the confirmation consumed, the withdrawal recorded, and its amount and fee locked in the [ledger](architecture.md#the-ledger). The answer is `201` with the withdrawal. The same request again answers `200` with it, and locks nothing more; another request with the key answers `409 idempotency_key_reused`.
 
@@ -1601,7 +1602,7 @@ The checks:
 - The currency is listed, and its lifecycle allows withdrawals; the network allows them (`409 withdrawals_closed`).
 - The destination is the user's, usable now (`409 destination_not_usable_yet` with `usable_from`), and of the kind of the currency: a card, an IBAN, or an account for a fiat currency, an address on `network` for a crypto one.
 - The user's restrictions and security hold (`403`, as for the other operations), and the `withdrawals` lockdown (`503 feature_locked`).
-- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, or `confirmation_mismatch` for one of another request.
+- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, `confirmation_mismatch` for one of another request, or `withdrawal_fee_changed` for this request's confirmation at a fee that has changed since, with `info.confirmed_fee` and `info.fee`. The confirmation's fee, stored and sealed with it, tells the two apart.
 
 A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`). While thresholds are configured, a currency that has none, under any of its symbols, and no `"*"` default, waits whatever the amount (`review_reason: no_threshold`, [#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
 

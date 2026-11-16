@@ -30,6 +30,7 @@ import (
 type Confirmer interface {
 	Start(ctx context.Context, userHK string, p confirm.Purpose, digest []byte, details confirm.Details, client string) (confirm.Challenge, error)
 	Consume(ctx context.Context, tx *sql.Tx, userHK, id string, p confirm.Purpose, digest []byte) error
+	Bound(ctx context.Context, tx *sql.Tx, userHK, id string, p confirm.Purpose, digest []byte) (confirm.Details, bool, error)
 }
 
 // DestinationBook returns a destination of a user's book that a withdrawal
@@ -210,6 +211,11 @@ func (s Service) run(ctx context.Context, userHK string, r Request, digest []byt
 		return Outcome{}, err
 	}
 	if err := s.Confirm.Consume(ctx, tx, userHK, r.ConfirmationID, confirm.PurposeWithdrawal, r.confirmationDigest(p.fee)); err != nil {
+		if errors.Is(err, confirm.ErrMismatch) {
+			if changed, ferr := s.feeChanged(ctx, tx, userHK, r, p); ferr != nil || changed != nil {
+				return Outcome{}, errors.Join(ferr, asError(changed))
+			}
+		}
 		return Outcome{}, err
 	}
 	status := StatusQueued
@@ -246,6 +252,36 @@ func (s Service) run(ctx context.Context, userHK string, r Request, digest []byt
 		return Outcome{}, err
 	}
 	return Outcome{Withdrawal: &w}, tx.Commit()
+}
+
+// feeChanged tells, for a confirmation that does not match the request,
+// whether it is the confirmation of this very request at another fee
+// (#460): the fee it told the user, stored and sealed with it, gives the
+// digest that it is bound to. It returns the two fees then, and nil for a
+// confirmation of another request.
+func (s Service) feeChanged(ctx context.Context, tx *sql.Tx, userHK string, r Request, p plan) (*FeeChangedError, error) {
+	details, _, err := s.Confirm.Bound(ctx, tx, userHK, r.ConfirmationID, confirm.PurposeWithdrawal, nil)
+	if err != nil || details.Fee == "" {
+		return nil, err
+	}
+	number, _, _ := strings.Cut(details.Fee, " ")
+	confirmed, err := shared.NewDecimalFromString(number)
+	if err != nil {
+		return nil, nil //nolint:nilerr // a fee that does not parse is no fee of this request.
+	}
+	_, bound, err := s.Confirm.Bound(ctx, tx, userHK, r.ConfirmationID, confirm.PurposeWithdrawal, r.confirmationDigest(confirmed))
+	if err != nil || !bound {
+		return nil, err
+	}
+	return &FeeChangedError{Confirmed: details.Fee, Current: p.details.Fee}, nil
+}
+
+// asError returns e as an error, nil for a nil e.
+func asError(e *FeeChangedError) error {
+	if e == nil {
+		return nil
+	}
+	return e
 }
 
 // replay returns the withdrawal that a request with the key made, when

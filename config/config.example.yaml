@@ -274,7 +274,7 @@ notifications:
     smsir:
       api_key: ""           # Or set SMSIR_API_KEY
       otp_template_id: 0    # A quick-send (verify) template of the panel with #CODE#
-      withdrawal_template_id: 0  # With #CODE#, #AMOUNT#, #DEST#, and #DENY#, the token of the "this was not me" link; 0 sends withdrawal codes through other providers
+      withdrawal_template_id: 0  # With #CODE#, #AMOUNT#, #DEST#, #FEE#, and #DENY#, the token of the "this was not me" link; 0 sends withdrawal codes through other providers
       anti_phishing_reminder_template_id: 0  # With #COUNT#, the emails that showed the code; 0 is none
       delisting_notice_template_id: 0  # With #CURRENCY# and #DATE#, the date of the freeze; 0 is none
       base_url: "https://api.sms.ir"
