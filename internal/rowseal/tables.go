@@ -206,6 +206,25 @@ var (
 		text("user_hk"), text("kind"), sealedBytes("value_enc"), sealedBytes("value_bidx"), text("masked"),
 		text("bank"), text("network"), sealedBytes("memo_enc"), text("verified_by"),
 		timestamptz("usable_from"), timestamptz("removed_at"),
+		// A destination pending its ownership check (#158) is unusable
+		// while this is set: cleared in SQL, it would pass for verified.
+		optional(timestamptz("ownership_pending_since")),
+	}, SealedFromStart: true}
+	// UserNationalIDs covers a user's verified national ID (#158): the
+	// value, encrypted, its blind index, which keeps one account per
+	// person, the date of birth, and who verified it and when. A national
+	// ID swapped in SQL is not relied on. Rows written without a seal are
+	// adopted in report mode, as in every table sealed after its rows.
+	UserNationalIDs = &Table{Name: "user_national_ids", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		sealedBytes("national_id_sealed"), timestamptz("verified_at"), text("provider"), text("provider_ref"),
+		optional(sealedBytes("national_id_bidx")), optional(sealedBytes("birth_date_sealed")),
+	}}
+	// IdentityChecks covers a check of a national ID and its date of birth
+	// (#158): what was submitted, and its outcome. A check marked matched
+	// in SQL verifies nothing.
+	IdentityChecks = &Table{Name: "identity_checks", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), sealedBytes("national_id_sealed"), sealedBytes("national_id_bidx"), sealedBytes("birth_date_sealed"),
+		text("status"), text("provider"), text("provider_ref"), timestamptz("decided_at"),
 	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
@@ -342,6 +361,7 @@ var Tables = []*Table{
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
 	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
+	UserNationalIDs, IdentityChecks,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

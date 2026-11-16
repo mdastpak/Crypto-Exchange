@@ -18,6 +18,11 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/crypto/field"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // MobileOwnership checks that a mobile number belongs to a national ID.
@@ -66,67 +71,146 @@ func nationalIDAAD(userHK string) []byte {
 	return []byte("user_national_ids.national_id_sealed:" + userHK)
 }
 
+// birthDateAAD binds a sealed date of birth to its user.
+func birthDateAAD(userHK string) []byte {
+	return []byte("user_national_ids.birth_date_sealed:" + userHK)
+}
+
+// NationalIDIndexDomain is the domain of the blind index of a national ID
+// (#140, #158), so that the index of one is never that of another field.
+const NationalIDIndexDomain = "user_national_ids.national_id"
+
+// ErrNationalIDTaken is a national ID verified for another account (#158):
+// one person has one account.
+var ErrNationalIDTaken = errors.New("the national ID is verified for another account")
+
 // NationalID returns the verified national ID of a user, and false when
 // the user has none. Without sealer, a user with a national ID answers
-// ErrNoKeys: the check cannot be skipped because the keys are missing.
+// ErrNoKeys: the check cannot be skipped because the keys are missing. A
+// row that does not match its seal (#139) is refused in enforce mode: the
+// error wraps rowseal.ErrUnverified.
 func NationalID(ctx context.Context, q Querier, sealer Sealer, userHK string) (string, bool, error) {
-	var sealed []byte
-	err := q.QueryRowContext(ctx, `SELECT national_id_sealed FROM user_national_ids
-		WHERE user_hk = $1 AND verified_at IS NOT NULL`, userHK).Scan(&sealed)
+	p, has, err := PersonOf(ctx, q, sealer, userHK)
+	return p.NationalID, has, err
+}
+
+// PersonOf returns the verified national ID of a user with its date of
+// birth, which is zero for a national ID stored without one, and false
+// when the user has none. It checks as NationalID does.
+func PersonOf(ctx context.Context, q Querier, sealer Sealer, userHK string) (Person, bool, error) {
+	var sealed, birth []byte
+	row := rowseal.UserNationalIDs.NewRow()
+	err := q.QueryRowContext(ctx, `SELECT national_id_sealed, birth_date_sealed, `+rowseal.UserNationalIDs.Fields("")+`
+		FROM user_national_ids WHERE user_hk = $1 AND verified_at IS NOT NULL`, userHK).
+		Scan(append([]any{&sealed, &birth}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return Person{}, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("failed to read the national ID: %w", err)
+		return Person{}, false, fmt.Errorf("failed to read the national ID: %w", err)
+	}
+	// A national ID swapped in SQL is never relied on (#158).
+	if err := rowseal.Check(ctx, rowseal.UserNationalIDs, row); err != nil {
+		return Person{}, false, err
 	}
 	if sealer == nil {
-		return "", false, ErrNoKeys
+		return Person{}, false, ErrNoKeys
 	}
 	plain, err := sealer.OpenField(nationalIDAAD(userHK), sealed)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to open the national ID: %w", err)
+		return Person{}, false, fmt.Errorf("failed to open the national ID: %w", err)
 	}
 	// A national ID is checked when it is saved, and again before any
 	// check relies on it, so that a malformed one never reaches a
 	// provider.
 	if !ValidNationalID(string(plain)) {
-		return "", false, ErrInvalidNationalID
+		return Person{}, false, ErrInvalidNationalID
 	}
-	return string(plain), true, nil
+	p := Person{NationalID: string(plain)}
+	if birth != nil {
+		date, err := sealer.OpenField(birthDateAAD(userHK), birth)
+		if err != nil {
+			return Person{}, false, fmt.Errorf("failed to open the date of birth: %w", err)
+		}
+		if p.BirthDate, err = time.Parse(time.DateOnly, string(date)); err != nil {
+			return Person{}, false, errors.New("the stored date of birth is not a date")
+		}
+	}
+	return p, true, nil
 }
 
 // ErrInvalidNationalID is a stored national ID that is not well formed.
 // Nothing stores one, so it marks a value written outside the backend.
 var ErrInvalidNationalID = errors.New("the stored national ID is not a valid national ID")
 
-// Execer is a *sql.DB or a *sql.Tx.
-type Execer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+// Verified is a national ID as a provider verified it, to be stored.
+type Verified struct {
+	Person
+	Provider, Ref string
+	At            time.Time
 }
 
 // SaveNationalID stores the verified national ID of a user, sealed,
-// replacing the one before. The identity verification of #158 calls it,
-// with the provider and its reference of the check.
-func SaveNationalID(ctx context.Context, q Execer, sealer Sealer, userHK, nationalID, provider, ref string, verifiedAt time.Time) error {
-	if !ValidNationalID(nationalID) {
+// replacing the one before, without a date of birth, as the mobile
+// ownership checks and tests store one; the identity checks use Save.
+func SaveNationalID(ctx context.Context, q rowseal.Querier, sealer Sealer, userHK, nationalID, provider, ref string, verifiedAt time.Time) error {
+	return Save(ctx, q, sealer, userHK, Verified{Person: Person{NationalID: nationalID}, Provider: provider, Ref: ref, At: verifiedAt})
+}
+
+// Save stores the verified national ID of a user with its date of birth,
+// encrypted, and its blind index, replacing the one before, and seals the
+// row (#139). A national ID that another account has verified, under any
+// version of the blind-index key, is refused with ErrNationalIDTaken (#158).
+// Run it in the caller's transaction, after the lock of the user's row.
+// Without the field cipher, which holds the blind-index key, no index is
+// stored: only tests run so.
+func Save(ctx context.Context, q rowseal.Querier, sealer Sealer, userHK string, v Verified) error {
+	if !ValidNationalID(v.NationalID) {
 		return errors.New("not a valid national ID")
 	}
 	if sealer == nil {
 		return ErrNoKeys
 	}
-	sealed, err := sealer.SealField(nationalIDAAD(userHK), []byte(nationalID))
+	sealed, err := sealer.SealField(nationalIDAAD(userHK), []byte(v.NationalID))
 	if err != nil {
 		return fmt.Errorf("failed to seal the national ID: %w", err)
 	}
-	_, err = q.ExecContext(ctx, `INSERT INTO user_national_ids (user_hk, national_id_sealed, verified_at, provider, provider_ref)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+	var birth []byte
+	if !v.BirthDate.IsZero() {
+		if birth, err = sealer.SealField(birthDateAAD(userHK), []byte(v.BirthDate.Format(time.DateOnly))); err != nil {
+			return fmt.Errorf("failed to seal the date of birth: %w", err)
+		}
+	}
+	var index []byte
+	if cipher := field.Active(); cipher != nil {
+		if index, err = cipher.Index(NationalIDIndexDomain, v.NationalID); err != nil {
+			return err
+		}
+		var taken bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_national_ids
+			WHERE national_id_bidx = ANY($1::bytea[]) AND user_hk <> $2)`,
+			cipher.Indexes(NationalIDIndexDomain, v.NationalID), userHK).Scan(&taken); err != nil {
+			return fmt.Errorf("failed to look for the national ID: %w", err)
+		}
+		if taken {
+			return ErrNationalIDTaken
+		}
+	}
+	_, err = q.ExecContext(ctx, `INSERT INTO user_national_ids (user_hk, national_id_sealed, verified_at, provider, provider_ref,
+			national_id_bidx, birth_date_sealed)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
 		ON CONFLICT (user_hk) DO UPDATE SET national_id_sealed = EXCLUDED.national_id_sealed,
 			verified_at = EXCLUDED.verified_at, provider = EXCLUDED.provider, provider_ref = EXCLUDED.provider_ref,
-			updated_at = NOW()`, userHK, sealed, verifiedAt, provider, ref)
+			national_id_bidx = EXCLUDED.national_id_bidx, birth_date_sealed = EXCLUDED.birth_date_sealed,
+			updated_at = NOW()`, userHK, sealed, v.At, v.Provider, v.Ref, index, birth)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "user_national_ids_bidx" {
+		return ErrNationalIDTaken
+	}
 	if err != nil {
 		return fmt.Errorf("failed to store the national ID: %w", err)
 	}
-	return nil
+	return rowseal.Reseal(ctx, q, rowseal.UserNationalIDs, "user_hk = $1", userHK)
 }
 
 // ValidNationalID reports whether s is a well-formed Iranian national ID:

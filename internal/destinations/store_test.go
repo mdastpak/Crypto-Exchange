@@ -58,7 +58,9 @@ func (f fixture) user(tier shared.KYCTier, nationalID string) string {
 		tier).Scan(&hk))
 	require.NoError(f.t, rowseal.Reseal(context.Background(), f.DB, rowseal.Users, "hk = $1", hk))
 	if nationalID != "" {
-		require.NoError(f.t, identity.SaveNationalID(context.Background(), f.DB, f.NationalIDs, hk, nationalID, "stub", "", time.Now()))
+		require.NoError(f.t, identity.Save(context.Background(), f.DB, f.NationalIDs, hk, identity.Verified{
+			Person:   identity.Person{NationalID: nationalID, BirthDate: time.Date(1990, 3, 21, 0, 0, 0, 0, time.UTC)},
+			Provider: "stub", At: time.Now()}))
 	}
 	return hk
 }
@@ -109,19 +111,23 @@ func TestStore_FiatDestinationsOfTheUsersOwn(t *testing.T) {
 	carol := f.user(shared.KYCTierBasic, "")
 	_, err = f.Add(ctx, carol, Request{Kind: KindCard, Number: other}, audit.Event{})
 	require.ErrorIs(t, err, ErrNationalIDRequired)
-	f.stub.SetUnavailable(true)
-	_, err = f.Add(ctx, alice, Request{Kind: KindCard, Number: luhn("603799000000001")}, audit.Event{})
-	require.ErrorIs(t, err, ErrOwnershipUnavailable)
-	f.stub.SetUnavailable(false)
 	noProvider := f.Store
 	noProvider.Ownership = nil
 	_, err = noProvider.Add(ctx, alice, Request{Kind: KindCard, Number: luhn("603799000000001")}, audit.Event{})
-	require.ErrorIs(t, err, ErrOwnershipUnavailable)
+	require.ErrorIs(t, err, ErrOwnershipUnavailable, "no provider: nothing would ever check it")
+	f.stub.SetUnavailable(true)
+	pending, err := f.Add(ctx, alice, Request{Kind: KindCard, Number: luhn("603799000000001")}, audit.Event{})
+	require.NoError(t, err, "a provider that does not answer: added pending (#158)")
+	assert.True(t, pending.OwnershipPending)
+	f.stub.SetUnavailable(false)
+	_, err = f.Usable(ctx, f.DB, alice, pending.ID)
+	require.ErrorIs(t, err, ErrOwnershipPending, "not usable while pending")
 
 	list, err := f.List(ctx, alice)
 	require.NoError(t, err)
-	require.Len(t, list, 1)
-	assert.Equal(t, d.ID, list[0].ID)
+	require.Len(t, list, 2)
+	assert.Equal(t, pending.ID, list[0].ID, "the newest first")
+	assert.Equal(t, d.ID, list[1].ID)
 
 	resolved, err := f.Usable(ctx, f.DB, alice, d.ID)
 	require.NoError(t, err)
@@ -299,4 +305,103 @@ func TestStore_AStoredNumberIsCheckedAgainBeforeUse(t *testing.T) {
 
 	_, err = f.Usable(ctx, f.DB, alice, d.ID)
 	require.ErrorIs(t, err, ErrUnverified)
+}
+
+// A card added while the provider could not answer is pending (#158): the
+// scheduler asks again, outside any transaction, and decides with the
+// user's row locked first. A match verifies it and, with the verified
+// national ID, raises the user to level 1; a mismatch removes it; another
+// failure waits longer. Nothing is approved on a failure, and a row
+// changed in SQL is refused.
+func TestStore_PendingOwnershipChecks(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	alice := f.user(shared.KYCTierNone, "0012345679")
+	f.stub.SetOwner(luhn("603799000000001"), "0012345679")
+	f.stub.SetUnavailable(true)
+	mine, err := f.Add(ctx, alice, Request{Kind: KindCard, Number: luhn("603799000000001")}, audit.Event{})
+	require.NoError(t, err)
+	other := makeIBAN("0540102680020817909002")
+	theirs, err := f.Add(ctx, alice, Request{Kind: KindIBAN, Number: other}, audit.Event{})
+	require.NoError(t, err)
+	f.stub.SetOwner(other, "0499370899")
+	level := func() string {
+		var tier string
+		require.NoError(t, f.DB.QueryRow(`SELECT kyc_tier FROM users WHERE hk = $1`, alice).Scan(&tier))
+		return tier
+	}
+	due := func() {
+		_, err := f.DB.Exec(`UPDATE withdrawal_destinations SET ownership_next_check = NOW() WHERE ownership_pending_since IS NOT NULL`)
+		require.NoError(t, err)
+	}
+
+	// Still unavailable: both wait longer, and nothing is approved.
+	result, err := f.CheckPending(ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, CheckResult{}, result, "not due yet")
+	due()
+	result, err = f.CheckPending(ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.StillPending)
+	var attempts int
+	var next time.Time
+	require.NoError(t, f.DB.QueryRow(`SELECT ownership_attempts, ownership_next_check FROM withdrawal_destinations WHERE id = $1`,
+		mine.ID).Scan(&attempts, &next))
+	assert.Equal(t, 1, attempts)
+	assert.True(t, next.After(time.Now().Add(30*time.Second)), "a minute later")
+	assert.Equal(t, string(shared.KYCTierNone), level())
+
+	// The provider answers: the card matches, the IBAN is someone else's.
+	f.stub.SetUnavailable(false)
+	due()
+	result, err = f.CheckPending(ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, CheckResult{Matched: 1, NotOwned: 1}, result)
+	resolved, err := f.Resolve(ctx, f.DB, alice, mine.ID)
+	require.NoError(t, err)
+	assert.False(t, resolved.OwnershipPending)
+	list, err := f.List(ctx, alice)
+	require.NoError(t, err)
+	require.Len(t, list, 1, "the IBAN that is not hers is removed")
+	assert.Equal(t, mine.ID, list[0].ID)
+	_, err = f.Usable(ctx, f.DB, alice, theirs.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.Equal(t, string(shared.KYCTierBasic), level(), "a verified national ID and a matched card are level 1")
+	assert.Equal(t, 1, f.events(audit.ActionDestinationOwnershipCheck, audit.Success))
+	assert.Equal(t, 1, f.events(audit.ActionDestinationOwnershipCheck, audit.Failure))
+	assert.Equal(t, 1, f.events(audit.ActionUserVerificationSet, audit.Success))
+
+	// A pending card cleared in SQL, to pass for verified, does not match
+	// its seal: it is not used, and the scheduler leaves it alone.
+	f.stub.SetUnavailable(true)
+	forged, err := f.Add(ctx, alice, Request{Kind: KindCard, Number: luhn("603799000000002")}, audit.Event{})
+	require.NoError(t, err)
+	_, err = f.DB.Exec(`UPDATE withdrawal_destinations SET ownership_pending_since = NULL, ownership_next_check = NULL,
+		verified_by = 'stub' WHERE id = $1`, forged.ID)
+	require.NoError(t, err)
+	_, err = f.Usable(ctx, f.DB, alice, forged.ID)
+	require.ErrorIs(t, err, rowseal.ErrUnverified)
+}
+
+// A card matched at once raises a level-0 user with a verified national ID
+// to level 1, and never lowers or touches a higher level (#158).
+func TestStore_AMatchedCardGrantsLevel1(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	tier := func(user string) string {
+		var t2 string
+		require.NoError(t, f.DB.QueryRow(`SELECT kyc_tier FROM users WHERE hk = $1`, user).Scan(&t2))
+		return t2
+	}
+	alice := f.user(shared.KYCTierNone, "0012345679")
+	f.stub.SetOwner(luhn("603799000000003"), "0012345679")
+	f.stub.SetOwner(luhn("603799000000004"), "0499370899")
+	_, err := f.Add(ctx, alice, Request{Kind: KindCard, Number: luhn("603799000000003")}, audit.Event{})
+	require.NoError(t, err)
+	assert.Equal(t, string(shared.KYCTierBasic), tier(alice))
+
+	bob := f.user(shared.KYCTierStandard, "0499370899")
+	_, err = f.Add(ctx, bob, Request{Kind: KindCard, Number: luhn("603799000000004")}, audit.Event{})
+	require.NoError(t, err)
+	assert.Equal(t, string(shared.KYCTierStandard), tier(bob), "level 2 stays")
 }

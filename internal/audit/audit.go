@@ -124,6 +124,19 @@ const (
 	// with the provider's reference.
 	ActionUserDestinationAdd    = "user.withdrawal_destination_add"
 	ActionUserDestinationRemove = "user.withdrawal_destination_remove"
+	// The scheduler checking again the owner of a card or an IBAN that was
+	// added pending, because the provider could not answer (#158). The
+	// target is the destination; the outcome is success when the owner
+	// matched, and failure, with the reason not_owned, when it did not and
+	// the destination was removed.
+	ActionDestinationOwnershipCheck = "withdrawal_destination.ownership_check"
+	// A check of a user's national ID and date of birth (#158), when its
+	// provider answered: success when it matched and the national ID was
+	// stored, failure with the reason mismatched, or taken when the national
+	// ID is verified for another account. The target is the user; the event
+	// holds the check, the provider, and its reference, never the values.
+	// The scheduler's retries are the system's.
+	ActionUserIdentityCheck = "user.identity_check"
 	// A user choosing how withdrawals are confirmed (#161): SMS, email, or
 	// the authenticator app. The target is the user.
 	ActionUserConfirmationMethodSet = "user.confirmation_method_set"

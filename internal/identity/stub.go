@@ -15,7 +15,11 @@ type Stub struct {
 	// Owners maps a mobile number, or the number of a card, an IBAN, or an
 	// account, to the national ID it belongs to.
 	Owners map[string]string
-	// MatchUnlisted matches the numbers that Owners does not list.
+	// Births maps a national ID to its date of birth, YYYY-MM-DD, for
+	// Identify.
+	Births map[string]string
+	// MatchUnlisted matches the numbers that Owners does not list, and
+	// the national IDs that Births does not.
 	MatchUnlisted bool
 	// Unavailable makes every check fail with ErrUnavailable.
 	Unavailable bool

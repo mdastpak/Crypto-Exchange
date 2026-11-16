@@ -187,7 +187,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		}, "verification.withdrawal_limits.*.3 names level 3"},
 
 		// The withdrawal destinations (#160).
-		"unknown bank ownership provider": {func(c *Configuration) { c.Identity.BankOwnership.Provider = "jibit" }, `identity.bank_ownership.provider is "jibit"; it must be none or stub`},
+		"unknown bank ownership provider": {func(c *Configuration) { c.Identity.BankOwnership.Provider = "finnotech" }, `identity.bank_ownership.provider is "finnotech"; it must be none, stub, or jibit`},
+		"jibit without its account":       {func(c *Configuration) { c.Identity.BankOwnership.Provider = BankOwnershipJibit }, `uses the Jibit account of identity.mobile_ownership`},
 		"bank ownership stub released":    {func(c *Configuration) { c.Identity.BankOwnership.Provider = BankOwnershipStub }, `identity.bank_ownership.provider is "stub"`},
 		"too many destinations":           {func(c *Configuration) { c.Withdrawals.MaxDestinations = 500 }, "withdrawals.max_destinations is 500; it must be from 1 to 200"},
 		"a negative wait": {func(c *Configuration) {

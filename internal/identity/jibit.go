@@ -59,8 +59,39 @@ func (j *Jibit) Provider() string { return "jibit" }
 
 // Match asks Jibit whether mobile belongs to nationalID.
 func (j *Jibit) Match(ctx context.Context, nationalID, mobile string) (Match, error) {
+	return j.matching(ctx, url.Values{"mobileNumber": {mobile}, "nationalCode": {nationalID}})
+}
+
+// Identify asks Jibit whether p.NationalID was born on p.BirthDate (#158),
+// with the matching service and the date of birth in the Persian calendar,
+// YYYYMMDD, as Jibit takes it.
+func (j *Jibit) Identify(ctx context.Context, p Person) (Match, error) {
+	return j.matching(ctx, url.Values{"nationalCode": {p.NationalID}, "birthDate": {jalali(p.BirthDate)}})
+}
+
+// MatchBank asks Jibit whether a card or an IBAN belongs to the person
+// (#158): the matching service with the card number or the IBAN, the
+// national ID, and the date of birth. Jibit checks no bank account number:
+// such a check is ErrUnsupported.
+func (j *Jibit) MatchBank(ctx context.Context, p Person, account BankAccount) (Match, error) {
+	query := url.Values{"nationalCode": {p.NationalID}, "birthDate": {jalali(p.BirthDate)}}
+	switch account.Kind {
+	case "card":
+		query.Set("cardNumber", account.Number)
+	case "iban":
+		query.Set("iban", account.Number)
+	default:
+		return Match{}, fmt.Errorf("%w: jibit checks cards and IBANs, not a %s", ErrUnsupported, account.Kind)
+	}
+	return j.matching(ctx, query)
+}
+
+// matching asks the matching service about query, and reads its answer,
+// {"matched": true|false}. The query holds personal data: Jibit takes it in
+// the URL of a GET, so the URL is never logged or put in an error, here or
+// in send.
+func (j *Jibit) matching(ctx context.Context, query url.Values) (Match, error) {
 	ref := uuid.NewString()
-	query := url.Values{"mobileNumber": {mobile}, "nationalCode": {nationalID}}
 	var answer struct {
 		Matched *bool `json:"matched"`
 	}
@@ -72,6 +103,11 @@ func (j *Jibit) Match(ctx context.Context, nationalID, mobile string) (Match, er
 	}
 	return Match{Matched: *answer.Matched, Ref: ref}, nil
 }
+
+var (
+	_ BankOwnership   = (*Jibit)(nil)
+	_ IdentityInquiry = (*Jibit)(nil)
+)
 
 // authorized sends a request with the access token, and fetches a new
 // token once when the API refuses the one it had.

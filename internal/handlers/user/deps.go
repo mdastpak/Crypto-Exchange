@@ -12,6 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
+	"github.com/mdastpak/crypto-exchange/internal/idcheck"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -72,6 +73,12 @@ type FavoriteStore interface {
 type RestrictionReader interface {
 	Active(ctx context.Context, userHK string) ([]restrictions.Restriction, error)
 	SecurityHold(ctx context.Context, userHK string) (*time.Time, error)
+}
+
+// IdentityService checks the identity of users (#158): idcheck.Service.
+type IdentityService interface {
+	Status(ctx context.Context, userHK string) (idcheck.Status, error)
+	Submit(ctx context.Context, userHK, nationalID, birthDate string, origin audit.Event) (idcheck.Status, error)
 }
 
 // BalanceReader reads the balances of a user and the history of their

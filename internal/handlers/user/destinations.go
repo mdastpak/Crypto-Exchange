@@ -87,13 +87,14 @@ func (h *UserHandler) ListDestinations(c *gin.Context) {
 // book (#160).
 //
 // @Summary Add a withdrawal destination
-// @Description Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID, which the provider checks now: 409 national_id_required without one, 403 destination_not_owned when it is someone else's, 503 ownership_check_unavailable when the provider cannot answer. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.
+// @Description Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID and date of birth (#158), which the provider checks now: 409 national_id_required without them (verify them with POST /user/identity), 403 destination_not_owned when it is someone else's. When the provider cannot answer, the card or IBAN is added pending (202, ownership_pending true): it is not usable, the server checks it again until the provider answers, and removes it if its owner does not match. 503 ownership_check_unavailable without a provider, or for a bank account number, which the provider does not check. A matched card, IBAN, or account of a user with a verified identity at level 0 raises them to level 1; such a user may add one before, though their withdrawals still need the level. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.
 // @Tags user-withdrawals
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param body body destinations.Request true "The destination"
 // @Success 201 {object} models.APIResponse{info=destinations.Destination}
+// @Success 202 {object} models.APIResponse{info=destinations.Destination}
 // @Failure 400 {object} models.APIResponse "destination_invalid, with info.reason"
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "destination_not_owned, verification_required, security_hold, or step_up_required"
@@ -118,7 +119,11 @@ func (h *UserHandler) AddDestination(c *gin.Context) {
 		sendDestinationError(c, userHK, err)
 		return
 	}
-	helpers.SendResponse(c, http.StatusCreated, i18n.M("DESTINATION_ADDED"), d)
+	status := http.StatusCreated
+	if d.OwnershipPending {
+		status = http.StatusAccepted
+	}
+	helpers.SendResponse(c, status, i18n.M("DESTINATION_ADDED"), d)
 }
 
 // RemoveDestination removes a withdrawal destination from the signed-in

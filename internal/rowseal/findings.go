@@ -208,6 +208,7 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		WithdrawalPayouts.Name: "(SELECT w.user_id FROM withdrawals w WHERE w.id = withdrawal_payouts.withdrawal_id)",
 		DenyLinks.Name:         "user_hk",
 		IntegrityFindings.Name: "NULL", PriceOverrides.Name: "NULL",
+		UserNationalIDs.Name: "user_hk", IdentityChecks.Name: "user_hk",
 		CurrencyMigrations.Name: "NULL", CurrencyDelistings.Name: "NULL",
 	}[t.Name]
 	if owner == "" {
