@@ -255,8 +255,11 @@ sealed `otc_routed_orders` table.
   reservation. A reason is a code, never the venue's own text.
 - **The kill switch.** A lockdown of `otc_routing`
   ([`api.md`](api.md#maintenance-and-lockdowns)) stops every order where it is, and
-  refuses, with the lockdown's `503`, new trades whose route has a venue leg. A lockdown of
-  `market_data` pauses the drivers with the other jobs of the worker.
+  refuses, with the lockdown's `503`, new trades whose route has a venue leg.
+  It also pauses the venue jobs of the worker, so the venue state goes stale
+  and nothing routes to a venue. A lockdown of `market_data` does not stop
+  the drivers ([#514](https://github.com/mdastpak/Crypto-Exchange/issues/514)),
+  so the open orders are still followed.
 - **A changed row.** An order that fails its seal is not driven. It waits
   until it is reviewed.
 

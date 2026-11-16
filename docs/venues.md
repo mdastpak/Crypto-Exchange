@@ -86,7 +86,17 @@ The router (#386) decides from the state of the venues, in PostgreSQL so that ev
 
 ### Snapshots
 
-A job of `cmd/market-worker`, `venue_state:<venue>`, runs every `venues.state.interval_seconds` under its lease ([#264](https://github.com/mdastpak/Crypto-Exchange/issues/264)), so that one node at a time calls a venue for its state. Only a node that enables the venue in `venues.exchanges` has its job. One run, in order:
+A job of `cmd/market-worker`, `venue_state:<venue>`, runs every `venues.state.interval_seconds` under its lease ([#264](https://github.com/mdastpak/Crypto-Exchange/issues/264)), so that one node at a time calls a venue for its state. Only a node that enables the venue in `venues.exchanges` has its job.
+
+The venue jobs run apart from the market data ([#501](https://github.com/mdastpak/Crypto-Exchange/issues/501)). They are this job and the [routed orders](otc-routing.md#routed-orders) of each venue, and they have a runner of their own:
+
+- They run whenever a venue is enabled, also with `market_data.enabled: false`.
+- They are always live. The mode of a venue is `venues.exchanges.<name>.mode`, so a `dry_run` venue still reads its state but sends nothing.
+- `market_data.mode` does not apply to them.
+- A lockdown of `otc_routing` pauses them, and a lockdown of `market_data` does not.
+- They take the poll, lease, and retry timing of `market_data` where it is set: by default 1 second, 30 seconds, and 5 seconds.
+
+One run, in order:
 
 1. The markets (`venue_instruments`): the steps, the minimums, and whether each trades.
 2. The networks of each mapped asset (`venue_networks`): deposits and withdrawals on or off, the withdrawal fee and minimum.
