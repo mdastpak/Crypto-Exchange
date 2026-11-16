@@ -276,6 +276,22 @@ var (
 	OTCHousePositions = &Table{Name: "otc_house_positions", Key: "currency_hk", KeyType: "uuid", Columns: []Column{
 		text("position"),
 	}}
+	// VenueReservations covers a reservation of a balance at a venue by a
+	// routed order (#385): which balance, how much, for what, and whether
+	// it was released. A reservation released or lowered in SQL, which
+	// would let the router spend the same funds twice, is refused.
+	VenueReservations = &Table{Name: "venue_reservations", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("venue"), text("asset"), text("amount"), text("reference_type"), text("reference_id"),
+		timestamptz("created_at"), timestamptz("released_at"),
+	}, SealedFromStart: true}
+	// VenueHolds covers a hold of a currency at a venue (#385), which a
+	// reconciliation opens on a difference with the books. A hold cleared
+	// in SQL, which would route through a venue that may have lost funds,
+	// keeps the currency not routable.
+	VenueHolds = &Table{Name: "venue_holds", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("venue"), text("asset"), text("currency_hk"), text("reported"), text("booked"), text("difference"),
+		timestamptz("detected_at"), timestamptz("cleared_at"), text("cleared_by"), text("clear_reason"),
+	}, SealedFromStart: true}
 	// IntegrityFindings covers the resolution of a finding (#404): which
 	// row it is about, and whether, when, how, and by whom it was closed. A
 	// finding closed in SQL, which would hide the row from the
@@ -360,6 +376,7 @@ var Tables = []*Table{
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
 	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
 	OTCTrades, OTCHousePositions,
+	VenueReservations, VenueHolds,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

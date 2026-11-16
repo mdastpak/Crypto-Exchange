@@ -1286,6 +1286,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/audit", ih.Admin.ListAuditEvents)
 		adminGroup.GET("/integrity/findings", ih.Admin.ListIntegrityFindings)
 		adminGroup.POST("/integrity/findings/:id/reseal", ih.Admin.ResealIntegrityFinding)
+		// The state of the external venues of the OTC trades (#385).
+		adminGroup.GET("/venues", ih.Admin.ListVenues)
+		adminGroup.POST("/venues/holds/:id/clear", ih.Admin.ClearVenueHold)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)

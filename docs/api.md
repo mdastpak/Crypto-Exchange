@@ -658,6 +658,7 @@ The sensitive routes:
 | `POST /admin/payouts/{id}/complete`, `POST …/fail` | Recording a payout of a withdrawal as paid, which moves the funds, or as failed ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) |
 | `PUT /admin/notifications/sms` | The routing of SMS through the providers ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
+| `POST /admin/venues/holds/{id}/clear` | Routing through a venue again after a difference with the books ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)) |
 
 Every admin route that changes something is classified in one table, `adminRoutes` of `internal/app/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
 
@@ -1197,6 +1198,15 @@ The rows that did not match their [row seal](data-protection.md#row-seals) ([#13
 | --- | --- |
 | `GET /admin/integrity/findings?all=&limit=` | The open findings, or every finding with `all=true`, newest first, [paginated](#pagination): `table`, `row_key`, `check` (`missing`, `mismatch`, `unknown_key`, `row_missing`), `detected_by` (`read`, `verifier`), `seen_count`, and, once resolved, `resolution` (`resealed`, `report_mode`, `row_gone`), `resolved_by`, and `reason`. |
 | `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters. It needs two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): the first request records the reason and answers `202` with the finding and `reseal_requested_by`; the same request by another administrator within 24 hours seals the row, resolves the finding, and answers `200`. The request pins the row as the first administrator reviewed it ([#411](https://github.com/mdastpak/Crypto-Exchange/issues/411)): both answers show its `reseal_row_version` and its `reseal_values`, secret columns as `[secret]`, and so does the list of findings. When the row changed since the request, the approval answers `409 row_changed`, the row stays unsealed, and the finding stays open; the administrator who asked can ask again for the current values. `403 second_approval_required` for the administrator who asked, and `403 own_row` for the administrator whose account the row belongs to, at either step. A request older than 24 hours is replaced by a new one, and so is a request without its sealed `integrity.reseal_request` audit event, such as one written in SQL in the name of another administrator ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)). Audited as `integrity.reseal_request` and `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. Needs a [step-up](#post-adminstep-up). |
+
+## Venues
+
+The state of the external venues that cover the OTC trades ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)), as the snapshots of `cmd/market-worker` last saw them. See [venue state](venues.md#state).
+
+| Route | |
+| --- | --- |
+| `GET /admin/venues` | Each enabled venue: `snapshots` (`kind`, `taken_at`, `fresh`, `failed_at`, `failure`), `balances` (`asset`, `currency`, `free`, `locked`, `reserved`, `available`, `booked`, `difference`, `mismatch_runs`, `taken_at`, and `routability` with its `reasons`), `networks`, the counts `instruments` and `trading`, and the open `holds`. `409 row_unverified` when a reservation was changed outside the backend; `503 venues_unavailable` without PostgreSQL. |
+| `POST /admin/venues/holds/{id}/clear` | `{"reason": "…"}`, required, at most 1000 characters. Clears the hold that a reconciliation put on a currency of a venue, after a review of its difference; the next runs hold it again if the difference stays. Answers the hold. Audited as `admin.venue_hold_clear`. `404` for an unknown hold, `409 already_cleared`, `409 row_unverified` for a hold changed outside the backend. Needs a [step-up](#post-adminstep-up). |
 
 ## Currency migrations
 

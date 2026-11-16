@@ -92,7 +92,8 @@ func (c CurrencyReport) Balanced() bool {
 //     credited or failed yet, which is what users hold as pending: exactly
 //     the opposite of Pending.
 //
-// The inventory may go either way, as the exchange trades.
+// The inventory may go either way, as the exchange trades. A venue account
+// (#385) is never above zero, as custody.
 func accountProblems(c CurrencyReport) []string {
 	var problems []string
 	if fees := c.Accounts[AccountFees]; fees.IsNegative() {
@@ -103,6 +104,18 @@ func accountProblems(c CurrencyReport) []string {
 	}
 	if pending := c.Accounts[AccountDepositsPending]; !pending.Equal(c.Pending.Neg()) {
 		problems = append(problems, fmt.Sprintf("the deposits_pending account is %s, and users hold %s pending", pending, c.Pending))
+	}
+	// A venue account holds the negative of what we hold at the venue
+	// (#385), which no fee or withdrawal takes below what was deposited.
+	names := make([]string, 0, len(c.Accounts))
+	for name := range c.Accounts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if IsVenueAccount(name) && c.Accounts[name].IsPositive() {
+			problems = append(problems, fmt.Sprintf("the %s account is %s, above zero", name, c.Accounts[name]))
+		}
 	}
 	return problems
 }
@@ -329,8 +342,8 @@ func sums(ctx context.Context, q querier) ([]CurrencyReport, error) {
 	out := make([]CurrencyReport, 0, len(byCurrency))
 	for _, c := range byCurrency {
 		total := c.Users.Add(c.Pending)
-		for _, a := range Accounts {
-			total = total.Add(c.Accounts[a])
+		for _, sum := range c.Accounts {
+			total = total.Add(sum)
 		}
 		c.Imbalance = total
 		c.Expected = c.Accounts[AccountCustody].Neg()

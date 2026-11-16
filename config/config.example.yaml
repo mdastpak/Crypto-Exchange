@@ -657,6 +657,14 @@ venues:
       token_file: ""
       mount: secret
       prefix: venues/
+  # The snapshots of the enabled venues, and their reconciliation with the
+  # books, by a job of cmd/market-worker (docs/venues.md#state).
+  state:
+    interval_seconds: 60       # A run of each venue
+    max_age_seconds: 300       # An older snapshot is unknown: not routable
+    confirm_runs: 2            # Runs in a row with a difference before a hold
+    tolerances:                # Accepted differences, by our currency symbol
+      USDT: "0.01"
   exchanges:
     binance:
       enabled: false

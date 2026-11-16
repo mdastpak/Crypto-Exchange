@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 // The connectors of the external exchanges (#384), by their name in
@@ -59,6 +61,11 @@ const (
 	DefaultVenueRequestsPerMinuteBinance  = 600
 	DefaultVenueRequestsPerMinuteNobitex  = 60
 	defaultVenueRequestsPerMinuteFallback = 60
+	DefaultVenueStateIntervalSeconds      = 60
+	MinVenueStateIntervalSeconds          = 10
+	DefaultVenueStateMaxAgeSeconds        = 300
+	DefaultVenueStateConfirmRuns          = 2
+	MaxVenueStateConfirmRuns              = 10
 )
 
 // VenuesConfig configures the connectors of the external exchanges (#384).
@@ -71,6 +78,24 @@ type VenuesConfig struct {
 	Credentials VenueCredentialsConfig `yaml:"credentials"`
 	// Exchanges are the venues by the name of their connector.
 	Exchanges map[string]VenueConfig `yaml:"exchanges"`
+	// State configures the snapshots and the reconciliation of the venues
+	// (#385).
+	State VenueStateConfig `yaml:"state"`
+}
+
+// VenueStateConfig configures the state of the venues (#385): how often a
+// job of cmd/market-worker takes the snapshots of each enabled venue and
+// reconciles it with the books, how old a snapshot may be before the router
+// treats it as unknown, and the differences that a reconciliation accepts.
+type VenueStateConfig struct {
+	IntervalSeconds int `yaml:"interval_seconds"`
+	MaxAgeSeconds   int `yaml:"max_age_seconds"`
+	// ConfirmRuns is how many reconciliations in a row must find a
+	// difference before the currency is held.
+	ConfirmRuns int `yaml:"confirm_runs"`
+	// Tolerances are the accepted differences, by our currency symbol, as
+	// decimals; a currency that is not here accepts none.
+	Tolerances map[string]string `yaml:"tolerances"`
 }
 
 // VenueCredentialsConfig says where the API keys of the venues are read.
@@ -153,6 +178,16 @@ func (c *Configuration) applyVenueDefaults() {
 	if v.Credentials.CacheSeconds == 0 {
 		v.Credentials.CacheSeconds = DefaultVenueCredentialsCacheSeconds
 	}
+	st := &v.State
+	if st.IntervalSeconds == 0 {
+		st.IntervalSeconds = DefaultVenueStateIntervalSeconds
+	}
+	if st.MaxAgeSeconds == 0 {
+		st.MaxAgeSeconds = DefaultVenueStateMaxAgeSeconds
+	}
+	if st.ConfirmRuns == 0 {
+		st.ConfirmRuns = DefaultVenueStateConfirmRuns
+	}
 	b := &v.Credentials.OpenBao
 	if b.Mount == "" {
 		b.Mount = DefaultVenueOpenBaoMount
@@ -214,6 +249,7 @@ func (c *Configuration) venueProblems(p *problems, release bool) {
 		venueConfigProblems(p, name, v.Exchanges[name], v.ProxyURL, release)
 	}
 	if len(enabled) > 0 {
+		venueStateProblems(p, v.State)
 		c.venueCredentialProblems(p, release)
 	}
 }
@@ -339,6 +375,39 @@ func venueRegionSettings(c *Configuration) []regionSetting {
 	for _, name := range c.Venues.EnabledVenues() {
 		if slices.Contains(IranianVenues, name) {
 			out = append(out, regionSetting{fmt.Sprintf("venues.exchanges.%s.enabled", name), "true", "set it to false"})
+		}
+	}
+	return out
+}
+
+// venueStateProblems checks venues.state.
+func venueStateProblems(p *problems, st VenueStateConfig) {
+	if st.IntervalSeconds < MinVenueStateIntervalSeconds {
+		p.add("venues.state.interval_seconds", "is %d; it must be at least %d", st.IntervalSeconds, MinVenueStateIntervalSeconds)
+	}
+	// A snapshot must live through at least two runs, or every run that
+	// is a little late makes the venues not routable.
+	if st.MaxAgeSeconds < 2*st.IntervalSeconds {
+		p.add("venues.state.max_age_seconds", "is %d; it must be at least twice interval_seconds (%d)", st.MaxAgeSeconds, 2*st.IntervalSeconds)
+	}
+	if st.ConfirmRuns < 1 || st.ConfirmRuns > MaxVenueStateConfirmRuns {
+		p.add("venues.state.confirm_runs", "is %d; it must be from 1 to %d", st.ConfirmRuns, MaxVenueStateConfirmRuns)
+	}
+	for _, symbol := range slices.Sorted(maps.Keys(st.Tolerances)) {
+		d, err := decimal.NewFromString(st.Tolerances[symbol])
+		if err != nil || d.IsNegative() {
+			p.add("venues.state.tolerances."+symbol, "is not a decimal of zero or more")
+		}
+	}
+}
+
+// VenueTolerances are the tolerances of venues.state as decimals; the
+// configuration check refused any that does not parse.
+func (st VenueStateConfig) VenueTolerances() map[string]decimal.Decimal {
+	out := make(map[string]decimal.Decimal, len(st.Tolerances))
+	for symbol, raw := range st.Tolerances {
+		if d, err := decimal.NewFromString(raw); err == nil {
+			out[symbol] = d
 		}
 	}
 	return out

@@ -49,6 +49,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,6 +93,10 @@ const (
 	KindTrade           = "trade"
 	KindWithdrawal      = "withdrawal"
 	KindConversion      = "conversion"
+	// The moves of the exchange's own funds to and from the venues (#385).
+	KindVenueDeposit    = "venue_deposit"
+	KindVenueWithdrawal = "venue_withdrawal"
+	KindVenueFee        = "venue_fee"
 )
 
 var (
@@ -303,6 +308,82 @@ func trade(key string, a Account, t Trade, ref Ref) (entry, error) {
 	return e, nil
 }
 
+// VenueAccount is the house account of the exchange at the venue name
+// (#385), one per currency: the negative of what we hold there, as the
+// custody account is of what custody holds.
+func VenueAccount(name string) string { return venueAccountPrefix + name }
+
+const venueAccountPrefix = "venue:"
+
+// IsVenueAccount reports an account of VenueAccount.
+func IsVenueAccount(account string) bool { return strings.HasPrefix(account, venueAccountPrefix) }
+
+// VenueDeposit records a deposit of the exchange's own funds from custody to
+// the venue, once the venue credited it: custody holds amount less, and
+// the venue amount more. ref is the move, such as a deposit to the venue.
+func (l Ledger) VenueDeposit(ctx context.Context, key, venue string, amount Amount, ref Ref) (Result, error) {
+	if !amount.Value.IsPositive() {
+		return Result{}, fmt.Errorf("%w: a move of a venue of %s", ErrInvalidRequest, amount.Value)
+	}
+	return l.record(ctx, entry{kind: KindVenueDeposit, key: key, ref: ref, postings: []posting{
+		{AccountCustody, amount.Currency, amount.Value},
+		{VenueAccount(venue), amount.Currency, amount.Value.Neg()},
+	}})
+}
+
+// VenueWithdrawal records a withdrawal of the exchange's funds from the
+// venue to custody, once custody received it.
+func (l Ledger) VenueWithdrawal(ctx context.Context, key, venue string, amount Amount, ref Ref) (Result, error) {
+	if !amount.Value.IsPositive() {
+		return Result{}, fmt.Errorf("%w: a move of a venue of %s", ErrInvalidRequest, amount.Value)
+	}
+	return l.record(ctx, entry{kind: KindVenueWithdrawal, key: key, ref: ref, postings: []posting{
+		{VenueAccount(venue), amount.Currency, amount.Value},
+		{AccountCustody, amount.Currency, amount.Value.Neg()},
+	}})
+}
+
+// VenueFee records a fee that the venue charged us, as it reported it: the
+// venue holds fee less, which the inventory, the exchange's own funds,
+// pays.
+func (l Ledger) VenueFee(ctx context.Context, key, venue string, fee Amount, ref Ref) (Result, error) {
+	if !fee.Value.IsPositive() {
+		return Result{}, fmt.Errorf("%w: a move of a venue of %s", ErrInvalidRequest, fee.Value)
+	}
+	return l.record(ctx, entry{kind: KindVenueFee, key: key, ref: ref, postings: []posting{
+		{VenueAccount(venue), fee.Currency, fee.Value},
+		{AccountInventory, fee.Currency, fee.Value.Neg()},
+	}})
+}
+
+// VenueHoldings returns what the books say the exchange holds at the venue
+// name in each currency (#385), by the currency's hk: the negative of the
+// venue's account. A currency that was never moved there is absent.
+func (l Ledger) VenueHoldings(ctx context.Context, name string) (map[string]shared.Decimal, error) {
+	rows, err := l.DB.QueryContext(ctx, `SELECT currency_hk::text, (-SUM(amount::numeric))::text
+		FROM ledger_postings WHERE account = $1 GROUP BY currency_hk`, VenueAccount(name))
+	if err != nil {
+		return nil, fmt.Errorf("ledger: read the holdings of venue %s: %w", name, err)
+	}
+	defer rows.Close()
+	out := map[string]shared.Decimal{}
+	for rows.Next() {
+		var hk, sum string
+		if err := rows.Scan(&hk, &sum); err != nil {
+			return nil, fmt.Errorf("ledger: read the holdings of venue %s: %w", name, err)
+		}
+		d, err := shared.NewDecimalFromString(sum)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: read the holdings of venue %s: %w", name, err)
+		}
+		out[hk] = d
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ledger: read the holdings of venue %s: %w", name, err)
+	}
+	return out, nil
+}
+
 // Conversion converts the available funds of a in one currency into
 // another, as a currency migration does (#215): From leaves the balance,
 // through a lock as every debit does, and To enters it. Custody must then
@@ -373,6 +454,9 @@ func withdrawal(key string, a Account, amount Amount, fee shared.Decimal, ref Re
 	return e
 }
 
+// venueName is the name of a venue, as the configuration names it.
+var venueName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,29}$`)
+
 // validate checks an entry before it touches the database.
 func (e entry) validate() error {
 	if e.key == "" || len(e.key) > 200 {
@@ -392,6 +476,9 @@ func (e entry) validate() error {
 	for _, p := range e.postings {
 		if p.amount.IsZero() {
 			return fmt.Errorf("%w: a posting to %s of zero", ErrInvalidRequest, p.account)
+		}
+		if IsVenueAccount(p.account) && !venueName.MatchString(strings.TrimPrefix(p.account, venueAccountPrefix)) {
+			return fmt.Errorf("%w: %q is not the name of a venue", ErrInvalidRequest, p.account)
 		}
 	}
 	return nil
@@ -723,6 +810,11 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 			seen[k] = true
 			all = append(all, wanted{k, m.account, m.currency})
 		}
+	}
+	// An entry of the exchange's own accounts only, such as a move to a
+	// venue (#385), touches no balance.
+	if len(all) == 0 {
+		return map[balanceKey]*balance.Balance{}, nil
 	}
 	sort.Slice(all, func(i, j int) bool {
 		a, b := all[i].key, all[j].key

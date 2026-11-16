@@ -75,6 +75,10 @@ var adminRoutes = map[string]admin.RouteClass{
 	// Accepting a row that was changed outside the backend.
 	"POST /integrity/findings/:id/reseal": admin.RouteSensitive,
 
+	// Routing through a venue again after a difference with the books
+	// (#385).
+	"POST /venues/holds/:id/clear": admin.RouteSensitive,
+
 	// The market data catalog: public prices of other exchanges, which the
 	// jobs can fetch again.
 	"POST /market-data/sources/:source/pause":  admin.RouteChange,

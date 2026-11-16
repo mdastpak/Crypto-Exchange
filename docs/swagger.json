@@ -6312,6 +6312,177 @@
                 }
             }
         },
+        "/api/v1/admin/venues": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The external exchanges that cover the OTC trades (#385), as the snapshots of cmd/market-worker last saw them: the time and freshness of each snapshot and its last failure, each balance against what the books say the venue holds with its open reservations and whether it is routable, the networks, the count of the markets and of those trading, and the open reconciliation holds. Read from the database, so every node answers the same.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin venues"
+                ],
+                "summary": "Show the state of the venues",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/state.VenueState"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/venues/holds/{id}/clear": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "After an operator reviewed the difference between what a venue reported holding of a currency and what the books say (#385), clears the hold that made the currency not routable there. The reason is required. If the difference stays, the next reconciliations hold the currency again. Audited as admin.venue_hold_clear. A hold already cleared answers 409 already_cleared; one changed outside the backend, 409 row_unverified. The route needs a step-up.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin venues"
+                ],
+                "summary": "Clear a reconciliation hold of a venue",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The hold's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Why the difference is understood",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.ClearVenueHoldRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/state.Hold"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/withdrawals": {
             "get": {
                 "security": [
@@ -12363,6 +12534,19 @@
                 }
             }
         },
+        "admin.ClearVenueHoldRequest": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "description": "Reason says why the difference is understood, such as the deposit\nthat the venue credited late.",
+                    "type": "string",
+                    "maxLength": 1000
+                }
+            }
+        },
         "admin.ControlList": {
             "type": "object",
             "properties": {
@@ -17215,6 +17399,184 @@
                     "description": "URL is the origin of the site, such as \"https://example.ir\".",
                     "type": "string",
                     "example": "https://example.ir"
+                }
+            }
+        },
+        "state.BalanceState": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "available": {
+                    "type": "number"
+                },
+                "booked": {
+                    "description": "Booked is what the books say the venue holds; Difference is\nFree + Locked - Booked.",
+                    "type": "number"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "difference": {
+                    "type": "number"
+                },
+                "free": {
+                    "description": "Free and Locked are the last snapshot; Reserved the open\nreservations; Available what the router may still plan on.",
+                    "type": "number"
+                },
+                "locked": {
+                    "type": "number"
+                },
+                "mismatch_runs": {
+                    "type": "integer"
+                },
+                "reserved": {
+                    "type": "number"
+                },
+                "routability": {
+                    "$ref": "#/definitions/state.Routability"
+                },
+                "taken_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "state.Hold": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "booked": {
+                    "type": "number"
+                },
+                "clear_reason": {
+                    "type": "string"
+                },
+                "cleared_at": {
+                    "type": "string"
+                },
+                "cleared_by": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "difference": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "reported": {
+                    "type": "number"
+                },
+                "venue": {
+                    "type": "string"
+                }
+            }
+        },
+        "state.NetworkState": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "deposit_enabled": {
+                    "type": "boolean"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "taken_at": {
+                    "type": "string"
+                },
+                "withdraw_enabled": {
+                    "type": "boolean"
+                },
+                "withdraw_fee": {
+                    "type": "number"
+                },
+                "withdraw_min": {
+                    "type": "number"
+                }
+            }
+        },
+        "state.Routability": {
+            "type": "object",
+            "properties": {
+                "reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "routable": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "state.Snapshot": {
+            "type": "object",
+            "properties": {
+                "failed_at": {
+                    "type": "string"
+                },
+                "failure": {
+                    "description": "Failure is the kind of the last failure: retryable, rejected, or\nunknown_outcome.",
+                    "type": "string"
+                },
+                "fresh": {
+                    "type": "boolean"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "taken_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "state.VenueState": {
+            "type": "object",
+            "properties": {
+                "balances": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/state.BalanceState"
+                    }
+                },
+                "holds": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/state.Hold"
+                    }
+                },
+                "instruments": {
+                    "description": "Instruments and Trading count the markets listed, and those trading.",
+                    "type": "integer"
+                },
+                "networks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/state.NetworkState"
+                    }
+                },
+                "snapshots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/state.Snapshot"
+                    }
+                },
+                "trading": {
+                    "type": "integer"
+                },
+                "venue": {
+                    "type": "string"
                 }
             }
         },
