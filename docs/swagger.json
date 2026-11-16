@@ -13247,6 +13247,10 @@
         "delisting.NoticeReport": {
             "type": "object",
             "properties": {
+                "broadcasting": {
+                    "description": "Broadcasting is a notice to everyone whose other users are still\nbeing sent, in batches (#461).",
+                    "type": "boolean"
+                },
                 "due_at": {
                     "type": "string"
                 },
@@ -13267,12 +13271,15 @@
                 "pending": {
                     "type": "integer"
                 },
+                "prepare_attempts": {
+                    "type": "integer"
+                },
                 "prepared_at": {
-                    "description": "PreparedAt is when the recipients were written; nil until then.",
+                    "description": "PreparedAt is when the holders were written as recipients; nil until\nthen. PrepareAttempts counts the batches that failed meanwhile.",
                     "type": "string"
                 },
                 "recipients": {
-                    "description": "Recipients are the users that it goes to, and Holders those of them\nwho held the currency.",
+                    "description": "Recipients are the users that it went to so far, and Holders those\nof them who held the currency.",
                     "type": "integer"
                 },
                 "sent": {

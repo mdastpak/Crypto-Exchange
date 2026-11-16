@@ -950,6 +950,11 @@ definitions:
     - KindEmergency
   delisting.NoticeReport:
     properties:
+      broadcasting:
+        description: |-
+          Broadcasting is a notice to everyone whose other users are still
+          being sent, in batches (#461).
+        type: boolean
       due_at:
         type: string
       failed:
@@ -964,13 +969,17 @@ definitions:
         type: integer
       pending:
         type: integer
+      prepare_attempts:
+        type: integer
       prepared_at:
-        description: PreparedAt is when the recipients were written; nil until then.
+        description: |-
+          PreparedAt is when the holders were written as recipients; nil until
+          then. PrepareAttempts counts the batches that failed meanwhile.
         type: string
       recipients:
         description: |-
-          Recipients are the users that it goes to, and Holders those of them
-          who held the currency.
+          Recipients are the users that it went to so far, and Holders those
+          of them who held the currency.
         type: integer
       sent:
         description: The recipients by outcome, and those still to send.
