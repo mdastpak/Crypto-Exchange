@@ -32,6 +32,10 @@ type OTPMessage struct {
 	// and "TR7NHq...gjLj6t", each at most 25 characters, for templates
 	// whose parameters are short (#371).
 	Amount, Destination string
+	// Fee is the network fee that the withdrawal is charged on top of the
+	// amount, such as "1 USDT" (#408), or "" when the message has none. It
+	// is at most 25 characters, as Amount is.
+	Fee string
 	// AntiPhishingCode is the user's anti-phishing phrase (#375), which
 	// every email shows, or "" when they have none. It is set only for a
 	// contact that the account has verified. Never log it.

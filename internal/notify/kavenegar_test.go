@@ -23,8 +23,13 @@ type kavenegarRequest struct {
 	form                      url.Values
 }
 
+// fakeKavenegarLimits are the limits of the tokens, as Kavenegar documents
+// them (#459), written out apart from the deliverer's own check: spaces per
+// token, and 100 characters.
+var fakeKavenegarLimits = map[string]int{"token": 0, "token2": 0, "token3": 0, "token10": 5, "token20": 8}
+
 // fakeKavenegar answers every request with status and body, and records the
-// requests.
+// requests. Like the real API, it refuses with 431 a token over its limits.
 func fakeKavenegar(t *testing.T, status int, body string) (*httptest.Server, func() []kavenegarRequest) {
 	t.Helper()
 	var mu sync.Mutex
@@ -40,6 +45,13 @@ func fakeKavenegar(t *testing.T, status int, body string) (*httptest.Server, fun
 		})
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		for name, spaces := range fakeKavenegarLimits {
+			if v := r.PostForm.Get(name); strings.Count(v, " ") > spaces || len([]rune(v)) > 100 || strings.ContainsAny(v, "\r\n") {
+				w.WriteHeader(431)
+				_, _ = w.Write([]byte(`{"return":{"status":431,"message":"invalid token format"}}`))
+				return
+			}
+		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
 	}))
@@ -168,6 +180,81 @@ func TestKavenegarDeliverer_WithdrawalCodesHaveTheirOwnTemplate(t *testing.T) {
 	assert.Equal(t, "withdraw", got[0].form.Get("template"))
 	assert.Equal(t, "482913", got[0].form.Get("token"))
 	assert.Equal(t, "100 USDT to TR7NHq...gjLj6t", got[0].form.Get("token10"))
+}
+
+// TestKavenegarDeliverer_TheLongestWithdrawalFits sends a withdrawal code
+// with the longest amount, destination, and fee that a confirmation allows,
+// 25 characters each, through a Kavenegar that enforces its limits (#459):
+// %token10 holds at most five spaces and 100 characters.
+func TestKavenegarDeliverer_TheLongestWithdrawalFits(t *testing.T) {
+	server, requests := fakeKavenegar(t, http.StatusOK, `{"return":{"status":200,"message":"OK"},"entries":[{"messageid":7}]}`)
+	k, err := NewKavenegarDeliverer(config.KavenegarConfig{APIKey: testKavenegarKey, OTPTemplate: "signin",
+		WithdrawalTemplate: "withdraw", BaseURL: server.URL, Timeout: 5})
+	require.NoError(t, err)
+
+	withdrawal := testSMSMessage
+	withdrawal.Purpose = PurposeWithdrawal
+	withdrawal.Amount = "1234567890.12345678 USDTX"
+	withdrawal.Destination = "TR7NHqjeKQxGTCi8q8ZY4p..."
+	withdrawal.Fee = "123456.123456789012 USDTX"
+	withdrawal.Details = withdrawal.Amount + " to " + withdrawal.Destination + " (fee " + withdrawal.Fee + ")"
+	withdrawal.DenyToken = "d8Kx2Qm9"
+	require.Len(t, withdrawal.Amount, 25)
+	require.Len(t, withdrawal.Destination, 25)
+	require.Len(t, withdrawal.Fee, 25)
+	require.Equal(t, 6, strings.Count(withdrawal.Details, " "), "the text of the message, which %token10 cannot take")
+
+	require.NoError(t, k.Deliver(context.Background(), withdrawal))
+	got := requests()
+	require.Len(t, got, 1)
+	token10 := got[0].form.Get("token10")
+	assert.Equal(t, withdrawal.Amount+" to "+withdrawal.Destination+" (fee:"+withdrawal.Fee+")", token10)
+	assert.Equal(t, 5, strings.Count(token10, " "))
+	assert.LessOrEqual(t, len([]rune(token10)), 100)
+
+	// A destination with spaces loses them, and a message without the fee
+	// shows none.
+	withdrawal.Destination, withdrawal.Fee = "IR12 0000 1234", ""
+	require.NoError(t, k.Deliver(context.Background(), withdrawal))
+	assert.Equal(t, withdrawal.Amount+" to IR1200001234", requests()[1].form.Get("token10"))
+
+	// A message queued before the parts were set keeps its text, and is
+	// refused here if it breaks the limits, never sent to fail there.
+	withdrawal.Amount, withdrawal.Destination = "", ""
+	err = k.Deliver(context.Background(), withdrawal)
+	require.Error(t, err)
+	assert.True(t, IsPermanent(err))
+	assert.Contains(t, err.Error(), "token10 has 6 spaces")
+	assert.Len(t, requests(), 2, "not sent")
+}
+
+// TestCheckKavenegarTokens checks each limit of the tokens (#459).
+func TestCheckKavenegarTokens(t *testing.T) {
+	for name, tc := range map[string]struct {
+		token, value, want string
+	}{
+		"code without spaces":    {"token", "482913", ""},
+		"code with a space":      {"token", "48 2913", "token has 1 spaces; Kavenegar allows 0"},
+		"deny token with space":  {"token2", "a b", "token2 has 1 spaces"},
+		"token3 with space":      {"token3", "a b", "token3 has 1 spaces"},
+		"five spaces in token10": {"token10", "a b c d e f", ""},
+		"six spaces in token10":  {"token10", "a b c d e f g", "token10 has 6 spaces; Kavenegar allows 5"},
+		"eight in token20":       {"token20", "a b c d e f g h i", ""},
+		"nine in token20":        {"token20", "a b c d e f g h i j", "token20 has 9 spaces"},
+		"a line break":           {"token10", "a\nb", "token10 has a line break"},
+		"100 characters":         {"token10", strings.Repeat("ب", 100), ""},
+		"101 characters":         {"token10", strings.Repeat("ب", 101), "token10 has 101 characters; Kavenegar allows 100"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := checkKavenegarTokens(url.Values{tc.token: {tc.value}, "receptor": {"0912 123 4567"}})
+			if tc.want == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }
 
 // TestKavenegarDeliverer_RemindersHaveTheirOwnTemplate checks that the
