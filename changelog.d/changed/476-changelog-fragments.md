@@ -1,0 +1,4 @@
+- The entries of the CHANGELOG are one file per change in [changelog.d](changelog.d/README.md), not edits of CHANGELOG.md ([#476](https://github.com/mdastpak/Crypto-Exchange/issues/476)). Every pull request used to add its entry at the top of the same list, so any two open together conflicted there: 9 of the 11 merges of main into a branch that conflicted since 2026-11-01 did so in CHANGELOG.md.
+  - `go run ./scripts/changelog check` validates the fragments, `render` shows them together, and `collect` moves them into `[Unreleased]` at a release.
+  - CI runs `check`, and refuses a pull request that adds lines to CHANGELOG.md without collecting fragments.
+  - `scripts/sync-main.sh` brings a branch up to date with main before a merge. It regenerates the OpenAPI document when only that conflicts, stops on any other conflict, and runs the checks of the migration files and of the fragments.

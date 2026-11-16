@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+New entries are not written here: each change adds a file to [changelog.d](changelog.d/README.md), and `go run ./scripts/changelog render` shows them together ([#476](https://github.com/mdastpak/Crypto-Exchange/issues/476)). They move into this section at a release, with `go run ./scripts/changelog collect`. The entries below were written before that.
+
 ### Added
 
 - Signed reference prices ([#450](https://github.com/mdastpak/Crypto-Exchange/issues/450)). See [Integrity of the prices](docs/price-engine.md#integrity-of-the-prices).
