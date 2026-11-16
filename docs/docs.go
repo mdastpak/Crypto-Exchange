@@ -8793,6 +8793,88 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/balances": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The balances of the signed-in user, grouped by account, one per currency: available, locked, pending_deposit, total (available plus locked), and version, which rises with every change, so that a client joins this snapshot with the stream of account.balances (#66) by applying only the events of a higher version. account selects the main account (the default), a sub-account of the user by its ID, or all, every account of the user. A sub-account of another user, an unknown one, and a deleted one all answer 404 account_not_found. currency filters to one currency. A currency without a balance row is left out: show it as zero. Amounts are decimal strings. Each balance is checked against its row seal (#139); one that fails is not returned, its finding is recorded, and the answer is 503 balance_unverified with info.currency_hk.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-balances"
+                ],
+                "summary": "My balances",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "main (the default), all, or the ID of a sub-account",
+                        "name": "account",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "A currency hk",
+                        "name": "currency",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.BalancesInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "account_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "balance_unverified, with info.currency_hk, or balances_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/confirmation-method": {
             "get": {
                 "security": [
@@ -11300,6 +11382,133 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/transactions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every change of the signed-in user's balances, newest first: its id, the entry that made it (entry_id) and its kind, the change_type, the currency, the amount, the available, locked, and pending_deposit amounts after it, the account (sub_account_id, absent for the main account), what caused it (reference, such as a withdrawal and its ID), and its time. account selects the main account (the default), a sub-account by its ID, or all; a sub-account of another user, an unknown one, and a deleted one answer 404 account_not_found. currency, kind, since (inclusive), and until (exclusive) filter it. Pages follow the pagination convention of docs/api.md; the cursor holds the time and the id of a change. The changes of one entry share its time.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-balances"
+                ],
+                "summary": "My transaction history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "main (the default), all, or the ID of a sub-account",
+                        "name": "account",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "A currency hk",
+                        "name": "currency",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "deposit_detected",
+                            "deposit_credited",
+                            "deposit_failed",
+                            "lock",
+                            "release",
+                            "transfer",
+                            "trade",
+                            "withdrawal",
+                            "conversion"
+                        ],
+                        "type": "string",
+                        "description": "The kind of the entry",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "From this time, inclusive (RFC 3339)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Before this time, exclusive (RFC 3339)",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 200,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "The number of changes, 50 by default",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/user.TransactionPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "account_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "balances_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/verification": {
             "get": {
                 "security": [
@@ -11742,7 +11951,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, confirmation_denied, or row_unverified",
+                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -12842,6 +13051,134 @@ const docTemplate = `{
                 "next_cursor": {
                     "description": "NextCursor asks for the next page. It is left out on the last page.",
                     "type": "string"
+                }
+            }
+        },
+        "balances.Balance": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "string",
+                    "example": "95.5"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "locked": {
+                    "type": "string",
+                    "example": "4.5"
+                },
+                "pending_deposit": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID is the sub-account, absent for the main account.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "total": {
+                    "description": "Total is available plus locked.",
+                    "type": "string",
+                    "example": "100"
+                },
+                "version": {
+                    "description": "Version rises with every change: a client that joins this snapshot\nwith the stream of changes applies only the events of a higher\nversion.",
+                    "type": "integer",
+                    "example": 7
+                }
+            }
+        },
+        "balances.Change": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "4.5"
+                },
+                "available": {
+                    "description": "Available, Locked, and PendingDeposit are the balance after the\nchange.",
+                    "type": "string",
+                    "example": "95.5"
+                },
+                "change_type": {
+                    "description": "ChangeType is what the change did to the balance.",
+                    "type": "string",
+                    "example": "LOCK"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "entry_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "description": "ID is the change, and EntryID the ledger entry it is part of: one\nentry can change several balances, such as a trade.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "description": "Kind is the kind of the entry.",
+                    "type": "string",
+                    "enum": [
+                        "deposit_detected",
+                        "deposit_credited",
+                        "deposit_failed",
+                        "lock",
+                        "release",
+                        "transfer",
+                        "trade",
+                        "withdrawal",
+                        "conversion"
+                    ]
+                },
+                "locked": {
+                    "type": "string",
+                    "example": "4.5"
+                },
+                "pending_deposit": {
+                    "type": "string",
+                    "example": "0"
+                },
+                "reference": {
+                    "description": "Reference is what caused the change, such as a withdrawal.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/balances.Reference"
+                        }
+                    ]
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID is the sub-account, absent for the main account.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "time": {
+                    "type": "string"
+                }
+            }
+        },
+        "balances.Reference": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "5f0c3c9e-2f43-4f7e-9a9c-2d6f1f5c1a10"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "withdrawal"
                 }
             }
         },
@@ -16721,6 +17058,22 @@ const docTemplate = `{
                 }
             }
         },
+        "user.AccountBalances": {
+            "type": "object",
+            "properties": {
+                "balances": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/balances.Balance"
+                    }
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID is the sub-account, absent for the main account.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "user.AddPasskeyRequest": {
             "type": "object",
             "properties": {
@@ -16764,6 +17117,17 @@ const docTemplate = `{
                     "description": "Code is 4 to 20 letters, digits, spaces, or hyphens, of any script.",
                     "type": "string",
                     "example": "blue falcon 7"
+                }
+            }
+        },
+        "user.BalancesInfo": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/user.AccountBalances"
+                    }
                 }
             }
         },
@@ -17216,6 +17580,21 @@ const docTemplate = `{
                 "code": {
                     "type": "string",
                     "example": "123456"
+                }
+            }
+        },
+        "user.TransactionPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/balances.Change"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor asks for the next page. It is left out on the last page.",
+                    "type": "string"
                 }
             }
         },

@@ -371,10 +371,24 @@ func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
 	assert.Contains(t, html, "تأیید برداشت")
 	assert.Contains(t, html, "&lt;b&gt;TR7&lt;/b&gt;", "what the template prints is escaped")
 	assert.NotContains(t, html, "<b>TR7</b>")
+	assert.NotContains(t, html, "کارمزد شبکه", "no fee, no row")
+
+	// The fee of a withdrawal is in the HTML, in both languages (#460),
+	// and in the text.
+	withdrawal.Fee = "1.5 USDT"
+	text, html := send(HTMLTemplatesFA, withdrawal)
+	assert.Contains(t, html, "کارمزد شبکه")
+	assert.Contains(t, html, "1.5 USDT")
+	assert.Contains(t, text, "1.5 USDT")
+	text, html = send(HTMLTemplatesEN, withdrawal)
+	assert.Contains(t, html, "Network fee")
+	assert.Contains(t, html, "1.5 USDT")
+	assert.Contains(t, text, "1.5 USDT", "a text template that does not show the fee gets it")
+	withdrawal.Fee = ""
 	_, html = send(HTMLTemplatesFA, testEmailMessage)
 	assert.Contains(t, html, "کد ورود شما")
 
-	text, html := send(HTMLTemplatesNone, testEmailMessage)
+	text, html = send(HTMLTemplatesNone, testEmailMessage)
 	assert.Empty(t, html, "none sends text only")
 	assert.Contains(t, text, "482913")
 
@@ -396,6 +410,10 @@ func TestEmailDeliverer_HTMLTemplates(t *testing.T) {
 	_, err = NewEmailDeliverer(cfg, time.Minute)
 	require.ErrorContains(t, err, "delisting_notice.html")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "delisting_notice.html"), []byte(`<p>{{.Currency}} {{.Stage}} {{.AntiPhishingCode}}</p>`), 0o600))
+	// A withdrawal template that hides the fee is refused (#460).
+	_, err = NewEmailDeliverer(cfg, time.Minute)
+	require.ErrorContains(t, err, "withdrawal.html must show {{.Fee}}")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "withdrawal.html"), []byte(`<p>{{.Amount}} {{.Fee}} {{.Code}} {{.AntiPhishingCode}} {{.DenyLink}}</p>`), 0o600))
 	_, html = send(dir, testEmailMessage)
 	assert.Contains(t, html, "<p>Exchange: 482913 </p>", "the sender is the name of the from address")
 

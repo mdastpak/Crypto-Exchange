@@ -8,6 +8,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
+	"github.com/mdastpak/crypto-exchange/internal/balances"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
@@ -41,6 +42,8 @@ type UserHandler struct {
 	Restrictions RestrictionReader
 	// Verification reads the verification level of the user (#157).
 	Verification VerificationReader
+	// Balances reads the user's balances and their history (#365).
+	Balances BalanceReader
 	// Destinations keeps the withdrawal destinations of the user (#160).
 	// The server sets the provider that checks the owner of a card, an
 	// IBAN, or an account, and the keys that read the national IDs.
@@ -107,6 +110,7 @@ func NewHandler(is *models.InfraServices) *UserHandler {
 		h.Conversions = rebrand.Store{DB: is.Postgres.DB}
 		h.AntiPhishing = antiphishing.Store{DB: is.Postgres.DB, Rotation: antiphishing.NewRotation(is.Settings().AntiPhishing.Rotation)}
 		h.Agreements = agreements.Store{DB: is.Postgres.DB, Config: is.Settings()}
+		h.Balances = balances.Store{DB: is.Postgres.DB}
 		if policy, err := verification.NewPolicy(is.Settings().Verification); err != nil {
 			log.Printf("The verification levels are unavailable: %v", err)
 		} else {

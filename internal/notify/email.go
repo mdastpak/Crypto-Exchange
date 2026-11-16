@@ -57,8 +57,9 @@ type emailData struct {
 	Code       string
 	TTLSeconds int
 	// Details is what a withdrawal code confirms; empty for a sign-in.
-	// Amount and Destination are its two parts.
-	Details, Amount, Destination string
+	// Amount and Destination are its two parts, and Fee the network fee
+	// charged on top, or "" (#460).
+	Details, Amount, Destination, Fee string
 	// Sender is the name of the sender address, such as the exchange's.
 	Sender string
 	// AntiPhishingCode is the user's anti-phishing phrase (#375), or "".
@@ -89,6 +90,14 @@ const antiPhishingLabel = "Anti-phishing code / کد ضدفیشینگ: "
 // denyLinkLabel introduces the "this was not me" link that the text part of
 // an email gains when its template does not show it (#374).
 const denyLinkLabel = "Not you? This link cancels it and secures your account / این من نبودم: "
+
+// sampleFee is the fee of the sample withdrawal that each template renders
+// at startup: an HTML template of a withdrawal code must show it (#460).
+const sampleFee = "0.123 SAMPLEFEE"
+
+// feeLabel introduces the fee that the text part of a withdrawal email
+// gains when its template does not show it (#460).
+const feeLabel = "Network fee / کارمزد شبکه: "
 
 // sampleDenyLink is the link of the sample that each template renders at
 // startup: an HTML template of a code must show it.
@@ -146,7 +155,7 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 			AntiPhishingCode: "sample-phrase-7q", Uses: 200, AgeDays: 180}
 		switch purpose {
 		case PurposeWithdrawal:
-			sample.DenyToken, sample.DenyLink = "SAMPLE000000", sampleDenyLink
+			sample.DenyToken, sample.DenyLink, sample.Fee = "SAMPLE000000", sampleDenyLink, sampleFee
 		case PurposeAntiPhishingReminder:
 			sample.Code, sample.Details, sample.Amount, sample.Destination = "", "", "", ""
 		case PurposeDenied:
@@ -179,6 +188,11 @@ func NewEmailDeliverer(cfg config.EmailConfig, codeTTL time.Duration) (*EmailDel
 		if html != "" && sample.DenyLink != "" && !strings.Contains(html, sample.DenyLink) {
 			return nil, fmt.Errorf("html_templates: %s must show {{.DenyLink}}", htmlTemplateName(purpose))
 		}
+		// The HTML of a withdrawal code must show its fee (#460): what the
+		// user confirms is what they are charged.
+		if html != "" && sample.Fee != "" && !strings.Contains(html, sample.Fee) {
+			return nil, fmt.Errorf("html_templates: %s must show {{.Fee}}", htmlTemplateName(purpose))
+		}
 	}
 	return d, nil
 }
@@ -206,7 +220,7 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 		sender = d.from.Address
 	}
 	data := emailData{Code: msg.Code, TTLSeconds: int(d.codeTTL / time.Second), Details: msg.Details,
-		Amount: msg.Amount, Destination: msg.Destination, Sender: sender, AntiPhishingCode: msg.AntiPhishingCode,
+		Amount: msg.Amount, Destination: msg.Destination, Fee: msg.Fee, Sender: sender, AntiPhishingCode: msg.AntiPhishingCode,
 		Uses: msg.Uses, AgeDays: msg.AgeDays, DenyLink: msg.DenyLink,
 		Cancelled: msg.Cancelled, InProgress: msg.InProgress, HoldHours: msg.HoldHours,
 		Currency: msg.Delisting.Currency, Stage: msg.Delisting.Stage, Deadline: msg.Delisting.Deadline,
@@ -242,6 +256,11 @@ func (d *EmailDeliverer) render(msg OTPMessage) (subject, text, html string, err
 	// the operator's that does not show it gets it on its first line.
 	if code := msg.AntiPhishingCode; code != "" && !strings.Contains(text, code) {
 		text = antiPhishingLabel + code + "\n\n" + text
+	}
+	// The fee of a withdrawal is in its email (#460): a text template of
+	// the operator's that does not show it gets it after the text.
+	if fee := msg.Fee; fee != "" && !strings.Contains(text, fee) {
+		text = strings.TrimRight(text, "\n") + "\n\n" + feeLabel + fee + "\n"
 	}
 	// So is the link of a code (#374): a text template that does not show
 	// it gets it at the end.

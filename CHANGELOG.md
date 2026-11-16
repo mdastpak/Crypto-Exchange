@@ -10,6 +10,10 @@ New entries are not written here: each change adds a file to [changelog.d](chang
 
 ### Added
 
+- The user's balances and the history of their changes ([#365](https://github.com/mdastpak/Crypto-Exchange/issues/365)). See [Balances and history](docs/api.md#balances-and-history).
+  - `GET /user/balances` returns the signed-in user's balances, grouped by account: available, locked, pending, total, and the version that a stream of changes joins on. `?account=` is `main` (the default), a sub-account, or `all`, and `?currency=` filters. Another user's sub-account, an unknown one, and a deleted one all answer `404 account_not_found`. A balance that fails its row seal is not shown: `503 balance_unverified`, with its finding recorded.
+  - `GET /user/transactions` pages through every change of the user's balances, newest first, with its entry, kind, change type, amount, the balance after it, the account, and the reference that caused it. It filters by account, currency, kind, and time, with a cursor of the change's time and ID. The idempotency key, the request hash, and the postings stay internal.
+  - Migration 43 adds the indexes `balance_changes_user_history` and `balance_changes_user_currency_history`, which match every filter and the order, and replaces the index of the user alone.
 - Signed reference prices ([#450](https://github.com/mdastpak/Crypto-Exchange/issues/450)). See [Integrity of the prices](docs/price-engine.md#integrity-of-the-prices).
   - `cmd/price-aggregator` signs each price that it writes to Redis and to `price:stream` with an Ed25519 key, `price_aggregator.signing_key` (`PRICE_AGGREGATOR_SIGNING_KEY`), over a canonical encoding of every field, with the key id in `kid` and the signature in `sig`.
   - `price.Reader` verifies each price with `price.verify_keys` (`PRICE_VERIFY_KEYS`) before it reads its age: an unsigned, changed, malformed, or unknown-key price is `price.ErrUnverifiedPrice`, a stale price to OTC quotes and delisting settlements, counted in `price_signature_failures_total{reason}` and logged once a minute per market. Two public keys allow a rotation.
@@ -257,6 +261,10 @@ New entries are not written here: each change adds a file to [changelog.d](chang
 
 ### Fixed
 
+- The fee of a withdrawal is shown wherever its code is, and a changed fee is refused with its own error ([#460](https://github.com/mdastpak/Crypto-Exchange/issues/460)).
+  - The HTML email of a withdrawal code shows the fee, in English and Persian, and an operator's `withdrawal.html` without `{{.Fee}}` stops the server at startup. A text template without it gets the fee on a line of its own.
+  - sms.ir receives the fee in the template parameter `#FEE#`. Add it to the withdrawal template.
+  - Step two of a withdrawal whose fee changed since the user confirmed answers `409 withdrawal_fee_changed`, with `info.confirmed_fee` and `info.fee`, and locks nothing. `confirmation_mismatch` stays for a confirmation of another request: the fee stored and sealed with the confirmation tells the two apart.
 - The notices of a delisting fanned out every user in one statement, which times out with enough users, and one failure stopped every notice ([#461](https://github.com/mdastpak/Crypto-Exchange/issues/461)). See [Delisting notices in batches](docs/architecture.md#delisting-notices-in-batches).
   - The holders are written as recipients in batches of 5,000 with a cursor, and the other users of a notice to everyone are sent in batches of 50 and counted on the notice, not stored as a row each; a user whose send fails is written as a recipient and tried again. Migration 42 adds the cursors and the counts, and an index on `balances (currency_hk, user_id)`.
   - A notice that fails to prepare waits a minute times its attempts, up to an hour, and the others go on; a recipient whose send fails is delayed, and the batch continues. A run returns its errors together.

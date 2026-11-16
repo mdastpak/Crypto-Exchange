@@ -64,6 +64,8 @@ An error response contains only a fixed message for each error. Internal details
 | `verification_required` | `403` | The user's [verification level](#verification-levels) does not allow the action; `info.required_level` is the level it needs |
 | `withdrawal_limit_exceeded` | `403` | The withdrawal is above a limit of the user's [verification level](#verification-levels); `info` has the limit and, for the daily one, what remains |
 | `withdrawal_limit_unconfigured` | `403` | The currency has no withdrawal limit at the user's level, which limits other currencies: a configuration error, refused rather than unlimited ([#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); `info` has `action`, `level`, and `currency_hk` |
+| `account_not_found` | `404` | The `account` of a [balance or history](#balances-and-history) request is not a sub-account of the user: another user's, unknown, or deleted, alike |
+| `balance_unverified` | `503` | A [balance](#get-userbalances) failed its row seal and is not shown; `info.currency_hk` names its currency, and an integrity finding is recorded |
 | `destination_not_owned` | `403` | The card, IBAN, or account of a new [withdrawal destination](#withdrawal-destinations) is not the user's |
 | `destination_invalid` | `400` | Not a card number, an IBAN, an account number, or an address of its network; `info.reason` says why |
 | `destination_exists`, `destination_taken`, `destination_limit_reached` | `409` | The [withdrawal destination](#withdrawal-destinations) is in the user's list already, is another user's card, IBAN, or account, or the list is full |
@@ -73,6 +75,7 @@ An error response contains only a fixed message for each error. Internal details
 | `confirmation_locked` | `429` | Too many wrong codes of a confirmation, or too many codes requested |
 | `confirmation_expired`, `confirmation_already_confirmed` | `409` | The confirmation is past its time, or was confirmed already |
 | `confirmation_denied` | `409` | The confirmation was stopped with its ["this was not me" link](#this-was-not-me-links) |
+| `withdrawal_fee_changed` | `409` | The network fee of a [withdrawal](#withdrawals) changed since the user confirmed it; `info.confirmed_fee` and `info.fee` are the two fees, and nothing is locked: the user confirms again ([#460](https://github.com/mdastpak/Crypto-Exchange/issues/460)) |
 | `deny_link_invalid` | `404` | The ["this was not me" link](#this-was-not-me-links) is unknown, expired, or used |
 | `confirmation_method_unavailable`, `confirmation_method_required` | `409` | The user cannot use that method now, or has no method to confirm withdrawals with |
 | `confirmations_unavailable` | `503` | The confirmations are not available now |
@@ -1432,6 +1435,48 @@ Returns the signed-in user's verification:
 
 A client uses it to show what each level unlocks, and what remains of the daily limits.
 
+## Balances and history
+
+The signed-in user's own balances, and every change of them, from the [ledger](architecture.md#the-ledger) ([#365](https://github.com/mdastpak/Crypto-Exchange/issues/365)). Both routes need an active session and have the limits of every user route. Every query filters by the user in the database. API keys (#63) will need a read scope for them.
+
+**Accounts.** `account` selects the main account, which is the default (`main`), a sub-account of the user by its ID, or `all`, every account of the user. A sub-account of another user, an unknown one, and a deleted one all answer `404 account_not_found`, so the answer does not tell which sub-accounts exist.
+
+### `GET /user/balances`
+
+`?account=`, and `?currency=` (a currency hk) to filter to one currency. `info.accounts` is a list of groups, one per account, the main account first. Each group has `sub_account_id` (absent for the main account) and `balances`, one per currency:
+
+| Field | Meaning |
+|-------|---------|
+| `currency_hk`, `symbol` | The currency |
+| `available`, `locked`, `pending_deposit` | Decimal strings |
+| `total` | `available` plus `locked` |
+| `version` | Rises with every change. A client that joins this snapshot with the stream of `account.balances` (#66) applies only the events of a higher version |
+
+A currency without a balance row is left out; show it as zero. A single account without any balance is one group with no balances.
+
+Every balance is checked against its [row seal](data-protection.md#row-seals). Balances are sealed from their first row, so one that fails is not returned in either mode: the answer is `503 balance_unverified` with `info.currency_hk`, and an [integrity finding](#integrity-findings) is recorded.
+
+### `GET /user/transactions`
+
+The changes of the user's balances, newest first, in pages that follow the [pagination](#pagination) convention. The cursor holds the time and the ID of a change. Filters: `account`, `currency`, `kind`, `since` (inclusive), and `until` (exclusive), times in RFC 3339. Each item has:
+
+| Field | Meaning |
+|-------|---------|
+| `id` | The change |
+| `entry_id`, `kind` | The ledger entry that made it, and its kind: `deposit_detected`, `deposit_credited`, `deposit_failed`, `lock`, `release`, `transfer`, `trade`, `withdrawal`, or `conversion` |
+| `change_type` | What the change did, such as `LOCK` or `TRANSFER_OUT` |
+| `currency_hk`, `symbol`, `amount` | The currency and the amount |
+| `available`, `locked`, `pending_deposit` | The balance after the change |
+| `sub_account_id` | The account; absent for the main account |
+| `reference` | What caused it, `type` and `id`, such as a withdrawal; absent when nothing did |
+| `time` | When the entry was written |
+
+One entry can change several balances, such as a transfer's `LOCK` and `TRANSFER_OUT`. Its changes share its time. The internal fields of an entry are not shown: its idempotency key, its request hash, and its postings to the exchange's own accounts.
+
+**Paging while changes are written.** A change written after the first page is newer than it, so it never appears in a later page, and every change that existed when the first page was read is served once. A change's time is the start of its transaction. A transaction still in flight when a page is read, and committed later, can therefore carry a time that a page already passed. Read again from the first page to see such a change.
+
+Each combination of filters is a range scan of `balance_changes_user_history` or, with a currency, `balance_changes_user_currency_history` (migration 43). A test shows this with `EXPLAIN`.
+
 ## Withdrawal destinations
 
 A withdrawal goes only to a destination in the user's list, which the withdrawal names by its `id`. A number or address typed with the withdrawal is never used ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).
@@ -1591,7 +1636,7 @@ In two steps, with the same `Idempotency-Key` header: 1 to 100 letters, digits, 
 }
 ```
 
-1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, key, and the network fee that it would be charged. The fee is part of `details` (`fee`), and of the message of the code. If an administrator changes the fee before step two, the confirmation no longer matches (`409`, `confirmation_mismatch`), nothing is locked, and the user confirms again. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
+1. **Without `confirmation_id`**, the request is checked as it would run, and a [confirmation](#withdrawal-confirmations) of the user's second factor starts, bound to the request: its currency, network, amount, destination, key, and the network fee that it would be charged. The fee is part of `details` (`fee`), and of the message of the code. If an administrator changes the fee before step two, step two answers `409 withdrawal_fee_changed`, with `info.confirmed_fee`, the fee the user confirmed, and `info.fee`, the fee now ([#460](https://github.com/mdastpak/Crypto-Exchange/issues/460)): nothing is locked, and the user confirms again. The answer is `202` with `confirmation`: its `id`, its `method`, where the code went, and what it confirms. Nothing is locked yet.
 2. **Confirm it** with `POST /user/confirmations/{id}`.
 3. **Send the same request with `confirmation_id`.** It runs in one transaction, under a lock of the user: the checks again, the confirmation consumed, the withdrawal recorded, and its amount and fee locked in the [ledger](architecture.md#the-ledger). The answer is `201` with the withdrawal. The same request again answers `200` with it, and locks nothing more; another request with the key answers `409 idempotency_key_reused`.
 
@@ -1601,7 +1646,7 @@ The checks:
 - The currency is listed, and its lifecycle allows withdrawals; the network allows them (`409 withdrawals_closed`).
 - The destination is the user's, usable now (`409 destination_not_usable_yet` with `usable_from`), and of the kind of the currency: a card, an IBAN, or an account for a fiat currency, an address on `network` for a crypto one.
 - The user's restrictions and security hold (`403`, as for the other operations), and the `withdrawals` lockdown (`503 feature_locked`).
-- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, or `confirmation_mismatch` for one of another request.
+- The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, `confirmation_mismatch` for one of another request, or `withdrawal_fee_changed` for this request's confirmation at a fee that has changed since, with `info.confirmed_fee` and `info.fee`. The confirmation's fee, stored and sealed with it, tells the two apart.
 
 A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`). While thresholds are configured, a currency that has none, under any of its symbols, and no `"*"` default, waits whatever the amount (`review_reason: no_threshold`, [#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
 
