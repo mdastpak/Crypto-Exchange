@@ -37,6 +37,7 @@ const (
 	codeConfirmationNotConfirmed     = "confirmation_not_confirmed"
 	codeConfirmationConsumed         = "confirmation_consumed"
 	codeConfirmationOfAnotherRequest = "confirmation_mismatch"
+	codeWithdrawalFeeChanged         = "withdrawal_fee_changed"
 )
 
 // withdrawalRequest asks for a withdrawal. Amount is a decimal string.
@@ -86,7 +87,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // @Failure 400 {object} models.APIResponse "validation_failed, or idempotency_key_required"
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold"
-// @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, confirmation_denied, or row_unverified"
+// @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified"
 // @Failure 503 {object} models.APIResponse "withdrawals_unavailable or feature_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/withdrawals [post]
@@ -263,6 +264,13 @@ func sendWithdrawalError(c *gin.Context, userHK string, err error) {
 		helpers.SendError(c, http.StatusConflict, codeConfirmationNotConfirmed, i18n.M("CONFIRMATION_NOT_CONFIRMED"), nil)
 	case errors.Is(err, confirm.ErrConsumed):
 		helpers.SendError(c, http.StatusConflict, codeConfirmationConsumed, i18n.M("CONFIRMATION_CONSUMED"), nil)
+	case errors.Is(err, withdrawals.ErrFeeChanged):
+		var changed *withdrawals.FeeChangedError
+		info := gin.H{}
+		if errors.As(err, &changed) {
+			info["confirmed_fee"], info["fee"] = changed.Confirmed, changed.Current
+		}
+		helpers.SendError(c, http.StatusConflict, codeWithdrawalFeeChanged, i18n.M("WITHDRAWAL_FEE_CHANGED"), info)
 	case errors.Is(err, confirm.ErrMismatch):
 		helpers.SendError(c, http.StatusConflict, codeConfirmationOfAnotherRequest, i18n.M("CONFIRMATION_MISMATCH"), nil)
 	case errors.Is(err, destinations.ErrNoKeys):

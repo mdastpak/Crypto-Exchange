@@ -21,14 +21,16 @@ import (
 const SMSIRName = "smsir"
 
 // The parameters of the sms.ir templates: #CODE# in each template of a
-// code; #AMOUNT#, #DEST#, and, when the links are on, #DENY#, the token of
-// the "this was not me" link (#374), in the one of withdrawals; and #COUNT#
+// code; #AMOUNT#, #DEST#, #FEE#, the network fee (#460), and, when the
+// links are on, #DENY#, the token of the "this was not me" link (#374), in
+// the one of withdrawals; and #COUNT#
 // in the reminder to change the anti-phishing code.
 const (
 	SMSIRParamCode   = "CODE"
 	SMSIRParamAmount = "AMOUNT"
 	SMSIRParamDest   = "DEST"
 	SMSIRParamDeny   = "DENY"
+	SMSIRParamFee    = "FEE"
 	SMSIRParamCount  = "COUNT"
 	// SMSIRParamCurrency and SMSIRParamDate are, in the notice of a
 	// delisting, the symbol and the date of the freeze.
@@ -146,6 +148,9 @@ func (s *SMSIRDeliverer) params(msg OTPMessage) (int, []smsirParam, error) {
 		// its "this was not me" link (#374) follows the exchange's own
 		// domain in the template.
 		params := []smsirParam{{SMSIRParamCode, msg.Code}, {SMSIRParamAmount, msg.Amount}, {SMSIRParamDest, msg.Destination}}
+		if msg.Fee != "" {
+			params = append(params, smsirParam{SMSIRParamFee, msg.Fee})
+		}
 		if msg.DenyToken != "" {
 			params = append(params, smsirParam{SMSIRParamDeny, msg.DenyToken})
 		}

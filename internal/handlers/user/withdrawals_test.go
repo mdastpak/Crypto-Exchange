@@ -108,6 +108,7 @@ func TestWithdrawalRoutes_RunWithoutInfrastructure(t *testing.T) {
 		{withdrawals.ErrIdempotencyConflict, http.StatusConflict, codeIdempotencyKeyReused},
 		{confirm.ErrNotConfirmed, http.StatusConflict, codeConfirmationNotConfirmed},
 		{confirm.ErrMismatch, http.StatusConflict, codeConfirmationOfAnotherRequest},
+		{&withdrawals.FeeChangedError{Confirmed: "1 USDT", Current: "5 USDT"}, http.StatusConflict, codeWithdrawalFeeChanged},
 		{confirm.ErrExpired, http.StatusConflict, CodeConfirmationExpired},
 		{&destinations.NotUsableYet{Until: time.Now()}, http.StatusConflict, codeDestinationNotUsableYet},
 		{&restrictions.Refusal{Code: restrictions.CodeSecurityHold}, http.StatusForbidden, restrictions.CodeSecurityHold},
@@ -118,6 +119,11 @@ func TestWithdrawalRoutes_RunWithoutInfrastructure(t *testing.T) {
 		assert.Equal(t, tc.status, status, tc.err.Error())
 		assert.Equal(t, tc.code, resp["code"], tc.err.Error())
 	}
+
+	// A changed fee says both fees (#460).
+	service.err = &withdrawals.FeeChangedError{Confirmed: "1 USDT", Current: "5 USDT"}
+	_, resp = serveWithdrawal(t, h, http.MethodPost, "/withdrawals", "k1", withdrawalBody)
+	assert.Equal(t, map[string]any{"confirmed_fee": "1 USDT", "fee": "5 USDT"}, resp["info"])
 
 	service.err = withdrawals.ErrNotFound
 	status, resp = serveWithdrawal(t, h, http.MethodGet, "/withdrawals/w2", "", "")
