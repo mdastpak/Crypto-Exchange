@@ -115,7 +115,9 @@ func (o *OpenBao) Credentials(ctx context.Context, venue string) (Credentials, e
 		}
 		token = strings.TrimSpace(string(b))
 	}
-	path := o.base + "/v1/" + o.cfg.Mount + "/data/" + url.PathEscape(o.cfg.Prefix+venue)
+	// The prefix may hold slashes, as venues/ does: only the name of the
+	// venue is escaped, so that the path keeps its segments.
+	path := o.base + "/v1/" + o.cfg.Mount + "/data/" + o.cfg.Prefix + url.PathEscape(venue)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return Credentials{}, err

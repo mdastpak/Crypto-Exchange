@@ -99,7 +99,8 @@ func TestOpenBao_ReadsTheSecretOfTheVenue(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		switch r.URL.Path {
+		// The raw path, as OpenBao reads it: the prefix keeps its slash.
+		switch r.URL.EscapedPath() {
 		case "/v1/kv/data/venues/binance":
 			_, _ = w.Write([]byte(`{"data":{"data":{"api_key":"k","api_secret":"s"},"metadata":{"version":3}}}`))
 		default:
