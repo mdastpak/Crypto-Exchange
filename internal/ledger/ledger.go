@@ -28,6 +28,17 @@
 // balance below zero. There is no public write API: the services of the
 // exchange, such as OTC execution, settlement, and custody, call this
 // package.
+//
+// Locked funds are held per reservation (#407): a Lock holds funds of a
+// balance for its reference, such as a withdrawal or an order, and a move
+// that takes locked funds (a release, a withdrawal, a trade's debit and
+// fee, a transfer, a conversion) must name the reference of the hold it
+// ends, and may not take more than that hold has left. The holds are not a
+// table: each is the sum of the locks of its reference in the balance less
+// what moves of that reference took, read from the entries under the lock
+// of the balance, and from the moves before it in the same entry. So a
+// caller with a wrong reference cannot free or spend the funds that
+// another operation reserved.
 package ledger
 
 import (
@@ -37,6 +48,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -205,7 +217,9 @@ func (l Ledger) Lock(ctx context.Context, key string, a Account, amount Amount, 
 }
 
 // Release makes locked funds of a available again, when an order is
-// cancelled or a withdrawal fails.
+// cancelled or a withdrawal fails. ref is the reference that locked them:
+// a release takes from that hold only, and no more than it has left
+// (#407).
 func (l Ledger) Release(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
 	return l.record(ctx, entry{kind: KindRelease, key: key, ref: ref,
 		moves: []move{{a, amount.Currency, balance.BalanceChangeUnlock, amount.Value}},
@@ -229,18 +243,26 @@ func (l Ledger) Transfer(ctx context.Context, key string, from, to Account, amou
 
 // Trade is a trade of a user with the exchange as the counterparty, as in
 // OTC: the user gives Give, from funds locked with the order, receives
-// Receive, available, and pays Fee, also from the locked funds. A Fee of
-// zero is none.
+// Receive, available, and pays Fee, also from the locked funds of the
+// order, so in the currency of Give (#407): a fee in the received currency
+// would take funds that no hold of the order has. A Fee of zero is none.
 type Trade struct {
 	Give, Receive, Fee Amount
 }
 
 // SettleTrade settles a trade of a against the exchange's inventory: what
 // the user gives enters the inventory, what the user receives leaves it,
-// and the fee goes to the fees account.
+// and the fee goes to the fees account. ref is the order whose hold the
+// trade ends, as it was locked (#407): what the trade gives and its fee are
+// taken from that hold, and no more than it has left. The trade itself is
+// named by key.
 func (l Ledger) SettleTrade(ctx context.Context, key string, a Account, t Trade, ref Ref) (Result, error) {
 	if t.Give.Currency == t.Receive.Currency {
 		return Result{}, fmt.Errorf("%w: a trade gives and receives %s", ErrInvalidRequest, t.Give.Currency)
+	}
+	if !t.Fee.Value.IsZero() && t.Fee.Currency != t.Give.Currency {
+		return Result{}, fmt.Errorf("%w: the fee of a trade is taken from the order's hold, in %s, not in %s",
+			ErrInvalidRequest, t.Give.Currency, t.Fee.Currency)
 	}
 	e := entry{kind: KindTrade, key: key, ref: ref,
 		moves: []move{
@@ -309,7 +331,9 @@ func conversion(key string, a Account, c Conversion, ref Ref) (entry, error) {
 
 // Withdraw completes a withdrawal of a, whose amount and fee were locked
 // when it was requested: the amount leaves custody, and the fee goes to the
-// fees account. A fee of zero is none.
+// fees account. A fee of zero is none. ref is the withdrawal's, whose hold
+// the amount and the fee are taken from, and no more than it has left
+// (#407).
 func (l Ledger) Withdraw(ctx context.Context, key string, a Account, amount Amount, fee shared.Decimal, ref Ref) (Result, error) {
 	return l.record(ctx, withdrawal(key, a, amount, fee, ref))
 }
@@ -475,6 +499,9 @@ func write(ctx context.Context, tx *sql.Tx, e entry) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if err := checkHolds(ctx, tx, e, balances); err != nil {
+		return Result{}, err
+	}
 	read := make(map[balanceKey]int, len(balances))
 	for k, b := range balances {
 		read[k] = b.Version
@@ -520,6 +547,89 @@ func write(ctx context.Context, tx *sql.Tx, e entry) (Result, error) {
 		}
 	}
 	return Result{EntryID: entryID}, nil
+}
+
+// takesLocked reports whether a change takes locked funds, which must come
+// from the hold of the entry's reference (#407).
+func takesLocked(c balance.BalanceChangeType) bool {
+	switch c {
+	case balance.BalanceChangeUnlock, balance.BalanceChangeTradeDebit, balance.BalanceChangeFee,
+		balance.BalanceChangeWithdrawal, balance.BalanceChangeTransferOut, balance.BalanceChangeConversionOut:
+		return true
+	}
+	return false
+}
+
+// checkHolds checks that every move of e that takes locked funds takes
+// them from the hold of e's reference in its balance, and no more than the
+// hold has left (#407). It runs under the locks of the balances, so the
+// holds cannot change meanwhile. A move takes first from what the entry
+// itself locked before it, as a transfer and a conversion do, and only
+// then reads the hold that earlier entries left, once per balance.
+func checkHolds(ctx context.Context, tx *sql.Tx, e entry, balances map[balanceKey]*balance.Balance) error {
+	held := map[balanceKey]shared.Decimal{}
+	read := map[balanceKey]bool{}
+	for _, m := range e.moves {
+		k := keyOf(m.account, m.currency)
+		left, ok := held[k]
+		if !ok {
+			left = shared.NewDecimalFromInt64(0)
+		}
+		switch {
+		case m.change == balance.BalanceChangeLock:
+			held[k] = left.Add(m.amount)
+			continue
+		case !takesLocked(m.change):
+			continue
+		}
+		// Without a reference, only what the entry locked itself is held
+		// for it.
+		if left.LessThan(m.amount) && !read[k] && e.ref.Type != "" {
+			stored, err := storedHold(ctx, tx, balances[k], e.ref)
+			if err != nil {
+				return err
+			}
+			left, read[k] = left.Add(stored), true
+		}
+		if left.LessThan(m.amount) {
+			return fmt.Errorf("%w: %s of %s in %s for %s %s, whose hold has %s left",
+				ErrInsufficientLocked, m.change, m.amount, m.currency, e.ref.Type, e.ref.ID, left)
+		}
+		held[k] = left.Sub(m.amount)
+	}
+	return nil
+}
+
+// storedHold returns what the hold of ref in the balance b has left after
+// the entries before: its locks less what its moves took. The entries of a
+// reference come from the index ledger_entries_reference, and their changes
+// from balance_changes_entry.
+//
+// The history has no seal yet (#366), but the balance has, over its
+// version (#139), and every change of the ledger made a version of its
+// balance, at most the current one: a version is unique per balance, so a
+// change written in SQL to make up a hold must come after it. A balance
+// with such a change is refused, and the reconciliation reports it, since
+// its changes no longer replay to it.
+func storedHold(ctx context.Context, tx *sql.Tx, b *balance.Balance, ref Ref) (shared.Decimal, error) {
+	var left shared.Decimal
+	var ahead bool
+	err := tx.QueryRowContext(ctx, `SELECT
+			(SELECT COALESCE(SUM(CASE WHEN c.change_type = 'LOCK' THEN c.amount ELSE -c.amount END), 0)
+			FROM ledger_entries e JOIN balance_changes c ON c.entry_id = e.id
+			WHERE e.reference_type = $2 AND e.reference_id = $3 AND c.balance_id = $1
+			  AND c.change_type IN ('LOCK', 'UNLOCK', 'TRADE_DEBIT', 'FEE', 'WITHDRAWAL', 'TRANSFER_OUT', 'CONVERSION_DEBIT')),
+			EXISTS (SELECT 1 FROM balance_changes c WHERE c.balance_id = $1 AND c.version > $4)`,
+		b.ID, ref.Type, ref.ID, b.Version).Scan(&left, &ahead)
+	if err != nil {
+		return shared.Decimal{}, fmt.Errorf("read the hold of %s %s: %w", ref.Type, ref.ID, err)
+	}
+	if ahead {
+		log.Printf("SECURITY: balance %s has changes after its sealed version %d, which no entry of the ledger made; "+
+			"its holds are not used", b.ID, b.Version)
+		return shared.Decimal{}, fmt.Errorf("%w: balance %s has changes after its version %d", ErrUnverified, b.ID, b.Version)
+	}
+	return left, nil
 }
 
 // lockBalances returns the balances of the moves, locked for the
