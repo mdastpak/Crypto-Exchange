@@ -90,12 +90,16 @@ var longTimestamp = regexp.MustCompile(`(?i)\btimestamp\b(\s*\(\d+\))?(\s+with(o
 // sqlComment is a comment to the end of the line.
 var sqlComment = regexp.MustCompile(`--[^\n]*`)
 
+// quotedIdentifier is a name in double quotes, such as the column
+// "timestamp" of balance_changes: a name, never a type.
+var quotedIdentifier = regexp.MustCompile(`"[^"]*"`)
+
 // timestampProblems returns the lines of sql that spell a time type other
 // than TIMESTAMPTZ.
 func timestampProblems(sql string) []string {
 	var lines []string
 	for i, line := range strings.Split(sql, "\n") {
-		code := sqlComment.ReplaceAllString(line, "")
+		code := quotedIdentifier.ReplaceAllString(sqlComment.ReplaceAllString(line, ""), `""`)
 		if longTimestamp.MatchString(code) {
 			lines = append(lines, strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 		}
@@ -136,6 +140,7 @@ func TestTimestampProblems(t *testing.T) {
 		"created_at timestamp NOT NULL,",
 		"created_at TIMESTAMP(3) WITH TIME ZONE,",
 		"SELECT now()::timestamp;",
+		`ALTER TABLE t ADD COLUMN "at" timestamp;`,
 	} {
 		assert.Len(t, timestampProblems(bad), 1, bad)
 	}
@@ -144,6 +149,7 @@ func TestTimestampProblems(t *testing.T) {
 		"approved_at timestamptz,",
 		"-- a timestamp with time zone, in a comment",
 		"retry_after TIMESTAMPTZ(3) NOT NULL,",
+		`CREATE INDEX i ON balance_changes (user_id, "timestamp" DESC);`,
 	} {
 		assert.Empty(t, timestampProblems(good), good)
 	}

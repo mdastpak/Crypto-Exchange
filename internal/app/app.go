@@ -1388,6 +1388,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/verification", ih.User.GetVerification)
+		// The user's own balances and their history (#365): reads, with
+		// the limits of every user route.
+		activeGroup.GET("/balances", ih.User.GetBalances)
+		activeGroup.GET("/transactions", ih.User.ListTransactions)
 		// The withdrawal destinations (#160). Adding one waits for a
 		// lockdown of withdrawals to end, and both changes need a fresh
 		// proof of the second factor. A lockdown of withdrawals does not hold
