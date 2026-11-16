@@ -351,7 +351,8 @@ func TestNotices_AFanOutOfManyUsersIsBatched(t *testing.T) {
 	_, err := w.db.Exec(`INSERT INTO users (status) SELECT 'ACTIVE' FROM generate_series(1, $1)`, others+holders)
 	require.NoError(t, err)
 	_, err = w.db.Exec(`INSERT INTO balances (user_id, currency_hk, available)
-		SELECT hk, $1, '1' FROM users WHERE hk NOT IN (SELECT user_id FROM balances) ORDER BY hk LIMIT $2`, w.currency, holders)
+		SELECT hk, $1, '1' FROM users WHERE deleted_at IS NULL AND hk NOT IN (SELECT user_id FROM balances) ORDER BY hk LIMIT $2`,
+		w.currency, holders) // a deleted user is told nothing, so it holds nothing here
 	require.NoError(t, err)
 	var dbName string
 	require.NoError(t, w.db.QueryRow(`SELECT current_database()`).Scan(&dbName))
