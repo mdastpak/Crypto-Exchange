@@ -528,8 +528,8 @@ func MappingsOf(c config.VenuesConfig) map[string]venues.Mapping {
 
 // Instrument is a market of a venue as its last snapshot lists it.
 type Instrument struct {
-	Symbol                        string
-	Lot, MinQuantity, MinNotional shared.Decimal
+	Symbol                              string
+	Tick, Lot, MinQuantity, MinNotional shared.Decimal
 }
 
 // InstrumentOf returns the market of a venue whose base and quote are the
@@ -537,9 +537,9 @@ type Instrument struct {
 // router (#386) checks it with MarketRoutable.
 func (s *Store) InstrumentOf(ctx context.Context, venue, base, quote string) (Instrument, bool, error) {
 	var in Instrument
-	err := s.DB.QueryRowContext(ctx, `SELECT symbol, lot_size, min_quantity, min_notional FROM venue_instruments
+	err := s.DB.QueryRowContext(ctx, `SELECT symbol, tick_size, lot_size, min_quantity, min_notional FROM venue_instruments
 		WHERE venue = $1 AND base = $2 AND quote = $3 ORDER BY symbol LIMIT 1`, venue, base, quote).
-		Scan(&in.Symbol, &in.Lot, &in.MinQuantity, &in.MinNotional)
+		Scan(&in.Symbol, &in.Tick, &in.Lot, &in.MinQuantity, &in.MinNotional)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Instrument{}, false, nil
 	}

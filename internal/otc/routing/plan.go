@@ -47,6 +47,7 @@ const (
 	skipLotMismatch   = "lot_mismatch"
 	skipBelowMinimum  = "below_venue_minimum"
 	skipCostAboveRule = "cost_above_rule"
+	skipExcluded      = "excluded"
 )
 
 var bps = decimal.NewFromInt(10000)
@@ -75,6 +76,9 @@ type Input struct {
 	Network string
 	// Day is the day of the venues' daily limits, in UTC.
 	Day time.Time
+	// Exclude are venues that the route must not use, such as one whose
+	// order of the trade failed (#387).
+	Exclude []string
 }
 
 // Notional is the notional of the trade in the quote currency.
@@ -426,6 +430,10 @@ func (r *Router) inventory(ctx context.Context, in Input) (source, error) {
 func (r *Router) venue(ctx context.Context, rule Rule, v VenueRule, in Input) (source, error) {
 	s := source{result: SourceResult{Source: SourceVenue, Venue: v.Venue}, priority: v.Priority, weight: v.Weight}
 	skip := func(reasons ...string) { s.result.Skipped = append(s.result.Skipped, reasons...) }
+	if slices.Contains(in.Exclude, v.Venue) {
+		skip(skipExcluded)
+		return s, nil
+	}
 	m, err := r.Venues.Market(ctx, v.Venue, in.Base, in.Quote)
 	if err != nil {
 		return s, err

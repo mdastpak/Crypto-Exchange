@@ -81,3 +81,37 @@ func TestReconcile_FlagsAVenueAccountAboveZero(t *testing.T) {
 	require.Len(t, problems, 1)
 	assert.Contains(t, problems[0], "venue:binance")
 }
+
+// TestLedger_VenueFill covers the fill of a routed order (#387): the venue
+// holds the base currency it bought and less of the quote it spent, the
+// inventory the reverse, and a key applies once.
+func TestLedger_VenueFill(t *testing.T) {
+	ctx := context.Background()
+	b := newBooks(t)
+	alice, usdt, btc := b.user(), b.currency("USDT"), b.currency("BTC")
+	b.fund(alice, usdt, "1000")
+	_, err := b.VenueDeposit(ctx, "venue:deposit:fill", "binance", amount(usdt, "500"), Ref{Type: "venue_deposit", ID: "fill"})
+	require.NoError(t, err)
+
+	tx, err := b.DB.Begin()
+	require.NoError(t, err)
+	_, err = b.In(tx).VenueFill(ctx, "venue:fill:1", "binance", amount(btc, "0.004"), amount(usdt, "260"), Ref{Type: "otc_routed_order", ID: "1"})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	_, err = b.VenueFill(ctx, "venue:fill:1", "binance", amount(btc, "0.004"), amount(usdt, "260"), Ref{Type: "otc_routed_order", ID: "1"})
+	require.NoError(t, err)
+
+	held, err := b.VenueHoldings(ctx, "binance")
+	require.NoError(t, err)
+	assert.Equal(t, "240", held[usdt.String()].String())
+	assert.Equal(t, "0.004", held[btc.String()].String())
+	assert.Equal(t, "-260", b.reconcile(usdt).Accounts[AccountInventory].String(), "the inventory paid the quote")
+	assert.Equal(t, "0.004", b.reconcile(btc).Accounts[AccountInventory].String(), "and got the base")
+
+	for _, bad := range [][2]string{{"0", "1"}, {"1", "-1"}} {
+		_, err = b.VenueFill(ctx, "venue:fill:bad:"+bad[0]+bad[1], "binance", amount(btc, bad[0]), amount(usdt, bad[1]), Ref{})
+		require.ErrorIs(t, err, ErrInvalidRequest)
+	}
+	_, err = b.VenueFill(ctx, "venue:fill:same", "binance", amount(btc, "1"), amount(btc, "1"), Ref{})
+	require.ErrorIs(t, err, ErrInvalidRequest)
+}

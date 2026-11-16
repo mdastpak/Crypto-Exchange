@@ -12848,7 +12848,8 @@
                         "read_only",
                         "scheduler",
                         "outbox",
-                        "market_data"
+                        "market_data",
+                        "otc_routing"
                     ],
                     "allOf": [
                         {
@@ -16336,7 +16337,8 @@
                         "read_only",
                         "scheduler",
                         "outbox",
-                        "market_data"
+                        "market_data",
+                        "otc_routing"
                     ],
                     "allOf": [
                         {
@@ -16408,6 +16410,7 @@
                 "scheduler",
                 "outbox",
                 "market_data",
+                "otc_routing",
                 "service",
                 "writes"
             ],
@@ -16424,6 +16427,7 @@
                 "FeatureScheduler",
                 "FeatureOutbox",
                 "FeatureMarketData",
+                "FeatureOTCRouting",
                 "UseService",
                 "UseWrites"
             ]

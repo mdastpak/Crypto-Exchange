@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -12,7 +13,9 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
 	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
+	"github.com/mdastpak/crypto-exchange/internal/venues/state"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
 
@@ -67,6 +70,11 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 		}
 		s.Route(r)
 		executor.Routing = r
+		host, _ := os.Hostname()
+		executor.Routed = &routed.Planner{
+			State: state.New(db, state.OptionsOf(settings.Venues.State)), Node: "server/" + host,
+			Settings: func() routed.Settings { return routed.SettingsOf(settings) },
+		}
 	}
 	return nil
 }

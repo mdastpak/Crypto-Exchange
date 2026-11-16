@@ -1,6 +1,7 @@
 // Package stub is a venue in memory, for the tests of what uses venues
 // (#384): the router (#386, #387) and the reconciliation (#385). It fills
-// a market order at once at its price, keeps a limit order open, and can
+// a market order, and a limit order that its price crosses, at once at its
+// price, keeps any other limit order open, and can
 // lose the answer of the next call that changes something, as a timeout
 // would after the venue did it.
 package stub
@@ -153,30 +154,73 @@ func (v *Venue) PlaceOrder(_ context.Context, req venues.OrderRequest) (venues.O
 		o = venues.Order{ClientID: req.ClientID, VenueID: fmt.Sprintf("stub-%d", len(v.orders)+1), Symbol: req.Symbol, Side: req.Side,
 			Type: req.Type, Status: venues.OrderNew, Quantity: req.Quantity, Price: req.Price, Filled: zero, FilledQuote: zero,
 			UpdatedAt: time.Now().UTC()}
-		if req.Type == venues.OrderMarket {
-			price := v.prices[req.Symbol]
-			quote := req.Quantity.Mul(price)
-			give, get, giveAmount, getAmount := inst.Quote, inst.Base, quote, req.Quantity
-			if req.Side == venues.SideSell {
-				give, get, giveAmount, getAmount = inst.Base, inst.Quote, req.Quantity, quote
+		price := v.prices[req.Symbol]
+		marketable := req.Type == venues.OrderMarket ||
+			req.Side == venues.SideBuy && !req.Price.LessThan(price) || req.Side == venues.SideSell && !req.Price.GreaterThan(price)
+		if marketable {
+			if err := v.fill(&o, inst, req.Quantity, price); err != nil {
+				return err
 			}
-			if v.balances[give].Free.LessThan(giveAmount) {
-				return &venues.Error{Venue: v.name, Op: "place_order", Kind: venues.KindRejected, Code: "insufficient_balance",
-					Err: errors.New("insufficient balance")}
-			}
-			g, r := v.balances[give], v.balances[get]
-			g.Asset, r.Asset = give, get
-			g.Free, r.Free = g.Free.Sub(giveAmount), r.Free.Add(getAmount)
-			if r.Locked.Decimal().IsZero() {
-				r.Locked = zero
-			}
-			v.balances[give], v.balances[get] = g, r
-			o.Status, o.Filled, o.FilledQuote, o.Price = venues.OrderFilled, req.Quantity, quote, price
 		}
 		v.orders[req.ClientID] = o
 		return nil
 	})
 	return o, err
+}
+
+// fill fills quantity of the order o at price, moving the balances.
+func (v *Venue) fill(o *venues.Order, inst venues.Instrument, quantity, price shared.Decimal) error {
+	zero := shared.MustNewDecimalFromString("0")
+	quote := quantity.Mul(price)
+	give, get, giveAmount, getAmount := inst.Quote, inst.Base, quote, quantity
+	if o.Side == venues.SideSell {
+		give, get, giveAmount, getAmount = inst.Base, inst.Quote, quantity, quote
+	}
+	if v.balances[give].Free.LessThan(giveAmount) {
+		return &venues.Error{Venue: v.name, Op: "place_order", Kind: venues.KindRejected, Code: "insufficient_balance",
+			Err: errors.New("insufficient balance")}
+	}
+	g, r := v.balances[give], v.balances[get]
+	g.Asset, r.Asset = give, get
+	g.Free, r.Free = g.Free.Sub(giveAmount), r.Free.Add(getAmount)
+	if r.Locked.Decimal().IsZero() {
+		r.Locked = zero
+	}
+	v.balances[give], v.balances[get] = g, r
+	o.Filled, o.FilledQuote = o.Filled.Add(quantity), o.FilledQuote.Add(quote)
+	o.Status = venues.OrderPartiallyFilled
+	if !o.Filled.LessThan(o.Quantity) {
+		o.Status = venues.OrderFilled
+	}
+	if o.Type == venues.OrderMarket {
+		o.Price = price
+	}
+	o.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// SetPrice sets the price of a market, at which its orders fill.
+func (v *Venue) SetPrice(symbol string, price shared.Decimal) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.prices[symbol] = price
+}
+
+// Fill fills quantity more of the open order clientID at its limit, as a
+// trade against it would.
+func (v *Venue) Fill(clientID string, quantity shared.Decimal) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	o, ok := v.orders[clientID]
+	if !ok || o.Status.Done() {
+		return venues.ErrNotFound
+	}
+	inst, _ := v.instrument(o.Symbol)
+	if err := v.fill(&o, inst, quantity, o.Price); err != nil {
+		return err
+	}
+	v.orders[clientID] = o
+	return nil
 }
 
 func (v *Venue) CancelOrder(_ context.Context, _, clientID string) (venues.Order, error) {

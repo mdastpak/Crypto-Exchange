@@ -3,6 +3,7 @@ package otc
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
 	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/region"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
@@ -185,4 +187,41 @@ func (e *Executor) reroute(ctx context.Context, q *Quote, m tradedMarket) error 
 	}
 	q.Components.Route = &route
 	return nil
+}
+
+// RerouteOf routes the remainder of a routed order again (#387): the
+// route of its trade, planned now for the remainder, without the venues
+// that failed it. The input is that of the trade: its market, side,
+// reference price, lot, network, and its user's level.
+func RerouteOf(db *sql.DB, r *Routing) routed.Reroute {
+	return func(ctx context.Context, o routed.Order, remainder decimal.Decimal, exclude []string) (routed.Trade, error) {
+		t, err := readTrade(ctx, db, `t.id = $1`, o.TradeID)
+		if err != nil {
+			return routed.Trade{}, err
+		}
+		var userHK string
+		var raw []byte
+		if err := db.QueryRowContext(ctx, `SELECT user_id::text, components FROM otc_trades WHERE id = $1`, o.TradeID).
+			Scan(&userHK, &raw); err != nil {
+			return routed.Trade{}, fmt.Errorf("otc: read the trade %s: %w", o.TradeID, err)
+		}
+		var c Components
+		if err := json.Unmarshal(raw, &c); err != nil || c.Route == nil {
+			return routed.Trade{}, fmt.Errorf("otc: the route of the trade %s: %w", o.TradeID, err)
+		}
+		base, quote, _ := strings.Cut(t.Market, "/")
+		in, err := r.input(ctx, userHK, currencies.PublicMarket{
+			Symbol: t.Market, Base: base, Quote: quote, BaseHK: o.BaseHK, QuoteHK: o.QuoteHK,
+		}, t.Side, remainder, o.Reference, c.Route.Lot, c.Route.Network)
+		if err != nil {
+			return routed.Trade{}, err
+		}
+		in.Exclude = exclude
+		route, err := r.Router.Plan(ctx, in)
+		if err != nil {
+			return routed.Trade{}, err
+		}
+		return routed.Trade{ID: o.TradeID, Side: o.Side, Base: in.Base, Quote: in.Quote, BaseHK: o.BaseHK, QuoteHK: o.QuoteHK,
+			Price: o.TradePrice, Reference: o.Reference, Route: route}, nil
+	}
 }

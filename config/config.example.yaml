@@ -635,6 +635,13 @@ otc:
   routing:
     enabled: false
     cache_seconds: 5
+    # The routed orders (#387): the most an order's limit may stray from
+    # the reference price, how long an order may stay open before it is
+    # cancelled and its remainder routed again, and how long a lost answer
+    # is looked up before the order is placed again.
+    max_slippage_bps: 50
+    order_timeout_seconds: 60
+    unknown_grace_seconds: 120
 
 # The anti-phishing code of users (#375), which every email to their
 # verified contacts shows. The exchange suggests a new one once it is

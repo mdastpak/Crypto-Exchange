@@ -24,6 +24,19 @@ const (
 	MinOTCRoutingCacheSeconds     = 1
 	MaxOTCRoutingCacheSeconds     = 60
 	DefaultOTCRoutingCacheSeconds = 5
+	// The bounds and defaults of the routed orders (#387): how far from the
+	// reference price an order's limit may go, how long an order may stay
+	// open before it is cancelled and its remainder routed again, and how
+	// long a venue may take to show an order whose answer was lost.
+	MinOTCRoutingSlippageBPS         = 1
+	MaxOTCRoutingSlippageBPS         = 1000
+	DefaultOTCRoutingSlippageBPS     = 50
+	MinOTCRoutingOrderTimeoutSeconds = 5
+	MaxOTCRoutingOrderTimeoutSeconds = 3600
+	DefaultOTCRoutingOrderTimeout    = 60
+	MinOTCRoutingUnknownGraceSeconds = 10
+	MaxOTCRoutingUnknownGraceSeconds = 3600
+	DefaultOTCRoutingUnknownGrace    = 120
 )
 
 // OTCConfig configures the OTC quotes (#61). See
@@ -57,6 +70,16 @@ type OTCRoutingConfig struct {
 	// CacheSeconds is how long a node keeps the active rules before it
 	// checks for a new version: a change applies on every node within it.
 	CacheSeconds int `yaml:"cache_seconds"`
+	// MaxSlippageBPS bounds the limit of a routed order (#387): a buy at
+	// most reference × (1 + it), and a sell at least reference × (1 − it).
+	MaxSlippageBPS int `yaml:"max_slippage_bps"`
+	// OrderTimeoutSeconds is how long a routed order may stay open: then it
+	// is cancelled, and what it did not fill is routed again.
+	OrderTimeoutSeconds int `yaml:"order_timeout_seconds"`
+	// UnknownGraceSeconds is how long a routed order whose answer was lost
+	// is looked up before it is placed again: a venue may not show an
+	// order at once.
+	UnknownGraceSeconds int `yaml:"unknown_grace_seconds"`
 }
 
 // OTCMarket prices the quotes of one market. A buy is quoted at
@@ -117,6 +140,15 @@ func (c *Configuration) applyOTCDefaults() {
 	if o.Routing.CacheSeconds == 0 {
 		o.Routing.CacheSeconds = DefaultOTCRoutingCacheSeconds
 	}
+	if o.Routing.MaxSlippageBPS == 0 {
+		o.Routing.MaxSlippageBPS = DefaultOTCRoutingSlippageBPS
+	}
+	if o.Routing.OrderTimeoutSeconds == 0 {
+		o.Routing.OrderTimeoutSeconds = DefaultOTCRoutingOrderTimeout
+	}
+	if o.Routing.UnknownGraceSeconds == 0 {
+		o.Routing.UnknownGraceSeconds = DefaultOTCRoutingUnknownGrace
+	}
 }
 
 var otcMarketSymbol = regexp.MustCompile(`^[A-Z0-9]{1,15}/[A-Z0-9]{1,15}$`)
@@ -136,6 +168,18 @@ func (c *Configuration) otcProblems(p *problems) {
 	}
 	if r := o.Routing.CacheSeconds; r < MinOTCRoutingCacheSeconds || r > MaxOTCRoutingCacheSeconds {
 		p.add("otc.routing.cache_seconds", "is %d; it must be from %d to %d", r, MinOTCRoutingCacheSeconds, MaxOTCRoutingCacheSeconds)
+	}
+	for _, b := range []struct {
+		key           string
+		value, lo, hi int
+	}{
+		{"otc.routing.max_slippage_bps", o.Routing.MaxSlippageBPS, MinOTCRoutingSlippageBPS, MaxOTCRoutingSlippageBPS},
+		{"otc.routing.order_timeout_seconds", o.Routing.OrderTimeoutSeconds, MinOTCRoutingOrderTimeoutSeconds, MaxOTCRoutingOrderTimeoutSeconds},
+		{"otc.routing.unknown_grace_seconds", o.Routing.UnknownGraceSeconds, MinOTCRoutingUnknownGraceSeconds, MaxOTCRoutingUnknownGraceSeconds},
+	} {
+		if b.value < b.lo || b.value > b.hi {
+			p.add(b.key, "is %d; it must be from %d to %d", b.value, b.lo, b.hi)
+		}
 	}
 	for _, symbol := range slices.Sorted(maps.Keys(o.Markets)) {
 		key := "otc.markets." + symbol

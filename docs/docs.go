@@ -12855,7 +12855,8 @@ const docTemplate = `{
                         "read_only",
                         "scheduler",
                         "outbox",
-                        "market_data"
+                        "market_data",
+                        "otc_routing"
                     ],
                     "allOf": [
                         {
@@ -16343,7 +16344,8 @@ const docTemplate = `{
                         "read_only",
                         "scheduler",
                         "outbox",
-                        "market_data"
+                        "market_data",
+                        "otc_routing"
                     ],
                     "allOf": [
                         {
@@ -16415,6 +16417,7 @@ const docTemplate = `{
                 "scheduler",
                 "outbox",
                 "market_data",
+                "otc_routing",
                 "service",
                 "writes"
             ],
@@ -16431,6 +16434,7 @@ const docTemplate = `{
                 "FeatureScheduler",
                 "FeatureOutbox",
                 "FeatureMarketData",
+                "FeatureOTCRouting",
                 "UseService",
                 "UseWrites"
             ]
