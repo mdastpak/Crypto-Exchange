@@ -121,7 +121,7 @@ func (s *Store) Reconcile(ctx context.Context, venue string, mapping venues.Mapp
 		ledger.VenueAccount(venue)).Scan(&lastEntry); err != nil {
 		return report, fmt.Errorf("venues: reconcile %s: %w", venue, err)
 	}
-	if !takenAt.Valid || !s.fresh(takenAt.Time) || (lastEntry.Valid && lastEntry.Time.After(takenAt.Time)) {
+	if !takenAt.Valid || !s.fresh(s.Clock(ctx), takenAt.Time) || (lastEntry.Valid && lastEntry.Time.After(takenAt.Time)) {
 		report.Skipped = true
 		return report, nil
 	}
@@ -198,7 +198,7 @@ func (s *Store) Reconcile(ctx context.Context, venue string, mapping venues.Mapp
 		report.Differences = append(report.Differences, d)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO venue_snapshots (venue, kind, taken_at) VALUES ($1, $2, $3)
-		ON CONFLICT (venue, kind) DO UPDATE SET taken_at = EXCLUDED.taken_at`, venue, KindReconciliation, s.now()); err != nil {
+		ON CONFLICT (venue, kind) DO UPDATE SET taken_at = EXCLUDED.taken_at`, venue, KindReconciliation, s.Clock(ctx)); err != nil {
 		return report, fmt.Errorf("venues: reconcile %s: %w", venue, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -220,7 +220,7 @@ func (s *Store) openHold(ctx context.Context, tx *sql.Tx, d Difference) (bool, e
 	err := tx.QueryRowContext(ctx, `INSERT INTO venue_holds (venue, asset, currency_hk, reported, booked, difference, detected_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (venue, asset) WHERE cleared_at IS NULL DO NOTHING RETURNING id::text`,
-		d.Venue, d.Asset, d.CurrencyHK, d.Reported.String(), d.Booked.String(), d.Difference.String(), s.now()).Scan(&id)
+		d.Venue, d.Asset, d.CurrencyHK, d.Reported.String(), d.Booked.String(), d.Difference.String(), s.Clock(ctx)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -273,7 +273,7 @@ func (s *Store) ClearHold(ctx context.Context, id string, origin audit.Event, re
 		return Hold{}, ErrAlreadyCleared
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE venue_holds SET cleared_at = $2, cleared_by = $3::uuid, clear_reason = $4 WHERE id = $1::uuid`,
-		id, s.now(), origin.ActorID, reason); err != nil {
+		id, s.Clock(ctx), origin.ActorID, reason); err != nil {
 		return Hold{}, fmt.Errorf("venues: clear the hold %s: %w", id, err)
 	}
 	if err := rowseal.Reseal(ctx, tx, t, "id = $1::uuid", id); err != nil {

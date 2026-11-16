@@ -87,15 +87,24 @@ func New(db *sql.DB, opts Options) *Store {
 	return &Store{DB: db, Ledger: ledger.Ledger{DB: db}, Opts: opts}
 }
 
-func (s *Store) now() time.Time {
+// Clock returns the time of now on the database's clock, which every node
+// shares (#502): the snapshots, their freshness, and the ledger entries that
+// the reconciliation compares them with are all on it. Now replaces it in
+// the tests. Should the database not answer, the node's clock is used; the
+// write that follows fails anyway.
+func (s *Store) Clock(ctx context.Context) time.Time {
 	if s.Now != nil {
 		return s.Now()
 	}
-	return time.Now()
+	var now time.Time
+	if err := s.DB.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return time.Now()
+	}
+	return now
 }
 
-// fresh reports whether a value taken at takenAt is still known.
-func (s *Store) fresh(takenAt time.Time) bool { return s.now().Sub(takenAt) <= s.Opts.MaxAge }
+// fresh reports whether a value taken at takenAt is still known at now.
+func (s *Store) fresh(now, takenAt time.Time) bool { return now.Sub(takenAt) <= s.Opts.MaxAge }
 
 // SaveBalances replaces the balances of venue with a snapshot taken at at.
 // A balance that the venue no longer reports is zeroed, never deleted, as
@@ -196,7 +205,7 @@ func (s *Store) save(ctx context.Context, venue, kind string, at time.Time, writ
 func (s *Store) RecordFailure(ctx context.Context, venue, kind string, err error) error {
 	_, werr := s.DB.ExecContext(ctx, `INSERT INTO venue_snapshots (venue, kind, failed_at, failure) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (venue, kind) DO UPDATE SET failed_at = EXCLUDED.failed_at, failure = EXCLUDED.failure`,
-		venue, kind, s.now(), string(venues.KindOf(err)))
+		venue, kind, s.Clock(ctx), string(venues.KindOf(err)))
 	if werr != nil {
 		return fmt.Errorf("venues: record the failure of the %s of %s: %w", kind, venue, werr)
 	}
@@ -250,7 +259,7 @@ func (s *Store) routable(ctx context.Context, q querier, venue, asset, network s
 		r.not(ReasonNoBalance)
 	case err != nil:
 		return r, fmt.Errorf("venues: read the balance of %s at %s: %w", asset, venue, err)
-	case !s.fresh(takenAt):
+	case !s.fresh(s.Clock(ctx), takenAt):
 		r.not(ReasonStaleBalance)
 	}
 	held, err := s.held(ctx, q, venue, asset)
@@ -269,7 +278,7 @@ func (s *Store) routable(ctx context.Context, q querier, venue, asset, network s
 			r.not(ReasonNetworkUnknown)
 		case err != nil:
 			return r, fmt.Errorf("venues: read the network %s of %s at %s: %w", network, asset, venue, err)
-		case !s.fresh(takenAt):
+		case !s.fresh(s.Clock(ctx), takenAt):
 			r.not(ReasonNetworkStale)
 		case !deposit || !withdraw:
 			r.not(ReasonNetworkSuspended)
@@ -291,7 +300,7 @@ func (s *Store) MarketRoutable(ctx context.Context, venue, symbol string) (Routa
 		r.not(ReasonMarketUnknown)
 	case err != nil:
 		return r, fmt.Errorf("venues: read the market %s at %s: %w", symbol, venue, err)
-	case !s.fresh(takenAt):
+	case !s.fresh(s.Clock(ctx), takenAt):
 		r.not(ReasonMarketStale)
 	case !trading:
 		r.not(ReasonMarketHalted)
@@ -397,7 +406,7 @@ func (s *Store) ReserveIn(ctx context.Context, tx *sql.Tx, r Reservation) (Reser
 	err = tx.QueryRowContext(ctx, `INSERT INTO venue_reservations (venue, asset, amount, reference_type, reference_id, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (venue, asset, reference_type, reference_id) DO NOTHING RETURNING id::text`,
-		r.Venue, r.Asset, r.Amount.String(), r.ReferenceType, r.ReferenceID, s.now()).Scan(&r.ID)
+		r.Venue, r.Asset, r.Amount.String(), r.ReferenceType, r.ReferenceID, s.Clock(ctx)).Scan(&r.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// The reference reserved before and was released: it is not
 		// reserved again.
@@ -479,7 +488,7 @@ func (s *Store) ReleaseIn(ctx context.Context, tx *sql.Tx, id string) error {
 	if r.Values[t.Index("released_at")].Valid {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE venue_reservations SET released_at = $2 WHERE id = $1::uuid`, id, s.now()); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE venue_reservations SET released_at = $2 WHERE id = $1::uuid`, id, s.Clock(ctx)); err != nil {
 		return fmt.Errorf("venues: release %s: %w", id, err)
 	}
 	return rowseal.Reseal(ctx, tx, t, "id = $1::uuid", id)

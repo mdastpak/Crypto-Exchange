@@ -386,3 +386,49 @@ func TestCollector_ExportsTheStateOfTheVenues(t *testing.T) {
 	assert.Contains(t, values, "venue_snapshot_age_seconds")
 	assert.Equal(t, 0.0, values["venue_open_holds"])
 }
+
+// lateMove is a venue whose answer of its balances is overtaken by a move
+// that the ledger posts while it answers.
+type lateMove struct {
+	*stub.Venue
+	move func()
+}
+
+func (v lateMove) Balances(ctx context.Context) ([]venues.Balance, error) {
+	b, err := v.Venue.Balances(ctx)
+	v.move()
+	return b, err
+}
+
+// TestJob_TheSnapshotTimeIsOfTheDatabaseBeforeTheCall covers #502: the
+// time of a snapshot is read from the database's clock, the clock of the
+// ledger entries, before the venue is called. A move posted while the
+// venue answers is newer than the snapshot, and the reconciliation skips
+// it rather than counting it as a difference.
+func TestJob_TheSnapshotTimeIsOfTheDatabaseBeforeTheCall(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.Now = nil
+	name := "skew" + shared.NewUUID().String()[:8]
+	v := stub.New(name)
+	v.SetBalance("USDT", dec("0"))
+	moved := false
+	venue := lateMove{Venue: v, move: func() {
+		if moved {
+			return
+		}
+		moved = true
+		_, err := f.Ledger.VenueDeposit(ctx, "late:"+name, name, ledger.Amount{Currency: f.usdt, Value: dec("5")}, ledger.Ref{})
+		require.NoError(t, err)
+	}}
+	job := Job{Store: f.Store, Venue: venue, Mapping: mapping}
+	require.NoError(t, job.Run(ctx, jobs.NewRun(marketdata.ModeLive, nil)))
+
+	var takenAt, entryAt time.Time
+	require.NoError(t, f.db.QueryRow(`SELECT taken_at FROM venue_snapshots WHERE venue = $1 AND kind = $2`, name, KindBalances).Scan(&takenAt))
+	require.NoError(t, f.db.QueryRow(`SELECT created_at FROM ledger_entries WHERE idempotency_key = $1`, "late:"+name).Scan(&entryAt))
+	assert.True(t, takenAt.Before(entryAt), "the snapshot is older than the move: %s, %s", takenAt, entryAt)
+	report, err := f.Reconcile(ctx, name, mapping)
+	require.NoError(t, err)
+	assert.True(t, report.Skipped, "a snapshot older than a move is not compared")
+}
