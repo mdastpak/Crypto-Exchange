@@ -21,3 +21,10 @@ Dockerfile text eol=lf
 # after a Windows checkout either.
 docs/swagger.json text eol=lf
 docs/swagger.yaml text eol=lf
+
+# The OpenAPI document is generated (#54): GitHub collapses its diffs, and
+# scripts/sync-main.sh generates it again after a merge instead of resolving
+# its conflicts by hand (#476).
+docs/docs.go linguist-generated=true
+docs/swagger.json linguist-generated=true
+docs/swagger.yaml linguist-generated=true

@@ -47,13 +47,25 @@ Follow [Getting started](README.md#getting-started) in the README. [docs/configu
 4. Address review feedback with new commits. Avoid force-pushing after a review has started.
 5. A maintainer merges the pull request once the checks pass and it has been approved. See [Review policy](#review-policy).
 
+### Working in parallel
+
+Several branches are open at once, and their merges must not undo each other or stall on conflicts ([#476](https://github.com/mdastpak/Crypto-Exchange/issues/476)):
+
+- **The CHANGELOG entry is a file of its own.** Add it in [changelog.d](changelog.d/README.md), such as `changelog.d/added/440-verification-grant.md`, and never edit CHANGELOG.md. Every pull request used to add its entry at the top of the same list there: it was the file of 9 in 10 conflicts. CI refuses an entry added to CHANGELOG.md, and checks the fragments with `go run ./scripts/changelog check`.
+- **Bring the branch up to date right before the merge** with `scripts/sync-main.sh`, and wait for CI on the new head. The script:
+  - merges `origin/main`;
+  - resolves a conflict of the generated OpenAPI document by generating it again from the merged code, and stops on any other conflict;
+  - generates the document again anyway, and commits it when it changed;
+  - runs the checks of the migration files and of the fragments.
+- **Migrations** follow the rules of [Database migrations](#database-migrations): the next free number, checked again before the merge, and the full list of the integrity findings.
+
 ## Review policy
 
 Most of the code of this repository is written by an AI agent, which also writes its tests and documentation, so blind spots can be shared by all three. A second look, independent of the author, is what finds them ([#311](https://github.com/mdastpak/Crypto-Exchange/issues/311)).
 
 - **Security-relevant paths have code owners.** [`.github/CODEOWNERS`](.github/CODEOWNERS) lists them: authentication, sign-in, sessions, and second factors; keys, row seals, and the audit log; the ledger, withdrawal destinations and confirmations, and verification levels; platform controls, restrictions, and middleware; migrations, database roles, and configuration validation; the Dockerfile and the workflows. A pull request that changes one of them needs the approval of a code owner, and fills in the **Security review** section of the template.
 - **The reviewer is not the author.** The approval comes from a person, or from a review that does not share the author's context: a separate reviewer session, or a review tool run on the diff alone. A review by the same session that wrote the change does not count.
-- **Pull requests stay reviewable.** The **Pull request size** check warns above 800 changed lines of non-generated code. Generated files (the OpenAPI document), `go.sum`, test data, and the CHANGELOG do not count. Split larger work into steps that can each be reviewed and merged, as an epic is split into issues; when a change cannot be split, say why in the description.
+- **Pull requests stay reviewable.** The **Pull request size** check warns above 800 changed lines of non-generated code. Generated files (the OpenAPI document), `go.sum`, test data, and the CHANGELOG and its fragments do not count. Split larger work into steps that can each be reviewed and merged, as an epic is split into issues; when a change cannot be split, say why in the description.
 - **Stale pull requests are closed or finished.** A pull request without activity for two weeks is either finished or closed with a note.
 - **The whole repository is audited regularly.** Periodic audits of the whole repository found defects that per-PR review missed; their findings are filed as issues with the `audit` label.
 
@@ -113,7 +125,7 @@ Nothing is deployed before version 1.0, so there is nobody to stay compatible wi
 
 Branches write migrations in parallel, so these rules keep one from undoing another ([#455](https://github.com/mdastpak/Crypto-Exchange/issues/455)):
 
-- **Take the next free number** on `main` when you start, and check it again right before the merge. If another branch merged that number first, renumber yours, up and down, and its mentions in the CHANGELOG and the docs. `TestMigrations_ComeInPairs` refuses a number taken twice and an up migration without its down migration.
+- **Take the next free number** on `main` when you start, and check it again right before the merge. If another branch merged that number first, renumber yours, up and down, and its mentions in your changelog fragment and the docs. `TestMigrations_ComeInPairs` refuses a number taken twice and an up migration without its down migration.
 - **Keep every name of the findings list.** A migration that adds a sealed table restates `integrity_findings_table_name_check` in full. Start from the list of the latest migration on `main`, not of the one your branch started from, and add your table. `TestSchema_FindingsAcceptEverySealedTable` checks that the list matches `rowseal.Tables`.
 - **Spell time columns `TIMESTAMPTZ`**, not `timestamp with time zone`, and never a bare `timestamp`, which has no time zone. `TestMigrations_SpellTimestampTZ` checks the migrations from 38 on.
 - **A down migration for every up migration**, and **never edit a merged migration**, as above.
@@ -136,6 +148,8 @@ Branches write migrations in parallel, so these rules keep one from undoing anot
 - [ ] Tests are added or updated, and `go test ./...` passes.
 - [ ] Migrations follow the rules above.
 - [ ] Documentation (README, `docs/`, Swagger annotations) is updated when behavior or configuration changes, and the OpenAPI document is regenerated when a route or its annotations change (see [API documentation](#api-documentation)).
+- [ ] The CHANGELOG entry is a fragment in `changelog.d`, not an edit of CHANGELOG.md (see [Working in parallel](#working-in-parallel)).
+- [ ] The branch was brought up to date with `scripts/sync-main.sh` right before the merge.
 - [ ] No secrets, keys, or personal data are included.
 - [ ] All text is in English.
 - [ ] A change to a path of `.github/CODEOWNERS` has the **Security review** section of the template filled in.
