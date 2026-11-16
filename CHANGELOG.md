@@ -259,6 +259,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The fee of a withdrawal is shown wherever its code is, and a changed fee is refused with its own error ([#460](https://github.com/mdastpak/Crypto-Exchange/issues/460)).
+  - The HTML email of a withdrawal code shows the fee, in English and Persian, and an operator's `withdrawal.html` without `{{.Fee}}` stops the server at startup. A text template without it gets the fee on a line of its own.
+  - sms.ir receives the fee in the template parameter `#FEE#`. Add it to the withdrawal template.
+  - Step two of a withdrawal whose fee changed since the user confirmed answers `409 withdrawal_fee_changed`, with `info.confirmed_fee` and `info.fee`, and locks nothing. `confirmation_mismatch` stays for a confirmation of another request: the fee stored and sealed with the confirmation tells the two apart.
 - The notices of a delisting fanned out every user in one statement, which times out with enough users, and one failure stopped every notice ([#461](https://github.com/mdastpak/Crypto-Exchange/issues/461)). See [Delisting notices in batches](docs/architecture.md#delisting-notices-in-batches).
   - The holders are written as recipients in batches of 5,000 with a cursor, and the other users of a notice to everyone are sent in batches of 50 and counted on the notice, not stored as a row each; a user whose send fails is written as a recipient and tried again. Migration 42 adds the cursors and the counts, and an index on `balances (currency_hk, user_id)`.
   - A notice that fails to prepare waits a minute times its attempts, up to an hour, and the others go on; a recipient whose send fails is delayed, and the batch continues. A run returns its errors together.

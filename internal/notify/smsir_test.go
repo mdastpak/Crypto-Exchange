@@ -107,12 +107,23 @@ func TestSMSIRDeliverer_SendsEachTemplateWithItsParameters(t *testing.T) {
 	assert.Equal(t, "9121234567", got[2].body["mobile"])
 	assert.Equal(t, []any{map[string]any{"name": "COUNT", "value": "212"}}, got[2].body["parameters"], "never the code")
 
+	// The fee of a withdrawal goes in #FEE# (#460).
+	withdrawal.Fee = "1 USDT"
+	_, err = s.Send(ctx, withdrawal)
+	require.NoError(t, err)
+	assert.Equal(t, []any{
+		map[string]any{"name": "CODE", "value": "482913"},
+		map[string]any{"name": "AMOUNT", "value": "100 USDT"},
+		map[string]any{"name": "DEST", "value": "TR7NHq...gjLj6t"},
+		map[string]any{"name": "FEE", "value": "1 USDT"},
+	}, requests()[3].body["parameters"])
+
 	// A value over 25 characters is never sent.
 	withdrawal.Destination = strings.Repeat("x", 26)
 	_, err = s.Send(ctx, withdrawal)
 	require.Error(t, err)
 	assert.True(t, IsProviderError(err), "another provider may take it")
-	assert.Len(t, requests(), 3)
+	assert.Len(t, requests(), 4)
 }
 
 func TestSMSIRDeliverer_ClassifiesFailures(t *testing.T) {

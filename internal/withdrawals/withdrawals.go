@@ -137,6 +137,9 @@ var (
 	// ErrIdempotencyConflict refuses a request whose idempotency key a
 	// request for another withdrawal used.
 	ErrIdempotencyConflict = errors.New("the idempotency key was used for another withdrawal")
+	// ErrFeeChanged refuses step two of a request whose network fee changed
+	// since the user confirmed it (#460); a *FeeChangedError wraps it.
+	ErrFeeChanged = errors.New("the fee of the network changed since the withdrawal was confirmed")
 	// ErrClosed refuses a withdrawal of a currency, or on a network, whose
 	// withdrawals are closed: by its lifecycle, such as a delisting, or by
 	// the network.
@@ -167,3 +170,18 @@ func (i Invalid) Error() string {
 func invalid(field, format string, args ...any) Invalid {
 	return Invalid{field: fmt.Sprintf(format, args...)}
 }
+
+// FeeChangedError refuses step two of a request whose network fee changed
+// since the user confirmed it (#460): nothing is locked, and the user
+// confirms again. Confirmed is the fee the user was told, and Current the
+// fee now, each with its currency.
+type FeeChangedError struct {
+	Confirmed, Current string
+}
+
+func (e *FeeChangedError) Error() string {
+	return fmt.Sprintf("%v: confirmed %s, now %s", ErrFeeChanged, e.Confirmed, e.Current)
+}
+
+// Unwrap is ErrFeeChanged.
+func (e *FeeChangedError) Unwrap() error { return ErrFeeChanged }

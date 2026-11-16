@@ -513,6 +513,19 @@ func (s Service) load(ctx context.Context, tx *sql.Tx, userHK, id string) (store
 	return s.read(ctx, tx, userHK, id, true)
 }
 
+// Bound returns what the confirmation id of the user confirms, as the user
+// was told it, and whether it is bound to digest under p, in tx, without
+// consuming it. The withdrawals use it to tell a confirmation whose fee
+// changed from one of another request (#460). A confirmation that does not
+// match its seal is refused: the error wraps ErrUnverified.
+func (s Service) Bound(ctx context.Context, tx *sql.Tx, userHK, id string, p Purpose, digest []byte) (Details, bool, error) {
+	c, err := s.read(ctx, tx, userHK, id, false)
+	if err != nil {
+		return Details{}, false, err
+	}
+	return c.details, c.purpose == string(p) && subtle.ConstantTimeCompare(c.digest, digest) == 1, nil
+}
+
 // rowReader reads one row: the database or a transaction.
 type rowReader interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
