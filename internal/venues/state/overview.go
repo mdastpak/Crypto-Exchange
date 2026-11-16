@@ -91,6 +91,7 @@ func (s *Store) venue(ctx context.Context, name string, mapping venues.Mapping) 
 	}
 
 	byKind := map[string]Snapshot{}
+	now := s.Clock(ctx)
 	rows, err := s.DB.QueryContext(ctx, `SELECT kind, taken_at, failed_at, COALESCE(failure, '') FROM venue_snapshots WHERE venue = $1`, name)
 	if err != nil {
 		return fail(err)
@@ -101,7 +102,7 @@ func (s *Store) venue(ctx context.Context, name string, mapping venues.Mapping) 
 			rows.Close()
 			return fail(err)
 		}
-		sn.Fresh = sn.TakenAt != nil && s.fresh(*sn.TakenAt)
+		sn.Fresh = sn.TakenAt != nil && s.fresh(now, *sn.TakenAt)
 		byKind[sn.Kind] = sn
 	}
 	rows.Close()
@@ -253,7 +254,7 @@ func (c Collector) Collect(ch chan<- prometheus.Metric) {
 	if err != nil {
 		return
 	}
-	now := c.Store.now()
+	now := c.Store.Clock(ctx)
 	for _, v := range states {
 		for _, sn := range v.Snapshots {
 			if sn.TakenAt != nil {

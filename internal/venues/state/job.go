@@ -31,11 +31,14 @@ func (j Job) Name() string { return "venue_state:" + j.Venue.Name() }
 // runs the job of a venue only when venues.exchanges enables it there.
 func (j Job) Sources() []string { return nil }
 
-func (j Job) now() time.Time {
+// now is the time of a snapshot, read before the venue is called: a move
+// that the ledger posts while the venue answers is then newer than the
+// snapshot, which the reconciliation skips, rather than older than it.
+func (j Job) now(ctx context.Context) time.Time {
 	if j.Now != nil {
 		return j.Now()
 	}
-	return j.Store.now()
+	return j.Store.Clock(ctx)
 }
 
 // Run implements jobs.Job. A snapshot that fails is recorded by the kind of
@@ -51,12 +54,13 @@ func (j Job) Run(ctx context.Context, run *jobs.Run) error {
 		}
 	}
 
+	instrumentsAt := j.now(ctx)
 	if instruments, err := j.Venue.Instruments(ctx); err != nil {
 		fail(KindInstruments, err)
 	} else {
 		run.AddRead(len(instruments))
 		if err := j.write(ctx, run, len(instruments), func() error {
-			return j.Store.SaveInstruments(ctx, name, instruments, j.now())
+			return j.Store.SaveInstruments(ctx, name, instruments, instrumentsAt)
 		}); err != nil {
 			return err
 		}
@@ -67,6 +71,7 @@ func (j Job) Run(ctx context.Context, run *jobs.Run) error {
 		assets = append(assets, asset)
 	}
 	sort.Strings(assets)
+	networksAt := j.now(ctx)
 	networks := map[string][]venues.Network{}
 	var networkErr error
 	for _, asset := range assets {
@@ -83,7 +88,7 @@ func (j Job) Run(ctx context.Context, run *jobs.Run) error {
 	}
 	if len(networks) > 0 {
 		if err := j.write(ctx, run, len(networks), func() error {
-			return j.Store.SaveNetworks(ctx, name, networks, j.now())
+			return j.Store.SaveNetworks(ctx, name, networks, networksAt)
 		}); err != nil {
 			return err
 		}
@@ -104,6 +109,7 @@ func (j Job) Run(ctx context.Context, run *jobs.Run) error {
 		}
 	}
 
+	balancesAt := j.now(ctx)
 	balances, err := j.Venue.Balances(ctx)
 	if err != nil {
 		fail(KindBalances, err)
@@ -111,7 +117,7 @@ func (j Job) Run(ctx context.Context, run *jobs.Run) error {
 	}
 	run.AddRead(len(balances))
 	if err := j.write(ctx, run, len(balances), func() error {
-		return j.Store.SaveBalances(ctx, name, balances, j.now())
+		return j.Store.SaveBalances(ctx, name, balances, balancesAt)
 	}); err != nil {
 		return err
 	}
