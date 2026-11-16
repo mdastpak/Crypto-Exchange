@@ -253,7 +253,6 @@ func (s Store) History(ctx context.Context, userHK string, f Filter, after *Posi
 		conds = append(conds, fmt.Sprintf(`(c."timestamp", c.id) < ($%d, $%d::uuid)`, len(args)-1, len(args)))
 	}
 	args = append(args, limit)
-	//nolint:gosec // G202: the conditions are built here from placeholders; the values are arguments.
 	rows, err := s.DB.QueryContext(ctx, `SELECT c.id::text, c.entry_id::text, e.kind, c.change_type, c.currency_hk::text,
 			COALESCE(cur.info->>'symbol', ''), c.amount, c.new_available, c.new_locked, c.new_pending, c.sub_account_id::text,
 			COALESCE(e.reference_type, ''), COALESCE(e.reference_id, ''), c."timestamp"
