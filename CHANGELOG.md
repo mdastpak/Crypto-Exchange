@@ -10,12 +10,6 @@ New entries are not written here: each change adds a file to [changelog.d](chang
 
 ### Added
 
-- The connectors of the external exchanges that cover the OTC trades ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)). See [`docs/venues.md`](docs/venues.md).
-  - `internal/venues.Venue`: balances, markets, networks, orders by our client order id, withdrawals, deposit addresses, transfers between sub-accounts, and the withdrawal whitelist. What a venue lacks answers `ErrUnsupported`. Every error is `retryable`, `rejected`, or `unknown_outcome`, which the caller resolves by looking its id up.
-  - Binance spot (testnet and live): HMAC-SHA256 signing on every attempt with the venue's clock, the codes of its errors, and the `/sapi` capabilities in live mode. Nobitex (live, `ir` region only): orders and deposit addresses by token.
-  - `source.Client.Do`: signed requests with a body, which a request that changes something sends again only when it was never sent or the venue answered 429; a lost answer is `source.ErrOutcomeUnknown`.
-  - The configuration `venues` (testnet, live, or `dry_run`; direct or through `VENUES_PROXY_URL`; the rate limit counted across every instance; the mapping of assets and networks; `withdraw_target`, `own_wallet` by default), with the credentials in OpenBao (`VENUES_OPENBAO_TOKEN`); release mode refuses a file of credentials, and an international release refuses Nobitex.
-  - A stub venue and a contract that every connector passes, over fake servers of the venues' APIs.
 - The user's balances and the history of their changes ([#365](https://github.com/mdastpak/Crypto-Exchange/issues/365)). See [Balances and history](docs/api.md#balances-and-history).
   - `GET /user/balances` returns the signed-in user's balances, grouped by account: available, locked, pending, total, and the version that a stream of changes joins on. `?account=` is `main` (the default), a sub-account, or `all`, and `?currency=` filters. Another user's sub-account, an unknown one, and a deleted one all answer `404 account_not_found`. A balance that fails its row seal is not shown: `503 balance_unverified`, with its finding recorded.
   - `GET /user/transactions` pages through every change of the user's balances, newest first, with its entry, kind, change type, amount, the balance after it, the account, and the reference that caused it. It filters by account, currency, kind, and time, with a cursor of the change's time and ID. The idempotency key, the request hash, and the postings stay internal.
