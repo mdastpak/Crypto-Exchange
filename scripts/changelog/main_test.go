@@ -25,6 +25,7 @@ func TestRead_SortsBySectionIssueAndName(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, map[string]string{
 		"README.md":                      "# Fragments\n",
+		".markdownlint.jsonc":            "{}\n",
 		"fixed/9-a-fix.md":               "- A fix.\n",
 		"added/440-grant.md":             "- The grant.\n  - With a detail.\n",
 		"added/76-orders.md":             "- Orders.\n",

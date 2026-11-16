@@ -123,6 +123,10 @@ func Read(dir string) ([]Fragment, []string) {
 	var problems []string
 	for _, e := range entries {
 		name := e.Name()
+		// Settings, such as .markdownlint.jsonc, are not fragments.
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 		if !e.IsDir() {
 			if name != "README.md" {
 				problems = append(problems, fmt.Sprintf("%s: a fragment goes in a section directory, such as %s/added/", filepath.Join(dir, name), dir))
@@ -141,7 +145,7 @@ func Read(dir string) ([]Fragment, []string) {
 		}
 		for _, f := range files {
 			path := filepath.Join(dir, name, f.Name())
-			if f.Name() == ".gitkeep" {
+			if strings.HasPrefix(f.Name(), ".") {
 				continue
 			}
 			fragment, problem := readFragment(Sections[i], path)
