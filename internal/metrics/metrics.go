@@ -203,6 +203,31 @@ var (
 		Name: "currency_conversion_failures_total",
 		Help: "Forced conversions of balances that failed and were held for a retry, by kind and code.",
 	}, []string{"kind", "code"})
+	// The notices of delistings (#461): those due and not prepared yet,
+	// those still broadcasting to the other users, the recipients waiting
+	// by holder, with the age of the oldest due one from its notice, and
+	// the failures, by stage (prepare or send). Each instance reads the
+	// same tables: alert on max().
+	DelistingNoticesUnprepared = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "delisting_notices_unprepared",
+		Help: "Notices of delistings that are due and whose recipients are not written yet.",
+	})
+	DelistingNoticeBroadcasts = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "delisting_notice_broadcasts_pending",
+		Help: "Notices of delistings to every user whose other users are still being sent.",
+	})
+	DelistingNoticeRecipientsPending = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "delisting_notice_recipients_pending",
+		Help: "Recipients of notices of delistings not sent yet, by holder.",
+	}, []string{"holder"})
+	DelistingNoticeOldestPending = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "delisting_notice_oldest_pending_seconds",
+		Help: "How long ago the notice of the oldest due recipient not sent yet was due, by holder.",
+	}, []string{"holder"})
+	DelistingNoticeFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "delisting_notice_failures_total",
+		Help: "Notices of delistings that failed to prepare, and sends to a recipient that failed, by stage.",
+	}, []string{"stage"})
 	// PriceDelivery is the time from a price's newest tick to its send to
 	// the WebSocket clients of an instance (#59).
 	PriceDelivery = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -242,6 +267,7 @@ func init() {
 		SMSSends, SMSFallbacks, SMSDeliveryReports,
 		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
 		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceSignatureFailures, PriceDelivery, ConversionFailures,
+		DelistingNoticesUnprepared, DelistingNoticeBroadcasts, DelistingNoticeRecipientsPending, DelistingNoticeOldestPending, DelistingNoticeFailures,
 		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin,
 	)
 }

@@ -236,17 +236,16 @@ func TestNotices_AFailedSendIsTriedAgainWithoutTheChannelsSent(t *testing.T) {
 	_, err := delisting.Advance(ctx, w.db, w.start, 100)
 	require.NoError(t, err)
 	_, err = w.n.Advance(ctx, w.db, w.start, 100)
-	require.Error(t, err, "the run stops at the send that failed")
+	require.Error(t, err, "the run reports the send that failed")
 	assert.Len(t, w.sender.to("alice@example.com"), 1)
-	assert.Empty(t, w.sender.to("bob@example.com"), "the run stopped before the others")
+	assert.Len(t, w.sender.to("bob@example.com"), 1, "and goes on with the others (#461)")
 
 	// Before the delay, nothing is tried again; after it, the SMS goes
-	// alone, and the others are sent.
+	// alone.
 	w.sender.fail = nil
 	_, err = w.n.Advance(ctx, w.db, w.start.Add(time.Minute), 100)
 	require.NoError(t, err)
 	assert.Empty(t, w.sender.to("+989121111111"))
-	assert.Len(t, w.sender.to("bob@example.com"), 1)
 	_, err = w.n.Advance(ctx, w.db, w.start.Add(delisting.NoticeRetryDelay), 100)
 	require.NoError(t, err)
 	assert.Len(t, w.sender.to("+989121111111"), 1)
@@ -335,4 +334,141 @@ func TestNotices_OfAnotherCurrencyAreNotFound(t *testing.T) {
 	other := insertCurrency(t, w.db, sym("OTH"), "approved")
 	_, err := delisting.Notices(ctx, w.db, other, w.d.ID)
 	assert.ErrorIs(t, err, delisting.ErrNotFound)
+}
+
+// TestNotices_AFanOutOfManyUsersIsBatched prepares a notice to tens of
+// thousands of users under a short statement timeout (#461): the holders
+// are written in batches, the others are counted, not stored, and every
+// user is told once.
+func TestNotices_AFanOutOfManyUsersIsBatched(t *testing.T) {
+	if testing.Short() {
+		t.Skip("writes tens of thousands of users")
+	}
+	w := newNoticeWorld(t, tenDays)
+	const others, holders = 20000, 2500
+	// The users and balances are written in SQL: the test is of the
+	// notices, not of the sign-up.
+	_, err := w.db.Exec(`INSERT INTO users (status) SELECT 'ACTIVE' FROM generate_series(1, $1)`, others+holders)
+	require.NoError(t, err)
+	_, err = w.db.Exec(`INSERT INTO balances (user_id, currency_hk, available)
+		SELECT hk, $1, '1' FROM users WHERE hk NOT IN (SELECT user_id FROM balances) ORDER BY hk LIMIT $2`, w.currency, holders)
+	require.NoError(t, err)
+	var dbName string
+	require.NoError(t, w.db.QueryRow(`SELECT current_database()`).Scan(&dbName))
+	_, err = w.db.Exec(`ALTER DATABASE ` + dbName + ` SET statement_timeout = '2s'`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = w.db.Exec(`ALTER DATABASE ` + dbName + ` RESET statement_timeout`) })
+	w.db.SetMaxIdleConns(0) // every connection after this has the timeout
+
+	_, err = delisting.Advance(ctx, w.db, w.start, 100)
+	require.NoError(t, err)
+	w.n.PrepareBatch = 1000
+	w.n.Budget = time.Minute
+	_, err = w.n.Advance(ctx, w.db, w.start, 100)
+	require.NoError(t, err)
+	for i := 0; i < 20; i++ {
+		if n := w.notices(t)["step:delist_announced"]; !n.Broadcasting {
+			break
+		}
+		_, err = w.n.Advance(ctx, w.db, w.start, 100)
+		require.NoError(t, err)
+	}
+	n := w.notices(t)["step:delist_announced"]
+	assert.False(t, n.Broadcasting)
+	assert.Equal(t, holders+1, n.Holders, "every holder, alice too")
+	assert.Equal(t, others+holders+3, n.Recipients, "every user that is not deleted")
+	assert.Zero(t, n.Pending)
+	assert.Equal(t, holders+1, count(t, w.db, `SELECT count(*) FROM currency_delisting_notice_recipients`),
+		"only the holders are stored, one row each")
+	assert.Len(t, w.sender.to("bob@example.com"), 1, "the others are told")
+	assert.Len(t, w.sender.to("alice@example.com"), 1)
+}
+
+// TestNotices_AFailingNoticeDelaysOnlyItself checks that a notice that
+// cannot be prepared waits, and the other notices are prepared and sent
+// in the same run (#461).
+func TestNotices_AFailingNoticeDelaysOnlyItself(t *testing.T) {
+	w := newNoticeWorld(t, tenDays)
+	other := insertCurrency(t, w.db, sym("GOOD"), "approved")
+	carol := usertest.Insert(t, w.db, usertest.User{Email: "carol@example.com"})
+	books{t: t, db: w.db}.fund(accountOf(t, carol), other, "3")
+	d2, _, err := delisting.Schedule(ctx, w.db, other, tenDays(w.start), origin())
+	require.NoError(t, err)
+	_, err = delisting.Advance(ctx, w.db, w.start, 100)
+	require.NoError(t, err)
+	// The first notice due fails: its batch writes a recipient that the
+	// database refuses.
+	_, err = w.db.Exec(`CREATE FUNCTION fail_notice() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF NEW.delisting_hk = '` + w.d.ID + `' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$`)
+	require.NoError(t, err)
+	_, err = w.db.Exec(`CREATE TRIGGER fail_notice BEFORE INSERT ON currency_delisting_notice_recipients
+		FOR EACH ROW EXECUTE FUNCTION fail_notice()`)
+	require.NoError(t, err)
+
+	xyz := func(contact string) int {
+		n := 0
+		for _, m := range w.sender.to(contact) {
+			if m.Delisting.Currency == "XYZ" {
+				n++
+			}
+		}
+		return n
+	}
+	_, err = w.n.Advance(ctx, w.db, w.start, 100)
+	require.Error(t, err)
+	assert.Zero(t, xyz("alice@example.com"), "the failing notice waits")
+	assert.Len(t, w.sender.to("carol@example.com"), 1, "the other is prepared and sent in the same run")
+	assert.True(t, w.sender.to("carol@example.com")[0].Delisting.Holder)
+	failing := w.notices(t)["step:delist_announced"]
+	assert.Nil(t, failing.PreparedAt)
+	assert.Equal(t, 1, failing.PrepareAttempts)
+	list, err := delisting.Notices(ctx, w.db, other, d2.ID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, 1, list[0].Holders)
+
+	// Before its retry the failing notice is not tried again; once the
+	// cause is gone, it is prepared after the delay.
+	_, err = w.db.Exec(`DROP TRIGGER fail_notice ON currency_delisting_notice_recipients`)
+	require.NoError(t, err)
+	_, err = w.n.Advance(ctx, w.db, w.start.Add(time.Second), 100)
+	require.NoError(t, err)
+	assert.Zero(t, xyz("alice@example.com"))
+	_, err = w.n.Advance(ctx, w.db, w.start.Add(delisting.PrepareRetryDelay), 100)
+	require.NoError(t, err)
+	assert.Equal(t, 1, xyz("alice@example.com"))
+	assert.Equal(t, 1, xyz("bob@example.com"))
+	assert.Len(t, w.sender.to("carol@example.com"), 2, "each notice once")
+}
+
+// TestNotices_AFailingBroadcastUserIsTriedAgain checks that a user of a
+// broadcast whose send fails is written as a recipient, tried again, and
+// does not stop the batch (#461).
+func TestNotices_AFailingBroadcastUserIsTriedAgain(t *testing.T) {
+	w := newNoticeWorld(t, tenDays)
+	for i := range 5 {
+		usertest.Insert(t, w.db, usertest.User{Email: fmt.Sprintf("user%d@example.com", i)})
+	}
+	w.sender.fail = func(m notify.OTPMessage) bool { return m.Contact == "bob@example.com" }
+	_, err := delisting.Advance(ctx, w.db, w.start, 100)
+	require.NoError(t, err)
+	_, err = w.n.Advance(ctx, w.db, w.start, 100)
+	require.Error(t, err)
+	for i := range 5 {
+		assert.Len(t, w.sender.to(fmt.Sprintf("user%d@example.com", i)), 1)
+	}
+	n := w.notices(t)["step:delist_announced"]
+	assert.False(t, n.Broadcasting)
+	assert.Equal(t, 1, n.Pending, "bob waits as a recipient")
+	assert.Equal(t, 1, count(t, w.db, `SELECT count(*) FROM currency_delisting_notice_recipients WHERE NOT holder`))
+
+	w.sender.fail = nil
+	_, err = w.n.Advance(ctx, w.db, w.start.Add(delisting.NoticeRetryDelay), 100)
+	require.NoError(t, err)
+	assert.Len(t, w.sender.to("bob@example.com"), 1)
+	n = w.notices(t)["step:delist_announced"]
+	assert.Zero(t, n.Pending)
+	assert.Equal(t, 8, n.Recipients)
+	assert.Equal(t, 7, n.Sent)
+	assert.Equal(t, 1, n.NoContact)
 }
