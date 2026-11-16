@@ -44,7 +44,8 @@ func TestAdminRoutes_EveryChangeIsClassified(t *testing.T) {
 	// What the issue names: platform controls, restrictions, delistings,
 	// migrations, capabilities, and seals; the SMS routing (#371); and the
 	// networks and markets (#57); the review of withdrawals and their payouts (#70);
-	// and the price overrides (#59) and their approval (#453).
+	// and the price overrides (#59) and their approval (#453); and the holds
+	// of the venues (#385).
 	sensitive := 0
 	for key, class := range adminRoutes {
 		if class != admin.RouteSensitive {
@@ -52,12 +53,12 @@ func TestAdminRoutes_EveryChangeIsClassified(t *testing.T) {
 		}
 		sensitive++
 		named := false
-		for _, part := range []string{"/platform/controls", "/restrictions", "/delistings", "/migrations", "/capabilities/", "/reseal", "/notifications/sms", "/networks/", "/markets/", "/withdrawals/", "/payouts/", "/price-override"} {
+		for _, part := range []string{"/platform/controls", "/restrictions", "/delistings", "/migrations", "/capabilities/", "/reseal", "/notifications/sms", "/networks/", "/markets/", "/withdrawals/", "/payouts/", "/price-override", "/venues/holds/"} {
 			named = named || strings.Contains(key, part)
 		}
 		assert.True(t, named, key)
 	}
-	assert.Equal(t, 22, sensitive)
+	assert.Equal(t, 23, sensitive)
 	assert.Equal(t, admin.RouteUnclassified, adminRouteClass(http.MethodPost, adminRoutePrefix+"/new-route"))
 }
 
