@@ -255,6 +255,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Locked funds are held per reservation ([#407](https://github.com/mdastpak/Crypto-Exchange/issues/407)). A balance had one `locked` amount, and `Release`, `Withdraw`, and the debit and fee of `SettleTrade` took from it under any reference, so a caller with a wrong reference could free a pending withdrawal's funds, complete a withdrawal from an order's lock, or charge a fee from another reservation.
+  - Every move that takes locked funds now takes them from the hold of its entry's reference: the locks of that reference in the balance, less what its moves took, read under the balance's lock. It may not take more than the hold has left (`ErrInsufficientLocked`). No migration: the holds are read through the existing indexes.
+  - `SettleTrade` takes the reference of the order whose hold it ends; its fee must be in the currency it gives (`ErrInvalidRequest` otherwise).
+  - A hold made up by a change written in SQL is refused (`ErrUnverified`): such a change carries a version after the balance's sealed one.
+  - `ledger.Withdrawn` is the sum of the withdrawal holds. The withdrawals, conversions, and settlements already named their holds, and are unchanged.
 - An OTC quote held up to six connections of the pool at once, one per check, so that a few quotes at once made sign-ins, withdrawals, and the schedulers wait ([#455](https://github.com/mdastpak/Crypto-Exchange/issues/455)). The checks now run in order on one connection, and stop at the first refusal, which is the same as before. The load test still meets its p99 of 10 ms (about 2 ms locally).
 - Tests guard the migrations that branches write in parallel ([#455](https://github.com/mdastpak/Crypto-Exchange/issues/455)): the findings check must accept every table of `rowseal.Tables` and no other, the migrations from 38 on spell time columns `TIMESTAMPTZ`, and each number has one up and one down migration. See [Database migrations](CONTRIBUTING.md#database-migrations).
 - `cmd/price-aggregator` ran none of the release checks of its dependencies, served the operators' view on every interface, and accepted a quorum of one ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)).
