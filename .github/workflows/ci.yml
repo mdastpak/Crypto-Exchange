@@ -66,6 +66,11 @@ jobs:
             exit 1
           fi
 
+      # The CHANGELOG entries of unreleased changes are files in changelog.d
+      # (#476).
+      - name: Check the changelog fragments
+        run: go run ./scripts/changelog check
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -221,13 +226,44 @@ jobs:
           LIMIT: "800"
         run: |
           # Generated files, the module checksums, test data, and the
-          # CHANGELOG do not count.
+          # CHANGELOG and its fragments do not count.
           changed=$(git diff --numstat "$BASE"...HEAD -- . \
               ':(exclude)docs/docs.go' ':(exclude)docs/swagger.json' ':(exclude)docs/swagger.yaml' \
-              ':(exclude)go.sum' ':(exclude)**/testdata/**' ':(exclude)CHANGELOG.md' \
+              ':(exclude)go.sum' ':(exclude)**/testdata/**' ':(exclude)CHANGELOG.md' ':(exclude)changelog.d/**' \
             | awk '$1 != "-" { n += $1 + $2 } END { print n + 0 }')
           echo "Changed lines of non-generated code: $changed (guideline: $LIMIT)"
           echo "Changed lines of non-generated code: **$changed** (guideline: $LIMIT)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$changed" -gt "$LIMIT" ]; then
             echo "::warning::This pull request changes $changed lines of non-generated code, above the guideline of $LIMIT. Split it into reviewable steps, or say in its description why it cannot be split (CONTRIBUTING.md, Review policy)."
           fi
+
+  # A pull request writes its CHANGELOG entry as a file in changelog.d
+  # (#476), so that pull requests open at once never conflict on the same
+  # lines of CHANGELOG.md. An entry added there directly is refused, unless
+  # the pull request collects fragments, as a release does. Rewording an
+  # entry that is there already adds as many entry lines as it removes, and
+  # passes.
+  changelog:
+    name: Changelog entry
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that the entry is a fragment
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          diff=$(git diff -U0 "$BASE"...HEAD -- CHANGELOG.md)
+          added=$(printf '%s\n' "$diff" | grep -cE '^\+[[:space:]]*- ' || true)
+          removed=$(printf '%s\n' "$diff" | grep -cE '^-[[:space:]]*- ' || true)
+          entries=$((added - removed))
+          collected=$(git diff --name-only --diff-filter=D "$BASE"...HEAD -- 'changelog.d/*/*.md' | wc -l)
+          if [ "$entries" -gt 0 ] && [ "$collected" -eq 0 ]; then
+            echo "::error file=CHANGELOG.md::This pull request adds $entries entry line(s) to CHANGELOG.md. Write the entry as a file in changelog.d instead, such as changelog.d/added/<issue>-<slug>.md; see changelog.d/README.md."
+            exit 1
+          fi
+          echo "No entry was added to CHANGELOG.md directly."

@@ -1,0 +1,7 @@
+{
+  // The rules of the repository, for the fragments too.
+  "extends": "../.markdownlint.jsonc",
+  // A fragment is a list item that goes under a heading of CHANGELOG.md
+  // (#476), so it starts without one.
+  "MD041": false
+}
