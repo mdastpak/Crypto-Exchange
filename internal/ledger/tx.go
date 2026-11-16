@@ -76,6 +76,16 @@ func (t Tx) Convert(ctx context.Context, key string, a Account, c Conversion, re
 	return t.record(ctx, e)
 }
 
+// VenueFill is Ledger.VenueFill within the transaction: a fill of a routed
+// order (#387) that commits with the row of the order.
+func (t Tx) VenueFill(ctx context.Context, key, venue string, got, gave Amount, ref Ref) (Result, error) {
+	e, err := venueFill(key, venue, got, gave, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return t.record(ctx, e)
+}
+
 func (t Tx) record(ctx context.Context, e entry) (Result, error) {
 	start := time.Now()
 	res, err := func() (Result, error) {

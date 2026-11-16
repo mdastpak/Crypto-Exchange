@@ -25,6 +25,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/logging"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/candles"
@@ -37,9 +38,13 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/stream"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tickers"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tiers"
+	"github.com/mdastpak/crypto-exchange/internal/otc"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/venues/registry"
 	"github.com/mdastpak/crypto-exchange/internal/venues/state"
+	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
 
 var (
@@ -250,6 +255,45 @@ func venueStateSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 		v := enabled[name]
 		specs = append(specs, jobs.Spec{Job: state.Job{Store: store, Venue: v.Venue, Mapping: v.Mapping},
 			Interval: interval, Timeout: max(interval, time.Minute)})
+	}
+	if !config.Config.OTC.Routing.Enabled {
+		return specs, nil
+	}
+	drivers, err := routedSpecs(conn, store, enabled)
+	if err != nil {
+		return nil, err
+	}
+	return append(specs, drivers...), nil
+}
+
+// routedInterval is the time between two runs of the routed orders of a
+// venue: each run drives the orders that are due.
+const routedInterval = 2 * time.Second
+
+// routedSpecs are the drivers of the routed orders (#387): one per enabled
+// venue, under its own lease, and each order under a lease of its own.
+func routedSpecs(conn *sql.DB, store *state.Store, enabled map[string]registry.Venue) ([]jobs.Spec, error) {
+	current := func() *config.Configuration { return &config.Config }
+	rules := &routing.Store{DB: conn, Config: current}
+	ttl := time.Duration(config.Config.OTC.Routing.CacheSeconds) * time.Second
+	router, err := otc.NewRouter(conn, current, routing.NewCache(rules, ttl), rules)
+	if err != nil {
+		return nil, fmt.Errorf("otc routing: %w", err)
+	}
+	levels := verification.Store{DB: conn}
+	r := &otc.Routing{Router: router, Region: config.Config.Region(),
+		Level: func(ctx context.Context, userHK string) (int, error) {
+			st, err := levels.Level(ctx, conn, userHK)
+			return int(st.Level), err
+		},
+	}
+	node := applicationName()
+	planner := &routed.Planner{State: store, Node: node, Settings: func() routed.Settings { return routed.SettingsOf(current()) }}
+	var specs []jobs.Spec
+	for _, name := range config.Config.Venues.EnabledVenues() {
+		d := &routed.Driver{DB: conn, Venue: enabled[name].Venue, State: store, Ledger: ledger.Ledger{DB: conn},
+			Planner: planner, Reroute: otc.RerouteOf(conn, r), Positions: otc.MovePositions, Node: node}
+		specs = append(specs, jobs.Spec{Job: d, Interval: routedInterval, Timeout: time.Minute})
 	}
 	return specs, nil
 }

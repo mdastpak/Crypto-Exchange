@@ -306,6 +306,16 @@ var (
 	OTCRoutingUsage = &Table{Name: "otc_routing_usage", Key: "id", KeyType: "uuid", Columns: []Column{
 		text("venue"), text("day"), text("currency_hk"), text("notional"),
 	}, SealedFromStart: true}
+	// OTCRoutedOrders covers a routed order of an OTC trade (#387): what it
+	// buys or sells at which venue, its slippage guard, its id there, its
+	// status, and what it filled. An order changed in SQL, such as a limit
+	// raised or a fill lowered, is not driven further: it waits for review.
+	OTCRoutedOrders = &Table{Name: "otc_routed_orders", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("trade_id"), text("leg"), text("attempt"), text("parent_id"), text("venue"), text("symbol"),
+		text("base_asset"), text("quote_asset"), text("base_currency_hk"), text("quote_currency_hk"), text("side"),
+		text("quantity"), text("limit_price"), text("trade_price"), text("reference_price"), text("client_id"), text("venue_order_id"), text("status"),
+		text("filled"), text("filled_quote"), text("reservation_id"), text("reason"), timestamptz("created_at"),
+	}, SealedFromStart: true}
 	// IntegrityFindings covers the resolution of a finding (#404): which
 	// row it is about, and whether, when, how, and by whom it was closed. A
 	// finding closed in SQL, which would hide the row from the
@@ -391,7 +401,7 @@ var Tables = []*Table{
 	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
 	OTCTrades, OTCHousePositions,
 	VenueReservations, VenueHolds,
-	OTCRoutingRules, OTCRoutingUsage,
+	OTCRoutingRules, OTCRoutingUsage, OTCRoutedOrders,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

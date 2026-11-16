@@ -30,7 +30,7 @@ func (v oneVenue) Funds(context.Context, string, string, string) (routing.Funds,
 	return routing.Funds{Available: dec(v.fundsUSDT)}, nil
 }
 
-func routed(t *testing.T, f serviceFixture, funds string) *Routing {
+func withRouting(t *testing.T, f serviceFixture, funds string) *Routing {
 	t.Helper()
 	rules := []routing.Rule{{Name: "binance", Venues: []routing.VenueRule{{Venue: "binance"}}}}
 	require.NoError(t, routing.Validate(rules, nil))
@@ -47,7 +47,7 @@ func routed(t *testing.T, f serviceFixture, funds string) *Routing {
 func TestService_PricesTheRouteAndRefusesWithoutOne(t *testing.T) {
 	ctx := context.Background()
 	f := newService(t)
-	routed(t, f, "100000")
+	withRouting(t, f, "100000")
 	alice := Account{UserHK: shared.NewUUID().String()}
 	q, err := f.Quote(ctx, Request{Account: alice, Market: "BTC/USDT", Side: SideBuy, Quantity: ptr("0.5")})
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestService_PricesTheRouteAndRefusesWithoutOne(t *testing.T) {
 
 	// The venue's funds buy about 0.15 BTC: no route for 0.5.
 	f2 := newService(t)
-	routed(t, f2, "10000")
+	withRouting(t, f2, "10000")
 	_, err = f2.Quote(ctx, Request{Account: alice, Market: "BTC/USDT", Side: SideBuy, Quantity: ptr("0.5")})
 	assert.Equal(t, CodeNoRoute, refusalCode(t, err))
 	var r *Refusal
@@ -163,6 +163,9 @@ func TestExecutor_RoutesAgainAtExecution(t *testing.T) {
 	require.ErrorAs(t, err, &r)
 	assert.Equal(t, CodeQuoteNotRoutable, r.Code)
 	assert.Equal(t, routing.ReasonCostTooHigh, r.Limit)
+	// Covered, and refused while nothing places its venue leg (#387).
 	_, err = f.execute(routedQuote("0.05", "6", "30"), "covered")
-	require.NoError(t, err)
+	require.ErrorAs(t, err, &r)
+	assert.Equal(t, CodeQuoteNotRoutable, r.Code)
+	assert.Equal(t, "no_routed_orders", r.Limit)
 }

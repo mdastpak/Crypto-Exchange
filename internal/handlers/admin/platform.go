@@ -24,7 +24,7 @@ type CreateControlRequest struct {
 	Kind platform.Kind `json:"kind" enums:"maintenance,lockdown"`
 	// Feature is the feature that a lockdown closes; a maintenance closes
 	// everything and takes none.
-	Feature platform.Feature `json:"feature,omitempty" enums:"sign_up,sign_in,profile_changes,deposits,withdrawals,trading,api_keys,websocket,read_only,scheduler,outbox,market_data"`
+	Feature platform.Feature `json:"feature,omitempty" enums:"sign_up,sign_in,profile_changes,deposits,withdrawals,trading,api_keys,websocket,read_only,scheduler,outbox,market_data,otc_routing"`
 	// StartsAt is now when absent; EndsAt, when set, ends the control
 	// without a lift.
 	StartsAt *time.Time `json:"starts_at,omitempty"`

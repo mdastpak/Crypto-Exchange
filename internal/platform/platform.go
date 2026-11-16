@@ -61,13 +61,18 @@ const (
 	// FeatureMarketData pauses the jobs of cmd/market-worker (#264), which
 	// collect the global market data catalog. Users never see it.
 	FeatureMarketData Feature = "market_data"
+	// FeatureOTCRouting stops the placement of the routed orders of the OTC
+	// trades at the venues (#387); the orders already placed are followed
+	// to the end. Users never see it: their trades go on, and the inventory
+	// keeps what is not covered.
+	FeatureOTCRouting Feature = "otc_routing"
 )
 
 // Features are the features that a lockdown can close.
 var Features = []Feature{
 	FeatureSignUp, FeatureSignIn, FeatureProfileChanges, FeatureDeposits, FeatureWithdrawals,
 	FeatureTrading, FeatureAPIKeys, FeatureWebSocket, FeatureReadOnly, FeatureScheduler, FeatureOutbox,
-	FeatureMarketData,
+	FeatureMarketData, FeatureOTCRouting,
 }
 
 // Uses of the service that no lockdown names, which the gates check.
@@ -85,7 +90,7 @@ func (f Feature) Valid() bool { return slices.Contains(Features, f) }
 
 // internal reports whether users never see a lockdown of f.
 func (f Feature) internal() bool {
-	return f == FeatureScheduler || f == FeatureOutbox || f == FeatureMarketData
+	return f == FeatureScheduler || f == FeatureOutbox || f == FeatureMarketData || f == FeatureOTCRouting
 }
 
 // covers reports whether a control of kind and feature closes use. A full
@@ -117,7 +122,7 @@ type Message struct {
 type Control struct {
 	HK      string   `json:"id" format:"uuid"`
 	Kind    Kind     `json:"kind" enums:"maintenance,lockdown"`
-	Feature *Feature `json:"feature,omitempty" enums:"sign_up,sign_in,profile_changes,deposits,withdrawals,trading,api_keys,websocket,read_only,scheduler,outbox,market_data"`
+	Feature *Feature `json:"feature,omitempty" enums:"sign_up,sign_in,profile_changes,deposits,withdrawals,trading,api_keys,websocket,read_only,scheduler,outbox,market_data,otc_routing"`
 	// StartsAt is when the control applies; EndsAt, when set, when it
 	// stops.
 	StartsAt time.Time  `json:"starts_at"`

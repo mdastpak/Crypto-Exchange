@@ -54,6 +54,7 @@ func TestLedger_RefusesAnEntryOfTheWrongShape(t *testing.T) {
 		{KindVenueFee, "TRANSFER_IN", VenueAccount("binance")},
 		{KindVenueWithdrawal, "TRANSFER_IN", VenueAccount("binance")},
 		{KindTransfer, "TRANSFER_IN", VenueAccount("binance")},
+		{KindVenueFill, "TRANSFER_IN", VenueAccount("binance")},
 	} {
 		err := b.forge(forged.kind, forged.change, forged.account)
 		require.Error(t, err, "%+v", forged)

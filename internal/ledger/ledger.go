@@ -97,6 +97,8 @@ const (
 	KindVenueDeposit    = "venue_deposit"
 	KindVenueWithdrawal = "venue_withdrawal"
 	KindVenueFee        = "venue_fee"
+	// A fill of a routed order at a venue (#387).
+	KindVenueFill = "venue_fill"
 )
 
 var (
@@ -354,6 +356,34 @@ func (l Ledger) VenueFee(ctx context.Context, key, venue string, fee Amount, ref
 		{VenueAccount(venue), fee.Currency, fee.Value},
 		{AccountInventory, fee.Currency, fee.Value.Neg()},
 	}})
+}
+
+// VenueFill records a fill of a routed order at the venue (#387), which
+// covers an OTC trade that the inventory settled with the user: the venue
+// holds got more and gave less, and the inventory the reverse, so that the
+// inventory is whole again in what it gave the user. A buy at the venue
+// gets the base currency and gives the quote; a sell the reverse.
+func (l Ledger) VenueFill(ctx context.Context, key, venue string, got, gave Amount, ref Ref) (Result, error) {
+	e, err := venueFill(key, venue, got, gave, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return l.record(ctx, e)
+}
+
+func venueFill(key, venue string, got, gave Amount, ref Ref) (entry, error) {
+	if !got.Value.IsPositive() || !gave.Value.IsPositive() {
+		return entry{}, fmt.Errorf("%w: a fill of a venue of %s for %s", ErrInvalidRequest, got.Value, gave.Value)
+	}
+	if got.Currency == gave.Currency {
+		return entry{}, fmt.Errorf("%w: a fill of a venue gets and gives one currency", ErrInvalidRequest)
+	}
+	return entry{kind: KindVenueFill, key: key, ref: ref, postings: []posting{
+		{VenueAccount(venue), got.Currency, got.Value.Neg()},
+		{AccountInventory, got.Currency, got.Value},
+		{VenueAccount(venue), gave.Currency, gave.Value},
+		{AccountInventory, gave.Currency, gave.Value.Neg()},
+	}}, nil
 }
 
 // VenueHoldings returns what the books say the exchange holds at the venue

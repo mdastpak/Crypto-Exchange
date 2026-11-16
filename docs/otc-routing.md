@@ -40,11 +40,11 @@ are used only by the explain endpoint.
   refused with `409 quote_not_routable` in three cases: no route remains,
   the new route costs more than the quote charged, or the quote was given
   before routing was switched on. Otherwise the trade records the route of
-  the execution in its sealed `components`. The routed orders
-  ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)) will place
-  that route. The inventory limits
+  the execution in its sealed `components`, and the
+  [routed orders](#routed-orders) place its venue legs. The inventory limits
   ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) are still
-  checked under their locks.
+  checked under their locks, on the share of the trade that the inventory
+  keeps.
 - **Versions.** Every save creates a new version of the whole rule set in
   `otc_routing_rules`. The save is audited as `admin.otc_routing_rules` in
   the same transaction ([#51](https://github.com/mdastpak/Crypto-Exchange/issues/51)).
@@ -189,6 +189,76 @@ cheapest first:
    "venues": [{"venue": "binance"}, {"venue": "nobitex"}]}
 ]
 ```
+
+## Routed orders
+
+Each venue leg of a trade's route becomes a routed order at its venue
+([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)), kept in the
+sealed `otc_routed_orders` table.
+
+- **With the trade.** The order is planned in the transaction of the trade.
+  The same transaction reserves the venue balance that the order spends
+  ([`venues.md#state`](venues.md#state)), adds its notional to the venue's
+  daily usage, and writes an `otc.routed_order_changed` event to the outbox.
+  A trade therefore never commits without the orders that cover it. A leg
+  whose venue, market, or balance can no longer be planned refuses the trade
+  with `409 quote_not_routable`.
+- **The slippage guard.** Every order is a limit order. A buy pays at most
+  the trade's price / (1 + the venue's `fee_bps`), so that the trade stays
+  whole. It also pays at most the reference price × (1 +
+  `otc.routing.max_slippage_bps`). The limit is rounded down to the venue's
+  tick. A sell takes at least price / (1 − fee) and at least reference × (1 −
+  slippage), rounded up. A fill whose average price is beyond the limit is
+  left to a review.
+- **The driver.** `cmd/market-worker` runs one job per enabled venue,
+  `routed_orders:<venue>`, every 2 seconds, while `otc.routing.enabled` is
+  on. Any node may run it. Each order is driven by one node at a time, under
+  a lease of its own row with a token. Every write carries the token, so a
+  node whose lease was taken over writes nothing, and its transaction rolls
+  back.
+- **Once at the venue.** The client id of an order is derived from the
+  trade, the leg, and the attempt. A node looks the order up by it before it
+  places anything. An order that a node placed before it crashed, or whose
+  answer was lost, is found and followed rather than placed twice. A
+  placement with an unknown outcome is looked up for
+  `otc.routing.unknown_grace_seconds` before the order is placed again,
+  because a venue may not show a new order at once. A venue that still
+  refuses the id after that leaves the order to a review.
+- **Fills.** Each lookup posts what the order filled since the last one, in
+  one transaction. It posts `venue_fill` in the ledger: the venue gets what
+  it bought and gives what it spent, and the inventory the reverse. It moves
+  the inventory's positions back by the same amounts and writes the new
+  status. The trade took its whole quantity from the inventory's positions,
+  and the fills give back what the venue covered. The inventory keeps the
+  difference of the prices. The venue's fees are posted from its own
+  reports ([`venues.md`](venues.md#the-venue-accounts-in-the-ledger)).
+- **The deadline.** An order open longer than
+  `otc.routing.order_timeout_seconds` is cancelled, then looked up again,
+  since a cancel may cross a fill. What it did not fill is routed again
+  by the trade's rules, without the venues that already failed the leg, as
+  a new order of the next attempt. A route of the remainder to the inventory
+  needs no order. After 3 attempts, or with no route, the order is left to a
+  review, and the inventory keeps what nothing covered.
+- **Statuses.**
+  - `planned`, `placed`, and `partially_filled` are driven.
+  - `filled` and `cancelled` are ended. A cancelled order's reason is
+    `timed_out` or `venue_rejected`.
+  - `failed` was refused by the venue.
+  - `manual_review` needs a person. Its reason is one of these codes:
+    `no_route`, `attempts_exhausted`, `duplicate_unresolved`,
+    `order_missing`, `fill_invalid`, or `price_beyond_limit`.
+  - The withdrawal states are those of
+    [#388](https://github.com/mdastpak/Crypto-Exchange/issues/388).
+
+  Every transition is kept in the append-only `otc_routed_order_events`,
+  with the node and its lease token. Every ended order releases its
+  reservation. A reason is a code, never the venue's own text.
+- **The kill switch.** A lockdown of `otc_routing`
+  ([`api.md`](api.md#maintenance-and-lockdowns)) stops every order where it is, and
+  refuses, with the lockdown's `503`, new trades whose route has a venue leg. A lockdown of
+  `market_data` pauses the drivers with the other jobs of the worker.
+- **A changed row.** An order that fails its seal is not driven. It waits
+  until it is reviewed.
 
 ## Admin API
 

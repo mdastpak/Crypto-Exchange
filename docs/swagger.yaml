@@ -87,6 +87,7 @@ definitions:
         - scheduler
         - outbox
         - market_data
+        - otc_routing
       kind:
         allOf:
         - $ref: '#/definitions/platform.Kind'
@@ -2711,6 +2712,7 @@ definitions:
         - scheduler
         - outbox
         - market_data
+        - otc_routing
       id:
         format: uuid
         type: string
@@ -2760,6 +2762,7 @@ definitions:
     - scheduler
     - outbox
     - market_data
+    - otc_routing
     - service
     - writes
     type: string
@@ -2776,6 +2779,7 @@ definitions:
     - FeatureScheduler
     - FeatureOutbox
     - FeatureMarketData
+    - FeatureOTCRouting
     - UseService
     - UseWrites
   platform.Kind:

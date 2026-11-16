@@ -21,6 +21,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
@@ -195,9 +197,18 @@ type Executor struct {
 	// Routing plans the route of each trade again at its execution (#386);
 	// nil trades from the inventory.
 	Routing *Routing
+	// Routed plans the orders of the venue legs of a route at the venues
+	// (#387), in the transaction of the trade. A route with a venue leg is
+	// refused without it.
+	Routed RoutedOrders
 
 	// fail injects a failure after a step, for the tests.
 	fail func(step string) error
+}
+
+// RoutedOrders plans the routed orders of a trade (routed.Planner).
+type RoutedOrders interface {
+	Create(ctx context.Context, tx *sql.Tx, t routed.Trade) ([]routed.Order, error)
 }
 
 // The steps after which the tests inject a failure.
@@ -206,6 +217,7 @@ const (
 	stepSettled   = "settled"
 	stepRecorded  = "recorded"
 	stepPositions = "positions"
+	stepRouted    = "routed"
 	stepEvents    = "events"
 )
 
@@ -338,10 +350,16 @@ func (e *Executor) run(ctx context.Context, r ExecuteRequest, digest []byte, ori
 	if err := e.step(stepRecorded); err != nil {
 		return Execution{}, err
 	}
-	if err := e.move(ctx, tx, s); err != nil {
+	if err := e.move(ctx, tx, s, coveredShare(q)); err != nil {
 		return Execution{}, err
 	}
 	if err := e.step(stepPositions); err != nil {
+		return Execution{}, err
+	}
+	if err := e.orders(ctx, tx, id, q, m); err != nil {
+		return Execution{}, err
+	}
+	if err := e.step(stepRouted); err != nil {
 		return Execution{}, err
 	}
 	t, err := readTrade(ctx, tx, `t.id = $1`, id)
@@ -611,12 +629,55 @@ func record(ctx context.Context, tx *sql.Tx, id string, r ExecuteRequest, digest
 // move changes the positions of the inventory by what the trade moved
 // through it, under the locks of their rows, in the order of the
 // currencies, and refuses a trade that takes a position beyond its limit.
-// A trade that brings a position back toward zero always passes.
-func (e *Executor) move(ctx context.Context, tx *sql.Tx, s settlement) error {
+// A trade that brings a position back toward zero always passes. The
+// positions move by the whole trade, also of the share that the venues
+// cover (#387), whose fills move them back; the limits are checked on the
+// share of the inventory only, covered being the share of the venues.
+func (e *Executor) move(ctx context.Context, tx *sql.Tx, s settlement, covered decimal.Decimal) error {
 	deltas := []side{
 		{currency: s.give.currency, symbol: s.give.symbol, amount: s.give.amount},
 		{currency: s.receive.currency, symbol: s.receive.symbol, amount: s.receive.amount.Neg()},
 	}
+	own := decimal.NewFromInt(1).Sub(covered)
+	return adjust(ctx, tx, deltas, func(d side, position shared.Decimal) error {
+		l, ok := e.Limits[strings.ToUpper(d.symbol)]
+		if e.RequireLimits && (!ok || l.MaxShort == nil || l.MaxLong == nil) {
+			log.Printf("OTC: %s has no inventory limit in otc.inventory_limits; its trades are refused", d.symbol)
+			return &Refusal{Code: CodeInventoryLimit}
+		}
+		if !ok {
+			return nil
+		}
+		amount := d.amount.Decimal().Mul(own)
+		n := position.Decimal().Add(amount)
+		if amount.IsNegative() && l.MaxShort != nil && n.Neg().GreaterThan(*l.MaxShort) ||
+			amount.IsPositive() && l.MaxLong != nil && n.GreaterThan(*l.MaxLong) {
+			log.Printf("OTC: a trade would take the inventory of %s to %s, beyond its limit; refused", d.symbol, n)
+			return &Refusal{Code: CodeInventoryLimit}
+		}
+		return nil
+	})
+}
+
+// coveredShare is the share of the quantity of a quote that the venue legs
+// of its route cover, from 0 to 1.
+func coveredShare(q Quote) decimal.Decimal {
+	if q.Components.Route == nil || !q.Quantity.IsPositive() {
+		return decimal.Zero
+	}
+	covered := decimal.Zero
+	for _, l := range q.Components.Route.Legs {
+		if l.Source == routing.SourceVenue {
+			covered = covered.Add(l.Quantity)
+		}
+	}
+	return decimal.Min(decimal.NewFromInt(1), covered.Div(q.Quantity.Decimal()))
+}
+
+// adjust moves the positions by deltas, each checked by check against the
+// position before it, under the locks of their rows, in the order of the
+// currencies.
+func adjust(ctx context.Context, tx *sql.Tx, deltas []side, check func(d side, position shared.Decimal) error) error {
 	sort.Slice(deltas, func(i, j int) bool { return deltas[i].currency.String() < deltas[j].currency.String() })
 	for _, d := range deltas {
 		var created string
@@ -641,20 +702,12 @@ func (e *Executor) move(ctx context.Context, tx *sql.Tx, s settlement) error {
 		if err := rowseal.Check(ctx, rowseal.OTCHousePositions, sealed); err != nil {
 			return err
 		}
-		next := position.Add(d.amount)
-		l, ok := e.Limits[strings.ToUpper(d.symbol)]
-		if e.RequireLimits && (!ok || l.MaxShort == nil || l.MaxLong == nil) {
-			log.Printf("OTC: %s has no inventory limit in otc.inventory_limits; its trades are refused", d.symbol)
-			return &Refusal{Code: CodeInventoryLimit}
-		}
-		if ok {
-			n := next.Decimal()
-			if d.amount.IsNegative() && l.MaxShort != nil && n.Neg().GreaterThan(*l.MaxShort) ||
-				d.amount.IsPositive() && l.MaxLong != nil && n.GreaterThan(*l.MaxLong) {
-				log.Printf("OTC: a trade would take the inventory of %s to %s, beyond its limit; refused", d.symbol, next)
-				return &Refusal{Code: CodeInventoryLimit}
+		if check != nil {
+			if err := check(d, position); err != nil {
+				return err
 			}
 		}
+		next := position.Add(d.amount)
 		if _, err := tx.ExecContext(ctx, `UPDATE otc_house_positions SET position = $2::numeric, updated_at = now()
 			WHERE currency_hk = $1`, d.currency, next.String()); err != nil {
 			return fmt.Errorf("otc: write the position of %s: %w", d.symbol, err)
@@ -664,6 +717,43 @@ func (e *Executor) move(ctx context.Context, tx *sql.Tx, s settlement) error {
 		}
 	}
 	return nil
+}
+
+// MovePositions moves the positions of the inventory by the fills of the
+// routed orders (#387), without their limits: a fill gives back to the
+// inventory what the trade took from it.
+func MovePositions(ctx context.Context, tx *sql.Tx, deltas []routed.Delta) error {
+	sides := make([]side, 0, len(deltas))
+	for _, d := range deltas {
+		hk, err := shared.UUIDFromString(d.CurrencyHK)
+		if err != nil {
+			return err
+		}
+		sides = append(sides, side{currency: hk, symbol: d.CurrencyHK, amount: shared.Decimal(d.Amount)})
+	}
+	return adjust(ctx, tx, sides, nil)
+}
+
+// orders plans the routed orders of the venue legs of the trade id (#387)
+// in its transaction. Without routing, or a route of the inventory only,
+// there is none.
+func (e *Executor) orders(ctx context.Context, tx *sql.Tx, id string, q Quote, m tradedMarket) error {
+	if e.Routing == nil || !coveredShare(q).IsPositive() {
+		return nil
+	}
+	if e.Routed == nil {
+		log.Printf("OTC: a route of the quote %s has a venue leg, and no routed orders are wired; refused", q.ID)
+		return &Refusal{Code: CodeQuoteNotRoutable, Limit: "no_routed_orders"}
+	}
+	_, err := e.Routed.Create(ctx, tx, routed.Trade{
+		ID: id, Side: string(q.Side), Base: m.base, Quote: m.quote, BaseHK: m.baseHK, QuoteHK: m.quoteHK,
+		Price: q.Price.Decimal(), Reference: q.Components.Reference, Route: *q.Components.Route,
+	})
+	if errors.Is(err, routed.ErrNotRoutable) {
+		log.Printf("OTC: a venue leg of the quote %s cannot be planned: %v", q.ID, err)
+		return &Refusal{Code: CodeQuoteNotRoutable, Limit: routing.ReasonInsufficientLiquidity}
+	}
+	return err
 }
 
 // TradeExecuted is the event of a trade, as TopicTradeExecuted carries it.
