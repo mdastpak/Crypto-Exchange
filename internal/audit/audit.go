@@ -141,6 +141,9 @@ const (
 	// holds the currency, network, destination, amount, and fee.
 	ActionUserWithdrawalRequest = "user.withdrawal_request"
 	ActionUserWithdrawalCancel  = "user.withdrawal_cancel"
+	// A user executing an OTC quote (#62). The target is the trade; the
+	// event holds the market, the side, and what was given and received.
+	ActionUserOTCTrade = "user.otc_trade"
 	// An administrator approving a withdrawal held for review, or
 	// rejecting it, which releases its funds (#70), with the reason.
 	ActionWithdrawalApprove = "withdrawal.approve"
@@ -265,6 +268,8 @@ const (
 	TargetWithdrawalDestination = "withdrawal_destination"
 	// TargetWithdrawal is a withdrawal of a user (#70), by its id.
 	TargetWithdrawal = "withdrawal"
+	// TargetOTCTrade is an OTC trade of a user (#62), by its id.
+	TargetOTCTrade = "otc_trade"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"

@@ -55,6 +55,16 @@ func (t Tx) Withdraw(ctx context.Context, key string, a Account, amount Amount, 
 	return t.record(ctx, withdrawal(key, a, amount, fee, ref))
 }
 
+// SettleTrade is Ledger.SettleTrade within the transaction: an OTC trade
+// (#62) that commits with its row and its events.
+func (t Tx) SettleTrade(ctx context.Context, key string, a Account, tr Trade, ref Ref) (Result, error) {
+	e, err := trade(key, a, tr, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return t.record(ctx, e)
+}
+
 // Convert is Ledger.Convert within the transaction: a conversion of a
 // currency migration (#215), under the lock of the balance that the
 // migration claimed.

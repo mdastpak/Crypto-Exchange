@@ -8,6 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
@@ -18,8 +19,10 @@ import (
 // answers otc_unavailable. The quotes are signed with the otp-mac data key,
 // which every instance shares; without data keys, a quote can be taken
 // only on the instance that gave it, as a development setup with one
-// instance needs.
-func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings *config.Configuration) error {
+// instance needs. The executions of the quotes (#62) share the store, so a
+// quote is taken once on any instance, and nudge the outbox relay with
+// committed after each trade.
+func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings *config.Configuration, committed func()) error {
 	levels, ok := h.User.Verification.(verification.Store)
 	if h.Prices == nil || h.Public == nil || h.Public.Markets == nil || !ok {
 		return nil
@@ -38,11 +41,20 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 	for symbol := range settings.OTC.Markets {
 		markets = append(markets, symbol)
 	}
-	checks := otc.DBChecks{DB: db, Verification: levels}
+	checks := otc.DBChecks{DB: db, Verification: levels, Precisions: &otc.PrecisionCache{}}
 	s, err := otc.New(settings.OTC, h.Prices, h.Public.Markets, checks, store, otc.NewMetrics(markets))
 	if err != nil {
 		return fmt.Errorf("otc: %w", err)
 	}
 	h.User.Quotes = s
+	limits, err := otc.ParseInventoryLimits(settings.OTC.InventoryLimits)
+	if err != nil {
+		return err
+	}
+	h.User.Trades = &otc.Executor{
+		DB: db, Store: store, Ledger: ledger.Ledger{DB: db}, Verification: levels, Limits: limits, Committed: committed,
+		RequireLimits: settings.Server.Mode == "release",
+		Legal:         func() config.LegalConfig { return settings.Legal },
+	}
 	return nil
 }

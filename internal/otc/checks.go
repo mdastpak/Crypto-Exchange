@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
@@ -20,6 +22,9 @@ import (
 type DBChecks struct {
 	DB           *sql.DB
 	Verification verification.Store
+	// Precisions caches the precisions of the currencies; nil reads them
+	// for each quote.
+	Precisions *PrecisionCache
 }
 
 // Check refuses the quote when the user's level does not allow OTC trades,
@@ -88,4 +93,51 @@ func (d DBChecks) balance(ctx context.Context, q ledger.RowQuerier, a Account, c
 		return ErrInsufficientBalance
 	}
 	return nil
+}
+
+// Precision returns the precision of the currency (ledger.Precision), so
+// that a quote never asks for an amount that the ledger refuses (#422),
+// from the cache when it has one. A precision that changed since it was
+// read only makes the execution refuse the quote as not settleable.
+func (d DBChecks) Precision(ctx context.Context, currencyHK string) (int32, error) {
+	if d.Precisions == nil {
+		return ledger.Precision(ctx, d.DB, currencyHK)
+	}
+	return d.Precisions.get(ctx, d.DB, currencyHK)
+}
+
+// PrecisionCache keeps the precisions of the currencies for a minute, so
+// that a quote reads them from the database once a minute per currency
+// rather than twice per quote.
+type PrecisionCache struct {
+	mu   sync.Mutex
+	read map[string]cachedPrecision
+}
+
+type cachedPrecision struct {
+	places int32
+	at     time.Time
+}
+
+// precisionTTL is how long a precision is served from the cache.
+const precisionTTL = time.Minute
+
+func (c *PrecisionCache) get(ctx context.Context, db *sql.DB, currencyHK string) (int32, error) {
+	c.mu.Lock()
+	p, ok := c.read[currencyHK]
+	c.mu.Unlock()
+	if ok && time.Since(p.at) < precisionTTL {
+		return p.places, nil
+	}
+	places, err := ledger.Precision(ctx, db, currencyHK)
+	if err != nil {
+		return 0, err
+	}
+	c.mu.Lock()
+	if c.read == nil {
+		c.read = map[string]cachedPrecision{}
+	}
+	c.read[currencyHK] = cachedPrecision{places: places, at: time.Now()}
+	c.mu.Unlock()
+	return places, nil
 }

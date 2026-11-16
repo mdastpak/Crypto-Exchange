@@ -618,6 +618,18 @@ otc:
       slippage_k: "0.0001"
       liquidity: "5"
       max_slippage_bps: 150
+  # The net position of the exchange's inventory per currency (#62), in
+  # units of the currency: max_short is how much more it may give users
+  # than they gave it, max_long how much more it may hold. A trade beyond a
+  # bound is refused (otc_inventory_limit); one back toward zero passes.
+  # Empty is no bound; a release build requires both for each currency of
+  # every market above. The figures are placeholders that each deployment
+  # sets from its hedging capacity.
+  inventory_limits:
+    BTC: {max_short: "2", max_long: "10"}
+    ETH: {max_short: "30", max_long: "150"}
+    USDT: {max_short: "100000", max_long: "1000000"}
+    IRR: {max_short: "10000000000000", max_long: "100000000000000"}
 
 # The anti-phishing code of users (#375), which every email to their
 # verified contacts shows. The exchange suggests a new one once it is

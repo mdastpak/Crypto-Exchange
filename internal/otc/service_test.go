@@ -265,7 +265,7 @@ func newDBFixture(t testing.TB) dbFixture {
 	require.NoError(t, err)
 	_, err = books.CreditDeposit(ctx, key+":credit", account, amount, ledger.Ref{})
 	require.NoError(t, err)
-	return dbFixture{DB: conn, checks: DBChecks{DB: conn, Verification: verification.Store{DB: conn, Policy: policy}},
+	return dbFixture{DB: conn, checks: DBChecks{DB: conn, Verification: verification.Store{DB: conn, Policy: policy}, Precisions: &PrecisionCache{}},
 		market: m, user: user, keys: live}
 }
 

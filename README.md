@@ -53,7 +53,8 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | SMS providers | Implemented | Kavenegar and sms.ir in a configured order, with failover when a provider fails and delivery reports that send a message that did not reach the phone again through the next one ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)). Administrators see the health of each provider and switch between the automatic mode and a manual order (`GET`/`PUT /admin/notifications/sms`). See [SMS providers](docs/configuration.md#sms-providers). |
 | Price engine | Implemented | `cmd/price-aggregator` follows Binance, Coinbase, and Kraken by their streams, with their REST APIs while a stream is down, and OKX and the Iranian venues by REST, and computes a reference price per market every 100 ms: the best bid and ask, the median mid, VWAP and TWAP over windows, outliers rejected by MAD, and a quorum below which the price is stale ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). Every replica caches the live prices in Redis, one at a time publishes the updates to a Redis stream and RabbitMQ, which the WebSocket forwards, and administrators can set a price for a time ([#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). See [docs/price-engine.md](docs/price-engine.md). |
 | OTC quotes | Implemented | `POST /user/otc/quote` gives a firm price for 5 to 10 seconds: the reference price raised for a buy, and lowered for a sell, by half the spread, the hedge cost, a margin with a minimum, a risk premium, and a slippage of the square root of the size, rounded against the user, with the fee apart. It refuses a stale price, a paused market, and a user whose level, restrictions, currencies, or balance do not allow the trade. The quote is bound to the user and sub-account and signed in Redis, so that only they can take it, once ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)). See [docs/api.md](docs/api.md#otc-quotes). |
-| OTC execution, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
+| OTC execution | Implemented | `POST /user/otc/execute` takes a quote once and settles it in one transaction: the controls are checked again under its locks, the ledger settles the trade against the exchange's inventory, the trade is recorded sealed with the parts of its price, the inventory is bounded per currency by `otc.inventory_limits`, and `TradeExecuted` and `BalanceChanged` go through the outbox. A retry of the idempotency key returns the first trade ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)). See [docs/api.md](docs/api.md#post-userotcexecute). |
+| Custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
 
 ## Architecture
@@ -357,7 +358,8 @@ internal/metrics/       Prometheus metrics, served on a port of their own
 internal/middleware/    Security headers, CORS, rate limiting, validation, recovery
 internal/models/        API models for currencies and users
 internal/notify/        Delivery of sign-in codes by email and SMS through RabbitMQ
-internal/otc/           OTC quotes: pricing over the reference, checks, signed quotes in Redis
+internal/otc/           OTC quotes: pricing over the reference, checks, signed quotes in Redis;
+                        their execution in one transaction, and the inventory limits
 internal/otp/           One-time codes: generation, hashed storage in Redis, attempt limits
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints

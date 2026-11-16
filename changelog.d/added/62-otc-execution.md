@@ -1,0 +1,5 @@
+- `POST /user/otc/execute` executes an OTC quote at its price, in one transaction of the database ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)).
+  - The quote is taken once, the controls are checked again under the locks of the trade (the `trading` feature, the legal documents, the level of `trade_otc`, the restrictions and capabilities of both currencies, and the market), and the trade is settled in the ledger, recorded in the sealed table `otc_trades` with the parts of its price, and its `TradeExecuted` and `BalanceChanged` events are written to the outbox for the `trade_events` exchange. A retry with the same idempotency key returns the first trade.
+  - A sell's fee is netted from what it is credited; the ledger accepts the new shape of a trade entry (migration 44).
+  - New setting `otc.inventory_limits`: `max_short` and `max_long` per currency symbol bound the exchange's inventory, kept in the sealed table `otc_house_positions`. A release build requires both for each currency of every quoted market.
+  - Audited as `user.otc_trade`.
