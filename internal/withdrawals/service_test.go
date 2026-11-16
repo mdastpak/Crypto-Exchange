@@ -345,7 +345,12 @@ func TestRequest_RefusesAFeeThatChangedAfterTheConfirmation(t *testing.T) {
 
 	r.ConfirmationID = out.Challenge.ID
 	_, err = f.Request(ctx, f.user, r, "client", origin)
-	require.ErrorIs(t, err, confirm.ErrMismatch)
+	require.ErrorIs(t, err, ErrFeeChanged, "told apart from a confirmation of another request (#460)")
+	require.NotErrorIs(t, err, confirm.ErrMismatch)
+	var changed *FeeChangedError
+	require.ErrorAs(t, err, &changed)
+	assert.Equal(t, "1 USDT", changed.Confirmed)
+	assert.Equal(t, "5 USDT", changed.Current)
 	available, locked := f.balance()
 	assert.Equal(t, "1000", available, "nothing is locked")
 	assert.Equal(t, "0", locked)
