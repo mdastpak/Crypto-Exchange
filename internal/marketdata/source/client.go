@@ -42,6 +42,9 @@ type StatusError struct {
 	Source string
 	Path   string
 	Code   int
+	// Body is the answer of a request of Do, bounded, so that the caller
+	// can read the source's own error code. It is never in Error().
+	Body []byte
 }
 
 func (e *StatusError) Error() string {

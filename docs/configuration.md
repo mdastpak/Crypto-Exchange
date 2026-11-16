@@ -47,6 +47,8 @@ At start the server logs one line with its posture: the mode, the region, the ro
 | `otp.auth.dev_log_codes` | `false` |
 | `keys.provider` | Set, not `local`, and a Transit address with `https`. The data keys protect the sign-in codes, the authenticator secrets of administrators, and the row seals, and every instance must share them. |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
+| `venues.credentials.provider` | `openbao`, with an `https` address, while a venue is enabled: release mode never reads the keys of the exchanges from a file. See [`venues`](#venues). |
+| `venues.exchanges.<name>.base_url` | Empty, or an `https://` address |
 
 `cmd/price-aggregator` runs the same checks of Redis and RabbitMQ, with the same messages, when it publishes to them: `redis.password`, `rabbitmq.username` and `rabbitmq.password`, and the TLS of each, with `price_aggregator.signing_key`. It also needs a host in `price_aggregator.health_addr` and `price_aggregator.min_providers` of at least 2 ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)).
 
@@ -64,6 +66,7 @@ In an international release, the server and the market data worker refuse to sta
 | The Iranian venues on the public market data routes | `ir` in `market_data.api.regions` | server |
 | Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
 | A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
+| Nobitex as a venue of the OTC trades ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)) | `venues.exchanges.nobitex.enabled` | server |
 
 The defaults that depend on the region:
 
@@ -650,6 +653,37 @@ Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin
 
 Each quote records its parts, so that the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) knows the margin of every trade. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
 
+### `venues`
+
+The connectors of the external exchanges that the OTC trades are covered on ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)). See [`docs/venues.md`](venues.md) for what each connector offers. Nothing is sent to a venue that is not enabled, and a venue that is enabled needs a credentials provider.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `proxy_url` | empty | The proxy of the venues whose `egress` is `proxy`: `http://`, `https://`, or `socks5://`. Set it with `VENUES_PROXY_URL`; it is never logged. |
+| `credentials.provider` | empty | `openbao`, or `file` for development. Release mode refuses `file`. |
+| `credentials.file` | empty | The JSON file of the `file` provider: an object of venues, each with `api_key` and `api_secret` (Binance) or `token` (Nobitex). It is read again on every miss of the cache, so a change applies without a restart. Keep it out of Git. |
+| `credentials.cache_seconds` | `300` | From 1 to 3600. How long credentials are kept before they are read again, so that a rotation applies within it. Credentials that a venue refuses are read again at once. While the provider cannot be reached, the last credentials are kept. |
+| `credentials.openbao.address` | empty | The address of OpenBao or Vault, `https` in release mode. |
+| `credentials.openbao.token`, `credentials.openbao.token_file` | empty | The token (`VENUES_OPENBAO_TOKEN`), or a file that an agent renews in place, read on every request (`VENUES_OPENBAO_TOKEN_FILE`). One is required. The token needs only `read` on the secrets of the venues. |
+| `credentials.openbao.mount`, `credentials.openbao.prefix` | `secret`, `venues/` | The KV version 2 engine and the prefix of the secrets: a venue reads `<mount>/data/<prefix><venue>`, such as `secret/data/venues/binance`, with the fields `api_key`, `api_secret`, and `token`. |
+| `credentials.openbao.ca_cert`, `credentials.openbao.timeout_seconds` | empty, `10` | The CA of OpenBao, and the timeout of a read. |
+| `exchanges` | none | The venues, by the name of their connector: `binance` or `nobitex`. |
+
+Each venue of `exchanges`:
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | |
+| `mode` | `testnet` | `testnet`, `live`, or `dry_run`, which reads the live venue and logs the orders, withdrawals, and transfers without sending them. Nobitex has no testnet. |
+| `egress` | `direct` | `direct`, or `proxy` through `venues.proxy_url`. |
+| `base_url` | the mode's | Overrides the address of the venue. |
+| `requests_per_minute` | `600` for Binance, `60` for Nobitex | At least 1. Our share of the venue's limit, counted in Postgres (`market_source_usage`, as `venue_<name>`) over every instance. Keep it well under the venue's own limit, which the market data worker may share from the same address. |
+| `timeout_seconds` | `10` | From 1 to 60. One request. |
+| `recv_window_ms` | `5000` | From 1 to 60000. How long after its timestamp Binance accepts a signed request. |
+| `sub_account` | empty | The sub-account of the OTC trades, such as the email of a Binance sub-account; empty is the main account. Nobitex has none. |
+| `withdraw_target` | `own_wallet` | `own_wallet` sends a withdrawal from the venue to our hot wallet, which pays the user, so that the venue never sees a user's address ([#388](https://github.com/mdastpak/Crypto-Exchange/issues/388)); `direct` sends it to the user's address. |
+| `assets` | none | The venue's assets, by its symbol, each with our `currency` and its `networks`, from the venue's name to ours, such as `{TRX: tron}`. An asset or network that is not here is not routable. Two assets of one currency, or two networks of one network, are refused. |
+
 ### `anti_phishing`
 
 The [anti-phishing code](api.md#anti-phishing-code) of users ([#375](https://github.com/mdastpak/Crypto-Exchange/issues/375)), which every email to their verified contacts shows. The more emails show a code, and the longer it lives, the more places it can be seen, so the exchange suggests a new one: `GET /user/anti-phishing-code` says so, and a reminder goes by email, which shows the code like every email, and by SMS, which never does, with the number of emails that have shown it. The reminder comes again every `reminder_interval_days` until the code changes.
@@ -902,6 +936,12 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `MARKET_DATA_PROXY_URL` | `market_data.egress.proxy_url` |
 | `MARKET_DATA_COINGECKO_API_KEY` | `market_data.sources.coingecko.api_key` |
 | `MARKET_DATA_COINMARKETCAP_API_KEY` | `market_data.sources.coinmarketcap.api_key` |
+| `VENUES_PROXY_URL` | `venues.proxy_url` |
+| `VENUES_CREDENTIALS_PROVIDER` | `venues.credentials.provider` |
+| `VENUES_CREDENTIALS_FILE` | `venues.credentials.file` |
+| `VENUES_OPENBAO_ADDRESS` | `venues.credentials.openbao.address` |
+| `VENUES_OPENBAO_TOKEN` | `venues.credentials.openbao.token` |
+| `VENUES_OPENBAO_TOKEN_FILE` | `venues.credentials.openbao.token_file` |
 | `GEOIP_ENABLED` | `geoip.enabled` |
 | `GEOIP_HEADER` | `geoip.header` |
 | `GEOIP_DATABASE_PATH` | `geoip.database_path` |
@@ -981,4 +1021,5 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
 - Keep the KYC provider's credentials (`IDENTITY_MOBILE_OWNERSHIP_API_KEY`, `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`) in the secret manager, with a pair of their own for every environment.
 - Mount the price signing key (`price_aggregator.signing_key`, such as `/run/secrets/price-signing.pem`) on the price aggregators only, never on a server; the servers get only its public key (`price.verify_keys`), which may be public. Give every environment its own pair. See [Integrity of the prices](price-engine.md#integrity-of-the-prices).
+- Keep the API keys of the exchanges in OpenBao, one secret per venue, with keys that can trade and, where a venue allows it, withdraw only to whitelisted addresses, and bind them to the addresses of our nodes at the venue. The connectors never log them, never put them in a URL, and print them as `[redacted]`.
 - Give every environment its own KEK, and the server a Transit token that can only `encrypt` and `decrypt` with it, never read or delete it. See [`docs/data-protection.md`](data-protection.md).

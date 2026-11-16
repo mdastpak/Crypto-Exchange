@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "stats": {
+    "btc-rls": {"isClosed": false, "bestSell": "60500000000", "bestBuy": "60400000000", "volumeSrc": "12.5", "volumeDst": "755000000000", "latest": "60450000000", "dayLow": "59000000000", "dayHigh": "61000000000", "dayOpen": "59500000000", "dayClose": "60450000000", "dayChange": "1.6"},
+    "btc-usdt": {"isClosed": false, "bestSell": "60010", "bestBuy": "60000", "volumeSrc": "3.1", "volumeDst": "186000", "latest": "60005", "dayLow": "59000", "dayHigh": "61000", "dayOpen": "59500", "dayClose": "60005", "dayChange": "0.85"},
+    "shib-rls": {"isClosed": true, "latest": "1.2"}
+  }
+}

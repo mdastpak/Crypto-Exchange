@@ -624,6 +624,57 @@ otc:
 # max_age_days old or max_uses emails have shown it, by email and SMS, and
 # again every reminder_interval_days until it changes. A negative bound is
 # off; both off is no reminder.
+# The connectors of the external exchanges that the OTC trades are covered
+# on (#384, docs/venues.md). A venue starts on its testnet; dry_run reads
+# the live venue and logs the orders, withdrawals, and transfers without
+# sending them. Nobitex has no testnet, and only a release of the ir region
+# may turn it on.
+venues:
+  # The proxy of the venues whose egress is proxy (VENUES_PROXY_URL).
+  proxy_url: ""
+  credentials:
+    # openbao, or file for development; release mode refuses file
+    # (VENUES_CREDENTIALS_PROVIDER).
+    provider: file
+    file: config/venues.credentials.json
+    cache_seconds: 300
+    openbao:
+      address: ""
+      # Set the token with VENUES_OPENBAO_TOKEN, or give a file that an
+      # agent renews (VENUES_OPENBAO_TOKEN_FILE).
+      token_file: ""
+      mount: secret
+      prefix: venues/
+  exchanges:
+    binance:
+      enabled: false
+      mode: testnet
+      egress: direct
+      requests_per_minute: 600
+      # The email of the sub-account of the OTC trades; empty is the main
+      # account.
+      sub_account: ""
+      # own_wallet sends a withdrawal to our hot wallet, which pays the
+      # user; direct sends it to the user's address.
+      withdraw_target: own_wallet
+      assets:
+        BTC:
+          currency: BTC
+          networks: {BTC: bitcoin}
+        USDT:
+          currency: USDT
+          networks: {TRX: tron, ETH: ethereum, BSC: bsc}
+    nobitex:
+      enabled: false
+      mode: dry_run
+      requests_per_minute: 60
+      assets:
+        usdt:
+          currency: USDT
+          networks: {TRX: tron}
+        rls:
+          currency: IRR
+
 anti_phishing:
   rotation:
     max_age_days: 180

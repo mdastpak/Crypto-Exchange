@@ -1,0 +1,18 @@
+[
+  {
+    "coin": "USDT",
+    "depositAllEnable": true,
+    "withdrawAllEnable": true,
+    "name": "TetherUS",
+    "networkList": [
+      {"network": "TRX", "coin": "USDT", "depositEnable": true, "withdrawEnable": true, "withdrawFee": "1.0", "withdrawMin": "10", "minConfirm": 1, "sameAddress": false},
+      {"network": "ETH", "coin": "USDT", "depositEnable": true, "withdrawEnable": false, "withdrawFee": "4.5", "withdrawMin": "20", "minConfirm": 6, "sameAddress": false}
+    ]
+  },
+  {
+    "coin": "XRP",
+    "networkList": [
+      {"network": "XRP", "coin": "XRP", "depositEnable": true, "withdrawEnable": true, "withdrawFee": "0.25", "withdrawMin": "2", "minConfirm": 1, "sameAddress": true}
+    ]
+  }
+]

@@ -496,6 +496,8 @@ type Configuration struct {
 
 	// OTC configures the OTC quotes (#61).
 	OTC OTCConfig `yaml:"otc"`
+	// Venues configures the connectors of the external exchanges (#384).
+	Venues VenuesConfig `yaml:"venues"`
 
 	// AntiPhishing configures the anti-phishing codes of users (#375).
 	AntiPhishing AntiPhishingConfig `yaml:"anti_phishing"`
@@ -2046,6 +2048,7 @@ func setDefaults() {
 	}
 	Config.applyVerificationDefaults()
 	Config.applyOTCDefaults()
+	Config.applyVenueDefaults()
 	Config.applyAntiPhishingDefaults()
 
 	if Config.MarketData.Mode == "" {
