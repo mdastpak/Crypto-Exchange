@@ -58,6 +58,7 @@ func (c *Configuration) validateServer() error {
 	c.observabilityProblems(&p)
 	c.verificationProblems(&p)
 	c.otcProblems(&p)
+	c.venueProblems(&p, release)
 	c.antiPhishingProblems(&p)
 	c.smsProblems(&p)
 	c.withdrawalProblems(&p)

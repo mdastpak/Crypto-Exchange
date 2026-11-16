@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The connectors of the external exchanges that cover the OTC trades ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)). See [`docs/venues.md`](docs/venues.md).
+  - `internal/venues.Venue`: balances, markets, networks, orders by our client order id, withdrawals, deposit addresses, transfers between sub-accounts, and the withdrawal whitelist. What a venue lacks answers `ErrUnsupported`. Every error is `retryable`, `rejected`, or `unknown_outcome`, which the caller resolves by looking its id up.
+  - Binance spot (testnet and live): HMAC-SHA256 signing on every attempt with the venue's clock, the codes of its errors, and the `/sapi` capabilities in live mode. Nobitex (live, `ir` region only): orders and deposit addresses by token.
+  - `source.Client.Do`: signed requests with a body, which a request that changes something sends again only when it was never sent or the venue answered 429; a lost answer is `source.ErrOutcomeUnknown`.
+  - The configuration `venues` (testnet, live, or `dry_run`; direct or through `VENUES_PROXY_URL`; the rate limit counted across every instance; the mapping of assets and networks; `withdraw_target`, `own_wallet` by default), with the credentials in OpenBao (`VENUES_OPENBAO_TOKEN`); release mode refuses a file of credentials, and an international release refuses Nobitex.
+  - A stub venue and a contract that every connector passes, over fake servers of the venues' APIs.
+
 - Signed reference prices ([#450](https://github.com/mdastpak/Crypto-Exchange/issues/450)). See [Integrity of the prices](docs/price-engine.md#integrity-of-the-prices).
   - `cmd/price-aggregator` signs each price that it writes to Redis and to `price:stream` with an Ed25519 key, `price_aggregator.signing_key` (`PRICE_AGGREGATOR_SIGNING_KEY`), over a canonical encoding of every field, with the key id in `kid` and the signature in `sig`.
   - `price.Reader` verifies each price with `price.verify_keys` (`PRICE_VERIFY_KEYS`) before it reads its age: an unsigned, changed, malformed, or unknown-key price is `price.ErrUnverifiedPrice`, a stale price to OTC quotes and delisting settlements, counted in `price_signature_failures_total{reason}` and logged once a minute per market. Two public keys allow a rotation.

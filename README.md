@@ -209,6 +209,8 @@ Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-avail
 
 Each process writes structured logs, with secrets and contacts redacted; the server serves Prometheus metrics on a port of their own and sends OpenTelemetry traces. [docs/observability.md](docs/observability.md) lists the metrics, the spans, and the alerts to set.
 
+The connectors of the external exchanges that cover the OTC trades, Binance and Nobitex, read their keys from OpenBao and look every order up by our own id after a crash; [docs/venues.md](docs/venues.md) describes them.
+
 Backups, point-in-time recovery, the restore drill, and the disaster-recovery runbook are in [docs/disaster-recovery.md](docs/disaster-recovery.md). `admin backup status` alerts when WAL archiving falls behind the RPO, and `admin restore verify` checks a restored database before it is put in service.
 
 ## API overview
@@ -384,6 +386,8 @@ internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI co
 internal/totp/          Time-based one-time passwords (RFC 6238)
 internal/tracing/       OpenTelemetry spans of requests, queries, commands, and publishes
 internal/userauth/      The account password of users, the second step of their sign-in
+internal/venues/        Connectors of the external exchanges for the OTC trades: Binance,
+                        Nobitex, a stub, the shared contract, credentials from OpenBao
 internal/verification/  Verification levels: what each allows, and the withdrawal limits
 internal/withdrawals/   Withdrawals of users: request, confirmation, lock, review, and the payouts
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker

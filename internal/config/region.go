@@ -117,6 +117,11 @@ var regionFeatures = []regionFeature{
 		},
 	},
 	{
+		what:    "the Iranian exchanges as venues of the OTC trades (#384)",
+		regions: []region.Region{region.Iran},
+		on:      venueRegionSettings,
+	},
+	{
 		what:    "a site for visitors from Iran",
 		regions: []region.Region{region.Iran},
 		on: func(c *Configuration) []regionSetting {

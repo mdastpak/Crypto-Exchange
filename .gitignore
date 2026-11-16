@@ -23,6 +23,7 @@ go.work
 # Config and secrets
 config/config.yaml
 config/config.local.yaml
+config/venues.credentials.json
 .env
 .env.*
 !.env.example
