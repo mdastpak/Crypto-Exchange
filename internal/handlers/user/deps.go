@@ -7,6 +7,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/agreements"
 	"github.com/mdastpak/crypto-exchange/internal/antiphishing"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
+	"github.com/mdastpak/crypto-exchange/internal/balances"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
@@ -71,6 +72,14 @@ type FavoriteStore interface {
 type RestrictionReader interface {
 	Active(ctx context.Context, userHK string) ([]restrictions.Restriction, error)
 	SecurityHold(ctx context.Context, userHK string) (*time.Time, error)
+}
+
+// BalanceReader reads the balances of a user and the history of their
+// changes (#365): balances.Store.
+type BalanceReader interface {
+	Resolve(ctx context.Context, userHK, raw string) (balances.Account, error)
+	Balances(ctx context.Context, userHK string, a balances.Account, currencyHK string) ([]balances.Balance, error)
+	History(ctx context.Context, userHK string, f balances.Filter, after *balances.Position, limit int) ([]balances.Change, error)
 }
 
 // VerificationReader reads the verification level of a user, what it

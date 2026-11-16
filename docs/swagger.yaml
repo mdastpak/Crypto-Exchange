@@ -637,6 +637,108 @@ definitions:
           page.
         type: string
     type: object
+  balances.Balance:
+    properties:
+      available:
+        example: "95.5"
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+      locked:
+        example: "4.5"
+        type: string
+      pending_deposit:
+        example: "0"
+        type: string
+      sub_account_id:
+        description: SubAccountID is the sub-account, absent for the main account.
+        format: uuid
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      total:
+        description: Total is available plus locked.
+        example: "100"
+        type: string
+      version:
+        description: |-
+          Version rises with every change: a client that joins this snapshot
+          with the stream of changes applies only the events of a higher
+          version.
+        example: 7
+        type: integer
+    type: object
+  balances.Change:
+    properties:
+      amount:
+        example: "4.5"
+        type: string
+      available:
+        description: |-
+          Available, Locked, and PendingDeposit are the balance after the
+          change.
+        example: "95.5"
+        type: string
+      change_type:
+        description: ChangeType is what the change did to the balance.
+        example: LOCK
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+      entry_id:
+        format: uuid
+        type: string
+      id:
+        description: |-
+          ID is the change, and EntryID the ledger entry it is part of: one
+          entry can change several balances, such as a trade.
+        format: uuid
+        type: string
+      kind:
+        description: Kind is the kind of the entry.
+        enum:
+        - deposit_detected
+        - deposit_credited
+        - deposit_failed
+        - lock
+        - release
+        - transfer
+        - trade
+        - withdrawal
+        - conversion
+        type: string
+      locked:
+        example: "4.5"
+        type: string
+      pending_deposit:
+        example: "0"
+        type: string
+      reference:
+        allOf:
+        - $ref: '#/definitions/balances.Reference'
+        description: Reference is what caused the change, such as a withdrawal.
+      sub_account_id:
+        description: SubAccountID is the sub-account, absent for the main account.
+        format: uuid
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      time:
+        type: string
+    type: object
+  balances.Reference:
+    properties:
+      id:
+        example: 5f0c3c9e-2f43-4f7e-9a9c-2d6f1f5c1a10
+        type: string
+      type:
+        example: withdrawal
+        type: string
+    type: object
   confirm.Challenge:
     properties:
       details:
@@ -3595,6 +3697,17 @@ definitions:
           terms: 2026-11
         type: object
     type: object
+  user.AccountBalances:
+    properties:
+      balances:
+        items:
+          $ref: '#/definitions/balances.Balance'
+        type: array
+      sub_account_id:
+        description: SubAccountID is the sub-account, absent for the main account.
+        format: uuid
+        type: string
+    type: object
   user.AddPasskeyRequest:
     properties:
       credential:
@@ -3631,6 +3744,13 @@ definitions:
         type: string
     required:
     - code
+    type: object
+  user.BalancesInfo:
+    properties:
+      accounts:
+        items:
+          $ref: '#/definitions/user.AccountBalances'
+        type: array
     type: object
   user.ConfirmRequest:
     properties:
@@ -3989,6 +4109,17 @@ definitions:
     properties:
       code:
         example: "123456"
+        type: string
+    type: object
+  user.TransactionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/balances.Change'
+        type: array
+      next_cursor:
+        description: NextCursor asks for the next page. It is left out on the last
+          page.
         type: string
     type: object
   user.conversionRequest:
@@ -10431,6 +10562,66 @@ paths:
       summary: Set my anti-phishing code
       tags:
       - user-security
+  /api/v1/user/balances:
+    get:
+      description: 'The balances of the signed-in user, grouped by account, one per
+        currency: available, locked, pending_deposit, total (available plus locked),
+        and version, which rises with every change, so that a client joins this snapshot
+        with the stream of account.balances (#66) by applying only the events of a
+        higher version. account selects the main account (the default), a sub-account
+        of the user by its ID, or all, every account of the user. A sub-account of
+        another user, an unknown one, and a deleted one all answer 404 account_not_found.
+        currency filters to one currency. A currency without a balance row is left
+        out: show it as zero. Amounts are decimal strings. Each balance is checked
+        against its row seal (#139); one that fails is not returned, its finding is
+        recorded, and the answer is 503 balance_unverified with info.currency_hk.'
+      parameters:
+      - description: main (the default), all, or the ID of a sub-account
+        in: query
+        name: account
+        type: string
+      - description: A currency hk
+        format: uuid
+        in: query
+        name: currency
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.BalancesInfo'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: account_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: balance_unverified, with info.currency_hk, or balances_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: My balances
+      tags:
+      - user-balances
   /api/v1/user/confirmation-method:
     get:
       description: 'How the withdrawals of the signed-in user are confirmed: the method
@@ -12064,6 +12255,99 @@ paths:
       summary: Turn the authenticator app on
       tags:
       - user-security
+  /api/v1/user/transactions:
+    get:
+      description: 'Every change of the signed-in user''s balances, newest first:
+        its id, the entry that made it (entry_id) and its kind, the change_type, the
+        currency, the amount, the available, locked, and pending_deposit amounts after
+        it, the account (sub_account_id, absent for the main account), what caused
+        it (reference, such as a withdrawal and its ID), and its time. account selects
+        the main account (the default), a sub-account by its ID, or all; a sub-account
+        of another user, an unknown one, and a deleted one answer 404 account_not_found.
+        currency, kind, since (inclusive), and until (exclusive) filter it. Pages
+        follow the pagination convention of docs/api.md; the cursor holds the time
+        and the id of a change. The changes of one entry share its time.'
+      parameters:
+      - description: main (the default), all, or the ID of a sub-account
+        in: query
+        name: account
+        type: string
+      - description: A currency hk
+        format: uuid
+        in: query
+        name: currency
+        type: string
+      - description: The kind of the entry
+        enum:
+        - deposit_detected
+        - deposit_credited
+        - deposit_failed
+        - lock
+        - release
+        - transfer
+        - trade
+        - withdrawal
+        - conversion
+        in: query
+        name: kind
+        type: string
+      - description: From this time, inclusive (RFC 3339)
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Before this time, exclusive (RFC 3339)
+        format: date-time
+        in: query
+        name: until
+        type: string
+      - description: The number of changes, 50 by default
+        in: query
+        maximum: 200
+        minimum: 1
+        name: limit
+        type: integer
+      - description: The next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/user.TransactionPage'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: account_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: balances_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: My transaction history
+      tags:
+      - user-balances
   /api/v1/user/verification:
     get:
       description: 'The verification level of the signed-in user, from 0 to 2, and
