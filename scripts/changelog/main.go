@@ -176,7 +176,7 @@ func readFragment(s Section, path string) (Fragment, string) {
 	if !namePattern.MatchString(name) {
 		return Fragment{}, fmt.Sprintf("%s: the name must be the issue number and a slug in lower case, such as 440-verification-grant.md", path)
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: a fragment or the CHANGELOG of the repository, named on the command line.
 	if err != nil {
 		return Fragment{}, err.Error()
 	}
@@ -242,7 +242,7 @@ func Collect(path string, fragments []Fragment) error {
 	if len(fragments) == 0 {
 		return nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: a fragment or the CHANGELOG of the repository, named on the command line.
 	if err != nil {
 		return err
 	}

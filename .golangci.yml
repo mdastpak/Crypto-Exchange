@@ -37,9 +37,10 @@ linters:
       # checked, and is.
       - linters: [errcheck]
         text: "Error return value of `[^`]*\\.Close` is not checked"
-      # The admin command prints to the operator's terminal; when that
-      # fails, there is nothing left to tell anyone.
-      - path: ^cmd/admin/
+      # The admin command and the scripts print to the terminal of the person
+      # or the CI step that runs them; when that fails, there is nothing left
+      # to tell anyone.
+      - path: ^(cmd/admin|scripts)/
         linters: [errcheck]
         text: "Error return value of `fmt\\.Fprint"
       # Tests use fixed credentials for the local service containers,
