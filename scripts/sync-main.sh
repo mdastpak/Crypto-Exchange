@@ -32,6 +32,14 @@ git fetch origin main
 if ! git merge --no-edit origin/main; then
   others=$(git diff --name-only --diff-filter=U | grep -vxF -f <(printf '%s\n' "${generated[@]}") || true)
   if [ -n "$others" ]; then
+    # The generated files take main's side for now: the next run, after the
+    # merge is committed, generates them from the merged code.
+    for f in "${generated[@]}"; do
+      if git diff --name-only --diff-filter=U | grep -qxF "$f"; then
+        git checkout --theirs -- "$f"
+        git add -- "$f"
+      fi
+    done
     echo "These files conflict and need a person. Resolve them, commit the merge, and run this script again:" >&2
     echo "$others" >&2
     exit 1
