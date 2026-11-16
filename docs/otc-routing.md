@@ -61,6 +61,40 @@ are used only by the explain endpoint.
   An international release refuses a rule that names an Iranian venue, such
   as `nobitex`, both when the rule is saved and when it is read.
 
+## Cost and metrics
+
+A quote is priced again with the cost of its route, so it runs the router
+up to four times. Each run reads, for each venue of each matching rule, the
+market and its freshness, the balance, up to 20 holds each checked against
+its seal, and the open reservations, plus the network and its fee for a
+trade with a network; the inventory reads its position, and a venue with a
+daily cap reads its usage. Since
+[#509](https://github.com/mdastpak/Crypto-Exchange/issues/509) a quote reads
+the user's verification level once, and the state of each venue, the
+inventory, and the usage once: the later runs plan on what the first read,
+which is the same state a moment later. That is about ten queries for each
+venue of the matching rules, and a few more for the inventory, per quote,
+whatever the number of runs. The state read for one quote is never used for
+another, and the execution reads the state of now, so no node routes on a
+state older than the quote that read it.
+
+`TestService_LoadTestRouted` is the load test of the quotes with routing on:
+1,000 quotes a second over the bounded inventory and two venues read from
+PostgreSQL, each taking the inventory and a venue, with a p99 under 25 ms.
+The load test step of the CI runs it next to the test without routing, each
+bounded by its own baseline on the base branch.
+
+Each instance counts:
+
+| Metric | Labels | |
+| --- | --- | --- |
+| `otc_route_total` | `stage` (`quote`, `execution`), `rule`, `outcome` | `routed`, or why there is no route: a reason of [Behavior](#behavior), or the code of another refusal; `rule` is `none` without a route. |
+| `otc_route_legs_total` | `stage`, `source` (`inventory`, `venue`), `venue` | The legs of the routes found: where the liquidity comes from. |
+
+The rules and the reasons are few, as an operator writes the rules, so the
+labels stay bounded. Alert on a rise of `otc_route_total{outcome!="routed"}`
+against the quotes.
+
 ## Rule format
 
 A version is a JSON array of rules. An empty list matches everything.

@@ -350,7 +350,6 @@ func TestService_LoadTest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the load test runs without -short")
 	}
-	ctx := context.Background()
 	f := newDBFixture(t)
 	// As postgres.max_open_conns and max_idle_conns set them: without idle
 	// connections, a burst opens new ones.
@@ -360,7 +359,15 @@ func TestService_LoadTest(t *testing.T) {
 	require.NoError(t, err)
 	s, err := New(testSettings(), fakePrices{"BTC/USDT": live("65000")}, fakeMarkets{f.market}, f.checks, store, NewMetrics([]string{"BTC/USDT"}))
 	require.NoError(t, err)
-	account := Account{UserHK: f.user}
+	loadTest(t, "TestService_LoadTest", s, Account{UserHK: f.user}, 10*time.Millisecond, true)
+}
+
+// loadTest sends quote requests to s at a rate and bounds the p99 of their
+// latencies by target, or by the baseline of the test name (#486); a
+// baseline without the test is required when required is true.
+func loadTest(t *testing.T, name string, s *Service, account Account, target time.Duration, required bool) {
+	t.Helper()
+	ctx := context.Background()
 	// The target holds when the test runs alone, as the CI's load test
 	// step runs it, with LOAD_TESTS=1. Within go test ./..., every other
 	// package shares the machine and the databases, and the race detector
@@ -371,7 +378,7 @@ func TestService_LoadTest(t *testing.T) {
 	// test step's.
 	total, rate, budget := 400, 200, 2*time.Second
 	if os.Getenv("LOAD_TESTS") == "1" && !raceEnabled {
-		total, rate, budget = 1000, 1000, loadBudget(t, 10*time.Millisecond)
+		total, rate, budget = 1000, 1000, loadBudget(t, name, target, required)
 	}
 	// run sends n requests at the rate and returns their latencies.
 	run := func(n int) ([]time.Duration, time.Duration) {
@@ -420,7 +427,10 @@ func TestService_LoadTest(t *testing.T) {
 // that is more. A shared runner that is slow that day is slow for both, so
 // the step fails on a regression of this change rather than on the
 // machine; on a quiet machine the target holds as before.
-func loadBudget(t *testing.T, target time.Duration) time.Duration {
+//
+// The baseline counts the rounds of the test name only. A test new on this
+// branch, which the base does not have (required false), keeps its target.
+func loadBudget(t *testing.T, name string, target time.Duration, required bool) time.Duration {
 	t.Helper()
 	path := os.Getenv("LOAD_BASELINE")
 	if path == "" {
@@ -428,19 +438,36 @@ func loadBudget(t *testing.T, target time.Duration) time.Duration {
 	}
 	data, err := os.ReadFile(path)
 	require.NoError(t, err, "LOAD_BASELINE")
-	baseline, ok := bestP99(string(data))
+	baseline, ok := bestP99(string(data), name)
+	if !ok && !required {
+		t.Logf("LOAD_BASELINE holds no round of %s: the bound is %s", name, target)
+		return target
+	}
 	require.True(t, ok, "LOAD_BASELINE holds no round of the load test")
 	budget := max(target, baseline*3/2)
 	t.Logf("baseline p99 %s: the bound is %s", baseline, budget)
 	return budget
 }
 
-// bestP99 returns the smallest p99 of the rounds that a run of
-// TestService_LoadTest logged, as "round N: … p99 <duration>".
-func bestP99(log string) (time.Duration, bool) {
+// bestP99 returns the smallest p99 of the rounds that a run of the test
+// name logged, as "round N: … p99 <duration>", between its "=== RUN" and
+// the next "=== RUN" or "--- " line.
+func bestP99(log, name string) (time.Duration, bool) {
 	var best time.Duration
-	found := false
+	found, in := false, false
 	for _, line := range strings.Split(log, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if test, ok := strings.CutPrefix(trimmed, "=== RUN"); ok {
+			in = strings.TrimSpace(test) == name
+			continue
+		}
+		if strings.HasPrefix(trimmed, "--- ") {
+			in = false
+			continue
+		}
+		if !in {
+			continue
+		}
 		_, after, ok := strings.Cut(line, "quotes in ")
 		if !ok || !strings.Contains(line, "round ") {
 			continue
@@ -475,9 +502,20 @@ func TestBestP99_ReadsTheRoundsOfALoadTest(t *testing.T) {
     service_test.go:408: round 2: 1000 quotes in 1.009146433s: p50 4.845612ms, p99 32.775054ms
     service_test.go:408: round 3: 1000 quotes in 1.004836398s: p50 3.983487ms, p99 912.5µs
 --- PASS: TestService_LoadTest (6.03s)`
-	best, ok := bestP99(log)
+	best, ok := bestP99(log, "TestService_LoadTest")
 	require.True(t, ok)
 	assert.Equal(t, 912500*time.Nanosecond, best)
-	_, ok = bestP99("--- FAIL: TestService_LoadTest (0.00s)\npgtest: connecting to postgres")
+	_, ok = bestP99("--- FAIL: TestService_LoadTest (0.00s)\npgtest: connecting to postgres", "TestService_LoadTest")
 	assert.False(t, ok, "a run without rounds is no baseline")
+	_, ok = bestP99(log, "TestService_LoadTestRouted")
+	assert.False(t, ok, "the rounds of one test are no baseline of another")
+	both := log + `
+=== RUN   TestService_LoadTestRouted
+    service_test.go:408: round 1: 1000 quotes in 1.0s: p50 3ms, p99 7ms
+--- PASS: TestService_LoadTestRouted (3.00s)`
+	best, ok = bestP99(both, "TestService_LoadTestRouted")
+	require.True(t, ok)
+	assert.Equal(t, 7*time.Millisecond, best)
+	best, _ = bestP99(both, "TestService_LoadTest")
+	assert.Equal(t, 912500*time.Nanosecond, best, "the plain test keeps its own rounds")
 }
