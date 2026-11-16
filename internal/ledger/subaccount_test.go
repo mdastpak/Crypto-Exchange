@@ -36,11 +36,11 @@ func TestLedger_SubAccountsOfTheirUser(t *testing.T) {
 		// Three balances of one sub-account: it is checked once, and the
 		// trade settles in it, apart from the main account.
 		btc := b.currency("BTC")
-		_, err := b.Lock(ctx, "trading:lock", trading, amount(usdt, "31"), Ref{})
+		_, err := b.Lock(ctx, "trading:lock", trading, amount(usdt, "31"), Ref{Type: "order", ID: "trading"})
 		require.NoError(t, err)
 		_, err = b.SettleTrade(ctx, "trading:trade", trading, Trade{
 			Give: amount(usdt, "30"), Receive: amount(btc, "0.001"), Fee: amount(usdt, "1"),
-		}, Ref{})
+		}, Ref{Type: "order", ID: "trading"})
 		require.NoError(t, err)
 		assert.Equal(t, [3]string{"9", "0", "0"}, b.components(trading, usdt))
 		assert.Equal(t, [3]string{"0.001", "0", "0"}, b.components(trading, btc))

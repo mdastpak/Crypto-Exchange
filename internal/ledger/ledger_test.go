@@ -144,7 +144,7 @@ func TestLedger_TransferAndTrade(t *testing.T) {
 	require.NoError(t, err)
 	_, err = b.SettleTrade(ctx, "trade:t1", alice, Trade{
 		Give: amount(usdt, "600"), Receive: amount(btc, "0.01"), Fee: amount(usdt, "3"),
-	}, Ref{Type: "trade", ID: "t1"})
+	}, Ref{Type: "order", ID: "o1"})
 	require.NoError(t, err)
 	assert.Equal(t, [3]string{"147", "0", "0"}, b.components(alice, usdt))
 	assert.Equal(t, [3]string{"0.01", "0", "0"}, b.components(alice, btc))
@@ -258,15 +258,17 @@ func TestLedger_ConcurrentOperationsLoseNothing(t *testing.T) {
 	t.Run("locks compete for the same funds", func(t *testing.T) {
 		const attempts = 300
 		var locked, refused atomic.Int32
+		var held sync.Map
 		var wg sync.WaitGroup
 		for i := range attempts {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := b.Lock(ctx, fmt.Sprintf("lock:%d", i), alice, amount(usdt, "0.5"), Ref{})
+				_, err := b.Lock(ctx, fmt.Sprintf("lock:%d", i), alice, amount(usdt, "0.5"), Ref{Type: "order", ID: fmt.Sprint(i)})
 				switch {
 				case err == nil:
 					locked.Add(1)
+					held.Store(i, true)
 				case errors.Is(err, ErrInsufficientBalance):
 					refused.Add(1)
 				default:
@@ -279,15 +281,17 @@ func TestLedger_ConcurrentOperationsLoseNothing(t *testing.T) {
 		assert.Equal(t, int32(100), refused.Load())
 		assert.Equal(t, [3]string{"0", "100", "0"}, b.components(alice, usdt))
 
+		// Each release ends its own hold (#407).
 		var wg2 sync.WaitGroup
-		for i := range 200 {
+		held.Range(func(i, _ any) bool {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				_, err := b.Release(ctx, fmt.Sprintf("release:%d", i), alice, amount(usdt, "0.5"), Ref{})
+				_, err := b.Release(ctx, fmt.Sprintf("release:%d", i), alice, amount(usdt, "0.5"), Ref{Type: "order", ID: fmt.Sprint(i)})
 				assert.NoError(t, err)
 			}()
-		}
+			return true
+		})
 		wg2.Wait()
 		assert.Equal(t, [3]string{"100", "0", "0"}, b.components(alice, usdt))
 	})
