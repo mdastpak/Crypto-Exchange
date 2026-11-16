@@ -372,19 +372,100 @@ func TestCollector_ExportsTheStateOfTheVenues(t *testing.T) {
 		ReferenceType: "route", ReferenceID: "1"})
 	require.NoError(t, err)
 	reg := prometheus.NewRegistry()
-	require.NoError(t, reg.Register(Collector{Store: f.Store, Mappings: map[string]venues.Mapping{"binance": mapping}}))
+	require.NoError(t, reg.Register(NewCollector(f.Store, map[string]venues.Mapping{"binance": mapping})))
+	values := gather(t, reg)
+	assert.Equal(t, 59.0, values["venue_routable_balance/USDT/binance"])
+	assert.Equal(t, -1.0, values["venue_reconciliation_difference/USDT/binance"])
+	assert.Contains(t, values, "venue_snapshot_age_seconds/balances/binance")
+	assert.Equal(t, 0.0, values["venue_open_holds/binance"])
+}
+
+// gather returns the gauges of reg by name and label values, the labels
+// in the order of their names.
+func gather(t *testing.T, reg *prometheus.Registry) map[string]float64 {
+	t.Helper()
 	families, err := reg.Gather()
 	require.NoError(t, err)
 	values := map[string]float64{}
 	for _, mf := range families {
 		for _, m := range mf.GetMetric() {
-			values[mf.GetName()] = m.GetGauge().GetValue()
+			key := mf.GetName()
+			for _, l := range m.GetLabel() {
+				key += "/" + l.GetValue()
+			}
+			values[key] = m.GetGauge().GetValue()
 		}
 	}
-	assert.Equal(t, 59.0, values["venue_routable_balance"])
-	assert.Equal(t, -1.0, values["venue_reconciliation_difference"])
-	assert.Contains(t, values, "venue_snapshot_age_seconds")
-	assert.Equal(t, 0.0, values["venue_open_holds"])
+	return values
+}
+
+// TestOverview_ATamperedReservationShowsOnItsBalanceOnly covers #504: a
+// reservation changed in SQL marks its balance unverified and not
+// routable, and the other balances and venues, and the metrics, still
+// show.
+func TestOverview_ATamperedReservationShowsOnItsBalanceOnly(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.deposit(t, "d1", "100")
+	f.balance(t, "100")
+	other := "other" + shared.NewUUID().String()[:8]
+	require.NoError(t, f.SaveBalances(ctx, other, []venues.Balance{{Asset: "USDT", Free: dec("7"), Locked: dec("0")}}, f.clock))
+	r, err := f.Reserve(ctx, Reservation{Venue: "binance", Asset: "USDT", Amount: dec("40"), ReferenceType: "route", ReferenceID: "1"})
+	require.NoError(t, err)
+	_, err = f.db.Exec(`UPDATE venue_reservations SET amount = 1 WHERE id = $1`, r.ID)
+	require.NoError(t, err)
+
+	mappings := map[string]venues.Mapping{"binance": mapping, other: mapping}
+	states, err := f.Overview(ctx, mappings)
+	require.NoError(t, err, "one tampered row does not hide the venues")
+	require.Len(t, states, 2)
+	byName := map[string]VenueState{}
+	for _, v := range states {
+		byName[v.Venue] = v
+	}
+	tampered := byName["binance"].Balances[0]
+	assert.False(t, tampered.Routability.Routable)
+	assert.Contains(t, tampered.Routability.Reasons, ReasonUnverifiedReservation)
+	assert.True(t, tampered.Available.IsZero(), "nothing is available while the reservations are unknown")
+	assert.Equal(t, "0", tampered.Difference.String(), "the snapshot and the books still show")
+	fine := byName[other].Balances[0]
+	assert.NotContains(t, fine.Routability.Reasons, ReasonUnverifiedReservation)
+	assert.Equal(t, "7", fine.Available.String())
+
+	reg := prometheus.NewRegistry()
+	require.NoError(t, reg.Register(NewCollector(f.Store, mappings)))
+	values := gather(t, reg)
+	assert.Equal(t, 0.0, values["venue_routable_balance/USDT/binance"])
+	assert.Equal(t, 0.0, values["venue_reconciliation_difference/USDT/binance"])
+	assert.Contains(t, values, "venue_open_holds/"+other)
+}
+
+// TestCollector_ReadsOncePerCacheWindow covers #504: the scrapes within
+// CacheFor share one read of the database, and the next read follows the
+// window.
+func TestCollector_ReadsOncePerCacheWindow(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.deposit(t, "d1", "100")
+	f.balance(t, "100")
+	local := time.Now()
+	c := NewCollector(f.Store, map[string]venues.Mapping{"binance": mapping})
+	c.clock = func() time.Time { return local }
+	reg := prometheus.NewRegistry()
+	require.NoError(t, reg.Register(c))
+	assert.Equal(t, 100.0, gather(t, reg)["venue_routable_balance/USDT/binance"])
+
+	_, err := f.Reserve(ctx, Reservation{Venue: "binance", Asset: "USDT", Amount: dec("40"), ReferenceType: "route", ReferenceID: "1"})
+	require.NoError(t, err)
+	local = local.Add(DefaultCacheFor - time.Second)
+	assert.Equal(t, 100.0, gather(t, reg)["venue_routable_balance/USDT/binance"], "a scrape within the window is served from the read")
+	local = local.Add(2 * time.Second)
+	assert.Equal(t, 60.0, gather(t, reg)["venue_routable_balance/USDT/binance"], "the next scrape after the window reads again")
+
+	c.CacheFor = -1
+	_, err = f.Reserve(ctx, Reservation{Venue: "binance", Asset: "USDT", Amount: dec("10"), ReferenceType: "route", ReferenceID: "2"})
+	require.NoError(t, err)
+	assert.Equal(t, 50.0, gather(t, reg)["venue_routable_balance/USDT/binance"], "a negative CacheFor reads at every scrape")
 }
 
 // lateMove is a venue whose answer of its balances is overtaken by a move

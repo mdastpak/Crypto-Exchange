@@ -6571,7 +6571,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "The external exchanges that cover the OTC trades (#385), as the snapshots of cmd/market-worker last saw them: the time and freshness of each snapshot and its last failure, each balance against what the books say the venue holds with its open reservations and whether it is routable, the networks, the count of the markets and of those trading, and the open reconciliation holds. Read from the database, so every node answers the same.",
+                "description": "The external exchanges that cover the OTC trades (#385), as the snapshots of cmd/market-worker last saw them: the time and freshness of each snapshot and its last failure, each balance against what the books say the venue holds with its open reservations and whether it is routable, the networks, the count of the markets and of those trading, and the open reconciliation holds. Read from the database, so every node answers the same. A balance with an open reservation changed outside the backend shows unverified_reservation among its reasons, not routable, with nothing reserved or available; the other balances and venues still show (#504).",
                 "produces": [
                     "application/json"
                 ],

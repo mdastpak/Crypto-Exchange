@@ -81,7 +81,7 @@ func registerServiceGauges(services *models.InfraServices, handlers *InfraHandle
 		// The state of the enabled venues (#385), read from the database:
 		// every instance reports the same.
 		if mappings := state.MappingsOf(config.Config.Venues); len(mappings) > 0 {
-			collector := state.Collector{Store: state.New(pool, state.OptionsOf(config.Config.Venues.State)), Mappings: mappings}
+			collector := state.NewCollector(state.New(pool, state.OptionsOf(config.Config.Venues.State)), mappings)
 			if err := metrics.Registry.Register(collector); err != nil {
 				var already prometheus.AlreadyRegisteredError
 				if !errors.As(err, &already) {

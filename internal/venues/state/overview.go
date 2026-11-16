@@ -2,11 +2,14 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 	"github.com/mdastpak/crypto-exchange/internal/venues"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -146,13 +149,22 @@ func (s *Store) venue(ctx context.Context, name string, mapping venues.Mapping) 
 			}
 		}
 		_, reserved, err := openReservations(ctx, s.DB, name, b.Asset)
-		if err != nil {
+		unverified := errors.Is(err, rowseal.ErrUnverified)
+		if err != nil && !unverified {
 			return VenueState{}, err
 		}
 		b.Reserved, b.Available = reserved, b.Free.Sub(reserved)
 		b.Difference = b.Free.Add(b.Locked).Sub(b.Booked)
 		if b.Routability, err = s.Routable(ctx, name, b.Asset, ""); err != nil {
 			return VenueState{}, err
+		}
+		if unverified {
+			// A reservation changed outside the backend (#504): what is
+			// reserved is unknown, so nothing is available, and the
+			// router refuses the balance as ReserveIn does. The other
+			// balances and venues still show.
+			b.Reserved, b.Available = shared.Decimal{}, shared.Decimal{}
+			b.Routability.not(ReasonUnverifiedReservation)
 		}
 		if b.Currency == "" {
 			b.Routability.not("not_mapped")
@@ -209,15 +221,40 @@ func (s *Store) venue(ctx context.Context, name string, mapping venues.Mapping) 
 }
 
 // Collector exports the state of the venues as Prometheus gauges, read
-// from the database at each scrape, so that every node reports the same:
-// the age of each snapshot, the reconciliation difference, and the
-// routable balance of each currency.
+// from the database, so that every node reports the same: the age of each
+// snapshot, the reconciliation difference, and the routable balance of
+// each currency.
+//
+// One read of the state costs a few queries per venue and per balance
+// (#504). A read serves every scrape for CacheFor, and concurrent scrapes
+// wait for one read, so each instance reads at most once per CacheFor,
+// however often or from however many scrapers it is scraped. Use
+// NewCollector: the cache lives in the Collector.
 type Collector struct {
 	Store    *Store
 	Mappings map[string]venues.Mapping
 	// Timeout bounds the reads of one scrape; 5 seconds when zero.
 	Timeout time.Duration
+	// CacheFor is how long a read serves the scrapes; 15 seconds when
+	// zero. A negative value reads at every scrape.
+	CacheFor time.Duration
+
+	mu     sync.Mutex
+	readAt time.Time
+	states []VenueState
+	now    time.Time
+	ok     bool
+	// clock is the local clock of the cache; time.Now when nil.
+	clock func() time.Time
 }
+
+// NewCollector returns a Collector of the venues of mappings.
+func NewCollector(store *Store, mappings map[string]venues.Mapping) *Collector {
+	return &Collector{Store: store, Mappings: mappings}
+}
+
+// DefaultCacheFor is how long a read of the Collector serves the scrapes.
+const DefaultCacheFor = 15 * time.Second
 
 var (
 	snapshotAge = prometheus.NewDesc("venue_snapshot_age_seconds",
@@ -234,7 +271,7 @@ var (
 )
 
 // Describe implements prometheus.Collector.
-func (c Collector) Describe(ch chan<- *prometheus.Desc) {
+func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- snapshotAge
 	ch <- reconcileDifference
 	ch <- routableBalance
@@ -242,19 +279,13 @@ func (c Collector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 // Collect implements prometheus.Collector. A failed read exports nothing
-// for the scrape: an absent series alerts as stale.
-func (c Collector) Collect(ch chan<- prometheus.Metric) {
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	states, err := c.Store.Overview(ctx, c.Mappings)
-	if err != nil {
+// for the scrape: an absent series alerts as stale. A failed read is not
+// cached, so the next scrape reads again.
+func (c *Collector) Collect(ch chan<- prometheus.Metric) {
+	states, now, ok := c.read()
+	if !ok {
 		return
 	}
-	now := c.Store.Clock(ctx)
 	for _, v := range states {
 		for _, sn := range v.Snapshots {
 			if sn.TakenAt != nil {
@@ -271,4 +302,36 @@ func (c Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(openHolds, prometheus.GaugeValue, float64(len(v.Holds)), v.Venue)
 	}
+}
+
+// read returns the state of the venues and the database time of its read,
+// from the cache while it is younger than CacheFor. The snapshot ages are
+// of the time of the read: they lag by at most CacheFor.
+func (c *Collector) read() ([]VenueState, time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clock := c.clock
+	if clock == nil {
+		clock = time.Now
+	}
+	cacheFor := c.CacheFor
+	if cacheFor == 0 {
+		cacheFor = DefaultCacheFor
+	}
+	if c.ok && cacheFor > 0 && clock().Sub(c.readAt) < cacheFor {
+		return c.states, c.now, true
+	}
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	c.ok = false
+	states, err := c.Store.Overview(ctx, c.Mappings)
+	if err != nil {
+		return nil, time.Time{}, false
+	}
+	c.states, c.now, c.readAt, c.ok = states, c.Store.Clock(ctx), clock(), true
+	return c.states, c.now, true
 }
