@@ -19,6 +19,11 @@ const (
 	// MaxOTCPriceBPS bounds the sum of the components of a quote, so that
 	// a sell is always quoted at a positive price.
 	MaxOTCPriceBPS = 5000
+	// The bounds and default of how long a node keeps the routing rules
+	// (#386) before it checks for a new version.
+	MinOTCRoutingCacheSeconds     = 1
+	MaxOTCRoutingCacheSeconds     = 60
+	DefaultOTCRoutingCacheSeconds = 5
 )
 
 // OTCConfig configures the OTC quotes (#61). See
@@ -37,6 +42,21 @@ type OTCConfig struct {
 	// symbol (#62). A release build requires one for both currencies of
 	// every quoted market, so that no currency is traded without a bound.
 	InventoryLimits map[string]OTCInventoryLimit `yaml:"inventory_limits"`
+	// Routing routes the trades to the inventory or the venues (#386).
+	Routing OTCRoutingConfig `yaml:"routing"`
+}
+
+// OTCRoutingConfig configures the routing of the OTC trades (#386). The
+// rules themselves are data, which the administrators version through
+// the admin API; see docs/otc-routing.md.
+type OTCRoutingConfig struct {
+	// Enabled routes every quote and execution by the active rules: a
+	// trade that no rule routes is refused. Off, the inventory takes every
+	// trade, as before routing.
+	Enabled bool `yaml:"enabled"`
+	// CacheSeconds is how long a node keeps the active rules before it
+	// checks for a new version: a change applies on every node within it.
+	CacheSeconds int `yaml:"cache_seconds"`
 }
 
 // OTCMarket prices the quotes of one market. A buy is quoted at
@@ -94,6 +114,9 @@ func (c *Configuration) applyOTCDefaults() {
 	if o.Burst == 0 {
 		o.Burst = DefaultOTCQuoteBurst
 	}
+	if o.Routing.CacheSeconds == 0 {
+		o.Routing.CacheSeconds = DefaultOTCRoutingCacheSeconds
+	}
 }
 
 var otcMarketSymbol = regexp.MustCompile(`^[A-Z0-9]{1,15}/[A-Z0-9]{1,15}$`)
@@ -110,6 +133,9 @@ func (c *Configuration) otcProblems(p *problems) {
 	}
 	if o.Burst < 1 {
 		p.add("otc.burst", "is %d; it must be at least 1", o.Burst)
+	}
+	if r := o.Routing.CacheSeconds; r < MinOTCRoutingCacheSeconds || r > MaxOTCRoutingCacheSeconds {
+		p.add("otc.routing.cache_seconds", "is %d; it must be from %d to %d", r, MinOTCRoutingCacheSeconds, MaxOTCRoutingCacheSeconds)
 	}
 	for _, symbol := range slices.Sorted(maps.Keys(o.Markets)) {
 		key := "otc.markets." + symbol

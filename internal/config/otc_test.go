@@ -19,6 +19,7 @@ func TestOTC_ExampleAndDefaults(t *testing.T) {
 	var empty Configuration
 	empty.applyOTCDefaults()
 	assert.Equal(t, DefaultOTCQuoteTTLSeconds, empty.OTC.QuoteTTLSeconds)
+	assert.Equal(t, DefaultOTCRoutingCacheSeconds, empty.OTC.Routing.CacheSeconds)
 	assert.Equal(t, DefaultOTCQuotesPerSecond, empty.OTC.QuotesPerSecond)
 	assert.Equal(t, DefaultOTCQuoteBurst, empty.OTC.Burst)
 }
@@ -31,14 +32,15 @@ func TestOTC_Problems(t *testing.T) {
 		change func(c *Configuration)
 		want   string
 	}{
-		"TTL under 5 seconds": {func(c *Configuration) { c.OTC.QuoteTTLSeconds = 4 }, "otc.quote_ttl_seconds is 4; it must be from 5 to 10"},
-		"TTL over 10 seconds": {func(c *Configuration) { c.OTC.QuoteTTLSeconds = 11 }, "otc.quote_ttl_seconds is 11"},
-		"no rate":             {func(c *Configuration) { c.OTC.QuotesPerSecond = -1 }, "otc.quotes_per_second is -1"},
-		"lower-case market":   {func(c *Configuration) { market(c, OTCMarket{}); c.OTC.Markets["btc/usdt"] = OTCMarket{} }, "otc.markets.btc/usdt is not a market symbol"},
-		"negative spread":     {func(c *Configuration) { market(c, OTCMarket{SpreadBPS: -1}) }, "otc.markets.BTC/USDT.spread_bps is -1"},
-		"bad reference":       {func(c *Configuration) { market(c, OTCMarket{Reference: "USDT-IRT"}) }, `otc.markets.BTC/USDT.reference is "USDT-IRT"`},
-		"zero multiplier":     {func(c *Configuration) { market(c, OTCMarket{ReferenceMultiplier: "0"}) }, "otc.markets.BTC/USDT.reference_multiplier"},
-		"negative liquidity":  {func(c *Configuration) { market(c, OTCMarket{Liquidity: "-5"}) }, `otc.markets.BTC/USDT.liquidity is "-5"`},
+		"TTL under 5 seconds":           {func(c *Configuration) { c.OTC.QuoteTTLSeconds = 4 }, "otc.quote_ttl_seconds is 4; it must be from 5 to 10"},
+		"TTL over 10 seconds":           {func(c *Configuration) { c.OTC.QuoteTTLSeconds = 11 }, "otc.quote_ttl_seconds is 11"},
+		"routing cache over 60 seconds": {func(c *Configuration) { c.OTC.Routing.CacheSeconds = 61 }, "otc.routing.cache_seconds is 61; it must be from 1 to 60"},
+		"no rate":                       {func(c *Configuration) { c.OTC.QuotesPerSecond = -1 }, "otc.quotes_per_second is -1"},
+		"lower-case market":             {func(c *Configuration) { market(c, OTCMarket{}); c.OTC.Markets["btc/usdt"] = OTCMarket{} }, "otc.markets.btc/usdt is not a market symbol"},
+		"negative spread":               {func(c *Configuration) { market(c, OTCMarket{SpreadBPS: -1}) }, "otc.markets.BTC/USDT.spread_bps is -1"},
+		"bad reference":                 {func(c *Configuration) { market(c, OTCMarket{Reference: "USDT-IRT"}) }, `otc.markets.BTC/USDT.reference is "USDT-IRT"`},
+		"zero multiplier":               {func(c *Configuration) { market(c, OTCMarket{ReferenceMultiplier: "0"}) }, "otc.markets.BTC/USDT.reference_multiplier"},
+		"negative liquidity":            {func(c *Configuration) { market(c, OTCMarket{Liquidity: "-5"}) }, `otc.markets.BTC/USDT.liquidity is "-5"`},
 		"bands going down": {func(c *Configuration) {
 			market(c, OTCMarket{MarginBands: []OTCMarginBand{{MinQuantity: "10", MarginBPS: 5}, {MinQuantity: "1", MarginBPS: 3}}})
 		}, "otc.markets.BTC/USDT.margin_bands.1.min_quantity is 1; the bands must go up in quantity, after 10"},

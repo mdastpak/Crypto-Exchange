@@ -489,5 +489,14 @@
   "VENUE_HOLD_NOT_FOUND": "Venue hold not found.",
   "VENUE_HOLD_ALREADY_CLEARED": "The venue hold is already cleared.",
   "FAILED_TO_CLEAR_VENUE_HOLD": "Failed to clear the venue hold.",
-  "VENUE_HOLD_CLEARED": "The venue hold is cleared."
+  "VENUE_HOLD_CLEARED": "The venue hold is cleared.",
+  "OTC_ROUTING_UNAVAILABLE": "OTC routing is not available on this server.",
+  "FAILED_TO_READ_ROUTING_RULES": "Failed to read the OTC routing rules.",
+  "ROUTING_RULES_RETRIEVED": "OTC routing rules retrieved.",
+  "FAILED_TO_SAVE_ROUTING_RULES": "Failed to save the OTC routing rules.",
+  "ROUTING_RULES_SAVED": "The OTC routing rules are saved.",
+  "ROUTE_EXPLAINED": "The route is explained.",
+  "FAILED_TO_EXPLAIN_ROUTE": "Failed to explain the route.",
+  "OTC_NO_ROUTE": "This trade cannot be filled right now. Try a smaller amount or try again later.",
+  "OTC_QUOTE_NOT_ROUTABLE": "This quote can no longer be filled. Ask for a new quote."
 }

@@ -1,15 +1,18 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
 
@@ -51,10 +54,38 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 	if err != nil {
 		return err
 	}
-	h.User.Trades = &otc.Executor{
+	executor := &otc.Executor{
 		DB: db, Store: store, Ledger: ledger.Ledger{DB: db}, Verification: levels, Limits: limits, Committed: committed,
 		RequireLimits: settings.Server.Mode == "release",
 		Legal:         func() config.LegalConfig { return settings.Legal },
 	}
+	h.User.Trades = executor
+	if settings.OTC.Routing.Enabled {
+		r, err := otcRouting(db, settings, levels)
+		if err != nil {
+			return err
+		}
+		s.Route(r)
+		executor.Routing = r
+	}
 	return nil
+}
+
+// otcRouting routes the quotes and their executions by the rules (#386),
+// which each instance keeps for otc.routing.cache_seconds.
+func otcRouting(db *sql.DB, settings *config.Configuration, levels verification.Store) (*otc.Routing, error) {
+	current := func() *config.Configuration { return settings }
+	rules := &routing.Store{DB: db, Config: current}
+	ttl := time.Duration(settings.OTC.Routing.CacheSeconds) * time.Second
+	router, err := otc.NewRouter(db, current, routing.NewCache(rules, ttl), rules)
+	if err != nil {
+		return nil, fmt.Errorf("otc routing: %w", err)
+	}
+	return &otc.Routing{
+		Router: router, Region: settings.Region(),
+		Level: func(ctx context.Context, userHK string) (int, error) {
+			st, err := levels.Level(ctx, db, userHK)
+			return int(st.Level), err
+		},
+	}, nil
 }

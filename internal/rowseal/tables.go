@@ -292,6 +292,20 @@ var (
 		text("venue"), text("asset"), text("currency_hk"), text("reported"), text("booked"), text("difference"),
 		timestamptz("detected_at"), timestamptz("cleared_at"), text("cleared_by"), text("clear_reason"),
 	}, SealedFromStart: true}
+	// OTCRoutingRules covers a version of the routing rules of the OTC
+	// trades (#386): the rules, why, by whom, and when. A version changed
+	// in SQL, such as a rule that sends trades to a venue the
+	// administrators did not choose, routes nothing: the quotes are
+	// refused until it is reviewed.
+	OTCRoutingRules = &Table{Name: "otc_routing_rules", Key: "version", KeyType: "bigint", Columns: []Column{
+		text("rules"), text("reason"), text("created_by"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// OTCRoutingUsage covers the notional that the routed orders took from
+	// a venue in a day (#386): lowered in SQL, it would let more through
+	// than the daily limit of a rule.
+	OTCRoutingUsage = &Table{Name: "otc_routing_usage", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("venue"), text("day"), text("currency_hk"), text("notional"),
+	}, SealedFromStart: true}
 	// IntegrityFindings covers the resolution of a finding (#404): which
 	// row it is about, and whether, when, how, and by whom it was closed. A
 	// finding closed in SQL, which would hide the row from the
@@ -377,6 +391,7 @@ var Tables = []*Table{
 	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
 	OTCTrades, OTCHousePositions,
 	VenueReservations, VenueHolds,
+	OTCRoutingRules, OTCRoutingUsage,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

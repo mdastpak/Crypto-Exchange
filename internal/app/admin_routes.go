@@ -79,6 +79,11 @@ var adminRoutes = map[string]admin.RouteClass{
 	// (#385).
 	"POST /venues/holds/:id/clear": admin.RouteSensitive,
 
+	// The rules that pick the inventory or a venue for each OTC trade
+	// (#386); explaining a route places nothing.
+	"PUT /otc/routing/rules":    admin.RouteSensitive,
+	"POST /otc/routing/explain": admin.RouteRead,
+
 	// The market data catalog: public prices of other exchanges, which the
 	// jobs can fetch again.
 	"POST /market-data/sources/:source/pause":  admin.RouteChange,

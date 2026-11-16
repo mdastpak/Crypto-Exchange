@@ -630,6 +630,11 @@ otc:
     ETH: {max_short: "30", max_long: "150"}
     USDT: {max_short: "100000", max_long: "1000000"}
     IRR: {max_short: "10000000000000", max_long: "100000000000000"}
+  # The routing of the trades to the inventory or the venues (#386,
+  # docs/otc-routing.md). The rules are set through the admin API.
+  routing:
+    enabled: false
+    cache_seconds: 5
 
 # The anti-phishing code of users (#375), which every email to their
 # verified contacts shows. The exchange suggests a new one once it is
@@ -671,6 +676,8 @@ venues:
       mode: testnet
       egress: direct
       requests_per_minute: 600
+      fee_bps: 10                # Our taker fee there, for the routing cost
+      slippage_bps: 5            # The expected slippage of an order there
       # The email of the sub-account of the OTC trades; empty is the main
       # account.
       sub_account: ""

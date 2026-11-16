@@ -10,6 +10,7 @@ import (
 	"math/big"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 
 	"github.com/shopspring/decimal"
 )
@@ -113,11 +114,16 @@ type Components struct {
 	// OverrideID is the administrator's price override that the reference
 	// was (#453), for the execution to record which one it traded on.
 	OverrideID string `json:"override_id,omitempty"`
+	// RouteBPS is the cost of the route of the trade (#386), which the
+	// price includes, and Route the route that it was priced on. Without
+	// routing they are empty.
+	RouteBPS decimal.Decimal `json:"route_bps,omitzero"`
+	Route    *routing.Route  `json:"route,omitempty"`
 }
 
 // TotalBPS is the sum of the parts.
 func (c Components) TotalBPS() decimal.Decimal {
-	return c.HalfSpreadBPS.Add(c.HedgeCostBPS).Add(c.MarginBPS).Add(c.RiskPremiumBPS).Add(c.SlippageBPS)
+	return c.HalfSpreadBPS.Add(c.HedgeCostBPS).Add(c.MarginBPS).Add(c.RiskPremiumBPS).Add(c.SlippageBPS).Add(c.RouteBPS)
 }
 
 // ErrTooLarge is a quantity whose slippage is above the bound of its
