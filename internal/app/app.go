@@ -50,6 +50,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/middleware"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/outbox"
 	"github.com/mdastpak/crypto-exchange/internal/passkey"
@@ -329,7 +330,7 @@ func run() error {
 	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
 		return err
 	}
-	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config); err != nil {
+	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config, relay.Nudge); err != nil {
 		return err
 	}
 	payouts, err := startPayouts(handlers, services.Postgres.DB, &config.Config)
@@ -618,8 +619,12 @@ func newOutboxRelay(services *models.InfraServices, handlers *InfraHandlers, wat
 	if watcher != nil {
 		opts.Paused = func() bool { return watcher.Paused(platform.FeatureOutbox) }
 	}
-	relay := outbox.NewRelay(services.Postgres.DB, services.RabbitMQ,
-		map[string]outbox.Route{models.CurrencyEventTopic: route}, opts)
+	// The events of the OTC trades (#62) go to the trade events exchange,
+	// whose consumers drop a message delivered twice by its event_id.
+	trades := outbox.Route{Exchange: config.Config.RabbitMQ.Exchanges.TradeEvents}
+	relay := outbox.NewRelay(services.Postgres.DB, services.RabbitMQ, map[string]outbox.Route{
+		models.CurrencyEventTopic: route, otc.TopicTradeExecuted: trades, otc.TopicBalanceChanged: trades,
+	}, opts)
 	handlers.Admin.Outbox = relay
 	return relay
 }
@@ -1416,6 +1421,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// The OTC quotes (#61), with a limit of their own per user, on top
 		// of the trading limit of every user route.
 		activeGroup.POST("/otc/quote", gate.Require(platform.FeatureTrading), rl.OTCQuoteRateLimit(), ih.User.RequestQuote)
+		// Their execution (#62), which checks the trading feature again in
+		// its transaction.
+		activeGroup.POST("/otc/execute", gate.Require(platform.FeatureTrading), ih.User.ExecuteQuote)
 		// The conversion that an optional currency migration offers (#215).
 		activeGroup.POST("/currency-migrations/:id/convert", ih.User.ConvertMigrationHolding)
 		// The anti-phishing code that the emails show (#375). Changing it

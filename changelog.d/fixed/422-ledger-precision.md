@@ -1,0 +1,1 @@
+- The ledger refuses a move of a balance finer than the precision of its currency, the most decimal places of its networks or 18 without networks, and an amount beyond 36 decimals, with `ErrInvalidRequest` rather than a raw database error ([#422](https://github.com/mdastpak/Crypto-Exchange/issues/422)). The OTC quotes round their amounts to these precisions, against the user.

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // The bounds and defaults of the OTC quotes (#61).
@@ -32,6 +33,10 @@ type OTCConfig struct {
 	// Markets are the markets that are quoted, by their symbol, such as
 	// "BTC/USDT". A market without an entry is not quoted.
 	Markets map[string]OTCMarket `yaml:"markets"`
+	// InventoryLimits bound the inventory of the exchange per currency
+	// symbol (#62). A release build requires one for both currencies of
+	// every quoted market, so that no currency is traded without a bound.
+	InventoryLimits map[string]OTCInventoryLimit `yaml:"inventory_limits"`
 }
 
 // OTCMarket prices the quotes of one market. A buy is quoted at
@@ -114,6 +119,36 @@ func (c *Configuration) otcProblems(p *problems) {
 		}
 		otcMarketProblems(p, key, o.Markets[symbol])
 	}
+	for _, symbol := range slices.Sorted(maps.Keys(o.InventoryLimits)) {
+		key := "otc.inventory_limits." + symbol
+		if !otcCurrencySymbol.MatchString(symbol) {
+			p.add(key, "is not a currency symbol: upper-case letters and digits")
+			continue
+		}
+		l := o.InventoryLimits[symbol]
+		nonNegativeAmount(p, key+".max_short", l.MaxShort)
+		nonNegativeAmount(p, key+".max_long", l.MaxLong)
+	}
+}
+
+var otcCurrencySymbol = regexp.MustCompile(`^[A-Z0-9]{1,15}$`)
+
+// otcInventoryProblems reports, in a release build, a currency of a quoted
+// market without an inventory limit with both bounds (#62).
+func (c *Configuration) otcInventoryProblems(p *problems) {
+	o := c.OTC
+	for _, symbol := range slices.Sorted(maps.Keys(o.Markets)) {
+		base, quote, ok := strings.Cut(symbol, "/")
+		if !ok {
+			continue
+		}
+		for _, currency := range []string{base, quote} {
+			l, ok := o.InventoryLimits[currency]
+			if !ok || l.MaxShort == "" || l.MaxLong == "" {
+				p.add("otc.inventory_limits."+currency, "must set max_short and max_long in a release build: the market %s trades it", symbol)
+			}
+		}
+	}
 }
 
 func otcMarketProblems(p *problems, key string, m OTCMarket) {
@@ -176,4 +211,15 @@ func nonNegativeAmount(p *problems, key, s string) {
 	if !plainDecimal.MatchString(s) {
 		p.add(key, "is %q; it must be a decimal amount of zero or more, such as \"0.5\"", s)
 	}
+}
+
+// OTCInventoryLimit bounds the net position of the exchange's inventory in
+// a currency from the OTC trades (#62), in units of the currency. MaxShort
+// is how much the inventory may owe: what it gave users beyond what they
+// gave it. MaxLong is how much more it may hold than it gave. Empty is no
+// bound. A trade that would take the position beyond a bound is refused;
+// one that brings it back toward zero always passes.
+type OTCInventoryLimit struct {
+	MaxShort string `yaml:"max_short"`
+	MaxLong  string `yaml:"max_long"`
 }

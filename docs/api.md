@@ -106,6 +106,12 @@ An error response contains only a fixed message for each error. Internal details
 | `quantity_below_minimum`, `quantity_above_maximum`, `notional_below_minimum` | `400` | The [quote](#otc-quotes) is outside a size rule of the market; `info.limit` is the bound |
 | `quote_too_large` | `400` | The quantity would move the price more than the market quotes |
 | `otc_quote_failed` | `500` | The quote could not be priced or stored |
+| `quote_not_found` | `404` | The [quote](#post-userotcexecute) does not exist, expired from Redis, is of another account, or was taken already |
+| `quote_expired` | `410` | The quote expired before its execution |
+| `quote_invalid` | `409` | The quote fails its signature: it was changed in Redis, and is never executed |
+| `quote_not_settleable` | `409` | An amount of the quote is finer than the precision of its currency |
+| `otc_inventory_limit` | `409` | The trade would take the exchange's inventory beyond `otc.inventory_limits` |
+| `otc_trade_failed` | `500` | The trade could not be executed; nothing of it was recorded |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
 | `second_factor_required` | `403` | The operation moves funds, and the user has not set an [account password](#second-factor-and-step-up) yet |
 | `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
@@ -1053,6 +1059,50 @@ Refusals:
 - `429` above `otc.quotes_per_second` per user, counted in Redis over every instance. The limit fails closed: without Redis there is no quote to give.
 
 The route closes with the `trading` feature (`503 feature_locked`).
+
+### `POST /user/otc/execute`
+
+Executes a quote at its price ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)). The idempotency key comes in the `Idempotency-Key` header, or as `idempotency_key` in the body; when both are sent, they must be the same. It is 1 to 100 letters, digits, dots, colons, underscores, or hyphens.
+
+```json
+{ "quote_id": "6f1c…", "idempotency_key": "trade-2026-11-16-1" }
+```
+
+`sub_account_id` names the sub-account that asked for the quote. Response `201`:
+
+```json
+{
+  "id": "c2a9…",
+  "quote_id": "6f1c…",
+  "market": "BTC/USDT",
+  "side": "buy",
+  "quantity": "0.5",
+  "price": "65325",
+  "total": "32662.5",
+  "fee": "65.33",
+  "fee_bps": 20,
+  "fee_currency": "USDT",
+  "give": { "currency": "USDT", "currency_hk": "…", "amount": "32727.83" },
+  "receive": { "currency": "BTC", "currency_hk": "…", "amount": "0.5" },
+  "executed_at": "2026-11-15T17:00:03.412519Z"
+}
+```
+
+A buy gives `total + fee` of the quote currency and receives the quantity; a sell gives the quantity and receives `total − fee`, the fee netted from what it is credited. The same key again answers `200` with the first trade; with another quote, `409 idempotency_key_reused`.
+
+The execution is one transaction of the database:
+
+1. It takes the lock of the user, then a lock of the key, so that two requests of one key wait for each other and the second returns the trade of the first.
+2. It takes the quote from Redis, once: no other request can trade it, also when this one is then refused. A refused trade needs a new quote.
+3. It checks again, under its locks: the `trading` feature of the [platform controls](#maintenance-and-lockdowns), the current [legal documents](#legal-documents), the level of `trade_otc`, the restrictions of both currencies, their capabilities under a share lock, and the market, which must still trade and pass its seal.
+4. It locks what the user gives and settles the trade against the exchange's inventory in the [ledger](architecture.md), which refuses a balance that fails its seal.
+5. It records the trade, sealed, with the parts of the price and the override it used.
+6. It moves the inventory's positions of both currencies, and refuses a trade beyond `otc.inventory_limits`.
+7. It writes `TradeExecuted` (topic `otc.trade_executed`) and one `BalanceChanged` (topic `balances.changed`) per balance to the outbox, which publishes them to the `trade_events` exchange once the trade commits. Each carries an `event_id`, by which consumers drop a message delivered twice.
+
+A failure at any step rolls back all of it. Audited as `user.otc_trade`.
+
+Refusals: `404 quote_not_found`, `410 quote_expired`, `409 quote_invalid`, `409 market_inactive`, `409 insufficient_balance`, `409 quote_not_settleable`, `409 otc_inventory_limit`, `409 row_unverified`, `403 terms_update_required`, the refusals of the quote's levels and restrictions, and `503 feature_locked` or `maintenance`.
 
 ## Market data
 

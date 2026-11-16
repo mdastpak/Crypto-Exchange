@@ -634,6 +634,7 @@ The [OTC quotes](api.md#otc-quotes) ([#61](https://github.com/mdastpak/Crypto-Ex
 | `quotes_per_second` | `5` | At least 1. The quote requests of each user, per second, over every instance. |
 | `burst` | `10` | At least 1. The requests a user may send at once. |
 | `markets` | none | The quoted markets, by symbol such as `BTC/USDT`. A market without an entry is not quoted, so without entries there are no quotes. |
+| `inventory_limits` | none | The bounds of the exchange's inventory per currency symbol, for the [executions](api.md#post-userotcexecute) ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)): `max_short`, how much more the inventory may give users than they gave it, and `max_long`, how much more it may hold, in units of the currency. A trade that would take the position beyond a bound is refused with `otc_inventory_limit`; one that brings it back toward zero passes. Empty is no bound. A release build requires both for each currency of every market in `markets`. |
 
 Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin_bps + risk_premium_bps + slippage))`, plus for a buy and minus for a sell. Every part is in basis points of the reference, from 0 to 5000, and their sum must stay under 5000, so that a sell has a positive price.
 
@@ -651,7 +652,7 @@ Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin
 | `slippage_k`, `liquidity` | none | The slippage is `sqrt(slippage_k × quantity / liquidity)`, a fraction of the reference, with `liquidity` in the base currency. Unset is no slippage. |
 | `max_slippage_bps` | `0` | A quantity whose slippage would be above it is refused with `quote_too_large`. `0` is no bound. |
 
-Each quote records its parts, so that the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) knows the margin of every trade. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
+Each quote records its parts, and the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) stores them with the trade, so that the margin of every trade is known. A quote's amounts stay within the precision of their currencies, the most decimal places of their networks ([#422](https://github.com/mdastpak/Crypto-Exchange/issues/422)): the quantity is cut to the base currency's, and the total and the fee are rounded against the user to the quote currency's. The precisions are read once a minute per instance. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
 
 ### `venues`
 

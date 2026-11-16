@@ -242,10 +242,12 @@ func (l Ledger) Transfer(ctx context.Context, key string, from, to Account, amou
 }
 
 // Trade is a trade of a user with the exchange as the counterparty, as in
-// OTC: the user gives Give, from funds locked with the order, receives
-// Receive, available, and pays Fee, also from the locked funds of the
-// order, so in the currency of Give (#407): a fee in the received currency
-// would take funds that no hold of the order has. A Fee of zero is none.
+// OTC: the user gives Give, from funds locked with the order, and receives
+// Receive, available. Fee is in the currency of Give or of Receive, never
+// of another (#407). In Give, it is taken from the locked funds of the
+// order, as Give is. In Receive, it is netted: the user is credited
+// Receive less Fee, which must be positive, and takes nothing from any
+// hold (#62). A Fee of zero is none.
 type Trade struct {
 	Give, Receive, Fee Amount
 }
@@ -253,32 +255,52 @@ type Trade struct {
 // SettleTrade settles a trade of a against the exchange's inventory: what
 // the user gives enters the inventory, what the user receives leaves it,
 // and the fee goes to the fees account. ref is the order whose hold the
-// trade ends, as it was locked (#407): what the trade gives and its fee are
-// taken from that hold, and no more than it has left. The trade itself is
-// named by key.
+// trade ends, as it was locked (#407): what the trade gives and a fee in
+// its currency are taken from that hold, and no more than it has left. The
+// trade itself is named by key.
 func (l Ledger) SettleTrade(ctx context.Context, key string, a Account, t Trade, ref Ref) (Result, error) {
-	if t.Give.Currency == t.Receive.Currency {
-		return Result{}, fmt.Errorf("%w: a trade gives and receives %s", ErrInvalidRequest, t.Give.Currency)
+	e, err := trade(key, a, t, ref)
+	if err != nil {
+		return Result{}, err
 	}
-	if !t.Fee.Value.IsZero() && t.Fee.Currency != t.Give.Currency {
-		return Result{}, fmt.Errorf("%w: the fee of a trade is taken from the order's hold, in %s, not in %s",
-			ErrInvalidRequest, t.Give.Currency, t.Fee.Currency)
+	return l.record(ctx, e)
+}
+
+// trade is the entry of a settled trade.
+func trade(key string, a Account, t Trade, ref Ref) (entry, error) {
+	if t.Give.Currency == t.Receive.Currency {
+		return entry{}, fmt.Errorf("%w: a trade gives and receives %s", ErrInvalidRequest, t.Give.Currency)
+	}
+	netted := !t.Fee.Value.IsZero() && t.Fee.Currency == t.Receive.Currency
+	if !t.Fee.Value.IsZero() && !netted && t.Fee.Currency != t.Give.Currency {
+		return entry{}, fmt.Errorf("%w: the fee of a trade is in %s or %s, not in %s",
+			ErrInvalidRequest, t.Give.Currency, t.Receive.Currency, t.Fee.Currency)
+	}
+	if t.Fee.Value.IsNegative() {
+		return entry{}, fmt.Errorf("%w: a negative fee", ErrInvalidRequest)
+	}
+	credit := t.Receive.Value
+	if netted {
+		credit = credit.Sub(t.Fee.Value)
 	}
 	e := entry{kind: KindTrade, key: key, ref: ref,
 		moves: []move{
 			{a, t.Give.Currency, balance.BalanceChangeTradeDebit, t.Give.Value},
-			{a, t.Receive.Currency, balance.BalanceChangeTradeCredit, t.Receive.Value},
+			{a, t.Receive.Currency, balance.BalanceChangeTradeCredit, credit},
 		},
 		postings: []posting{
 			{AccountInventory, t.Give.Currency, t.Give.Value},
 			{AccountInventory, t.Receive.Currency, t.Receive.Value.Neg()},
 		},
 	}
-	if !t.Fee.Value.IsZero() {
+	switch {
+	case netted:
+		e.postings = append(e.postings, posting{AccountFees, t.Fee.Currency, t.Fee.Value})
+	case !t.Fee.Value.IsZero():
 		e.moves = append(e.moves, move{a, t.Fee.Currency, balance.BalanceChangeFee, t.Fee.Value})
 		e.postings = append(e.postings, posting{AccountFees, t.Fee.Currency, t.Fee.Value})
 	}
-	return l.record(ctx, e)
+	return e, nil
 }
 
 // Conversion converts the available funds of a in one currency into
@@ -495,6 +517,9 @@ func write(ctx context.Context, tx *sql.Tx, e entry) (Result, error) {
 		return Result{}, mapError(fmt.Errorf("record the entry: %w", err))
 	}
 
+	if err := checkPrecision(ctx, tx, e.moves); err != nil {
+		return Result{}, err
+	}
 	balances, err := lockBalances(ctx, tx, e.moves)
 	if err != nil {
 		return Result{}, err
@@ -547,6 +572,54 @@ func write(ctx context.Context, tx *sql.Tx, e entry) (Result, error) {
 		}
 	}
 	return Result{EntryID: entryID}, nil
+}
+
+// checkPrecision refuses a move of a balance finer than the precision of
+// its currency (#422): the most decimal places of its networks, as
+// Precision reads it, so that no balance holds dust that no network can
+// withdraw. A currency without networks keeps MaxConversionPlaces. The
+// postings to the exchange's accounts may be finer, as the dust of a
+// conversion is.
+func checkPrecision(ctx context.Context, tx *sql.Tx, moves []move) error {
+	seen := map[shared.UUID]bool{}
+	var currencies []string
+	for _, m := range moves {
+		if !seen[m.currency] {
+			seen[m.currency] = true
+			currencies = append(currencies, m.currency.String())
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT c::text, MAX(n.decimals) FROM unnest($1::uuid[]) AS c
+		LEFT JOIN currency_networks n ON n.currency_hk = c GROUP BY c`, currencies)
+	if err != nil {
+		return mapError(fmt.Errorf("read the precision of the currencies: %w", err))
+	}
+	defer rows.Close()
+	places := map[string]int32{}
+	for rows.Next() {
+		var hk string
+		var p sql.NullInt32
+		if err := rows.Scan(&hk, &p); err != nil {
+			return fmt.Errorf("read the precision of the currencies: %w", err)
+		}
+		places[hk] = MaxConversionPlaces
+		if p.Valid {
+			places[hk] = p.Int32
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read the precision of the currencies: %w", err)
+	}
+	for _, m := range moves {
+		p, ok := places[m.currency.String()]
+		if !ok {
+			p = MaxConversionPlaces
+		}
+		if d := m.amount.Decimal(); !d.Equal(d.Truncate(p)) {
+			return fmt.Errorf("%w: %s of %s in %s is finer than its %d decimal places", ErrInvalidRequest, m.change, m.amount, m.currency, p)
+		}
+	}
+	return nil
 }
 
 // takesLocked reports whether a change takes locked funds, which must come
@@ -738,8 +811,15 @@ func lockBalances(ctx context.Context, tx *sql.Tx, moves []move) (map[balanceKey
 // an unknown user or currency, into ErrInvalidRequest.
 func mapError(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" { // foreign_key_violation
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	switch {
+	case pgErr.Code == "23503": // foreign_key_violation
 		return fmt.Errorf("%w: %s", ErrInvalidRequest, pgErr.Detail)
+	case pgErr.Code == "22003", // numeric_value_out_of_range
+		pgErr.Code == "23514" && pgErr.ConstraintName == "exact_decimal_check": // an amount beyond 36 decimals (#422)
+		return fmt.Errorf("%w: an amount out of range: %s", ErrInvalidRequest, pgErr.Message)
 	}
 	return err
 }

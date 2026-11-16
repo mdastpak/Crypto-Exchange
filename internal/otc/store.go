@@ -30,8 +30,9 @@ type Quote struct {
 	Market       string  `json:"market" example:"BTC/USDT"`
 	Side         Side    `json:"side" enums:"buy,sell" example:"buy"`
 	// Quantity is in the base currency, and Price, Total, and Fee in the
-	// quote currency. Total is Quantity × Price. A buy pays Total + Fee,
-	// and a sell receives Total − Fee.
+	// quote currency. Total is Quantity × Price, rounded against the user
+	// to the precision of the quote currency (#422): up for a buy, down for
+	// a sell. A buy pays Total + Fee, and a sell receives Total − Fee.
 	Quantity shared.Decimal `json:"quantity" swaggertype:"string" example:"0.5"`
 	Price    shared.Decimal `json:"price" swaggertype:"string" example:"65000.12"`
 	Total    shared.Decimal `json:"total" swaggertype:"string" example:"32500.06"`

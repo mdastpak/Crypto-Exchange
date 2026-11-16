@@ -472,5 +472,15 @@
   "WITHDRAWAL_REJECTED": "Withdrawal rejected. Its funds were released.",
   "WITHDRAWAL_REQUESTED": "Withdrawal requested.",
   "WITHDRAWAL_RETRIEVED": "Withdrawal retrieved successfully.",
-  "WITHDRAWAL_UNVERIFIED": "This withdrawal failed an integrity check and is held until support reviews it."
+  "WITHDRAWAL_UNVERIFIED": "This withdrawal failed an integrity check and is held until support reviews it.",
+  "OTC_TRADE_EXECUTED": "Trade executed.",
+  "OTC_TRADE_REPLAYED": "This trade was already executed.",
+  "OTC_QUOTE_NOT_FOUND": "This quote does not exist or was already taken. Ask for a new quote.",
+  "OTC_QUOTE_EXPIRED": "This quote expired. Ask for a new quote.",
+  "OTC_QUOTE_INVALID": "This quote cannot be executed. Ask for a new quote.",
+  "OTC_QUOTE_NOT_SETTLEABLE": "This quote cannot be settled in the precision of its currencies. Ask for a new quote.",
+  "OTC_INVENTORY_LIMIT": "This trade is too large for the exchange now. Try a smaller amount later.",
+  "OTC_IDEMPOTENCY_KEY_REUSED": "This idempotency key was used for another trade.",
+  "OTC_TRADE_FAILED": "The trade could not be executed. Try again with a new quote.",
+  "OTC_TRADE_UNVERIFIED": "The trade cannot be executed until a record it depends on is reviewed. Contact support."
 }

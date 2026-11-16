@@ -259,6 +259,23 @@ var (
 		text("status"), text("confirmation_id"), text("reviewed_by"), timestamptz("reviewed_at"),
 		timestamptz("completed_at"), timestamptz("cancelled_at"),
 	}, SealedFromStart: true}
+	// OTCTrades covers an OTC trade (#62): whose it is, the quote it took,
+	// what it traded at which price and fee, what it settled, and its ledger
+	// entry. A trade is written once and sealed in its transaction; one
+	// changed in SQL is never shown as its user's or replayed.
+	OTCTrades = &Table{Name: "otc_trades", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("sub_account_id"), text("quote_id"), text("market"), text("base_currency_hk"),
+		text("quote_currency_hk"), text("side"), text("quantity"), text("price"), text("total"), text("fee"), text("fee_bps"),
+		text("fee_currency_hk"), text("give_amount"), text("receive_amount"), text("components"), text("override_id"),
+		text("entry_id"), timestamptz("executed_at"),
+	}, SealedFromStart: true}
+	// OTCHousePositions covers the net position of the exchange's inventory
+	// in a currency (#62), which the inventory limits of the OTC trades
+	// check. A position lowered in SQL, to let more trades through, refuses
+	// the trades of its currency in enforce mode.
+	OTCHousePositions = &Table{Name: "otc_house_positions", Key: "currency_hk", KeyType: "uuid", Columns: []Column{
+		text("position"),
+	}}
 	// IntegrityFindings covers the resolution of a finding (#404): which
 	// row it is about, and whether, when, how, and by whom it was closed. A
 	// finding closed in SQL, which would hide the row from the
@@ -342,6 +359,7 @@ var Tables = []*Table{
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
 	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
+	OTCTrades, OTCHousePositions,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

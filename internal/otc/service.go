@@ -37,6 +37,13 @@ type Checker interface {
 	Check(ctx context.Context, a Account, m currencies.PublicMarket, side Side, need decimal.Decimal) error
 }
 
+// Precisions returns the precision of a currency, as the ledger keeps it
+// (ledger.Precision). A Checker that implements it bounds the quotes to
+// it; DBChecks does.
+type Precisions interface {
+	Precision(ctx context.Context, currencyHK string) (int32, error)
+}
+
 // Account is the account that asks for a quote.
 type Account struct {
 	UserHK       string
@@ -190,11 +197,41 @@ func (s *Service) Quote(ctx context.Context, req Request) (q Quote, err error) {
 	if ref.Override != nil {
 		parts.OverrideID = ref.Override.ID
 	}
+	feePlaces := int32(max(0, -r.tick.Exponent()))
+	var quotePlaces *int32
+	if p, ok := s.checks.(Precisions); ok {
+		// The amounts stay within the precision of their currencies
+		// (#422), which the ledger refuses finer: the quantity is cut to
+		// the base currency's, and the total rounded against the user to
+		// the quote currency's.
+		basePlaces, err := p.Precision(ctx, m.BaseHK)
+		if err != nil {
+			return Quote{}, err
+		}
+		places, err := p.Precision(ctx, m.QuoteHK)
+		if err != nil {
+			return Quote{}, err
+		}
+		quotePlaces, feePlaces = &places, min(feePlaces, places)
+		if quantity = quantity.Truncate(basePlaces); !quantity.IsPositive() {
+			return Quote{}, &Refusal{Code: CodeQuantityBelowMinimum, Limit: decimal.New(1, -basePlaces).String()}
+		}
+	}
 	if err := checkSize(r, quantity, px); err != nil {
 		return Quote{}, err
 	}
 	total := quantity.Mul(px)
-	fee := total.Mul(decimal.NewFromInt(int64(m.TakerFeeBPS))).Div(bpsUnit).RoundUp(int32(max(0, -r.tick.Exponent())))
+	if quotePlaces != nil {
+		if req.Side == SideBuy {
+			total = total.RoundUp(*quotePlaces)
+		} else {
+			total = total.Truncate(*quotePlaces)
+		}
+	}
+	fee := total.Mul(decimal.NewFromInt(int64(m.TakerFeeBPS))).Div(bpsUnit).RoundUp(feePlaces)
+	if req.Side == SideSell && !total.GreaterThan(fee) {
+		return Quote{}, &Refusal{Code: CodeNotionalBelowMinimum, Limit: fee.String()}
+	}
 	need := quantity
 	if req.Side == SideBuy {
 		need = total.Add(fee)

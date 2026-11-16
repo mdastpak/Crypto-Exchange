@@ -9992,6 +9992,129 @@
                 }
             }
         },
+        "/api/v1/user/otc/execute": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Takes the quote quote_id of the signed-in user (and sub-account) and settles it at its price, in one transaction: the quote is taken once, the controls of the quote are checked again under the locks of the trade (the trading feature of the platform, the current agreements, the user's level, the restrictions of both currencies, their capabilities, and the market, which must trade), the user's funds are locked and settled against the exchange's inventory, the trade is recorded and sealed, the inventory limits of both currencies are checked (otc.inventory_limits), and the events TradeExecuted and BalanceChanged are written to the outbox, which publishes them once the trade commits. A buy gives total + fee of the quote currency and receives the quantity; a sell gives the quantity and receives total − fee. A quote is traded at most once: once taken, it is gone, also when the trade is then refused; ask for a new one. The same idempotency key again answers 200 with the first trade; with another quote it answers 409 idempotency_key_reused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-otc"
+                ],
+                "summary": "Execute an OTC quote",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1 to 100 letters, digits, dots, colons, underscores, or hyphens; or idempotency_key in the body",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
+                        "description": "The request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.executeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The trade of an earlier request with the key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/otc.Trade"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "201": {
+                        "description": "Executed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/otc.Trade"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "terms_update_required, verification_required, account_frozen, operation_restricted, asset_restricted, or currency_operation_disabled",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "quote_not_found or otc_market_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "insufficient_balance, market_inactive, quote_invalid, quote_not_settleable, otc_inventory_limit, idempotency_key_reused, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "quote_expired",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "otc_unavailable, maintenance, or feature_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/otc/quote": {
             "post": {
                 "security": [
@@ -15456,6 +15579,23 @@
                 }
             }
         },
+        "otc.Leg": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "32565.06"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "otc.Quote": {
             "type": "object",
             "properties": {
@@ -15491,7 +15631,7 @@
                     "example": "65000.12"
                 },
                 "quantity": {
-                    "description": "Quantity is in the base currency, and Price, Total, and Fee in the\nquote currency. Total is Quantity × Price. A buy pays Total + Fee,\nand a sell receives Total − Fee.",
+                    "description": "Quantity is in the base currency, and Price, Total, and Fee in the\nquote currency. Total is Quantity × Price, rounded against the user\nto the precision of the quote currency (#422): up for a buy, down for\na sell. A buy pays Total + Fee, and a sell receives Total − Fee.",
                     "type": "string",
                     "example": "0.5"
                 },
@@ -15527,6 +15667,77 @@
                 "SideBuy",
                 "SideSell"
             ]
+        },
+        "otc.Trade": {
+            "type": "object",
+            "properties": {
+                "executed_at": {
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "string",
+                    "example": "65"
+                },
+                "fee_bps": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "fee_currency": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "give": {
+                    "description": "Give is what the user gave, and Receive what the user was credited:\na buy gives total + fee and receives the quantity; a sell gives the\nquantity and receives total − fee.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/otc.Leg"
+                        }
+                    ]
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "market": {
+                    "type": "string",
+                    "example": "BTC/USDT"
+                },
+                "price": {
+                    "type": "string",
+                    "example": "65000.12"
+                },
+                "quantity": {
+                    "type": "string",
+                    "example": "0.5"
+                },
+                "quote_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "receive": {
+                    "$ref": "#/definitions/otc.Leg"
+                },
+                "side": {
+                    "enum": [
+                        "buy",
+                        "sell"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/otc.Side"
+                        }
+                    ],
+                    "example": "buy"
+                },
+                "sub_account_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "total": {
+                    "type": "string",
+                    "example": "32500.06"
+                }
+            }
         },
         "passkey.Options": {
             "type": "object",
@@ -17601,6 +17812,25 @@
                 },
                 "sub_account_id": {
                     "description": "SubAccountID converts the holding of a sub-account of the user; empty\nis the main account.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "user.executeRequest": {
+            "type": "object",
+            "properties": {
+                "idempotency_key": {
+                    "description": "IdempotencyKey may come in the Idempotency-Key header instead; when\nboth are sent, they must be the same.",
+                    "type": "string",
+                    "example": "7d1e6c2a-trade-1"
+                },
+                "quote_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sub_account_id": {
+                    "description": "SubAccountID is the sub-account that asked for the quote; empty is\nthe main account.",
                     "type": "string",
                     "format": "uuid"
                 }

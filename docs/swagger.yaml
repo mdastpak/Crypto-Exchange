@@ -2447,6 +2447,18 @@ definitions:
         example: 15
         type: integer
     type: object
+  otc.Leg:
+    properties:
+      amount:
+        example: "32565.06"
+        type: string
+      currency:
+        example: USDT
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+    type: object
   otc.Quote:
     properties:
       created_at:
@@ -2475,8 +2487,9 @@ definitions:
       quantity:
         description: |-
           Quantity is in the base currency, and Price, Total, and Fee in the
-          quote currency. Total is Quantity × Price. A buy pays Total + Fee,
-          and a sell receives Total − Fee.
+          quote currency. Total is Quantity × Price, rounded against the user
+          to the precision of the quote currency (#422): up for a buy, down for
+          a sell. A buy pays Total + Fee, and a sell receives Total − Fee.
         example: "0.5"
         type: string
       side:
@@ -2501,6 +2514,57 @@ definitions:
     x-enum-varnames:
     - SideBuy
     - SideSell
+  otc.Trade:
+    properties:
+      executed_at:
+        type: string
+      fee:
+        example: "65"
+        type: string
+      fee_bps:
+        example: 20
+        type: integer
+      fee_currency:
+        example: USDT
+        type: string
+      give:
+        allOf:
+        - $ref: '#/definitions/otc.Leg'
+        description: |-
+          Give is what the user gave, and Receive what the user was credited:
+          a buy gives total + fee and receives the quantity; a sell gives the
+          quantity and receives total − fee.
+      id:
+        format: uuid
+        type: string
+      market:
+        example: BTC/USDT
+        type: string
+      price:
+        example: "65000.12"
+        type: string
+      quantity:
+        example: "0.5"
+        type: string
+      quote_id:
+        format: uuid
+        type: string
+      receive:
+        $ref: '#/definitions/otc.Leg'
+      side:
+        allOf:
+        - $ref: '#/definitions/otc.Side'
+        enum:
+        - buy
+        - sell
+        example: buy
+      sub_account_id:
+        format: uuid
+        type: string
+      total:
+        example: "32500.06"
+        type: string
+    type: object
   passkey.Options:
     properties:
       publicKey:
@@ -4134,6 +4198,24 @@ definitions:
         description: |-
           SubAccountID converts the holding of a sub-account of the user; empty
           is the main account.
+        format: uuid
+        type: string
+    type: object
+  user.executeRequest:
+    properties:
+      idempotency_key:
+        description: |-
+          IdempotencyKey may come in the Idempotency-Key header instead; when
+          both are sent, they must be the same.
+        example: 7d1e6c2a-trade-1
+        type: string
+      quote_id:
+        format: uuid
+        type: string
+      sub_account_id:
+        description: |-
+          SubAccountID is the sub-account that asked for the quote; empty is
+          the main account.
         format: uuid
         type: string
     type: object
@@ -11353,6 +11435,96 @@ paths:
       summary: Sign out
       tags:
       - sign-in
+  /api/v1/user/otc/execute:
+    post:
+      consumes:
+      - application/json
+      description: 'Takes the quote quote_id of the signed-in user (and sub-account)
+        and settles it at its price, in one transaction: the quote is taken once,
+        the controls of the quote are checked again under the locks of the trade (the
+        trading feature of the platform, the current agreements, the user''s level,
+        the restrictions of both currencies, their capabilities, and the market, which
+        must trade), the user''s funds are locked and settled against the exchange''s
+        inventory, the trade is recorded and sealed, the inventory limits of both
+        currencies are checked (otc.inventory_limits), and the events TradeExecuted
+        and BalanceChanged are written to the outbox, which publishes them once the
+        trade commits. A buy gives total + fee of the quote currency and receives
+        the quantity; a sell gives the quantity and receives total − fee. A quote
+        is traded at most once: once taken, it is gone, also when the trade is then
+        refused; ask for a new one. The same idempotency key again answers 200 with
+        the first trade; with another quote it answers 409 idempotency_key_reused.'
+      parameters:
+      - description: 1 to 100 letters, digits, dots, colons, underscores, or hyphens;
+          or idempotency_key in the body
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: The request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.executeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The trade of an earlier request with the key
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/otc.Trade'
+              type: object
+        "201":
+          description: Executed
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/otc.Trade'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: terms_update_required, verification_required, account_frozen,
+            operation_restricted, asset_restricted, or currency_operation_disabled
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: quote_not_found or otc_market_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: insufficient_balance, market_inactive, quote_invalid, quote_not_settleable,
+            otc_inventory_limit, idempotency_key_reused, or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "410":
+          description: quote_expired
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: otc_unavailable, maintenance, or feature_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Execute an OTC quote
+      tags:
+      - user-otc
   /api/v1/user/otc/quote:
     post:
       consumes:

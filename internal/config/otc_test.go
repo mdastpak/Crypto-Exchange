@@ -45,6 +45,16 @@ func TestOTC_Problems(t *testing.T) {
 		"band without a quantity": {func(c *Configuration) {
 			market(c, OTCMarket{MarginBands: []OTCMarginBand{{MarginBPS: 5}}})
 		}, "otc.markets.BTC/USDT.margin_bands.0.min_quantity must be set"},
+		"a market without inventory limits in release": {func(c *Configuration) {
+			market(c, OTCMarket{})
+			c.OTC.InventoryLimits = map[string]OTCInventoryLimit{"BTC": {MaxShort: "1", MaxLong: "2"}, "USDT": {MaxShort: "5"}}
+		}, "otc.inventory_limits.USDT must set max_short and max_long in a release build: the market BTC/USDT trades it"},
+		"a negative inventory limit": {func(c *Configuration) {
+			c.OTC.InventoryLimits = map[string]OTCInventoryLimit{"BTC": {MaxShort: "-1"}}
+		}, `otc.inventory_limits.BTC.max_short is "-1"`},
+		"a lower-case inventory symbol": {func(c *Configuration) {
+			c.OTC.InventoryLimits = map[string]OTCInventoryLimit{"btc": {}}
+		}, "otc.inventory_limits.btc is not a currency symbol"},
 		"no price left on a sell": {func(c *Configuration) {
 			market(c, OTCMarket{SpreadBPS: 2000, MarginBPS: 3000, MaxSlippageBPS: 1000})
 		}, "otc.markets.BTC/USDT adds up to 5000 basis points over the reference; it must stay under 5000"},
