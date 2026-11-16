@@ -54,7 +54,7 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 	h.User.Trades = &otc.Executor{
 		DB: db, Store: store, Ledger: ledger.Ledger{DB: db}, Verification: levels, Limits: limits, Committed: committed,
 		RequireLimits: settings.Server.Mode == "release",
-		Legal: func() config.LegalConfig { return settings.Legal },
+		Legal:         func() config.LegalConfig { return settings.Legal },
 	}
 	return nil
 }
