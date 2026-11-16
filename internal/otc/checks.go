@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
@@ -21,7 +20,6 @@ import (
 type DBChecks struct {
 	DB           *sql.DB
 	Verification verification.Store
-	Ledger       ledger.Ledger
 }
 
 // Check refuses the quote when the user's level does not allow OTC trades,
@@ -40,32 +38,32 @@ func (d DBChecks) Check(ctx context.Context, a Account, m currencies.PublicMarke
 		baseOp, quoteOp = quoteOp, baseOp
 		baseCap, quoteCap = quoteCap, baseCap
 	}
-	// The checks read different rows, so they run at once: a quote waits
-	// for the slowest, not for their sum. The refusal is that of the first
-	// check in this order that refuses, whichever answers first.
-	checks := []func() error{
-		func() error { return d.Verification.Check(ctx, d.DB, a.UserHK, verification.TradeOTC) },
-		func() error { return restrictions.Check(ctx, d.DB, a.UserHK, baseOp, m.BaseHK) },
-		func() error { return restrictions.Check(ctx, d.DB, a.UserHK, quoteOp, m.QuoteHK) },
-		func() error { return currencies.Check(ctx, d.DB, m.BaseHK, baseCap, false) },
-		func() error { return currencies.Check(ctx, d.DB, m.QuoteHK, quoteCap, false) },
-		func() error { return d.balance(ctx, a, give, need) },
+	// The checks run in order on one connection of the pool (#455): a
+	// quote holds one connection, never one per check, so that quotes at
+	// once do not starve the sign-ins, the withdrawals, and the
+	// schedulers. The refusal is that of the first check that refuses, and
+	// the checks after it do not run.
+	conn, err := d.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("otc: a connection for the checks: %w", err)
 	}
-	errs := make([]error, len(checks))
-	var wg sync.WaitGroup
-	for i, check := range checks {
-		wg.Go(func() { errs[i] = check() })
-	}
-	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
+	defer conn.Close()
+	for _, check := range []func() error{
+		func() error { return d.Verification.Check(ctx, conn, a.UserHK, verification.TradeOTC) },
+		func() error { return restrictions.Check(ctx, conn, a.UserHK, baseOp, m.BaseHK) },
+		func() error { return restrictions.Check(ctx, conn, a.UserHK, quoteOp, m.QuoteHK) },
+		func() error { return currencies.Check(ctx, conn, m.BaseHK, baseCap, false) },
+		func() error { return currencies.Check(ctx, conn, m.QuoteHK, quoteCap, false) },
+		func() error { return d.balance(ctx, conn, a, give, need) },
+	} {
+		if err := check(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d DBChecks) balance(ctx context.Context, a Account, currencyHK string, need decimal.Decimal) error {
+func (d DBChecks) balance(ctx context.Context, q ledger.RowQuerier, a Account, currencyHK string, need decimal.Decimal) error {
 	user, err := shared.UUIDFromString(a.UserHK)
 	if err != nil {
 		return fmt.Errorf("otc: the user %q: %w", a.UserHK, err)
@@ -82,7 +80,7 @@ func (d DBChecks) balance(ctx context.Context, a Account, currencyHK string, nee
 	if err != nil {
 		return fmt.Errorf("otc: the currency %q: %w", currencyHK, err)
 	}
-	b, err := d.Ledger.Balance(ctx, account, currency)
+	b, err := ledger.BalanceIn(ctx, q, account, currency)
 	if err != nil {
 		return err
 	}

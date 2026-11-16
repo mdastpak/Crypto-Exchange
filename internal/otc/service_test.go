@@ -265,7 +265,7 @@ func newDBFixture(t testing.TB) dbFixture {
 	require.NoError(t, err)
 	_, err = books.CreditDeposit(ctx, key+":credit", account, amount, ledger.Ref{})
 	require.NoError(t, err)
-	return dbFixture{DB: conn, checks: DBChecks{DB: conn, Verification: verification.Store{DB: conn, Policy: policy}, Ledger: books},
+	return dbFixture{DB: conn, checks: DBChecks{DB: conn, Verification: verification.Store{DB: conn, Policy: policy}},
 		market: m, user: user, keys: live}
 }
 
@@ -317,6 +317,30 @@ func TestDBChecks(t *testing.T) {
 	assert.Equal(t, restrictions.CodeAssetRestricted, held.Code)
 	require.ErrorIs(t, f.checks.Check(ctx, alice, f.market, SideSell, dec("0.1")), ErrInsufficientBalance,
 		"the sell passes the restrictions and stops at the balance")
+}
+
+// TestDBChecks_HoldOneConnection checks #455: a quote runs its checks on
+// one connection of the pool, so a pool of one never makes it wait, and
+// the first refusal in order is the one returned.
+func TestDBChecks_HoldOneConnection(t *testing.T) {
+	ctx := context.Background()
+	f := newDBFixture(t)
+	f.DB.SetMaxOpenConns(1)
+	t.Cleanup(func() { f.DB.SetMaxOpenConns(0) })
+	before := f.DB.Stats().WaitCount
+	for range 5 {
+		require.NoError(t, f.checks.Check(ctx, Account{UserHK: f.user}, f.market, SideBuy, dec("1")))
+	}
+	assert.Equal(t, before, f.DB.Stats().WaitCount, "no check waits for a second connection")
+	assert.Equal(t, 1, f.DB.Stats().OpenConnections)
+
+	// A user of level 0 with no balance: the level is checked first.
+	var level0 string
+	require.NoError(t, f.DB.QueryRow(`INSERT INTO users (status) VALUES ('ACTIVE') RETURNING hk::text`).Scan(&level0))
+	require.NoError(t, rowseal.Reseal(ctx, f.DB, rowseal.Users, "hk = $1", level0))
+	var refusal *verification.Refusal
+	require.ErrorAs(t, f.checks.Check(ctx, Account{UserHK: level0}, f.market, SideBuy, dec("1")), &refusal)
+	assert.Equal(t, before, f.DB.Stats().WaitCount)
 }
 
 // TestService_LoadTest is the load test of #61: 1,000 quote requests in a
