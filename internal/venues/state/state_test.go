@@ -310,7 +310,7 @@ type feeVenue struct {
 	fees []Fee
 }
 
-func (v feeVenue) Fees(context.Context) ([]Fee, error) { return v.fees, nil }
+func (v feeVenue) Fees(context.Context, time.Time) ([]Fee, error) { return v.fees, nil }
 
 // TestJob_PostsNothingWithoutADifferenceAndExactlyTheFee covers the third
 // criterion: a run with no difference posts nothing, and a run with a
@@ -431,4 +431,41 @@ func TestJob_TheSnapshotTimeIsOfTheDatabaseBeforeTheCall(t *testing.T) {
 	report, err := f.Reconcile(ctx, name, mapping)
 	require.NoError(t, err)
 	assert.True(t, report.Skipped, "a snapshot older than a move is not compared")
+}
+
+// sinceVenue reports no fee, and keeps the start of each read.
+type sinceVenue struct {
+	*stub.Venue
+	since *[]time.Time
+}
+
+func (v sinceVenue) Fees(_ context.Context, since time.Time) ([]Fee, error) {
+	*v.since = append(*v.since, since)
+	return nil, nil
+}
+
+// TestJob_ReadsTheFeesFromACursor covers the cursor of #503: the first
+// read goes back FirstFeeWindow, and the next from the last read less the
+// overlap.
+func TestJob_ReadsTheFeesFromACursor(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	name := "fees" + shared.NewUUID().String()[:8]
+	var since []time.Time
+	job := Job{Store: f.Store, Venue: sinceVenue{Venue: stub.New(name), since: &since}, Mapping: mapping}
+	first := f.clock
+	require.NoError(t, job.Run(ctx, jobs.NewRun(marketdata.ModeLive, nil)))
+	f.clock = f.clock.Add(time.Minute)
+	require.NoError(t, job.Run(ctx, jobs.NewRun(marketdata.ModeLive, nil)))
+	require.Len(t, since, 2)
+	assert.WithinDuration(t, first.Add(-FirstFeeWindow), since[0], time.Second)
+	assert.WithinDuration(t, first.Add(-FeeOverlap), since[1], time.Second)
+
+	// A dry run of the worker reads the fees and moves no cursor.
+	f.clock = f.clock.Add(time.Minute)
+	require.NoError(t, job.Run(ctx, jobs.NewRun(marketdata.ModeDryRun, nil)))
+	require.Len(t, since, 3)
+	assert.WithinDuration(t, first.Add(time.Minute-FeeOverlap), since[2], time.Second, "from the second run")
+	require.NoError(t, job.Run(ctx, jobs.NewRun(marketdata.ModeLive, nil)))
+	assert.WithinDuration(t, first.Add(time.Minute-FeeOverlap), since[3], time.Second, "the dry run moved nothing")
 }

@@ -213,6 +213,27 @@ type Transfer struct {
 	DryRun   bool           `json:"dry_run,omitempty"`
 }
 
+// Fee is a fee that a venue charged us apart from its fills, such as the
+// fee of a withdrawal, as it reports it.
+type Fee struct {
+	// ID is the venue's id of the fee, unique per venue: the fee is posted
+	// once per id.
+	ID     string
+	Asset  string
+	Amount shared.Decimal
+}
+
+// FeeReporter is a venue that reports the fees it charged apart from its
+// fills (#503). The reconciliation (#385) posts them before it compares
+// the balances; a venue that reports none has every such fee show as a
+// difference.
+type FeeReporter interface {
+	// Fees returns the fees charged since since, or a window ending now
+	// that the venue bounds. A fee may be returned again: it is posted
+	// once per ID.
+	Fees(ctx context.Context, since time.Time) ([]Fee, error)
+}
+
 // Venue is an external exchange, through our account at it. Every method
 // is safe for concurrent use. A capability that the venue, or its mode,
 // does not offer answers ErrUnsupported; Supports says so beforehand.

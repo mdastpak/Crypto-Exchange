@@ -228,3 +228,22 @@ func TestCaller_ClassifiesTheAnswers(t *testing.T) {
 		assert.Equal(t, tc.want, KindOf(err), "%d %s %v", tc.status, tc.r.Method, err)
 	}
 }
+
+type reporting struct {
+	Venue
+	fees []Fee
+}
+
+func (r reporting) Fees(context.Context, time.Time) ([]Fee, error) { return r.fees, nil }
+
+// TestDryRun_ReadsTheFeesOfTheVenue covers #503: a dry run reads the fees
+// as it reads the balances, and reports none for a venue without them.
+func TestDryRun_ReadsTheFeesOfTheVenue(t *testing.T) {
+	fee := Fee{ID: "withdraw:1", Asset: "USDT", Amount: shared.MustNewDecimalFromString("1")}
+	got, err := NewDryRun(reporting{fees: []Fee{fee}}, nil).Fees(context.Background(), time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, []Fee{fee}, got)
+	got, err = NewDryRun(reporting{}.Venue, nil).Fees(context.Background(), time.Now())
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}

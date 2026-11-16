@@ -95,15 +95,23 @@ func (j Job) Run(ctx context.Context, run *jobs.Run) error {
 	}
 
 	if reporter, ok := j.Venue.(FeeReporter); ok {
-		fees, err := reporter.Fees(ctx)
+		feesAt := j.now(ctx)
+		since, err := j.Store.FeesSince(ctx, name, feesAt)
 		if err != nil {
-			fail(KindReconciliation, err)
+			return err
+		}
+		fees, err := reporter.Fees(ctx, since)
+		if err != nil {
+			// The balances would show the fees not read as differences.
+			fail(KindFees, err)
 			return errors.Join(failed...)
 		}
 		run.AddRead(len(fees))
-		if err := j.write(ctx, run, len(fees), func() error {
-			_, err := j.Store.PostFees(ctx, name, j.Mapping, fees)
-			return err
+		if err := j.write(ctx, run, max(len(fees), 1), func() error {
+			if _, err := j.Store.PostFees(ctx, name, j.Mapping, fees); err != nil {
+				return err
+			}
+			return j.Store.SaveFeeCursor(ctx, name, feesAt)
 		}); err != nil {
 			return err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -244,4 +245,39 @@ func TestNew_RefusesAModeWithoutAnAPI(t *testing.T) {
 	assert.Error(t, err, "a dry run wraps a live connector")
 	_, err = New(Options{Mode: venues.ModeLive})
 	assert.True(t, err != nil && !errors.Is(err, venues.ErrUnsupported))
+}
+
+// TestBinanceLive_ReportsTheFeesOfCompletedWithdrawals covers #503: the
+// fees of the withdrawals completed in the window, by the id of each, and
+// a window that Binance answers.
+func TestBinanceLive_ReportsTheFeesOfCompletedWithdrawals(t *testing.T) {
+	b, f := newConnector(t, venues.ModeLive)
+	ctx := context.Background()
+	f.mu.Lock()
+	f.withdraws = append(f.withdraws,
+		map[string]any{"id": "done1", "amount": "25", "transactionFee": "1", "coin": "USDT", "status": 6, "withdrawOrderId": "a"},
+		map[string]any{"id": "pending", "amount": "25", "transactionFee": "1", "coin": "USDT", "status": 4, "withdrawOrderId": "b"},
+		map[string]any{"id": "free", "amount": "25", "transactionFee": "0", "coin": "USDT", "status": 6, "withdrawOrderId": "c"},
+		map[string]any{"id": "done2", "amount": "0.1", "transactionFee": "0.0005", "coin": "BTC", "status": 6, "withdrawOrderId": "d"})
+	f.mu.Unlock()
+	fees, err := b.Fees(ctx, time.Now().Add(-365*24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, []venues.Fee{
+		{ID: "withdraw:done1", Asset: "USDT", Amount: shared.MustNewDecimalFromString("1")},
+		{ID: "withdraw:done2", Asset: "BTC", Amount: shared.MustNewDecimalFromString("0.0005")},
+	}, fees)
+	f.mu.Lock()
+	q := f.historyQueries[len(f.historyQueries)-1]
+	f.mu.Unlock()
+	start, err := strconv.ParseInt(q.Get("startTime"), 10, 64)
+	require.NoError(t, err)
+	end, err := strconv.ParseInt(q.Get("endTime"), 10, 64)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, end-start, (90 * 24 * time.Hour).Milliseconds(), "within the window that Binance answers")
+	assert.Equal(t, "6", q.Get("status"))
+
+	tb, _ := newConnector(t, venues.ModeTestnet)
+	none, err := tb.Fees(ctx, time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, none, "a testnet has no withdrawals")
 }

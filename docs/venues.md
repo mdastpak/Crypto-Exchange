@@ -100,7 +100,7 @@ One run, in order:
 
 1. The markets (`venue_instruments`): the steps, the minimums, and whether each trades.
 2. The networks of each mapped asset (`venue_networks`): deposits and withdrawals on or off, the withdrawal fee and minimum.
-3. The fees that the venue reports apart from its fills, when its connector implements `state.FeeReporter`, each posted once by its id (see below).
+3. The fees that the venue reports apart from its fills, when its connector implements `venues.FeeReporter`, each posted once by its id (see below). The fees are read from a cursor, the snapshot of kind `fees`, as described in [The fees of the venues](#the-fees-of-the-venues).
 4. The balances (`venue_balances`): free and locked.
 5. The reconciliation.
 
@@ -125,6 +125,21 @@ PostgreSQL refuses any other shape of these kinds, and a venue account on an ent
 After the balances, the job compares, for every mapped currency, what the venue reports holding (free and locked) with what the books say it holds (the negative of `venue:<name>`). A difference beyond `venues.state.tolerances` of the currency, found by `venues.state.confirm_runs` runs in a row, opens a hold (`venue_holds`): the currency is not routable at the venue, an alert is logged as `SECURITY`, and the metric `venue_open_holds` rises, until an operator reviews it. A balance snapshot that is not fresh, or older than the last venue entry, is not compared, as the move booked after it is not in it. One reconciliation of a venue runs at a time across the nodes, under an advisory lock.
 
 A run with no difference posts nothing. The fees are posted before the balances are taken, so a run with a venue fee posts exactly that fee, once, and then finds no difference.
+
+#### The fees of the venues
+
+The fees are read from a cursor ([#503](https://github.com/mdastpak/Crypto-Exchange/issues/503)):
+
+- A run reads from the time of the last read less 3 days. A fee that the venue reports late, such as the fee of a withdrawal that completes after it was asked for, is therefore still read. A fee read twice is posted once, by its id.
+- The first read goes back 30 days.
+- A dry run of the worker reads the fees and moves no cursor.
+- A read that fails is recorded as a failure of the `fees` snapshot. The run then compares no balances, since the unread fees would show as differences.
+
+Which venues report fees:
+
+- **Binance:** the fee (`transactionFee`) of each completed withdrawal, from `GET /sapi/v1/capital/withdraw/history`, within the 90 days that Binance answers. Each fee has the id `withdraw:<id>`. A testnet has no withdrawals and reports none. Transfers between our accounts are free.
+- **Nobitex:** none. Its connector makes no withdrawals.
+- The trading commissions are not in either list: they belong to the fills of the routed orders.
 
 An operator clears a hold with `POST /api/v1/admin/venues/holds/{id}/clear` and a reason, with a step-up, audited as `admin.venue_hold_clear`. If the difference stays, the next runs hold the currency again.
 

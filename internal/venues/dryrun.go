@@ -32,6 +32,15 @@ func NewDryRun(v Venue, logger *log.Logger) *DryRun {
 
 func (d *DryRun) Mode() Mode { return ModeDryRun }
 
+// Fees reads the fees of the venue, a read that a dry run makes as it is;
+// none when the venue reports none.
+func (d *DryRun) Fees(ctx context.Context, since time.Time) ([]Fee, error) {
+	if r, ok := d.Venue.(FeeReporter); ok {
+		return r.Fees(ctx, since)
+	}
+	return nil, nil
+}
+
 func (d *DryRun) PlaceOrder(_ context.Context, req OrderRequest) (Order, error) {
 	if req.ClientID == "" {
 		return Order{}, d.rejected("place_order", "the order has no client id")

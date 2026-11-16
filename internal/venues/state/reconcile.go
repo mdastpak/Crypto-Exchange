@@ -16,21 +16,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/venues"
 )
 
-// Fee is a fee that a venue charged us, as it reports it.
-type Fee struct {
-	// ID is the venue's id of the fee, unique per venue: the fee is posted
-	// once per id.
-	ID     string
-	Asset  string
-	Amount shared.Decimal
-}
-
-// FeeReporter is a venue that reports the fees it charged apart from its
-// fills, such as withdrawal and transfer fees. A venue whose fees are only
-// in its balances reports none, and a fee then shows as a difference.
-type FeeReporter interface {
-	Fees(ctx context.Context) ([]Fee, error)
-}
+// Fee and FeeReporter are those of the venues (#503).
+type (
+	Fee         = venues.Fee
+	FeeReporter = venues.FeeReporter
+)
 
 // Difference is the comparison of one currency of a venue with the books.
 type Difference struct {
@@ -57,6 +47,33 @@ type ReconcileReport struct {
 	// Skipped is true when the balances were not fresh, or a move of the
 	// venue was booked after them: nothing was compared.
 	Skipped bool `json:"skipped"`
+}
+
+// The window of the fees (#503): a run reads from its last read less
+// FeeOverlap, so that a fee that the venue reports late, such as that of
+// a withdrawal that completes after it was asked for, is still read; the
+// first read goes back FirstFeeWindow.
+const (
+	FeeOverlap     = 3 * 24 * time.Hour
+	FirstFeeWindow = 30 * 24 * time.Hour
+)
+
+// FeesSince is the start of the next read of the fees of venue, at now.
+func (s *Store) FeesSince(ctx context.Context, venue string, now time.Time) (time.Time, error) {
+	var last sql.NullTime
+	err := s.DB.QueryRowContext(ctx, `SELECT taken_at FROM venue_snapshots WHERE venue = $1 AND kind = $2`, venue, KindFees).Scan(&last)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, fmt.Errorf("venues: read the fee cursor of %s: %w", venue, err)
+	}
+	if !last.Valid {
+		return now.Add(-FirstFeeWindow), nil
+	}
+	return last.Time.Add(-FeeOverlap), nil
+}
+
+// SaveFeeCursor records a read of the fees of venue that started at at.
+func (s *Store) SaveFeeCursor(ctx context.Context, venue string, at time.Time) error {
+	return s.save(ctx, venue, KindFees, at, func(*sql.Tx) error { return nil })
 }
 
 // PostFees posts the fees that fees reports as venue_fee entries, each once

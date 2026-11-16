@@ -29,6 +29,7 @@ const (
 	KindInstruments    = "instruments"
 	KindNetworks       = "networks"
 	KindReconciliation = "reconciliation"
+	KindFees           = "fees"
 )
 
 // The defaults of Options.
