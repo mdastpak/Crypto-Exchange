@@ -26,17 +26,19 @@ type fake struct {
 	key, secret string
 	price       shared.Decimal
 
-	mu         sync.Mutex
-	skew       time.Duration
-	balances   map[string]shared.Decimal
-	orders     map[string]map[string]any
-	withdraws  []map[string]any
-	transfers  []map[string]any
-	nextID     int64
-	loseNext   bool
-	timeCalls  int
-	queries    []string
-	failStatus int
+	mu        sync.Mutex
+	skew      time.Duration
+	balances  map[string]shared.Decimal
+	orders    map[string]map[string]any
+	withdraws []map[string]any
+	// historyQueries are the queries of the withdrawal history.
+	historyQueries []url.Values
+	transfers      []map[string]any
+	nextID         int64
+	loseNext       bool
+	timeCalls      int
+	queries        []string
+	failStatus     int
 }
 
 func newFake(t *testing.T) (*fake, *httptest.Server) {
@@ -170,9 +172,15 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.answer(w, map[string]string{"id": id})
 	case "GET /sapi/v1/capital/withdraw/history":
-		var out []map[string]any
+		f.historyQueries = append(f.historyQueries, q)
+		out := []map[string]any{}
 		for _, x := range f.withdraws {
-			if x["withdrawOrderId"] == q.Get("withdrawOrderId") {
+			switch {
+			case q.Get("withdrawOrderId") != "":
+				if x["withdrawOrderId"] == q.Get("withdrawOrderId") {
+					out = append(out, x)
+				}
+			case q.Get("status") == "" || fmt.Sprint(x["status"]) == q.Get("status"):
 				out = append(out, x)
 			}
 		}

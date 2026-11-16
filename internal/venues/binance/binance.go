@@ -536,6 +536,56 @@ func (b *Binance) GetWithdrawal(ctx context.Context, clientID string) (venues.Wi
 	return venues.Withdrawal{}, venues.ErrNotFound
 }
 
+// withdrawalWindow is the longest window of the withdrawal history that
+// Binance answers.
+const withdrawalWindow = 90 * 24 * time.Hour
+
+// withdrawalPage is the most withdrawals that Binance answers at once.
+const withdrawalPage = 1000
+
+// Fees implements venues.FeeReporter (#503): the fees of the withdrawals
+// completed since since, from the withdrawal history, each by the id of its
+// withdrawal. A testnet, which has no withdrawals, reports none. The
+// trading commissions are not here: they belong to the fills.
+func (b *Binance) Fees(ctx context.Context, since time.Time) ([]venues.Fee, error) {
+	const op = "fees"
+	if !b.Supports(venues.CapabilityWithdraw) {
+		return nil, nil
+	}
+	now := time.Now()
+	if since.Before(now.Add(-withdrawalWindow)) {
+		since = now.Add(-withdrawalWindow + time.Hour)
+	}
+	var out []venues.Fee
+	for offset := 0; ; offset += withdrawalPage {
+		var body []struct {
+			ID             string      `json:"id"`
+			TransactionFee json.Number `json:"transactionFee"`
+			Coin           string      `json:"coin"`
+			Status         int         `json:"status"`
+		}
+		q := url.Values{"status": {"6"}, "startTime": {strconv.FormatInt(since.UnixMilli(), 10)},
+			"endTime": {strconv.FormatInt(now.UnixMilli(), 10)}, "offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(withdrawalPage)}}
+		if err := b.do(ctx, op, http.MethodGet, "sapi/v1/capital/withdraw/history", q, true, true, &body); err != nil {
+			return nil, err
+		}
+		d := decimals{op: op, venue: b.name}
+		for _, w := range body {
+			fee := d.read(w.TransactionFee)
+			if w.Status != 6 || w.ID == "" || !fee.IsPositive() {
+				continue
+			}
+			out = append(out, venues.Fee{ID: "withdraw:" + w.ID, Asset: w.Coin, Amount: fee})
+		}
+		if d.err != nil {
+			return nil, d.err
+		}
+		if len(body) < withdrawalPage {
+			return out, nil
+		}
+	}
+}
+
 func (b *Binance) DepositAddress(ctx context.Context, asset, network string) (venues.DepositAddress, error) {
 	if !b.Supports(venues.CapabilityDepositAddress) {
 		return venues.DepositAddress{}, venues.ErrUnsupported
@@ -644,4 +694,7 @@ func (b *Binance) Whitelisted(ctx context.Context, asset, network, address, tag 
 	return false, nil
 }
 
-var _ venues.Venue = (*Binance)(nil)
+var (
+	_ venues.Venue       = (*Binance)(nil)
+	_ venues.FeeReporter = (*Binance)(nil)
+)
