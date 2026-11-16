@@ -81,12 +81,11 @@ func world() (fakeVenues, fakeInventory) {
 			"USDT:bitcoin": {Reasons: []string{"network_unknown"}},
 		}
 	}
-	return fakeVenues{
-			markets: map[string]VenueMarket{"binance": market("BTCUSDT"), "nobitex": market("BTCUSDT")},
-			funds:   map[string]map[string]Funds{"binance": funds(), "nobitex": funds()},
-		}, fakeInventory{capacity: map[string]decimal.Decimal{
-			"BTC": d("1"), "USDT": d("50000"),
-		}}
+	venues := fakeVenues{
+		markets: map[string]VenueMarket{"binance": market("BTCUSDT"), "nobitex": market("BTCUSDT")},
+		funds:   map[string]map[string]Funds{"binance": funds(), "nobitex": funds()},
+	}
+	return venues, fakeInventory{capacity: map[string]decimal.Decimal{"BTC": d("1"), "USDT": d("50000")}}
 }
 
 func input(side, quantity string) Input {
