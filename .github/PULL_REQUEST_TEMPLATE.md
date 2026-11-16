@@ -49,6 +49,7 @@ Otherwise write "Not applicable".
 - [ ] `gofmt -l .` is empty, and `go vet ./...` and `go build ./...` pass.
 - [ ] Tests are added or updated, and `go test -p 1 ./...` passes.
 - [ ] New migrations include both up and down files, and no merged migration was modified.
-- [ ] Documentation is updated when behavior or configuration changes: the README (its status table and architecture notes), `docs/architecture.md`, `docs/configuration.md`, the API reference, and the CHANGELOG, as they apply.
+- [ ] Documentation is updated when behavior or configuration changes: the README (its status table and architecture notes), `docs/architecture.md`, `docs/configuration.md`, and the API reference, as they apply. The CHANGELOG entry is a fragment in `changelog.d` (see `changelog.d/README.md`), never an edit of CHANGELOG.md.
+- [ ] The branch was brought up to date with `scripts/sync-main.sh` right before the merge.
 - [ ] No secrets, keys, or personal data are included.
 - [ ] All code, comments, and text are in English.
