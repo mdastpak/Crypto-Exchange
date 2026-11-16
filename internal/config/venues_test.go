@@ -20,7 +20,13 @@ func openBaoVenues(exchanges map[string]VenueConfig) VenuesConfig {
 	return VenuesConfig{Exchanges: exchanges, Credentials: VenueCredentialsConfig{Provider: VenueCredentialsOpenBao,
 		CacheSeconds: DefaultVenueCredentialsCacheSeconds, OpenBao: VenueOpenBaoConfig{Address: "https://openbao.internal:8200",
 			TokenFile: "/run/secrets/openbao-token", Mount: DefaultVenueOpenBaoMount, Prefix: DefaultVenueOpenBaoPrefix,
-			TimeoutSeconds: DefaultVenueOpenBaoTimeoutSeconds}}}
+			TimeoutSeconds: DefaultVenueOpenBaoTimeoutSeconds}}, State: defaultVenueState()}
+}
+
+// defaultVenueState is venues.state with its defaults.
+func defaultVenueState() VenueStateConfig {
+	return VenueStateConfig{IntervalSeconds: DefaultVenueStateIntervalSeconds, MaxAgeSeconds: DefaultVenueStateMaxAgeSeconds,
+		ConfirmRuns: DefaultVenueStateConfirmRuns}
 }
 
 func TestVenues_ExampleAndDefaults(t *testing.T) {
@@ -34,6 +40,8 @@ func TestVenues_ExampleAndDefaults(t *testing.T) {
 	assert.Equal(t, VenueWithdrawOwnWallet, b.WithdrawTarget)
 	assert.Equal(t, DefaultVenueRequestsPerMinuteBinance, b.RequestsPerMinute)
 	assert.Equal(t, DefaultVenueOpenBaoMount, Config.Venues.Credentials.OpenBao.Mount)
+	assert.Equal(t, DefaultVenueStateMaxAgeSeconds, Config.Venues.State.MaxAgeSeconds)
+	assert.Equal(t, "0.01", Config.Venues.State.VenueTolerances()["USDT"].String())
 }
 
 func TestVenues_LoadReadsTheSecretsFromTheEnvironment(t *testing.T) {
@@ -94,6 +102,22 @@ func TestVenues_Problems(t *testing.T) {
 			venue(c, "binance", func(*VenueConfig) {})
 			c.Venues.Credentials.OpenBao.TokenFile = ""
 		}, "OpenBao needs one (VENUES_OPENBAO_TOKEN)"},
+		"a state run too rare for its cutoff": {func(c *Configuration) {
+			venue(c, "binance", func(*VenueConfig) {})
+			c.Venues.State.MaxAgeSeconds = 90
+		}, "venues.state.max_age_seconds is 90; it must be at least twice interval_seconds (120)"},
+		"a state run too often": {func(c *Configuration) {
+			venue(c, "binance", func(*VenueConfig) {})
+			c.Venues.State.IntervalSeconds = 1
+		}, "venues.state.interval_seconds is 1"},
+		"no confirmation of a difference": {func(c *Configuration) {
+			venue(c, "binance", func(*VenueConfig) {})
+			c.Venues.State.ConfirmRuns = -1
+		}, "venues.state.confirm_runs is -1"},
+		"a tolerance that is not a decimal": {func(c *Configuration) {
+			venue(c, "binance", func(*VenueConfig) {})
+			c.Venues.State.Tolerances = map[string]string{"USDT": "-1"}
+		}, "venues.state.tolerances.USDT is not a decimal"},
 		"a proxy address that is not one": {func(c *Configuration) {
 			venue(c, "binance", func(*VenueConfig) {})
 			c.Venues.ProxyURL = "ftp://user:pass@proxy"

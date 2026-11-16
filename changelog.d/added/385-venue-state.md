@@ -1,0 +1,6 @@
+- The state of the external venues that cover the OTC trades ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)). See [`docs/venues.md`](docs/venues.md#state).
+  - A job of `cmd/market-worker` per enabled venue, under its lease, snapshots its markets, networks, and balances into PostgreSQL; a snapshot older than `venues.state.max_age_seconds`, a suspended network, or a halted market is not routable.
+  - House accounts `venue:<name>` in the ledger, with the entries `venue_deposit`, `venue_withdrawal`, and `venue_fee`, whose shapes PostgreSQL checks.
+  - A reconciliation of each venue with the books: the fees that a venue reports are posted once, and a difference beyond `venues.state.tolerances`, found `confirm_runs` times in a row, holds the currency until an operator clears it with `POST /api/v1/admin/venues/holds/{id}/clear` (audited, with a step-up).
+  - Reservations of the venue balances, under the lock of the balance's row, so two nodes never plan to spend the same funds; the reservations and holds are sealed from their first row.
+  - `GET /api/v1/admin/venues`, and the metrics `venue_snapshot_age_seconds`, `venue_reconciliation_difference`, `venue_routable_balance`, and `venue_open_holds`.

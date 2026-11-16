@@ -685,6 +685,15 @@ Each venue of `exchanges`:
 | `withdraw_target` | `own_wallet` | `own_wallet` sends a withdrawal from the venue to our hot wallet, which pays the user, so that the venue never sees a user's address ([#388](https://github.com/mdastpak/Crypto-Exchange/issues/388)); `direct` sends it to the user's address. |
 | `assets` | none | The venue's assets, by its symbol, each with our `currency` and its `networks`, from the venue's name to ours, such as `{TRX: tron}`. An asset or network that is not here is not routable. Two assets of one currency, or two networks of one network, are refused. |
 
+`state` configures the [state of the venues](venues.md#state) ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)): a job of `cmd/market-worker` per enabled venue takes its snapshots and reconciles it with the books. It is checked while a venue is enabled. Give the server and the worker the same values: the server reads them for the admin overview and the metrics.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `state.interval_seconds` | `60` | At least 10. The time between two runs of the state job of a venue. |
+| `state.max_age_seconds` | `300` | At least twice `interval_seconds`. A snapshot older than this is unknown: the venue's currencies and markets are not routable until a new one. |
+| `state.confirm_runs` | `2` | From 1 to 10. The reconciliations in a row that must find a difference before the currency is held, so that a move in flight between a snapshot and its entry holds nothing. |
+| `state.tolerances` | none | The differences that a reconciliation accepts, by our currency symbol, as decimal strings such as `{USDT: "0.01"}`. A currency that is not here accepts none. |
+
 ### `anti_phishing`
 
 The [anti-phishing code](api.md#anti-phishing-code) of users ([#375](https://github.com/mdastpak/Crypto-Exchange/issues/375)), which every email to their verified contacts shows. The more emails show a code, and the longer it lives, the more places it can be seen, so the exchange suggests a new one: `GET /user/anti-phishing-code` says so, and a reminder goes by email, which shows the code like every email, and by SMS, which never does, with the number of emails that have shown it. The reminder comes again every `reminder_interval_days` until the code changes.

@@ -38,6 +38,8 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tickers"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tiers"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
+	"github.com/mdastpak/crypto-exchange/internal/venues/registry"
+	"github.com/mdastpak/crypto-exchange/internal/venues/state"
 )
 
 var (
@@ -225,6 +227,30 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 	}
 	specs = append(specs, jobs.Spec{Job: candles.NewPartitions(store, retentions, nil),
 		Interval: candlePartitionsInterval, Timeout: 5 * time.Minute})
+	venueSpecs, err := venueStateSpecs(conn)
+	if err != nil {
+		return nil, err
+	}
+	return append(specs, venueSpecs...), nil
+}
+
+// venueStateSpecs are the jobs of the state of the venues that this node
+// enables (#385): one per venue, under its own lease, so that one node at
+// a time takes its snapshots and reconciles it.
+func venueStateSpecs(conn *sql.DB) ([]jobs.Spec, error) {
+	c := config.Config.Venues
+	enabled, err := registry.FromConfig(&config.Config, conn, log.Default())
+	if err != nil {
+		return nil, fmt.Errorf("venues: %w", err)
+	}
+	store := state.New(conn, state.OptionsOf(c.State))
+	interval := time.Duration(c.State.IntervalSeconds) * time.Second
+	var specs []jobs.Spec
+	for _, name := range c.EnabledVenues() {
+		v := enabled[name]
+		specs = append(specs, jobs.Spec{Job: state.Job{Store: store, Venue: v.Venue, Mapping: v.Mapping},
+			Interval: interval, Timeout: max(interval, time.Minute)})
+	}
 	return specs, nil
 }
 

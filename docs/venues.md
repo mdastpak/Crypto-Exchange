@@ -80,9 +80,68 @@ Nobitex, at `https://apiv2.nobitex.ir`. Only a release of the `ir` region may en
 
 The endpoints and codes of Nobitex are from its public documentation; no answer of a live account was recorded for the fixtures, so the first run against the live venue in `dry_run` should confirm the order status and error codes before `live`.
 
+## State
+
+The router (#386) decides from the state of the venues, in PostgreSQL so that every node sees the same ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)). `internal/venues/state` keeps it.
+
+### Snapshots
+
+A job of `cmd/market-worker`, `venue_state:<venue>`, runs every `venues.state.interval_seconds` under its lease ([#264](https://github.com/mdastpak/Crypto-Exchange/issues/264)), so that one node at a time calls a venue for its state. Only a node that enables the venue in `venues.exchanges` has its job. One run, in order:
+
+1. The markets (`venue_instruments`): the steps, the minimums, and whether each trades.
+2. The networks of each mapped asset (`venue_networks`): deposits and withdrawals on or off, the withdrawal fee and minimum.
+3. The fees that the venue reports apart from its fills, when its connector implements `state.FeeReporter`, each posted once by its id (see below).
+4. The balances (`venue_balances`): free and locked.
+5. The reconciliation.
+
+A row that the venue no longer reports is kept: a balance is zeroed, a market stops trading, a network turns its deposits and withdrawals off. Nothing is deleted ([#248](https://github.com/mdastpak/Crypto-Exchange/issues/248)). Each kind of snapshot records its time and its last failure in `venue_snapshots`, by the kind of the error only (`retryable`, `rejected`, `unknown_outcome`), never the venue's text. A snapshot that fails leaves the last one, which goes stale on its own. In `market_data.mode: dry_run` the job reads the venue and writes nothing.
+
+A value older than `venues.state.max_age_seconds` is unknown, and an unknown value is not routable. `Store.Routable(venue, asset, network)` answers whether a currency is routable at a venue, and why not: `no_balance`, `stale_balance`, `reconciliation_hold`, and for a network `network_unknown`, `network_stale`, or `network_suspended` (deposits or withdrawals off). `Store.MarketRoutable` answers for a market: `market_unknown`, `market_stale`, or `market_halted`.
+
+### The venue accounts in the ledger
+
+Each venue has a house account in the ledger, `venue:<name>`, one per currency, which holds the negative of what we hold there, as `custody` does of what custody holds. The entries of the venues move only the exchange's accounts, never a user's balance:
+
+| Entry | Postings | When |
+| --- | --- | --- |
+| `venue_deposit` | `custody +`, `venue:<name> -` | the venue credited a deposit of ours |
+| `venue_withdrawal` | `venue:<name> +`, `custody -` | custody received a withdrawal of ours from the venue |
+| `venue_fee` | `venue:<name> +`, `inventory -` | the venue charged a fee, which the exchange's own funds pay |
+
+PostgreSQL refuses any other shape of these kinds, and a venue account on an entry of any other kind ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)). The reconciliation of the books counts every account, the venue accounts included, and flags a venue account above zero. The fills of routed orders are posted by the router (#386).
+
+### Reconciliation
+
+After the balances, the job compares, for every mapped currency, what the venue reports holding (free and locked) with what the books say it holds (the negative of `venue:<name>`). A difference beyond `venues.state.tolerances` of the currency, found by `venues.state.confirm_runs` runs in a row, opens a hold (`venue_holds`): the currency is not routable at the venue, an alert is logged as `SECURITY`, and the metric `venue_open_holds` rises, until an operator reviews it. A balance snapshot that is not fresh, or older than the last venue entry, is not compared, as the move booked after it is not in it. One reconciliation of a venue runs at a time across the nodes, under an advisory lock.
+
+A run with no difference posts nothing. The fees are posted before the balances are taken, so a run with a venue fee posts exactly that fee, once, and then finds no difference.
+
+An operator clears a hold with `POST /api/v1/admin/venues/holds/{id}/clear` and a reason, with a step-up, audited as `admin.venue_hold_clear`. If the difference stays, the next runs hold the currency again.
+
+### Reservations
+
+A routed order reserves the venue balance that it plans to spend before it is sent (`Store.Reserve`, or `ReserveIn` in the router's transaction). The row of the balance is locked first, so two nodes that reserve the same balance at once take turns, and the second sees the first's reservation: the free balance less the open reservations must cover the amount, or the reservation is refused with `ErrInsufficient`. The currency must be routable. A reference (`reference_type`, `reference_id`) reserves once: the same amount again returns the first reservation, another is `ErrReferenceReused`. `Store.Release` ends a reservation by its `released_at` mark, never by a delete.
+
+The reservations and the holds are sealed from their first row ([#404](https://github.com/mdastpak/Crypto-Exchange/issues/404)): a reservation lowered or released in SQL refuses the reservations of its balance, and a hold cleared in SQL still holds. The snapshots are not sealed: a balance raised in SQL lets the router plan an order that the venue then rejects for its funds, and the reconciliation holds the currency.
+
+### Admin and metrics
+
+`GET /api/v1/admin/venues` shows each enabled venue: the time, freshness, and last failure of each snapshot; each balance with what the books say, the difference, the open reservations, what is still available, and whether it is routable; the networks; the count of markets and of those trading; and the open holds.
+
+Each API instance exports, from the database, so every one reports the same:
+
+| Metric | Labels | |
+| --- | --- | --- |
+| `venue_snapshot_age_seconds` | `venue`, `kind` | Alert above `max_age_seconds`. |
+| `venue_reconciliation_difference` | `venue`, `asset` | What the venue reports less what the books say. |
+| `venue_routable_balance` | `venue`, `asset` | The free balance less the open reservations, `0` while not routable. |
+| `venue_open_holds` | `venue` | Alert above 0. |
+
 ## Tests
 
 `internal/venues/venuetest` is the contract of every connector: an unknown id is not found, a market order is found by our id, an open id again is a duplicate, a lost answer is `unknown_outcome` and the order is found after it, a cancel, an order beyond the funds is rejected and not found, the balances and markets, the capabilities a venue lacks, and that no error holds a credential or a signature.
+
+`internal/venues/state` is tested against PostgreSQL: parallel reservations of one balance never reserve more than it holds, a stale snapshot, a suspended network, and a reconciliation difference each make the currency not routable, a run with no difference posts nothing and one with a fee posts exactly that fee, and the tampered reservations and holds are refused.
 
 It runs against the stub (`internal/venues/stub`, for the tests of the router), and against each connector over a fake server of the venue's API (`fake_test.go`), which checks the key, the signature, and the timestamp as the venue does, answers from the fixtures in `testdata`, and can drop the connection after it did a change. The signature of Binance is also checked against the example of its documentation.
 

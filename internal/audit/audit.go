@@ -252,6 +252,9 @@ const (
 	ActionIntegrityReseal       = "integrity.reseal"
 	// An administrator asked for a re-seal, which another approves (#308).
 	ActionIntegrityResealRequest = "integrity.reseal_request"
+	// An operator cleared the hold that a reconciliation put on a currency
+	// of a venue (#385), after reviewing its difference.
+	ActionAdminVenueHoldClear = "admin.venue_hold_clear"
 )
 
 // Target types.
@@ -270,6 +273,8 @@ const (
 	TargetWithdrawal = "withdrawal"
 	// TargetOTCTrade is an OTC trade of a user (#62), by its id.
 	TargetOTCTrade = "otc_trade"
+	// TargetVenueHold is a hold of a currency of a venue (#385), by its id.
+	TargetVenueHold = "venue_hold"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"

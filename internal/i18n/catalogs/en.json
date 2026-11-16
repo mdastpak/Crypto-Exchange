@@ -482,5 +482,12 @@
   "OTC_INVENTORY_LIMIT": "This trade is too large for the exchange now. Try a smaller amount later.",
   "OTC_IDEMPOTENCY_KEY_REUSED": "This idempotency key was used for another trade.",
   "OTC_TRADE_FAILED": "The trade could not be executed. Try again with a new quote.",
-  "OTC_TRADE_UNVERIFIED": "The trade cannot be executed until a record it depends on is reviewed. Contact support."
+  "OTC_TRADE_UNVERIFIED": "The trade cannot be executed until a record it depends on is reviewed. Contact support.",
+  "VENUES_UNAVAILABLE": "The state of the venues is not available.",
+  "FAILED_TO_READ_VENUES": "Failed to read the state of the venues.",
+  "VENUES_RETRIEVED_SUCCESSFULLY": "The state of the venues.",
+  "VENUE_HOLD_NOT_FOUND": "Venue hold not found.",
+  "VENUE_HOLD_ALREADY_CLEARED": "The venue hold is already cleared.",
+  "FAILED_TO_CLEAR_VENUE_HOLD": "Failed to clear the venue hold.",
+  "VENUE_HOLD_CLEARED": "The venue hold is cleared."
 }
