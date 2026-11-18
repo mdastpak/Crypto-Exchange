@@ -236,4 +236,20 @@ func TestProviderFlow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "BAD_SELFIE", review.ReviewNotes)
 	assert.Equal(t, verification.Level1, f.level(other))
+
+	// An approval of a user who lost level 1 meanwhile is acknowledged,
+	// not applied: the application waits for an administrator.
+	third := f.newUser("third@example.com", verification.Level1)
+	c, err := f.Apply(ctx, third, form, userOrigin)
+	require.NoError(t, err)
+	a = c
+	require.NoError(t, hook("applicantPending", "", "", fake.applicants[c.ID]))
+	tx, err := f.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = verification.SetLevel(ctx, tx, third, verification.Level0, "revoked", audit.Event{ActorType: audit.ActorSystem})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, hook("applicantReviewed", "GREEN", "", fake.applicants[c.ID]), "acknowledged, so the provider stops sending it")
+	assert.Equal(t, StatusUnderReview, status())
+	assert.Equal(t, verification.Level0, f.level(third))
 }

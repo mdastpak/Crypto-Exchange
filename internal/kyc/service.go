@@ -692,7 +692,14 @@ func (s Service) Webhook(ctx context.Context, header http.Header, body []byte, o
 	case OutcomeRetry:
 		err = s.move(ctx, a, StatusUnderReview, StatusPending, v, origin)
 	}
-	if errors.Is(err, ErrNotUnderReview) || errors.Is(err, ErrNotPending) {
+	switch {
+	case errors.Is(err, ErrNotUnderReview), errors.Is(err, ErrNotPending):
+		return nil
+	case errors.Is(err, ErrLevelRequired), errors.Is(err, verification.ErrInactive):
+		// The verdict cannot apply, as the user lost level 1 or the
+		// account is not active; the provider would send it again
+		// forever. The application waits for an administrator.
+		log.Printf("A %s verdict on KYC application %s was not applied: %v", s.Provider.Name(), a.ID, err)
 		return nil
 	}
 	return err
