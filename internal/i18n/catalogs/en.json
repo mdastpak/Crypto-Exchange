@@ -506,5 +506,13 @@
   "ROUTE_EXPLAINED": "The route is explained.",
   "FAILED_TO_EXPLAIN_ROUTE": "Failed to explain the route.",
   "OTC_NO_ROUTE": "This trade cannot be filled right now. Try a smaller amount or try again later.",
-  "OTC_QUOTE_NOT_ROUTABLE": "This quote can no longer be filled. Ask for a new quote."
+  "OTC_QUOTE_NOT_ROUTABLE": "This quote can no longer be filled. Ask for a new quote.",
+  "WITHDRAWAL_REFUSED": "This withdrawal cannot be made. Please contact support.",
+  "AML_ALERTS_RETRIEVED": "AML alerts retrieved",
+  "AML_ALERT_RETRIEVED": "AML alert retrieved",
+  "AML_ALERT_UPDATED": "AML alert updated",
+  "AML_ALERT_NOT_FOUND": "AML alert not found",
+  "AML_ALERT_TRANSITION_INVALID": "The alert cannot move to this status.",
+  "AML_RULES_RETRIEVED": "AML rules retrieved",
+  "AML_UNAVAILABLE": "The AML rules cannot be read until a changed row is reviewed."
 }

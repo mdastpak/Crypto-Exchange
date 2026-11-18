@@ -291,6 +291,20 @@ func (d *EmailDeliverer) Deliver(ctx context.Context, msg OTPMessage) error {
 	return d.send(ctx, to.Address, message)
 }
 
+// SendText sends a plain-text message to one address, outside the
+// templates of the codes: the AML alerts to the compliance team (#73).
+func (d *EmailDeliverer) SendText(ctx context.Context, to, subject, text string) error {
+	addr, err := mail.ParseAddress(to)
+	if err != nil {
+		return permanent(errors.New("invalid recipient address"))
+	}
+	message, err := d.buildMessage(addr, subject, text, "")
+	if err != nil {
+		return permanent(err)
+	}
+	return d.send(ctx, addr.Address, message)
+}
+
 // buildMessage returns a plain-text UTF-8 message. The subject is encoded as
 // an RFC 2047 encoded word and the body as quoted-printable, so templates can
 // use any language.

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/aml"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/clientip"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
@@ -27,6 +28,7 @@ import (
 // The codes of the refusals of withdrawals (#70).
 const (
 	codeWithdrawalsUnavailable       = "withdrawals_unavailable"
+	codeWithdrawalRefused            = "withdrawal_refused"
 	codeIdempotencyKeyRequired       = "idempotency_key_required"
 	codeIdempotencyKeyReused         = "idempotency_key_reused"
 	codeWithdrawalsClosed            = "withdrawals_closed"
@@ -75,7 +77,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // RequestWithdrawal asks for a withdrawal (#70).
 //
 // @Summary Request a withdrawal
-// @Description Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a "*" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.
+// @Description Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a "*" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. The AML rules evaluate each step (#73): one may hold the withdrawal for review (review_reason aml), or refuse it (403 withdrawal_refused, at step one before any code is sent, or at step two); while they cannot be evaluated, 503 withdrawals_unavailable. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.
 // @Tags user-withdrawals
 // @Accept json
 // @Produce json
@@ -87,7 +89,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // @Success 202 {object} models.APIResponse{info=withdrawalChallenge}
 // @Failure 400 {object} models.APIResponse "validation_failed, or idempotency_key_required"
 // @Failure 401 {object} models.APIResponse
-// @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold"
+// @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, security_hold, or withdrawal_refused"
 // @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, destination_ownership_pending, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified"
 // @Failure 503 {object} models.APIResponse "withdrawals_unavailable or feature_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
@@ -110,7 +112,7 @@ func (h *UserHandler) RequestWithdrawal(c *gin.Context) {
 	defer cancel()
 	out, err := h.Withdrawals.Request(ctx, userHK, withdrawals.Request{
 		CurrencyHK: req.CurrencyHK, Network: req.Network, DestinationID: req.DestinationID, Amount: req.Amount,
-		ConfirmationID: req.ConfirmationID, IdempotencyKey: key,
+		ConfirmationID: req.ConfirmationID, IdempotencyKey: key, Country: h.country(c),
 	}, clientip.Key(c.ClientIP(), h.settings().RateLimits.IPv6PrefixLength), audit.FromRequest(c))
 	switch {
 	case err != nil:
@@ -276,7 +278,12 @@ func sendWithdrawalError(c *gin.Context, userHK string, err error) {
 		helpers.SendError(c, http.StatusConflict, codeWithdrawalFeeChanged, i18n.M("WITHDRAWAL_FEE_CHANGED"), info)
 	case errors.Is(err, confirm.ErrMismatch):
 		helpers.SendError(c, http.StatusConflict, codeConfirmationOfAnotherRequest, i18n.M("CONFIRMATION_MISMATCH"), nil)
-	case errors.Is(err, destinations.ErrNoKeys):
+	case errors.Is(err, withdrawals.ErrRefused):
+		helpers.SendError(c, http.StatusForbidden, codeWithdrawalRefused, i18n.M("WITHDRAWAL_REFUSED"), nil)
+	case errors.Is(err, destinations.ErrNoKeys), errors.Is(err, aml.ErrUnavailable):
+		if errors.Is(err, aml.ErrUnavailable) {
+			log.Printf("SECURITY: the AML rules could not evaluate a withdrawal of user %s: %v", userHK, err)
+		}
 		helpers.SendError(c, http.StatusServiceUnavailable, codeWithdrawalsUnavailable, i18n.M("WITHDRAWALS_UNAVAILABLE"), nil)
 	case errors.Is(err, rowseal.ErrUnverified):
 		helpers.SendError(c, http.StatusConflict, "row_unverified", i18n.M("WITHDRAWAL_UNVERIFIED"), nil)

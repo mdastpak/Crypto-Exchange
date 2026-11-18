@@ -1197,6 +1197,19 @@ The administration of the [market data catalog](market-data.md#administration) (
 
 An unknown source, venue, asset, pair, or conflict answers `404 market_not_found`, an invalid parameter or body `400 validation_failed`.
 
+## AML alerts
+
+The alerts of the [AML rules](aml.md) ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)), for active administrators. While `compliance.aml.enabled` is off, they answer `503 aml_unavailable`.
+
+| Route | |
+| --- | --- |
+| `GET /admin/aml/rules` | Every rule as the server synced it from the rules file: its code, type, settings, action, `version`, and `retired_at` for one that left the file |
+| `GET /admin/aml/alerts?status=&user_hk=&limit=` | The alerts, newest first, of a status or a user, at most `limit` (100) |
+| `GET /admin/aml/alerts/{id}` | One alert (`404 aml_alert_not_found`) |
+| `POST /admin/aml/alerts/{id}/transition` | Moves an alert: `{"status": "INVESTIGATING"}`, which assigns it to the administrator, `ESCALATED`, or `RESOLVED` and `DISMISSED` with a `resolution` of 1 to 1000 characters, which only they take. A move that its status does not allow answers `409 aml_alert_transition_invalid` with `from` and `to` |
+
+An alert has its `rule_code` and `rule_version`, the operation that raised it (`event_kind`, `event_ref`, such as the id of a withdrawal; none for the batch), the `action` that was taken, `trigger_data`, what the rule saw, `risk_score`, `status`, and who investigated and closed it. A rule or an alert changed in SQL answers `409 row_unverified`.
+
 ## Integrity findings
 
 The rows that did not match their [row seal](data-protection.md#row-seals) ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)), for active administrators.
@@ -1754,6 +1767,8 @@ The checks:
 - The confirmation: `409 confirmation_not_confirmed`, `confirmation_expired`, `confirmation_consumed`, `confirmation_denied` for one stopped with its link, `confirmation_mismatch` for one of another request, or `withdrawal_fee_changed` for this request's confirmation at a fee that has changed since, with `info.confirmed_fee` and `info.fee`. The confirmation's fee, stored and sealed with it, tells the two apart.
 
 A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`). While thresholds are configured, a currency that has none, under any of its symbols, and no `"*"` default, waits whatever the amount (`review_reason: no_threshold`, [#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
+
+The [AML rules](aml.md) evaluate both steps ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)). A rule may hold the withdrawal for an administrator (`status: review`, `review_reason: aml`), or refuse it: `403 withdrawal_refused`, at step one before any code is sent, or at step two, with nothing locked. The answer never names the rule. While the rules cannot be evaluated, such as for a rule changed in SQL, withdrawals answer `503 withdrawals_unavailable`.
 
 **The withdrawal:**
 

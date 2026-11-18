@@ -816,7 +816,7 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
-| `compliance` | Sanctions providers, AML rules path (`config/aml_rules.yaml`), KYC providers | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
+| `compliance` | Sanctions providers and KYC providers. `compliance.aml` is read: `enabled` turns the [AML rules](aml.md) on, which evaluate each withdrawal, and `rules_path` names their file; empty is the file built into the release, `config/aml_rules.yaml` of its source. A file that does not load, or that lists the country of the deployment as high-risk, keeps the server from starting. `config.example.yaml` turns them on. | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
 
 ## Environment variables
 

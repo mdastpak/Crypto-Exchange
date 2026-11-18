@@ -271,6 +271,15 @@ const (
 	// An administrator saved a new version of the OTC routing rules
 	// (#386).
 	ActionAdminOTCRoutingRules = "admin.otc_routing_rules"
+	// The AML rules file changed a rule, added one, or retired one (#73),
+	// at the sync of startup.
+	ActionAMLRuleSync = "aml.rule_sync"
+	// An AML rule hit an operation and raised an alert (#73), and what was
+	// done: an alert, a review, a refusal, or a freeze.
+	ActionAMLAlert = "aml.alert"
+	// An administrator, or the escalation, moved an AML alert to another
+	// status (#73).
+	ActionAMLAlertStatus = "aml.alert_status"
 )
 
 // Target types.
@@ -294,6 +303,10 @@ const (
 	// TargetOTCRoutingRules is a version of the OTC routing rules (#386),
 	// by its number.
 	TargetOTCRoutingRules = "otc_routing_rules"
+	// TargetAMLRule is an AML rule (#73), by its code.
+	TargetAMLRule = "aml_rule"
+	// TargetAMLAlert is an AML alert (#73), by its id.
+	TargetAMLAlert = "aml_alert"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"

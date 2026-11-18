@@ -331,8 +331,16 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
-	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
+	// The AML rules (#73), which the withdrawals evaluate.
+	amlRules, err := useAML(handlers, services.Postgres.DB, &config.Config, otpChannels.Email)
+	if err != nil {
 		return err
+	}
+	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config, amlRules); err != nil {
+		return err
+	}
+	if amlRules != nil {
+		workers = append(workers, startAMLBatch(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
 	}
 	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config, relay.Nudge); err != nil {
 		return err
@@ -1379,6 +1387,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/withdrawals", ih.Admin.ListWithdrawals)
 		adminGroup.POST("/withdrawals/:id/approve", ih.Admin.ApproveWithdrawal)
 		adminGroup.POST("/withdrawals/:id/reject", ih.Admin.RejectWithdrawal)
+		// The AML rules and alerts (#73).
+		adminGroup.GET("/aml/rules", ih.Admin.ListAMLRules)
+		adminGroup.GET("/aml/alerts", ih.Admin.ListAMLAlerts)
+		adminGroup.GET("/aml/alerts/:id", ih.Admin.GetAMLAlert)
+		adminGroup.POST("/aml/alerts/:id/transition", ih.Admin.TransitionAMLAlert)
 		// The payouts that administrators pay by hand (#70).
 		adminGroup.GET("/payouts", ih.Admin.ListPayouts)
 		adminGroup.GET("/payouts/:id", ih.Admin.GetPayout)
