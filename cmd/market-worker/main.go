@@ -25,6 +25,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/db"
+	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/logging"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/candles"
@@ -37,7 +38,13 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/stream"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tickers"
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/tiers"
+	"github.com/mdastpak/crypto-exchange/internal/otc"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
+	"github.com/mdastpak/crypto-exchange/internal/venues/registry"
+	"github.com/mdastpak/crypto-exchange/internal/venues/state"
+	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
 
 var (
@@ -90,22 +97,35 @@ func run() error {
 	defer postgres.Close()
 
 	cfg := config.Config.MarketData
-	var stopJobs func(ctx context.Context) error
+	// The venue jobs run whenever a venue is enabled, apart from the market
+	// data (#501, #514): the routing needs fresh venue state, and its orders
+	// followed, while market data is off or locked down.
+	venueSpecs, err := venueStateSpecs(postgres.DB)
+	if err != nil {
+		return fmt.Errorf("invalid venue jobs: %w", err)
+	}
+	var specs, streams []jobs.Spec
 	if cfg.Enabled {
-		specs, err := jobSpecs(postgres.DB)
-		if err != nil {
+		if specs, err = jobSpecs(postgres.DB); err != nil {
 			return fmt.Errorf("invalid market data jobs: %w", err)
 		}
-		streams, err := streamSpecs(postgres.DB)
-		if err != nil {
+		if streams, err = streamSpecs(postgres.DB); err != nil {
 			return fmt.Errorf("invalid market data streams: %w", err)
 		}
-		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, specs, streams); err != nil {
+	}
+	var stopJobs func(ctx context.Context) error
+	if cfg.Enabled || len(venueSpecs) > 0 {
+		if stopJobs, err = startJobs(postgres.DB, db.ApplicationName, specs, streams, venueSpecs); err != nil {
 			return err
 		}
-		log.Printf("Market worker started in %s mode", cfg.Mode)
-	} else {
-		log.Println("market_data.enabled is false: the worker runs no job and only answers its probes")
+	}
+	switch {
+	case cfg.Enabled:
+		log.Printf("Market worker started in %s mode, with %d venue jobs", cfg.Mode, len(venueSpecs))
+	case len(venueSpecs) > 0:
+		log.Printf("market_data.enabled is false: the worker runs only the %d venue jobs", len(venueSpecs))
+	default:
+		log.Println("market_data.enabled is false and no venue is enabled: the worker runs no job and only answers its probes")
 	}
 
 	probes := &probes{ping: postgres.Ping, stopJobs: stopJobs}
@@ -228,6 +248,65 @@ func jobSpecs(conn *sql.DB) ([]jobs.Spec, error) {
 	return specs, nil
 }
 
+// venueStateSpecs are the jobs of the state of the venues that this node
+// enables (#385): one per venue, under its own lease, so that one node at
+// a time takes its snapshots and reconciles it.
+func venueStateSpecs(conn *sql.DB) ([]jobs.Spec, error) {
+	c := config.Config.Venues
+	enabled, err := registry.FromConfig(&config.Config, conn, log.Default())
+	if err != nil {
+		return nil, fmt.Errorf("venues: %w", err)
+	}
+	store := state.New(conn, state.OptionsOf(c.State))
+	interval := time.Duration(c.State.IntervalSeconds) * time.Second
+	var specs []jobs.Spec
+	for _, name := range c.EnabledVenues() {
+		v := enabled[name]
+		specs = append(specs, jobs.Spec{Job: state.Job{Store: store, Venue: v.Venue, Mapping: v.Mapping},
+			Interval: interval, Timeout: max(interval, time.Minute)})
+	}
+	if !config.Config.OTC.Routing.Enabled {
+		return specs, nil
+	}
+	drivers, err := routedSpecs(conn, store, enabled)
+	if err != nil {
+		return nil, err
+	}
+	return append(specs, drivers...), nil
+}
+
+// routedInterval is the time between two runs of the routed orders of a
+// venue: each run drives the orders that are due.
+const routedInterval = 2 * time.Second
+
+// routedSpecs are the drivers of the routed orders (#387): one per enabled
+// venue, under its own lease, and each order under a lease of its own.
+func routedSpecs(conn *sql.DB, store *state.Store, enabled map[string]registry.Venue) ([]jobs.Spec, error) {
+	current := func() *config.Configuration { return &config.Config }
+	rules := &routing.Store{DB: conn, Config: current}
+	ttl := time.Duration(config.Config.OTC.Routing.CacheSeconds) * time.Second
+	router, err := otc.NewRouter(conn, current, routing.NewCache(rules, ttl), rules)
+	if err != nil {
+		return nil, fmt.Errorf("otc routing: %w", err)
+	}
+	levels := verification.Store{DB: conn}
+	r := &otc.Routing{Router: router, Region: config.Config.Region(),
+		Level: func(ctx context.Context, userHK string) (int, error) {
+			st, err := levels.Level(ctx, conn, userHK)
+			return int(st.Level), err
+		},
+	}
+	node := applicationName()
+	planner := &routed.Planner{State: store, Node: node, Settings: func() routed.Settings { return routed.SettingsOf(current()) }}
+	var specs []jobs.Spec
+	for _, name := range config.Config.Venues.EnabledVenues() {
+		d := &routed.Driver{DB: conn, Venue: enabled[name].Venue, State: store, Ledger: ledger.Ledger{DB: conn},
+			Planner: planner, Reroute: otc.RerouteOf(conn, r), Positions: otc.MovePositions, Node: node}
+		specs = append(specs, jobs.Spec{Job: d, Interval: routedInterval, Timeout: time.Minute})
+	}
+	return specs, nil
+}
+
 // streamSpecs are the streams of the venues that have one and that this
 // node reaches (#281). A run holds its stream for run_minutes; the next is
 // due a second after, on whichever worker claims it.
@@ -324,63 +403,106 @@ func catalogSource(conn *sql.DB, name string) (source.CatalogSource, []string, e
 }
 
 // startJobs starts the platform watcher, whose lockdown of market_data
-// pauses the jobs on every worker, and the runner of the jobs. It returns
-// the function that stops both.
-func startJobs(conn *sql.DB, node string, specs, streams []jobs.Spec) (func(ctx context.Context) error, error) {
+// pauses the jobs and streams of the market data on every worker, and
+// their runners; and the runner of the venue jobs, which a lockdown of
+// otc_routing pauses instead (#501). It returns the function that stops
+// them all.
+func startJobs(conn *sql.DB, node string, specs, streams, venueSpecs []jobs.Spec) (func(ctx context.Context) error, error) {
 	settings, err := platform.SettingsOf(&config.Config)
 	if err != nil {
 		return nil, fmt.Errorf("invalid platform configuration: %w", err)
 	}
 	watcher := platform.NewWatcher(conn, settings.Options)
 	cfg := config.Config.MarketData
-	runner, err := jobs.NewRunner(conn, jobs.Options{
-		Node:          node,
-		Mode:          cfg.Mode,
-		Poll:          time.Duration(cfg.PollSeconds) * time.Second,
-		Lease:         time.Duration(cfg.LeaseSeconds) * time.Second,
-		MaxConcurrent: cfg.MaxConcurrentJobs,
-		RetryBase:     time.Duration(cfg.RetryBaseSeconds) * time.Second,
-		Paused:        func() bool { return watcher.Paused(platform.FeatureMarketData) },
-		// The node runs only the jobs of the sources its configuration
-		// reaches (#265).
-		Reachable: cfg.Reachable,
-	}, specs...)
-	if err != nil {
-		return nil, err
+	paused := func(f platform.Feature) func() bool { return func() bool { return watcher.Paused(f) } }
+	var runners []*jobs.Runner
+	if len(specs) > 0 {
+		runner, err := jobs.NewRunner(conn, jobs.Options{
+			Node:          node,
+			Mode:          cfg.Mode,
+			Poll:          time.Duration(cfg.PollSeconds) * time.Second,
+			Lease:         time.Duration(cfg.LeaseSeconds) * time.Second,
+			MaxConcurrent: cfg.MaxConcurrentJobs,
+			RetryBase:     time.Duration(cfg.RetryBaseSeconds) * time.Second,
+			Paused:        paused(platform.FeatureMarketData),
+			// The node runs only the jobs of the sources its configuration
+			// reaches (#265).
+			Reachable: cfg.Reachable,
+		}, specs...)
+		if err != nil {
+			return nil, err
+		}
+		runners = append(runners, runner)
 	}
 	// The streams hold their runs for long, so they have runners of their
 	// own, with slots of their own: they never take the slots of the jobs,
 	// and one worker holds at most max_per_worker of them.
-	var streamRunner *jobs.Runner
 	if len(streams) > 0 {
-		streamRunner, err = jobs.NewRunner(conn, jobs.Options{
+		streamRunner, err := jobs.NewRunner(conn, jobs.Options{
 			Node:          node,
 			Mode:          cfg.Mode,
 			Poll:          time.Duration(cfg.PollSeconds) * time.Second,
 			Lease:         time.Duration(cfg.LeaseSeconds) * time.Second,
 			MaxConcurrent: cfg.Streams.MaxPerWorker,
 			RetryBase:     time.Duration(cfg.RetryBaseSeconds) * time.Second,
-			Paused:        func() bool { return watcher.Paused(platform.FeatureMarketData) },
+			Paused:        paused(platform.FeatureMarketData),
 			Reachable:     cfg.Reachable,
 		}, streams...)
 		if err != nil {
 			return nil, err
 		}
+		runners = append(runners, streamRunner)
+	}
+	// The venue jobs have a runner of their own (#501): always live, since
+	// the mode of a venue is its own (venues.exchanges.<name>.mode), with
+	// a slot for each, paused by otc_routing rather than market_data.
+	if len(venueSpecs) > 0 {
+		o := venueRunnerOptions(cfg)
+		o.Node, o.MaxConcurrent, o.Paused = node, len(venueSpecs), paused(platform.FeatureOTCRouting)
+		venueRunner, err := jobs.NewRunner(conn, o, venueSpecs...)
+		if err != nil {
+			return nil, err
+		}
+		runners = append(runners, venueRunner)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	watcher.Start(ctx)
-	runner.Start()
-	if streamRunner != nil {
-		streamRunner.Start()
+	for _, r := range runners {
+		r.Start()
 	}
 	return func(ctx context.Context) error {
-		var streamsStopped error
-		if streamRunner != nil {
-			streamsStopped = streamRunner.Stop(ctx)
+		var stopped []error
+		for i := len(runners) - 1; i >= 0; i-- {
+			stopped = append(stopped, runners[i].Stop(ctx))
 		}
-		return errors.Join(runner.Stop(ctx), streamsStopped, watcher.Stop(ctx))
+		return errors.Join(append(stopped, watcher.Stop(ctx))...)
 	}, nil
+}
+
+// The timing of the venue runner when market_data, whose settings it
+// shares, sets none, as with market_data.enabled false.
+const (
+	venuePoll      = time.Second
+	venueLease     = 30 * time.Second
+	venueRetryBase = 5 * time.Second
+)
+
+// venueRunnerOptions are the options of the venue runner, from the timing
+// of market_data where it is set.
+func venueRunnerOptions(cfg config.MarketDataConfig) jobs.Options {
+	or := func(seconds int, d time.Duration) time.Duration {
+		if seconds > 0 {
+			return time.Duration(seconds) * time.Second
+		}
+		return d
+	}
+	return jobs.Options{
+		Mode:      marketdata.ModeLive,
+		Poll:      or(cfg.PollSeconds, venuePoll),
+		Lease:     or(cfg.LeaseSeconds, venueLease),
+		RetryBase: or(cfg.RetryBaseSeconds, venueRetryBase),
+	}
 }
 
 // applicationName is the application_name of a worker:

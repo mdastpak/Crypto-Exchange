@@ -37,6 +37,13 @@ type Checker interface {
 	Check(ctx context.Context, a Account, m currencies.PublicMarket, side Side, need decimal.Decimal) error
 }
 
+// Precisions returns the precision of a currency, as the ledger keeps it
+// (ledger.Precision). A Checker that implements it bounds the quotes to
+// it; DBChecks does.
+type Precisions interface {
+	Precision(ctx context.Context, currencyHK string) (int32, error)
+}
+
 // Account is the account that asks for a quote.
 type Account struct {
 	UserHK       string
@@ -51,6 +58,9 @@ type Request struct {
 	Side        Side
 	Quantity    *decimal.Decimal
 	QuoteAmount *decimal.Decimal
+	// Network is our network of the user's destination (#57), when the
+	// trade has one, which the routing rules match (#386).
+	Network string
 }
 
 // Refusal is a quote that is not given, with the code of the API.
@@ -94,7 +104,13 @@ type Service struct {
 	pricing map[string]Pricing
 	metrics *Metrics
 	now     func() time.Time
+	routing *Routing
 }
+
+// Route routes the quotes by r (#386): each quote is priced with the cost
+// of its route, and refused when there is none. Nil quotes every trade
+// from the inventory.
+func (s *Service) Route(r *Routing) { s.routing = r }
 
 // New returns the service of the quotes of the markets that settings
 // prices. metrics may be nil.
@@ -183,9 +199,43 @@ func (s *Service) Quote(ctx context.Context, req Request) (q Quote, err error) {
 	if !mid.IsPositive() {
 		return Quote{}, &Refusal{Code: CodePriceUnavailable}
 	}
-	quantity, px, parts, err := solve(pricing, r, req, mid)
+	feePlaces := int32(max(0, -r.tick.Exponent()))
+	var basePlaces, quotePlaces *int32
+	if p, ok := s.checks.(Precisions); ok {
+		// The amounts stay within the precision of their currencies
+		// (#422), which the ledger refuses finer: the quantity is cut to
+		// the base currency's, and the total rounded against the user to
+		// the quote currency's.
+		b, err := p.Precision(ctx, m.BaseHK)
+		if err != nil {
+			return Quote{}, err
+		}
+		places, err := p.Precision(ctx, m.QuoteHK)
+		if err != nil {
+			return Quote{}, err
+		}
+		basePlaces, quotePlaces, feePlaces = &b, &places, min(feePlaces, places)
+	}
+	size := func(routeBPS decimal.Decimal) (decimal.Decimal, decimal.Decimal, Components, error) {
+		quantity, px, parts, err := solve(pricing, r, req, mid, routeBPS)
+		if err != nil {
+			return quantity, px, parts, err
+		}
+		if basePlaces != nil {
+			if quantity = quantity.Truncate(*basePlaces); !quantity.IsPositive() {
+				return quantity, px, parts, &Refusal{Code: CodeQuantityBelowMinimum, Limit: decimal.New(1, -*basePlaces).String()}
+			}
+		}
+		return quantity, px, parts, nil
+	}
+	quantity, px, parts, err := size(decimal.Zero)
 	if err != nil {
 		return Quote{}, err
+	}
+	if s.routing != nil {
+		if quantity, px, parts, err = s.route(ctx, req, m, r, mid, size, quantity, px, parts); err != nil {
+			return Quote{}, err
+		}
 	}
 	if ref.Override != nil {
 		parts.OverrideID = ref.Override.ID
@@ -194,7 +244,17 @@ func (s *Service) Quote(ctx context.Context, req Request) (q Quote, err error) {
 		return Quote{}, err
 	}
 	total := quantity.Mul(px)
-	fee := total.Mul(decimal.NewFromInt(int64(m.TakerFeeBPS))).Div(bpsUnit).RoundUp(int32(max(0, -r.tick.Exponent())))
+	if quotePlaces != nil {
+		if req.Side == SideBuy {
+			total = total.RoundUp(*quotePlaces)
+		} else {
+			total = total.Truncate(*quotePlaces)
+		}
+	}
+	fee := total.Mul(decimal.NewFromInt(int64(m.TakerFeeBPS))).Div(bpsUnit).RoundUp(feePlaces)
+	if req.Side == SideSell && !total.GreaterThan(fee) {
+		return Quote{}, &Refusal{Code: CodeNotionalBelowMinimum, Limit: fee.String()}
+	}
 	need := quantity
 	if req.Side == SideBuy {
 		need = total.Add(fee)
@@ -241,9 +301,10 @@ func (s *Service) market(ctx context.Context, symbol string) (currencies.PublicM
 // sells the most lots whose total stays within it: the quantity at the
 // reference is a bound, since the price of a buy only rises with the
 // quantity, and it is lowered by a lot while the total is above.
-func solve(p Pricing, r rules, req Request, mid decimal.Decimal) (decimal.Decimal, decimal.Decimal, Components, error) {
+func solve(p Pricing, r rules, req Request, mid, routeBPS decimal.Decimal) (decimal.Decimal, decimal.Decimal, Components, error) {
 	price := func(q decimal.Decimal) (decimal.Decimal, Components, error) {
 		parts, err := p.Components(mid, q)
+		parts.RouteBPS = routeBPS
 		if errors.Is(err, ErrTooLarge) {
 			return decimal.Zero, parts, &Refusal{Code: CodeQuoteTooLarge}
 		}

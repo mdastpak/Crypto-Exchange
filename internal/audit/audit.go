@@ -154,6 +154,9 @@ const (
 	// holds the currency, network, destination, amount, and fee.
 	ActionUserWithdrawalRequest = "user.withdrawal_request"
 	ActionUserWithdrawalCancel  = "user.withdrawal_cancel"
+	// A user executing an OTC quote (#62). The target is the trade; the
+	// event holds the market, the side, and what was given and received.
+	ActionUserOTCTrade = "user.otc_trade"
 	// An administrator approving a withdrawal held for review, or
 	// rejecting it, which releases its funds (#70), with the reason.
 	ActionWithdrawalApprove = "withdrawal.approve"
@@ -262,6 +265,12 @@ const (
 	ActionIntegrityReseal       = "integrity.reseal"
 	// An administrator asked for a re-seal, which another approves (#308).
 	ActionIntegrityResealRequest = "integrity.reseal_request"
+	// An operator cleared the hold that a reconciliation put on a currency
+	// of a venue (#385), after reviewing its difference.
+	ActionAdminVenueHoldClear = "admin.venue_hold_clear"
+	// An administrator saved a new version of the OTC routing rules
+	// (#386).
+	ActionAdminOTCRoutingRules = "admin.otc_routing_rules"
 )
 
 // Target types.
@@ -278,6 +287,13 @@ const (
 	TargetWithdrawalDestination = "withdrawal_destination"
 	// TargetWithdrawal is a withdrawal of a user (#70), by its id.
 	TargetWithdrawal = "withdrawal"
+	// TargetOTCTrade is an OTC trade of a user (#62), by its id.
+	TargetOTCTrade = "otc_trade"
+	// TargetVenueHold is a hold of a currency of a venue (#385), by its id.
+	TargetVenueHold = "venue_hold"
+	// TargetOTCRoutingRules is a version of the OTC routing rules (#386),
+	// by its number.
+	TargetOTCRoutingRules = "otc_routing_rules"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"

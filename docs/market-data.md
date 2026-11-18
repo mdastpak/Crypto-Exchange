@@ -39,7 +39,7 @@ The probes listen on `market_data.health_addr` (`:8081`).
 
 ### Rollout
 
-1. Deploy the worker with `market_data.enabled: false`: it only answers its probes.
+1. Deploy the worker with `market_data.enabled: false`: it runs only the [venue jobs](venues.md#snapshots) of the venues it enables, and answers its probes.
 2. Enable it with `market_data.mode: dry_run`: the jobs collect and check what they would write, and record only their runs.
 3. Switch to `live` once the runs look right.
 

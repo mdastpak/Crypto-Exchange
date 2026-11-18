@@ -47,6 +47,8 @@ At start the server logs one line with its posture: the mode, the region, the ro
 | `otp.auth.dev_log_codes` | `false` |
 | `keys.provider` | Set, not `local`, and a Transit address with `https`. The data keys protect the sign-in codes, the authenticator secrets of administrators, and the row seals, and every instance must share them. |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
+| `venues.credentials.provider` | `openbao`, with an `https` address, while a venue is enabled: release mode never reads the keys of the exchanges from a file. See [`venues`](#venues). |
+| `venues.exchanges.<name>.base_url` | Empty, or an `https://` address |
 
 `cmd/price-aggregator` runs the same checks of Redis and RabbitMQ, with the same messages, when it publishes to them: `redis.password`, `rabbitmq.username` and `rabbitmq.password`, and the TLS of each, with `price_aggregator.signing_key`. It also needs a host in `price_aggregator.health_addr` and `price_aggregator.min_providers` of at least 2 ([#454](https://github.com/mdastpak/Crypto-Exchange/issues/454)).
 
@@ -64,6 +66,7 @@ In an international release, the server and the market data worker refuse to sta
 | The Iranian venues on the public market data routes | `ir` in `market_data.api.regions` | server |
 | Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
 | A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
+| Nobitex as a venue of the OTC trades ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)) | `venues.exchanges.nobitex.enabled` | server |
 
 The defaults that depend on the region:
 
@@ -631,6 +634,12 @@ The [OTC quotes](api.md#otc-quotes) ([#61](https://github.com/mdastpak/Crypto-Ex
 | `quotes_per_second` | `5` | At least 1. The quote requests of each user, per second, over every instance. |
 | `burst` | `10` | At least 1. The requests a user may send at once. |
 | `markets` | none | The quoted markets, by symbol such as `BTC/USDT`. A market without an entry is not quoted, so without entries there are no quotes. |
+| `inventory_limits` | none | The bounds of the exchange's inventory per currency symbol, for the [executions](api.md#post-userotcexecute) ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)): `max_short`, how much more the inventory may give users than they gave it, and `max_long`, how much more it may hold, in units of the currency. A trade that would take the position beyond a bound is refused with `otc_inventory_limit`; one that brings it back toward zero passes. Empty is no bound. A release build requires both for each currency of every market in `markets`, and refuses the trades of a currency without both, such as one [renamed](api.md#currency-migrations) after the file was written. |
+| `routing.enabled` | `false` | Routes every quote and execution by the [routing rules](otc-routing.md) ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)): a quote is priced with the cost of its route, and refused with `otc_no_route` when no rule gives one. Off, the inventory takes every trade, as before. The rules themselves are versioned data, set through the admin API. |
+| `routing.cache_seconds` | `5` | From 1 to 60. How long an instance keeps the active rules before it checks for a new version: a change applies on every instance within it. |
+| `routing.max_slippage_bps` | `50` | From 1 to 1000. The [slippage guard](otc-routing.md#routed-orders) of a routed order ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)): a buy's limit is at most the reference price × (1 + it), and a sell's at least the reference × (1 − it). |
+| `routing.order_timeout_seconds` | `60` | From 5 to 3600. How long a routed order may stay open at its venue. Then it is cancelled, and what it did not fill is routed again. |
+| `routing.unknown_grace_seconds` | `120` | From 10 to 3600. How long a routed order whose answer was lost is looked up by its client id before it is placed again, since a venue may not show a new order at once. |
 
 Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin_bps + risk_premium_bps + slippage))`, plus for a buy and minus for a sell. Every part is in basis points of the reference, from 0 to 5000, and their sum must stay under 5000, so that a sell has a positive price.
 
@@ -648,7 +657,48 @@ Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin
 | `slippage_k`, `liquidity` | none | The slippage is `sqrt(slippage_k × quantity / liquidity)`, a fraction of the reference, with `liquidity` in the base currency. Unset is no slippage. |
 | `max_slippage_bps` | `0` | A quantity whose slippage would be above it is refused with `quote_too_large`. `0` is no bound. |
 
-Each quote records its parts, so that the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) knows the margin of every trade. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
+Each quote records its parts, and the execution ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)) stores them with the trade, so that the margin of every trade is known. A quote's amounts stay within the precision of their currencies, the most decimal places of their networks ([#422](https://github.com/mdastpak/Crypto-Exchange/issues/422)): the quantity is cut to the base currency's, and the total and the fee are rounded against the user to the quote currency's. The precisions are read once a minute per instance. The quotes are signed with a key derived from the `otp-mac` [data key](#keys), which every instance shares, so a quote given on one instance is taken on any other. Without data keys, each instance signs with a key of its own, and only one instance can run.
+
+### `venues`
+
+The connectors of the external exchanges that the OTC trades are covered on ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)). See [`docs/venues.md`](venues.md) for what each connector offers. Nothing is sent to a venue that is not enabled, and a venue that is enabled needs a credentials provider.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `proxy_url` | empty | The proxy of the venues whose `egress` is `proxy`: `http://`, `https://`, or `socks5://`. Set it with `VENUES_PROXY_URL`; it is never logged. |
+| `credentials.provider` | empty | `openbao`, or `file` for development. Release mode refuses `file`. |
+| `credentials.file` | empty | The JSON file of the `file` provider: an object of venues, each with `api_key` and `api_secret` (Binance) or `token` (Nobitex). It is read again on every miss of the cache, so a change applies without a restart. Keep it out of Git. |
+| `credentials.cache_seconds` | `300` | From 1 to 3600. How long credentials are kept before they are read again, so that a rotation applies within it. Credentials that a venue refuses are read again at once. While the provider cannot be reached, the last credentials are kept. |
+| `credentials.openbao.address` | empty | The address of OpenBao or Vault, `https` in release mode. |
+| `credentials.openbao.token`, `credentials.openbao.token_file` | empty | The token (`VENUES_OPENBAO_TOKEN`), or a file that an agent renews in place, read on every request (`VENUES_OPENBAO_TOKEN_FILE`). One is required. The token needs only `read` on the secrets of the venues. |
+| `credentials.openbao.mount`, `credentials.openbao.prefix` | `secret`, `venues/` | The KV version 2 engine and the prefix of the secrets: a venue reads `<mount>/data/<prefix><venue>`, such as `secret/data/venues/binance`, with the fields `api_key`, `api_secret`, and `token`. |
+| `credentials.openbao.ca_cert`, `credentials.openbao.timeout_seconds` | empty, `10` | The CA of OpenBao, and the timeout of a read. |
+| `exchanges` | none | The venues, by the name of their connector: `binance` or `nobitex`. |
+
+Each venue of `exchanges`:
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | |
+| `mode` | `testnet` | `testnet`, `live`, or `dry_run`, which reads the live venue and logs the orders, withdrawals, and transfers without sending them. Nobitex has no testnet. |
+| `egress` | `direct` | `direct`, or `proxy` through `venues.proxy_url`. |
+| `base_url` | the mode's | Overrides the address of the venue. |
+| `requests_per_minute` | `600` for Binance, `60` for Nobitex | At least 1. Our share of the venue's limit, counted in Postgres (`market_source_usage`, as `venue_<name>`) over every instance. Keep it well under the venue's own limit, which the market data worker may share from the same address. |
+| `timeout_seconds` | `10` | From 1 to 60. One request. |
+| `recv_window_ms` | `5000` | From 1 to 60000. How long after its timestamp Binance accepts a signed request. |
+| `sub_account` | empty | The sub-account of the OTC trades, such as the email of a Binance sub-account; empty is the main account. Nobitex has none. |
+| `withdraw_target` | `own_wallet` | `own_wallet` sends a withdrawal from the venue to our hot wallet, which pays the user, so that the venue never sees a user's address ([#388](https://github.com/mdastpak/Crypto-Exchange/issues/388)); `direct` sends it to the user's address. |
+| `fee_bps`, `slippage_bps` | `0` | From 0 to 1000. The taker fee of our account at the venue, and the slippage expected of an order there, in basis points, which the [routing rules](otc-routing.md#cost) add to the cost of a leg at the venue ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)). |
+| `assets` | none | The venue's assets, by its symbol, each with our `currency` and its `networks`, from the venue's name to ours, such as `{TRX: tron}`. An asset or network that is not here is not routable. Two assets of one currency, or two networks of one network, are refused. |
+
+`state` configures the [state of the venues](venues.md#state) ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)): a job of `cmd/market-worker` per enabled venue takes its snapshots and reconciles it with the books. It is checked while a venue is enabled. Give the server and the worker the same values: the server reads them for the admin overview and the metrics.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `state.interval_seconds` | `60` | At least 10. The time between two runs of the state job of a venue. |
+| `state.max_age_seconds` | `300` | At least twice `interval_seconds`. A snapshot older than this is unknown: the venue's currencies and markets are not routable until a new one. |
+| `state.confirm_runs` | `2` | From 1 to 10. The reconciliations in a row that must find a difference before the currency is held, so that a move in flight between a snapshot and its entry holds nothing. |
+| `state.tolerances` | none | The differences that a reconciliation accepts, by our currency symbol, as decimal strings such as `{USDT: "0.01"}`. A currency that is not here accepts none. |
 
 ### `anti_phishing`
 
@@ -902,6 +952,12 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `MARKET_DATA_PROXY_URL` | `market_data.egress.proxy_url` |
 | `MARKET_DATA_COINGECKO_API_KEY` | `market_data.sources.coingecko.api_key` |
 | `MARKET_DATA_COINMARKETCAP_API_KEY` | `market_data.sources.coinmarketcap.api_key` |
+| `VENUES_PROXY_URL` | `venues.proxy_url` |
+| `VENUES_CREDENTIALS_PROVIDER` | `venues.credentials.provider` |
+| `VENUES_CREDENTIALS_FILE` | `venues.credentials.file` |
+| `VENUES_OPENBAO_ADDRESS` | `venues.credentials.openbao.address` |
+| `VENUES_OPENBAO_TOKEN` | `venues.credentials.openbao.token` |
+| `VENUES_OPENBAO_TOKEN_FILE` | `venues.credentials.openbao.token_file` |
 | `GEOIP_ENABLED` | `geoip.enabled` |
 | `GEOIP_HEADER` | `geoip.header` |
 | `GEOIP_DATABASE_PATH` | `geoip.database_path` |
@@ -981,4 +1037,5 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 - Generate separate key pairs for every environment, and rotate them if they are ever exposed.
 - Keep the KYC provider's credentials (`IDENTITY_MOBILE_OWNERSHIP_API_KEY`, `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`) in the secret manager, with a pair of their own for every environment.
 - Mount the price signing key (`price_aggregator.signing_key`, such as `/run/secrets/price-signing.pem`) on the price aggregators only, never on a server; the servers get only its public key (`price.verify_keys`), which may be public. Give every environment its own pair. See [Integrity of the prices](price-engine.md#integrity-of-the-prices).
+- Keep the API keys of the exchanges in OpenBao, one secret per venue, with keys that can trade and, where a venue allows it, withdraw only to whitelisted addresses, and bind them to the addresses of our nodes at the venue. The connectors never log them, never put them in a URL, and print them as `[redacted]`.
 - Give every environment its own KEK, and the server a Transit token that can only `encrypt` and `decrypt` with it, never read or delete it. See [`docs/data-protection.md`](data-protection.md).

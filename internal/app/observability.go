@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/metrics"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/venues/state"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -77,6 +78,17 @@ func registerServiceGauges(services *models.InfraServices, handlers *InfraHandle
 			func() float64 { return float64(pool.Stats().WaitCount) })
 		gauge("db_connection_wait_seconds", "Time that queries waited for a connection of the pool, since the start.",
 			func() float64 { return pool.Stats().WaitDuration.Seconds() })
+		// The state of the enabled venues (#385), read from the database:
+		// every instance reports the same.
+		if mappings := state.MappingsOf(config.Config.Venues); len(mappings) > 0 {
+			collector := state.NewCollector(state.New(pool, state.OptionsOf(config.Config.Venues.State)), mappings)
+			if err := metrics.Registry.Register(collector); err != nil {
+				var already prometheus.AlreadyRegisteredError
+				if !errors.As(err, &already) {
+					errs = append(errs, err)
+				}
+			}
+		}
 	}
 	if services.Redis != nil {
 		redis := services.Redis

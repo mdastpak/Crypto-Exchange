@@ -265,7 +265,7 @@ func newDBFixture(t testing.TB) dbFixture {
 	require.NoError(t, err)
 	_, err = books.CreditDeposit(ctx, key+":credit", account, amount, ledger.Ref{})
 	require.NoError(t, err)
-	return dbFixture{DB: conn, checks: DBChecks{DB: conn, Verification: verification.Store{DB: conn, Policy: policy}},
+	return dbFixture{DB: conn, checks: DBChecks{DB: conn, Verification: verification.Store{DB: conn, Policy: policy}, Precisions: &PrecisionCache{}},
 		market: m, user: user, keys: live}
 }
 
@@ -371,7 +371,7 @@ func TestService_LoadTest(t *testing.T) {
 	// test step's.
 	total, rate, budget := 400, 200, 2*time.Second
 	if os.Getenv("LOAD_TESTS") == "1" && !raceEnabled {
-		total, rate, budget = 1000, 1000, 10*time.Millisecond
+		total, rate, budget = 1000, 1000, loadBudget(t, 10*time.Millisecond)
 	}
 	// run sends n requests at the rate and returns their latencies.
 	run := func(n int) ([]time.Duration, time.Duration) {
@@ -414,9 +414,70 @@ func TestService_LoadTest(t *testing.T) {
 	assert.Less(t, p99, budget, "p99 of the quotes")
 }
 
+// loadBudget is the bound of the p99 of the load test (#486): target, or,
+// when LOAD_BASELINE names the output of the same test on the base branch,
+// run in the same CI job, one and a half times the baseline's best p99 if
+// that is more. A shared runner that is slow that day is slow for both, so
+// the step fails on a regression of this change rather than on the
+// machine; on a quiet machine the target holds as before.
+func loadBudget(t *testing.T, target time.Duration) time.Duration {
+	t.Helper()
+	path := os.Getenv("LOAD_BASELINE")
+	if path == "" {
+		return target
+	}
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "LOAD_BASELINE")
+	baseline, ok := bestP99(string(data))
+	require.True(t, ok, "LOAD_BASELINE holds no round of the load test")
+	budget := max(target, baseline*3/2)
+	t.Logf("baseline p99 %s: the bound is %s", baseline, budget)
+	return budget
+}
+
+// bestP99 returns the smallest p99 of the rounds that a run of
+// TestService_LoadTest logged, as "round N: … p99 <duration>".
+func bestP99(log string) (time.Duration, bool) {
+	var best time.Duration
+	found := false
+	for _, line := range strings.Split(log, "\n") {
+		_, after, ok := strings.Cut(line, "quotes in ")
+		if !ok || !strings.Contains(line, "round ") {
+			continue
+		}
+		_, raw, ok := strings.Cut(after, "p99 ")
+		if !ok {
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		if !found || d < best {
+			best, found = d, true
+		}
+	}
+	return best, found
+}
+
 func mustKeys(t *testing.T, f serviceFixture) []string {
 	t.Helper()
 	keys, err := f.store.redis.Keys(context.Background(), KeyPrefix+"*").Result()
 	require.NoError(t, err)
 	return keys
+}
+
+// TestBestP99_ReadsTheRoundsOfALoadTest covers the parse of the baseline
+// of the load test (#486).
+func TestBestP99_ReadsTheRoundsOfALoadTest(t *testing.T) {
+	log := `=== RUN   TestService_LoadTest
+    service_test.go:408: round 1: 1000 quotes in 1.166957752s: p50 100.874178ms, p99 408.397256ms
+    service_test.go:408: round 2: 1000 quotes in 1.009146433s: p50 4.845612ms, p99 32.775054ms
+    service_test.go:408: round 3: 1000 quotes in 1.004836398s: p50 3.983487ms, p99 912.5µs
+--- PASS: TestService_LoadTest (6.03s)`
+	best, ok := bestP99(log)
+	require.True(t, ok)
+	assert.Equal(t, 912500*time.Nanosecond, best)
+	_, ok = bestP99("--- FAIL: TestService_LoadTest (0.00s)\npgtest: connecting to postgres")
+	assert.False(t, ok, "a run without rounds is no baseline")
 }

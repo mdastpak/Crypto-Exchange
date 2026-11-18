@@ -24,6 +24,17 @@ definitions:
         description: Note says why, at most 1000 characters.
         type: string
     type: object
+  admin.ClearVenueHoldRequest:
+    properties:
+      reason:
+        description: |-
+          Reason says why the difference is understood, such as the deposit
+          that the venue credited late.
+        maxLength: 1000
+        type: string
+    required:
+    - reason
+    type: object
   admin.ControlList:
     properties:
       items:
@@ -76,6 +87,7 @@ definitions:
         - scheduler
         - outbox
         - market_data
+        - otc_routing
       kind:
         allOf:
         - $ref: '#/definitions/platform.Kind'
@@ -171,6 +183,42 @@ definitions:
           $ref: '#/definitions/delisting.Delisting'
         type: array
     type: object
+  admin.ExplainRouteRequest:
+    properties:
+      level:
+        description: Level is the user's verification level (#157).
+        example: 2
+        type: integer
+      market:
+        example: BTC/USDT
+        type: string
+      network:
+        description: Network is our network of the user's destination, if any.
+        type: string
+      price:
+        example: "65000"
+        type: string
+      quantity:
+        description: Quantity is in the base currency, and Price in the quote currency.
+        example: "0.5"
+        type: string
+      region:
+        description: Region is the user's region; empty is the release's.
+        enum:
+        - ir
+        - international
+        type: string
+      side:
+        enum:
+        - buy
+        - sell
+        type: string
+    required:
+    - market
+    - price
+    - quantity
+    - side
+    type: object
   admin.FindingPage:
     properties:
       items:
@@ -235,6 +283,23 @@ definitions:
           $ref: '#/definitions/restrictions.Restriction'
         type: array
     type: object
+  admin.RoutingRulesView:
+    properties:
+      cache_seconds:
+        description: |-
+          CacheSeconds is how long a node keeps a version before it checks
+          for a new one.
+        type: integer
+      enabled:
+        description: |-
+          Enabled is otc.routing.enabled: off, the inventory takes every trade
+          and the rules only explain.
+        type: boolean
+      version:
+        allOf:
+        - $ref: '#/definitions/routing.Version'
+        description: Version is the highest version; none before the first save.
+    type: object
   admin.SMSRoutingRequest:
     properties:
       mode:
@@ -256,6 +321,19 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  admin.SaveRoutingRulesRequest:
+    properties:
+      reason:
+        description: Reason says why the rules change.
+        maxLength: 1000
+        type: string
+      rules:
+        items:
+          $ref: '#/definitions/routing.Rule'
+        type: array
+    required:
+    - reason
     type: object
   admin.StepUpInfo:
     properties:
@@ -2484,6 +2562,18 @@ definitions:
         example: 15
         type: integer
     type: object
+  otc.Leg:
+    properties:
+      amount:
+        example: "32565.06"
+        type: string
+      currency:
+        example: USDT
+        type: string
+      currency_hk:
+        format: uuid
+        type: string
+    type: object
   otc.Quote:
     properties:
       created_at:
@@ -2512,8 +2602,9 @@ definitions:
       quantity:
         description: |-
           Quantity is in the base currency, and Price, Total, and Fee in the
-          quote currency. Total is Quantity × Price. A buy pays Total + Fee,
-          and a sell receives Total − Fee.
+          quote currency. Total is Quantity × Price, rounded against the user
+          to the precision of the quote currency (#422): up for a buy, down for
+          a sell. A buy pays Total + Fee, and a sell receives Total − Fee.
         example: "0.5"
         type: string
       side:
@@ -2538,6 +2629,57 @@ definitions:
     x-enum-varnames:
     - SideBuy
     - SideSell
+  otc.Trade:
+    properties:
+      executed_at:
+        type: string
+      fee:
+        example: "65"
+        type: string
+      fee_bps:
+        example: 20
+        type: integer
+      fee_currency:
+        example: USDT
+        type: string
+      give:
+        allOf:
+        - $ref: '#/definitions/otc.Leg'
+        description: |-
+          Give is what the user gave, and Receive what the user was credited:
+          a buy gives total + fee and receives the quantity; a sell gives the
+          quantity and receives total − fee.
+      id:
+        format: uuid
+        type: string
+      market:
+        example: BTC/USDT
+        type: string
+      price:
+        example: "65000.12"
+        type: string
+      quantity:
+        example: "0.5"
+        type: string
+      quote_id:
+        format: uuid
+        type: string
+      receive:
+        $ref: '#/definitions/otc.Leg'
+      side:
+        allOf:
+        - $ref: '#/definitions/otc.Side'
+        enum:
+        - buy
+        - sell
+        example: buy
+      sub_account_id:
+        format: uuid
+        type: string
+      total:
+        example: "32500.06"
+        type: string
+    type: object
   passkey.Options:
     properties:
       publicKey:
@@ -2607,6 +2749,7 @@ definitions:
         - scheduler
         - outbox
         - market_data
+        - otc_routing
       id:
         format: uuid
         type: string
@@ -2656,6 +2799,7 @@ definitions:
     - scheduler
     - outbox
     - market_data
+    - otc_routing
     - service
     - writes
     type: string
@@ -2672,6 +2816,7 @@ definitions:
     - FeatureScheduler
     - FeatureOutbox
     - FeatureMarketData
+    - FeatureOTCRouting
     - UseService
     - UseWrites
   platform.Kind:
@@ -3542,6 +3687,200 @@ definitions:
     - ScopeAccount
     - ScopeOperation
     - ScopeAsset
+  routing.Explanation:
+    properties:
+      reason:
+        description: Reason is why there is no route.
+        type: string
+      route:
+        $ref: '#/definitions/routing.Route'
+      rule_version:
+        type: integer
+      rules:
+        items:
+          $ref: '#/definitions/routing.RuleResult'
+        type: array
+    type: object
+  routing.Leg:
+    properties:
+      cost_bps:
+        description: |-
+          CostBPS is the venue fee, the slippage, and the withdrawal fee of the
+          leg, in basis points of its notional; 0 for the inventory.
+        type: number
+      notional:
+        type: number
+      quantity:
+        type: number
+      source:
+        type: string
+      symbol:
+        description: Symbol is the venue's symbol of the market.
+        type: string
+      venue:
+        type: string
+    type: object
+  routing.Route:
+    properties:
+      cost_bps:
+        description: |-
+          CostBPS is the cost of the legs, weighted by their notional, in
+          basis points of the trade's notional, rounded up to a hundredth.
+        type: number
+      legs:
+        items:
+          $ref: '#/definitions/routing.Leg'
+        type: array
+      lot:
+        description: Lot is the lot of our market that the legs are multiples of.
+        type: number
+      network:
+        description: |-
+          Network is the network of the user's destination that the route was
+          planned for, which the execution plans for again.
+        type: string
+      rule:
+        type: string
+      rule_version:
+        type: integer
+    type: object
+  routing.Rule:
+    properties:
+      markets:
+        description: Markets are our market symbols, such as BTC/USDT.
+        items:
+          type: string
+        type: array
+      max_cost_bps:
+        description: |-
+          MaxCostBPS bounds the cost of the route, in basis points of the
+          notional; 0 is no bound.
+        type: integer
+      max_notional:
+        type: string
+      min_level:
+        description: |-
+          MinLevel is the lowest verification level (#157) that the rule
+          serves.
+        type: integer
+      min_notional:
+        description: |-
+          MinNotional and MaxNotional bound the notional of the trade, in its
+          quote currency.
+        type: string
+      name:
+        type: string
+      networks:
+        description: Networks are our networks of the user's destination (#57).
+        items:
+          type: string
+        type: array
+      priority:
+        type: integer
+      regions:
+        description: Regions are the deployment regions (#272) that the rule serves.
+        items:
+          type: string
+        type: array
+      sides:
+        description: 'Sides are the user''s sides: buy or sell.'
+        items:
+          type: string
+        type: array
+      strategy:
+        description: Strategy is own_first (the default) or cheapest.
+        type: string
+      use_inventory:
+        description: UseInventory lets the exchange's own inventory fill the trade.
+        type: boolean
+      venues:
+        description: Venues are the external venues that may fill it.
+        items:
+          $ref: '#/definitions/routing.VenueRule'
+        type: array
+    type: object
+  routing.RuleResult:
+    properties:
+      failure:
+        description: Failure is why a matched rule gives no route.
+        type: string
+      matched:
+        type: boolean
+      rule:
+        type: string
+      skipped:
+        description: Skipped are why the rule does not match.
+        items:
+          type: string
+        type: array
+      sources:
+        description: Sources are the sources of a matched rule.
+        items:
+          $ref: '#/definitions/routing.SourceResult'
+        type: array
+    type: object
+  routing.SourceResult:
+    properties:
+      capacity:
+        description: |-
+          Capacity is the quantity of the base currency that it can fill;
+          empty is no bound.
+        type: number
+      cost_bps:
+        type: number
+      skipped:
+        items:
+          type: string
+        type: array
+      source:
+        type: string
+      venue:
+        type: string
+    type: object
+  routing.VenueRule:
+    properties:
+      max_balance_share_bps:
+        description: |-
+          MaxBalanceShareBPS is the share of the venue's available balance
+          that one trade may use; 0 is all of it.
+        type: integer
+      max_daily_notional:
+        description: |-
+          MaxDailyNotional bounds the notional that the venue takes in a day,
+          in the quote currency of the trade.
+        type: string
+      priority:
+        description: Priority orders the venues of a rule, lower first.
+        type: integer
+      reserve:
+        description: |-
+          Reserve is an amount of the asset that the venue spends, which no
+          trade takes.
+        type: string
+      venue:
+        type: string
+      weight:
+        description: |-
+          Weight splits a trade across the venues of one priority in
+          proportion; venues of a priority without weights fill in turn.
+        type: integer
+    type: object
+  routing.Version:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        format: uuid
+        type: string
+      reason:
+        type: string
+      rules:
+        items:
+          $ref: '#/definitions/routing.Rule'
+        type: array
+      version:
+        type: integer
+    type: object
   rowseal.Finding:
     properties:
       check:
@@ -3701,6 +4040,130 @@ definitions:
       url:
         description: URL is the origin of the site, such as "https://example.ir".
         example: https://example.ir
+        type: string
+    type: object
+  state.BalanceState:
+    properties:
+      asset:
+        type: string
+      available:
+        type: number
+      booked:
+        description: |-
+          Booked is what the books say the venue holds; Difference is
+          Free + Locked - Booked.
+        type: number
+      currency:
+        type: string
+      difference:
+        type: number
+      free:
+        description: |-
+          Free and Locked are the last snapshot; Reserved the open
+          reservations; Available what the router may still plan on.
+        type: number
+      locked:
+        type: number
+      mismatch_runs:
+        type: integer
+      reserved:
+        type: number
+      routability:
+        $ref: '#/definitions/state.Routability'
+      taken_at:
+        type: string
+    type: object
+  state.Hold:
+    properties:
+      asset:
+        type: string
+      booked:
+        type: number
+      clear_reason:
+        type: string
+      cleared_at:
+        type: string
+      cleared_by:
+        type: string
+      currency_hk:
+        type: string
+      detected_at:
+        type: string
+      difference:
+        type: number
+      id:
+        type: string
+      reported:
+        type: number
+      venue:
+        type: string
+    type: object
+  state.NetworkState:
+    properties:
+      asset:
+        type: string
+      deposit_enabled:
+        type: boolean
+      network:
+        type: string
+      taken_at:
+        type: string
+      withdraw_enabled:
+        type: boolean
+      withdraw_fee:
+        type: number
+      withdraw_min:
+        type: number
+    type: object
+  state.Routability:
+    properties:
+      reasons:
+        items:
+          type: string
+        type: array
+      routable:
+        type: boolean
+    type: object
+  state.Snapshot:
+    properties:
+      failed_at:
+        type: string
+      failure:
+        description: |-
+          Failure is the kind of the last failure: retryable, rejected, or
+          unknown_outcome.
+        type: string
+      fresh:
+        type: boolean
+      kind:
+        type: string
+      taken_at:
+        type: string
+    type: object
+  state.VenueState:
+    properties:
+      balances:
+        items:
+          $ref: '#/definitions/state.BalanceState'
+        type: array
+      holds:
+        items:
+          $ref: '#/definitions/state.Hold'
+        type: array
+      instruments:
+        description: Instruments and Trading count the markets listed, and those trading.
+        type: integer
+      networks:
+        items:
+          $ref: '#/definitions/state.NetworkState'
+        type: array
+      snapshots:
+        items:
+          $ref: '#/definitions/state.Snapshot'
+        type: array
+      trading:
+        type: integer
+      venue:
         type: string
     type: object
   system.HealthStatus:
@@ -4186,6 +4649,24 @@ definitions:
         description: |-
           SubAccountID converts the holding of a sub-account of the user; empty
           is the main account.
+        format: uuid
+        type: string
+    type: object
+  user.executeRequest:
+    properties:
+      idempotency_key:
+        description: |-
+          IdempotencyKey may come in the Idempotency-Key header instead; when
+          both are sent, they must be the same.
+        example: 7d1e6c2a-trade-1
+        type: string
+      quote_id:
+        format: uuid
+        type: string
+      sub_account_id:
+        description: |-
+          SubAccountID is the sub-account that asked for the quote; empty is
+          the main account.
         format: uuid
         type: string
     type: object
@@ -7965,6 +8446,167 @@ paths:
       summary: Choose how SMS is routed
       tags:
       - admin notifications
+  /api/v1/admin/otc/routing/explain:
+    post:
+      consumes:
+      - application/json
+      description: Given a market, a side, a quantity at a price, and the user's verification
+        level, network, and region, shows each rule in order, why it matched or not,
+        what each source of a matching rule can fill and at what cost, and the route
+        of the first rule that gives one (#386), or why there is none. It reads the
+        latest version of the rules and the state of the venues now, and places nothing.
+      parameters:
+      - description: The trade
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.ExplainRouteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/routing.Explanation'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Explain the route of an OTC trade
+      tags:
+      - admin otc
+  /api/v1/admin/otc/routing/rules:
+    get:
+      description: The highest version of the rules that route the OTC trades to the
+        exchange's own inventory or to external venues (#386), with who saved it and
+        why, and whether otc.routing.enabled routes by them. A version changed outside
+        the backend answers 409 row_unverified. See docs/otc-routing.md.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/admin.RoutingRulesView'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the OTC routing rules
+      tags:
+      - admin otc
+    put:
+      consumes:
+      - application/json
+      description: 'Saves the whole set of rules as a new version (#386), which every
+        node applies within otc.routing.cache_seconds, without a restart. The rules
+        are checked first: a venue without a connector, an Iranian venue in an international
+        release, or an amount that is not one answers 400 with the field of each problem.
+        The reason is required. Audited as admin.otc_routing_rules. The route needs
+        a step-up. See docs/otc-routing.md for the format.'
+      parameters:
+      - description: The rules, and why
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.SaveRoutingRulesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/routing.Version'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Save the OTC routing rules
+      tags:
+      - admin otc
   /api/v1/admin/payouts:
     get:
       description: 'The payouts of withdrawals of a status, by when they are due:
@@ -8932,6 +9574,124 @@ paths:
       summary: Lift a restriction of a user
       tags:
       - admin users
+  /api/v1/admin/venues:
+    get:
+      description: 'The external exchanges that cover the OTC trades (#385), as the
+        snapshots of cmd/market-worker last saw them: the time and freshness of each
+        snapshot and its last failure, each balance against what the books say the
+        venue holds with its open reservations and whether it is routable, the networks,
+        the count of the markets and of those trading, and the open reconciliation
+        holds. Read from the database, so every node answers the same. A balance with
+        an open reservation changed outside the backend shows unverified_reservation
+        among its reasons, not routable, with nothing reserved or available; the other
+        balances and venues still show (#504).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/state.VenueState'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Show the state of the venues
+      tags:
+      - admin venues
+  /api/v1/admin/venues/holds/{id}/clear:
+    post:
+      consumes:
+      - application/json
+      description: After an operator reviewed the difference between what a venue
+        reported holding of a currency and what the books say (#385), clears the hold
+        that made the currency not routable there. The reason is required. If the
+        difference stays, the next reconciliations hold the currency again. Audited
+        as admin.venue_hold_clear. A hold already cleared answers 409 already_cleared;
+        one changed outside the backend, 409 row_unverified. The route needs a step-up.
+      parameters:
+      - description: The hold's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Why the difference is understood
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.ClearVenueHoldRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/state.Hold'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Clear a reconciliation hold of a venue
+      tags:
+      - admin venues
   /api/v1/admin/withdrawals:
     get:
       description: The withdrawals that wait for an administrator (status review),
@@ -11518,6 +12278,96 @@ paths:
       summary: Sign out
       tags:
       - sign-in
+  /api/v1/user/otc/execute:
+    post:
+      consumes:
+      - application/json
+      description: 'Takes the quote quote_id of the signed-in user (and sub-account)
+        and settles it at its price, in one transaction: the quote is taken once,
+        the controls of the quote are checked again under the locks of the trade (the
+        trading feature of the platform, the current agreements, the user''s level,
+        the restrictions of both currencies, their capabilities, and the market, which
+        must trade), the user''s funds are locked and settled against the exchange''s
+        inventory, the trade is recorded and sealed, the inventory limits of both
+        currencies are checked (otc.inventory_limits), and the events TradeExecuted
+        and BalanceChanged are written to the outbox, which publishes them once the
+        trade commits. A buy gives total + fee of the quote currency and receives
+        the quantity; a sell gives the quantity and receives total − fee. A quote
+        is traded at most once: once taken, it is gone, also when the trade is then
+        refused; ask for a new one. The same idempotency key again answers 200 with
+        the first trade; with another quote it answers 409 idempotency_key_reused.'
+      parameters:
+      - description: 1 to 100 letters, digits, dots, colons, underscores, or hyphens;
+          or idempotency_key in the body
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: The request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.executeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The trade of an earlier request with the key
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/otc.Trade'
+              type: object
+        "201":
+          description: Executed
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/otc.Trade'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: terms_update_required, verification_required, account_frozen,
+            operation_restricted, asset_restricted, or currency_operation_disabled
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: quote_not_found or otc_market_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: insufficient_balance, market_inactive, quote_invalid, quote_not_settleable,
+            otc_inventory_limit, idempotency_key_reused, or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "410":
+          description: quote_expired
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: otc_unavailable, maintenance, or feature_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Execute an OTC quote
+      tags:
+      - user-otc
   /api/v1/user/otc/quote:
     post:
       consumes:

@@ -53,7 +53,10 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | SMS providers | Implemented | Kavenegar and sms.ir in a configured order, with failover when a provider fails and delivery reports that send a message that did not reach the phone again through the next one ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)). Administrators see the health of each provider and switch between the automatic mode and a manual order (`GET`/`PUT /admin/notifications/sms`). See [SMS providers](docs/configuration.md#sms-providers). |
 | Price engine | Implemented | `cmd/price-aggregator` follows Binance, Coinbase, and Kraken by their streams, with their REST APIs while a stream is down, and OKX and the Iranian venues by REST, and computes a reference price per market every 100 ms: the best bid and ask, the median mid, VWAP and TWAP over windows, outliers rejected by MAD, and a quorum below which the price is stale ([#58](https://github.com/mdastpak/Crypto-Exchange/issues/58)). Every replica caches the live prices in Redis, one at a time publishes the updates to a Redis stream and RabbitMQ, which the WebSocket forwards, and administrators can set a price for a time ([#59](https://github.com/mdastpak/Crypto-Exchange/issues/59)). See [docs/price-engine.md](docs/price-engine.md). |
 | OTC quotes | Implemented | `POST /user/otc/quote` gives a firm price for 5 to 10 seconds: the reference price raised for a buy, and lowered for a sell, by half the spread, the hedge cost, a margin with a minimum, a risk premium, and a slippage of the square root of the size, rounded against the user, with the fee apart. It refuses a stale price, a paused market, and a user whose level, restrictions, currencies, or balance do not allow the trade. The quote is bound to the user and sub-account and signed in Redis, so that only they can take it, once ([#61](https://github.com/mdastpak/Crypto-Exchange/issues/61)). See [docs/api.md](docs/api.md#otc-quotes). |
-| OTC execution, custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
+| OTC execution | Implemented | `POST /user/otc/execute` takes a quote once and settles it in one transaction: the controls are checked again under its locks, the ledger settles the trade against the exchange's inventory, the trade is recorded sealed with the parts of its price, the inventory is bounded per currency by `otc.inventory_limits`, and `TradeExecuted` and `BalanceChanged` go through the outbox. A retry of the idempotency key returns the first trade ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)). See [docs/api.md](docs/api.md#post-userotcexecute). |
+| Venue state | Implemented | A job of `cmd/market-worker` per enabled venue snapshots its markets, networks, and balances into PostgreSQL, under a lease; a stale snapshot, a suspended network, or a halted market is not routable. Each venue has house accounts in the ledger, a reconciliation with the books that posts the fees a venue reports and holds a currency on a difference until an operator clears it, and reservations of its balances under row locks, so two nodes never plan the same funds ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)). See [docs/venues.md](docs/venues.md#state). |
+| OTC routing rules | Implemented | Versioned, audited rules pick the inventory, one venue, or a weighted split across venues for each OTC trade, by market, side, network, notional, region, and verification level, within each venue's balance share, reserve, daily limit, and a cost ceiling. A quote is priced with the cost of its route and refused when there is none; the execution routes again against fresh state. Every instance applies a new version within its cache window ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)). Each venue leg becomes a limit order at its venue within a slippage guard, placed once by its own client id, followed to its fill in the ledger, and past its deadline cancelled and its remainder routed again ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)). See [docs/otc-routing.md](docs/otc-routing.md). |
+| Custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
 
 ## Architecture
@@ -209,6 +212,8 @@ Redis runs as one node, behind Sentinel, or as a cluster; [docs/redis-high-avail
 
 Each process writes structured logs, with secrets and contacts redacted; the server serves Prometheus metrics on a port of their own and sends OpenTelemetry traces. [docs/observability.md](docs/observability.md) lists the metrics, the spans, and the alerts to set.
 
+The connectors of the external exchanges that cover the OTC trades, Binance and Nobitex, read their keys from OpenBao and look every order up by our own id after a crash; [docs/venues.md](docs/venues.md) describes them. The [routing rules](docs/otc-routing.md) decide which of them, or the exchange's own inventory, fills each trade, and the routed orders place and follow the venue legs.
+
 Backups, point-in-time recovery, the restore drill, and the disaster-recovery runbook are in [docs/disaster-recovery.md](docs/disaster-recovery.md). `admin backup status` alerts when WAL archiving falls behind the RPO, and `admin restore verify` checks a restored database before it is put in service.
 
 ## API overview
@@ -356,7 +361,8 @@ internal/metrics/       Prometheus metrics, served on a port of their own
 internal/middleware/    Security headers, CORS, rate limiting, validation, recovery
 internal/models/        API models for currencies and users
 internal/notify/        Delivery of sign-in codes by email and SMS through RabbitMQ
-internal/otc/           OTC quotes: pricing over the reference, checks, signed quotes in Redis
+internal/otc/           OTC quotes: pricing over the reference, checks, signed quotes in Redis;
+                        their execution in one transaction, and the inventory limits
 internal/otp/           One-time codes: generation, hashed storage in Redis, attempt limits
 internal/outbox/        Transactional outbox: relaying events to RabbitMQ, dead letters
 internal/pagination/    Keyset pagination with opaque cursors for list endpoints
@@ -386,6 +392,9 @@ internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI co
 internal/totp/          Time-based one-time passwords (RFC 6238)
 internal/tracing/       OpenTelemetry spans of requests, queries, commands, and publishes
 internal/userauth/      The account password of users, the second step of their sign-in
+internal/venues/        Connectors of the external exchanges for the OTC trades: Binance,
+                        Nobitex, a stub, the shared contract, credentials from OpenBao;
+                        their state, reconciliation, and reservations (state/)
 internal/verification/  Verification levels: what each allows, and the withdrawal limits
 internal/withdrawals/   Withdrawals of users: request, confirmation, lock, review, and the payouts
 scripts/dr/             The restore drill: point-in-time recovery from end to end on Docker

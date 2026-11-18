@@ -111,6 +111,12 @@ An error response contains only a fixed message for each error. Internal details
 | `quantity_below_minimum`, `quantity_above_maximum`, `notional_below_minimum` | `400` | The [quote](#otc-quotes) is outside a size rule of the market; `info.limit` is the bound |
 | `quote_too_large` | `400` | The quantity would move the price more than the market quotes |
 | `otc_quote_failed` | `500` | The quote could not be priced or stored |
+| `quote_not_found` | `404` | The [quote](#post-userotcexecute) does not exist, expired from Redis, is of another account, or was taken already |
+| `quote_expired` | `410` | The quote expired before its execution |
+| `quote_invalid` | `409` | The quote fails its signature: it was changed in Redis, and is never executed |
+| `quote_not_settleable` | `409` | An amount of the quote is finer than the precision of its currency |
+| `otc_inventory_limit` | `409` | The trade would take the exchange's inventory beyond `otc.inventory_limits` |
+| `otc_trade_failed` | `500` | The trade could not be executed; nothing of it was recorded |
 | `admin_network_denied` | `403` | The client address is not in `admin.allowed_cidrs`, so the admin routes are closed to it |
 | `second_factor_required` | `403` | The operation moves funds, and the user has not set an [account password](#second-factor-and-step-up) yet |
 | `step_up_required` | `403` | The session must prove the account password again: `POST /user/step-up` |
@@ -657,6 +663,8 @@ The sensitive routes:
 | `POST /admin/payouts/{id}/complete`, `POST …/fail` | Recording a payout of a withdrawal as paid, which moves the funds, or as failed ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)) |
 | `PUT /admin/notifications/sms` | The routing of SMS through the providers ([#371](https://github.com/mdastpak/Crypto-Exchange/issues/371)) |
 | `POST /admin/integrity/findings/{id}/reseal` | Re-seals |
+| `POST /admin/venues/holds/{id}/clear` | Routing through a venue again after a difference with the books ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)) |
+| `PUT /admin/otc/routing/rules` | The rules that pick the inventory or a venue for each OTC trade ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)) |
 
 Every admin route that changes something is classified in one table, `adminRoutes` of `internal/app/admin_routes.go`. A route that is not there is refused with `403 route_not_classified`, and a test fails, so a new route cannot skip the decision.
 
@@ -1055,9 +1063,54 @@ Refusals:
 - `400` `quantity_below_minimum`, `quantity_above_maximum`, `notional_below_minimum`, or `quote_too_large`, with `info.limit`.
 - `403 verification_required` below the level of `trade_otc`, `account_frozen`, `operation_restricted`, or `asset_restricted` for a restriction of either currency, and `currency_operation_disabled` when a currency cannot be bought or sold now.
 - `409 insufficient_balance` when the available balance of the currency the user gives is under the total and the fee of a buy, or the quantity of a sell. It is a pre-check: the execution checks again.
+- `409 otc_no_route` with [routing](otc-routing.md) on, when no rule routes the trade; `info.limit` is the reason, such as `insufficient_liquidity`. The price of a routed quote includes the cost of its route.
 - `429` above `otc.quotes_per_second` per user, counted in Redis over every instance. The limit fails closed: without Redis there is no quote to give.
 
 The route closes with the `trading` feature (`503 feature_locked`).
+
+### `POST /user/otc/execute`
+
+Executes a quote at its price ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)). The idempotency key comes in the `Idempotency-Key` header, or as `idempotency_key` in the body; when both are sent, they must be the same. It is 1 to 100 letters, digits, dots, colons, underscores, or hyphens.
+
+```json
+{ "quote_id": "6f1c…", "idempotency_key": "trade-2026-11-16-1" }
+```
+
+`sub_account_id` names the sub-account that asked for the quote. Response `201`:
+
+```json
+{
+  "id": "c2a9…",
+  "quote_id": "6f1c…",
+  "market": "BTC/USDT",
+  "side": "buy",
+  "quantity": "0.5",
+  "price": "65325",
+  "total": "32662.5",
+  "fee": "65.33",
+  "fee_bps": 20,
+  "fee_currency": "USDT",
+  "give": { "currency": "USDT", "currency_hk": "…", "amount": "32727.83" },
+  "receive": { "currency": "BTC", "currency_hk": "…", "amount": "0.5" },
+  "executed_at": "2026-11-15T17:00:03.412519Z"
+}
+```
+
+A buy gives `total + fee` of the quote currency and receives the quantity; a sell gives the quantity and receives `total − fee`, the fee netted from what it is credited. The same key again answers `200` with the first trade; with another quote, `409 idempotency_key_reused`.
+
+The execution is one transaction of the database:
+
+1. It takes the lock of the user, then a lock of the key, so that two requests of one key wait for each other and the second returns the trade of the first.
+2. It takes the quote from Redis, once: no other request can trade it, also when this one is then refused. A refused trade needs a new quote.
+3. It checks again, under its locks: the `trading` feature of the [platform controls](#maintenance-and-lockdowns), the current [legal documents](#legal-documents), the level of `trade_otc`, the restrictions of both currencies, their capabilities under a share lock, and the market, which must still trade and pass its seal.
+4. It locks what the user gives and settles the trade against the exchange's inventory in the [ledger](architecture.md), which refuses a balance that fails its seal.
+5. It records the trade, sealed, with the parts of the price and the override it used.
+6. It moves the inventory's positions of both currencies, and refuses a trade beyond `otc.inventory_limits`.
+7. It writes `TradeExecuted` (topic `otc.trade_executed`) and one `BalanceChanged` (topic `balances.changed`) per balance to the outbox, which publishes them to the `trade_events` exchange once the trade commits. Each carries an `event_id`, by which consumers drop a message delivered twice.
+
+A failure at any step rolls back all of it. Audited as `user.otc_trade`.
+
+Refusals: `404 quote_not_found`, `410 quote_expired`, `409 quote_invalid`, `409 market_inactive`, `409 insufficient_balance`, `409 quote_not_settleable`, `409 otc_inventory_limit`, `409 quote_not_routable` with [routing](otc-routing.md) on, when the route planned again at execution is gone or costs more than the quote charged (`info.limit` is the reason), `409 row_unverified`, `403 terms_update_required`, the refusals of the quote's levels and restrictions, and `503 feature_locked` or `maintenance`.
 
 ## Market data
 
@@ -1152,6 +1205,25 @@ The rows that did not match their [row seal](data-protection.md#row-seals) ([#13
 | --- | --- |
 | `GET /admin/integrity/findings?all=&limit=` | The open findings, or every finding with `all=true`, newest first, [paginated](#pagination): `table`, `row_key`, `check` (`missing`, `mismatch`, `unknown_key`, `row_missing`), `detected_by` (`read`, `verifier`), `seen_count`, and, once resolved, `resolution` (`resealed`, `report_mode`, `row_gone`), `resolved_by`, and `reason`. |
 | `POST /admin/integrity/findings/{id}/reseal` | `{"reason": "…"}`, required, at most 1000 characters. It needs two administrators ([#308](https://github.com/mdastpak/Crypto-Exchange/issues/308)): the first request records the reason and answers `202` with the finding and `reseal_requested_by`; the same request by another administrator within 24 hours seals the row, resolves the finding, and answers `200`. The request pins the row as the first administrator reviewed it ([#411](https://github.com/mdastpak/Crypto-Exchange/issues/411)): both answers show its `reseal_row_version` and its `reseal_values`, secret columns as `[secret]`, and so does the list of findings. When the row changed since the request, the approval answers `409 row_changed`, the row stays unsealed, and the finding stays open; the administrator who asked can ask again for the current values. `403 second_approval_required` for the administrator who asked, and `403 own_row` for the administrator whose account the row belongs to, at either step. A request older than 24 hours is replaced by a new one, and so is a request without its sealed `integrity.reseal_request` audit event, such as one written in SQL in the name of another administrator ([#337](https://github.com/mdastpak/Crypto-Exchange/issues/337)). Audited as `integrity.reseal_request` and `integrity.reseal`. `404` for an unknown finding, `409 already_resolved`, `503` when the server has no data keys. Needs a [step-up](#post-adminstep-up). |
+
+## Venues
+
+The state of the external venues that cover the OTC trades ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)), as the snapshots of `cmd/market-worker` last saw them. See [venue state](venues.md#state).
+
+| Route | |
+| --- | --- |
+| `GET /admin/venues` | Each enabled venue: `snapshots` (`kind`, `taken_at`, `fresh`, `failed_at`, `failure`), `balances` (`asset`, `currency`, `free`, `locked`, `reserved`, `available`, `booked`, `difference`, `mismatch_runs`, `taken_at`, and `routability` with its `reasons`), `networks`, the counts `instruments` and `trading`, and the open `holds`. A balance with an open reservation changed outside the backend shows `unverified_reservation` among its `reasons`, with nothing `reserved` or `available`, and the rest still shows ([#504](https://github.com/mdastpak/Crypto-Exchange/issues/504)); `503 venues_unavailable` without PostgreSQL. |
+| `POST /admin/venues/holds/{id}/clear` | `{"reason": "…"}`, required, at most 1000 characters. Clears the hold that a reconciliation put on a currency of a venue, after a review of its difference; the next runs hold it again if the difference stays. Answers the hold. Audited as `admin.venue_hold_clear`; two administrators will be needed ([#521](https://github.com/mdastpak/Crypto-Exchange/issues/521)). `404` for an unknown hold, `409 already_cleared`, `409 row_unverified` for a hold changed outside the backend. Needs a [step-up](#post-adminstep-up). |
+
+## OTC routing rules
+
+The rules that decide where the liquidity of each OTC trade comes from ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)). See [`otc-routing.md`](otc-routing.md) for the format and examples.
+
+| Route | |
+| --- | --- |
+| `GET /admin/otc/routing/rules` | `enabled` (`otc.routing.enabled`), `cache_seconds`, and the highest `version`: its number, `rules`, `reason`, `created_by`, and `created_at`; no `version` before the first save. `409 row_unverified` for a version changed outside the backend. |
+| `PUT /admin/otc/routing/rules` | `{"rules": [...], "reason": "…"}`; the reason is required, at most 1000 characters. Saves the whole set as a new version, which every instance applies within `otc.routing.cache_seconds`. `400 validation_failed` lists each problem by its field, such as `rules[0].venues[0].venue` for a venue without a connector, or an Iranian venue in an international release. Answers the version. Audited as `admin.otc_routing_rules`. Needs a [step-up](#post-adminstep-up). |
+| `POST /admin/otc/routing/explain` | `{"market": "BTC/USDT", "side": "buy", "quantity": "0.5", "price": "65000", "level": 2, "network": "bitcoin", "region": "ir"}`; `level`, `network`, and `region` are optional, the region being the release's. Places nothing. Answers `rule_version`, `rules` (each with `matched`, `skipped`, its `sources` with their `capacity`, `cost_bps`, and `skipped`, and a `failure`), and the `route` (`rule`, `legs`, `cost_bps`) or the `reason` there is none. `404` for an unknown market. |
 
 ## Currency migrations
 
@@ -1794,7 +1866,8 @@ Administrators take the whole service, or one feature, out of users' reach for p
 | `websocket` | New WebSocket connections, and the open ones |
 | `read_only` | Every change by users: every `/user/*` method but `GET`, and the features above that change something. Reads continue. |
 | `scheduler`, `outbox` | Pause the scheduler of delistings and migrations, or the relay of the outbox, for work that needs a quiet database or broker. Users never see these. |
-| `market_data` | Pauses every job of [`cmd/market-worker`](market-data.md) on every worker, for maintenance or to leave the sources alone at once. A run in progress stops at its next batch. Users never see it. |
+| `market_data` | Pauses every job of [`cmd/market-worker`](market-data.md) on every worker, for maintenance or to leave the sources alone at once. A run in progress stops at its next batch. The venue jobs, those of the venue state and the routed orders, are not paused ([#501](https://github.com/mdastpak/Crypto-Exchange/issues/501)). Users never see it. |
+| `otc_routing` | Stops the [routed orders](otc-routing.md#routed-orders) ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)). No order is placed or followed at a venue while it holds, and a trade whose route has a venue leg is refused with the lockdown's `503`, since nothing would cover it. It also pauses the venue jobs of `cmd/market-worker`, the snapshots of the venue state among them ([#501](https://github.com/mdastpak/Crypto-Exchange/issues/501)). Trades from the inventory continue. Users never see it. |
 
 A control applies from `starts_at`, now by default, until it is lifted or reaches `ends_at`. A scheduled control starts and ends at its times without a job. Users see it from `announce_at`, which defaults to its creation, on `GET /public/status` and over the WebSocket, so the apps can show a countdown. Several controls may apply at once; a maintenance comes first. Controls are never deleted, so the history stays.
 
@@ -1865,7 +1938,7 @@ Where the visitor belongs ([#285](https://github.com/mdastpak/Crypto-Exchange/is
 
 ### `GET /public/status`
 
-What users see: `mode` (`open` or `maintenance`), `lockdowns` (the features closed now), `active` (the controls that apply now), and `scheduled` (those announced that start later), each with `kind`, `feature`, `starts_at`, `ends_at`, and `message`. Reasons, allow lists, and the `scheduler`, `outbox`, and `market_data` lockdowns are left out. It answers from the memory of the instance, during a maintenance too.
+What users see: `mode` (`open` or `maintenance`), `lockdowns` (the features closed now), `active` (the controls that apply now), and `scheduled` (those announced that start later), each with `kind`, `feature`, `starts_at`, `ends_at`, and `message`. Reasons, allow lists, and the `scheduler`, `outbox`, `market_data`, and `otc_routing` lockdowns are left out. It answers from the memory of the instance, during a maintenance too.
 
 ```json
 {

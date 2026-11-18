@@ -22,7 +22,7 @@ func TestHolds_EachMoveEndsTheHoldItNames(t *testing.T) {
 	ctx := context.Background()
 	b := newBooks(t)
 	sealtest.Use(t, b.DB, rowseal.ModeEnforce)
-	alice, usdt, btc := b.user(), b.currency("USDT"), b.currency("BTC")
+	alice, usdt, btc, eth := b.user(), b.currency("USDT"), b.currency("BTC"), b.currency("ETH")
 	b.fund(alice, usdt, "1000")
 	w1, w2 := Ref{Type: RefWithdrawal, ID: "w1"}, Ref{Type: RefWithdrawal, ID: "w2"}
 	o1, o2 := Ref{Type: "order", ID: "o1"}, Ref{Type: "order", ID: "o2"}
@@ -63,16 +63,21 @@ func TestHolds_EachMoveEndsTheHoldItNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [3]string{"846", "60", "0"}, b.components(alice, usdt), "o1 ended, o2 untouched")
 
-	// A fee in the received currency is refused, and never touches another
-	// hold: here, 1 BTC locked for a withdrawal.
+	// A fee in the received currency is netted from the credit (#62), and
+	// never touches another hold: here, 1 BTC locked for a withdrawal. A
+	// fee in a third currency is refused.
 	b.fund(alice, btc, "1")
 	_, err = b.Lock(ctx, "w3:lock", alice, amount(btc, "1"), Ref{Type: RefWithdrawal, ID: "w3"})
 	require.NoError(t, err)
 	_, err = b.Lock(ctx, "o3:lock", alice, amount(usdt, "10"), Ref{Type: "order", ID: "o3"})
 	require.NoError(t, err)
-	_, err = b.SettleTrade(ctx, "t3", alice, Trade{Give: amount(usdt, "10"), Receive: amount(btc, "0.0002"), Fee: amount(btc, "0.00001")},
+	_, err = b.SettleTrade(ctx, "t3", alice, Trade{Give: amount(usdt, "10"), Receive: amount(btc, "0.0002"), Fee: amount(eth, "0.00001")},
 		Ref{Type: "order", ID: "o3"})
 	require.ErrorIs(t, err, ErrInvalidRequest)
+	_, err = b.SettleTrade(ctx, "t3", alice, Trade{Give: amount(usdt, "10"), Receive: amount(btc, "0.0002"), Fee: amount(btc, "0.00001")},
+		Ref{Type: "order", ID: "o3"})
+	require.NoError(t, err)
+	assert.Equal(t, [3]string{"0.00119", "1", "0"}, b.components(alice, btc), "t1's 0.001, and 0.0002 less the fee; the withdrawal's 1 BTC still locked")
 	_, err = b.Withdraw(ctx, "w3:complete", alice, amount(btc, "0.99"), dec("0.01"), Ref{Type: RefWithdrawal, ID: "w3"})
 	require.NoError(t, err, "the withdrawal's hold is whole")
 

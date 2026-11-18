@@ -58,6 +58,7 @@ func (c *Configuration) validateServer() error {
 	c.observabilityProblems(&p)
 	c.verificationProblems(&p)
 	c.otcProblems(&p)
+	c.venueProblems(&p, release)
 	c.antiPhishingProblems(&p)
 	c.smsProblems(&p)
 	c.withdrawalProblems(&p)
@@ -66,6 +67,7 @@ func (c *Configuration) validateServer() error {
 	clientTLSProblems(&p, "rabbitmq", c.RabbitMQ.Host, c.RabbitMQ.TLS, release)
 	if release {
 		c.releaseProblems(&p)
+		c.otcInventoryProblems(&p)
 	}
 	return p.err()
 }

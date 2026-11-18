@@ -55,11 +55,31 @@ func (t Tx) Withdraw(ctx context.Context, key string, a Account, amount Amount, 
 	return t.record(ctx, withdrawal(key, a, amount, fee, ref))
 }
 
+// SettleTrade is Ledger.SettleTrade within the transaction: an OTC trade
+// (#62) that commits with its row and its events.
+func (t Tx) SettleTrade(ctx context.Context, key string, a Account, tr Trade, ref Ref) (Result, error) {
+	e, err := trade(key, a, tr, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return t.record(ctx, e)
+}
+
 // Convert is Ledger.Convert within the transaction: a conversion of a
 // currency migration (#215), under the lock of the balance that the
 // migration claimed.
 func (t Tx) Convert(ctx context.Context, key string, a Account, c Conversion, ref Ref) (Result, error) {
 	e, err := conversion(key, a, c, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return t.record(ctx, e)
+}
+
+// VenueFill is Ledger.VenueFill within the transaction: a fill of a routed
+// order (#387) that commits with the row of the order.
+func (t Tx) VenueFill(ctx context.Context, key, venue string, got, gave Amount, ref Ref) (Result, error) {
+	e, err := venueFill(key, venue, got, gave, ref)
 	if err != nil {
 		return Result{}, err
 	}

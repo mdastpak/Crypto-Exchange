@@ -618,12 +618,97 @@ otc:
       slippage_k: "0.0001"
       liquidity: "5"
       max_slippage_bps: 150
+  # The net position of the exchange's inventory per currency (#62), in
+  # units of the currency: max_short is how much more it may give users
+  # than they gave it, max_long how much more it may hold. A trade beyond a
+  # bound is refused (otc_inventory_limit); one back toward zero passes.
+  # Empty is no bound; a release build requires both for each currency of
+  # every market above. The figures are placeholders that each deployment
+  # sets from its hedging capacity.
+  inventory_limits:
+    BTC: {max_short: "2", max_long: "10"}
+    ETH: {max_short: "30", max_long: "150"}
+    USDT: {max_short: "100000", max_long: "1000000"}
+    IRR: {max_short: "10000000000000", max_long: "100000000000000"}
+  # The routing of the trades to the inventory or the venues (#386,
+  # docs/otc-routing.md). The rules are set through the admin API.
+  routing:
+    enabled: false
+    cache_seconds: 5
+    # The routed orders (#387): the most an order's limit may stray from
+    # the reference price, how long an order may stay open before it is
+    # cancelled and its remainder routed again, and how long a lost answer
+    # is looked up before the order is placed again.
+    max_slippage_bps: 50
+    order_timeout_seconds: 60
+    unknown_grace_seconds: 120
 
 # The anti-phishing code of users (#375), which every email to their
 # verified contacts shows. The exchange suggests a new one once it is
 # max_age_days old or max_uses emails have shown it, by email and SMS, and
 # again every reminder_interval_days until it changes. A negative bound is
 # off; both off is no reminder.
+# The connectors of the external exchanges that the OTC trades are covered
+# on (#384, docs/venues.md). A venue starts on its testnet; dry_run reads
+# the live venue and logs the orders, withdrawals, and transfers without
+# sending them. Nobitex has no testnet, and only a release of the ir region
+# may turn it on.
+venues:
+  # The proxy of the venues whose egress is proxy (VENUES_PROXY_URL).
+  proxy_url: ""
+  credentials:
+    # openbao, or file for development; release mode refuses file
+    # (VENUES_CREDENTIALS_PROVIDER).
+    provider: file
+    file: config/venues.credentials.json
+    cache_seconds: 300
+    openbao:
+      address: ""
+      # Set the token with VENUES_OPENBAO_TOKEN, or give a file that an
+      # agent renews (VENUES_OPENBAO_TOKEN_FILE).
+      token_file: ""
+      mount: secret
+      prefix: venues/
+  # The snapshots of the enabled venues, and their reconciliation with the
+  # books, by a job of cmd/market-worker (docs/venues.md#state).
+  state:
+    interval_seconds: 60       # A run of each venue
+    max_age_seconds: 300       # An older snapshot is unknown: not routable
+    confirm_runs: 2            # Runs in a row with a difference before a hold
+    tolerances:                # Accepted differences, by our currency symbol
+      USDT: "0.01"
+  exchanges:
+    binance:
+      enabled: false
+      mode: testnet
+      egress: direct
+      requests_per_minute: 600
+      fee_bps: 10                # Our taker fee there, for the routing cost
+      slippage_bps: 5            # The expected slippage of an order there
+      # The email of the sub-account of the OTC trades; empty is the main
+      # account.
+      sub_account: ""
+      # own_wallet sends a withdrawal to our hot wallet, which pays the
+      # user; direct sends it to the user's address.
+      withdraw_target: own_wallet
+      assets:
+        BTC:
+          currency: BTC
+          networks: {BTC: bitcoin}
+        USDT:
+          currency: USDT
+          networks: {TRX: tron, ETH: ethereum, BSC: bsc}
+    nobitex:
+      enabled: false
+      mode: dry_run
+      requests_per_minute: 60
+      assets:
+        usdt:
+          currency: USDT
+          networks: {TRX: tron}
+        rls:
+          currency: IRR
+
 anti_phishing:
   rotation:
     max_age_days: 180

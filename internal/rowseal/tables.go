@@ -278,6 +278,63 @@ var (
 		text("status"), text("confirmation_id"), text("reviewed_by"), timestamptz("reviewed_at"),
 		timestamptz("completed_at"), timestamptz("cancelled_at"),
 	}, SealedFromStart: true}
+	// OTCTrades covers an OTC trade (#62): whose it is, the quote it took,
+	// what it traded at which price and fee, what it settled, and its ledger
+	// entry. A trade is written once and sealed in its transaction; one
+	// changed in SQL is never shown as its user's or replayed.
+	OTCTrades = &Table{Name: "otc_trades", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("sub_account_id"), text("quote_id"), text("market"), text("base_currency_hk"),
+		text("quote_currency_hk"), text("side"), text("quantity"), text("price"), text("total"), text("fee"), text("fee_bps"),
+		text("fee_currency_hk"), text("give_amount"), text("receive_amount"), text("components"), text("override_id"),
+		text("entry_id"), timestamptz("executed_at"),
+	}, SealedFromStart: true}
+	// OTCHousePositions covers the net position of the exchange's inventory
+	// in a currency (#62), which the inventory limits of the OTC trades
+	// check. A position lowered in SQL, to let more trades through, refuses
+	// the trades of its currency in enforce mode.
+	OTCHousePositions = &Table{Name: "otc_house_positions", Key: "currency_hk", KeyType: "uuid", Columns: []Column{
+		text("position"),
+	}}
+	// VenueReservations covers a reservation of a balance at a venue by a
+	// routed order (#385): which balance, how much, for what, and whether
+	// it was released. A reservation released or lowered in SQL, which
+	// would let the router spend the same funds twice, is refused.
+	VenueReservations = &Table{Name: "venue_reservations", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("venue"), text("asset"), text("amount"), text("reference_type"), text("reference_id"),
+		timestamptz("created_at"), timestamptz("released_at"),
+	}, SealedFromStart: true}
+	// VenueHolds covers a hold of a currency at a venue (#385), which a
+	// reconciliation opens on a difference with the books. A hold cleared
+	// in SQL, which would route through a venue that may have lost funds,
+	// keeps the currency not routable.
+	VenueHolds = &Table{Name: "venue_holds", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("venue"), text("asset"), text("currency_hk"), text("reported"), text("booked"), text("difference"),
+		timestamptz("detected_at"), timestamptz("cleared_at"), text("cleared_by"), text("clear_reason"),
+	}, SealedFromStart: true}
+	// OTCRoutingRules covers a version of the routing rules of the OTC
+	// trades (#386): the rules, why, by whom, and when. A version changed
+	// in SQL, such as a rule that sends trades to a venue the
+	// administrators did not choose, routes nothing: the quotes are
+	// refused until it is reviewed.
+	OTCRoutingRules = &Table{Name: "otc_routing_rules", Key: "version", KeyType: "bigint", Columns: []Column{
+		text("rules"), text("reason"), text("created_by"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// OTCRoutingUsage covers the notional that the routed orders took from
+	// a venue in a day (#386): lowered in SQL, it would let more through
+	// than the daily limit of a rule.
+	OTCRoutingUsage = &Table{Name: "otc_routing_usage", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("venue"), text("day"), text("currency_hk"), text("notional"),
+	}, SealedFromStart: true}
+	// OTCRoutedOrders covers a routed order of an OTC trade (#387): what it
+	// buys or sells at which venue, its slippage guard, its id there, its
+	// status, and what it filled. An order changed in SQL, such as a limit
+	// raised or a fill lowered, is not driven further: it waits for review.
+	OTCRoutedOrders = &Table{Name: "otc_routed_orders", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("trade_id"), text("leg"), text("attempt"), text("parent_id"), text("venue"), text("symbol"),
+		text("base_asset"), text("quote_asset"), text("base_currency_hk"), text("quote_currency_hk"), text("side"),
+		text("quantity"), text("limit_price"), text("trade_price"), text("reference_price"), text("client_id"), text("venue_order_id"), text("status"),
+		text("filled"), text("filled_quote"), text("reservation_id"), text("reason"), timestamptz("created_at"),
+	}, SealedFromStart: true}
 	// IntegrityFindings covers the resolution of a finding (#404): which
 	// row it is about, and whether, when, how, and by whom it was closed. A
 	// finding closed in SQL, which would hide the row from the
@@ -361,6 +418,9 @@ var Tables = []*Table{
 	AdminSessions, UserRestrictions, PlatformControls, UserRecoveryCodes, Balances, WithdrawalDestinations,
 	OperationConfirmations, UserConfirmationMethods, AntiPhishingCodes, SMSRouting, CurrencyNetworks, Markets, Withdrawals,
 	IntegrityFindings, WithdrawalPayouts, DenyLinks, PriceOverrides, CurrencyMigrations, CurrencyDelistings,
+	OTCTrades, OTCHousePositions,
+	VenueReservations, VenueHolds,
+	OTCRoutingRules, OTCRoutingUsage, OTCRoutedOrders,
 	UserNationalIDs, IdentityChecks,
 }
 

@@ -8,7 +8,11 @@ ALTER TABLE integrity_findings
             'balances', 'withdrawal_destinations', 'operation_confirmations', 'user_confirmation_methods',
             'user_anti_phishing_codes', 'sms_routing', 'currency_networks', 'markets', 'withdrawals', 'integrity_findings',
             'withdrawal_payouts', 'deny_links', 'price_overrides',
-            'currency_migrations', 'currency_delistings'));
+            'currency_migrations', 'currency_delistings',
+            'otc_trades', 'otc_house_positions',
+            'venue_reservations', 'venue_holds',
+            'otc_routing_rules', 'otc_routing_usage',
+            'otc_routed_orders'));
 
 -- A destination still pending its ownership check was never usable.
 DELETE FROM withdrawal_destinations WHERE ownership_pending_since IS NOT NULL;

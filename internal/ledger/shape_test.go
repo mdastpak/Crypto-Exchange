@@ -50,6 +50,11 @@ func TestLedger_RefusesAnEntryOfTheWrongShape(t *testing.T) {
 		{KindWithdrawal, "TRANSFER_IN", AccountInventory},
 		{KindConversion, "CONVERSION_CREDIT", AccountFees},
 		{KindDepositCredited, "CONVERSION_CREDIT", AccountCustody},
+		// A venue account (#385) never offsets a user's credit.
+		{KindVenueFee, "TRANSFER_IN", VenueAccount("binance")},
+		{KindVenueWithdrawal, "TRANSFER_IN", VenueAccount("binance")},
+		{KindTransfer, "TRANSFER_IN", VenueAccount("binance")},
+		{KindVenueFill, "TRANSFER_IN", VenueAccount("binance")},
 	} {
 		err := b.forge(forged.kind, forged.change, forged.account)
 		require.Error(t, err, "%+v", forged)

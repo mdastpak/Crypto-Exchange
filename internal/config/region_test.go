@@ -26,6 +26,7 @@ func iranRelease(t *testing.T) Configuration {
 	}
 	c.MarketData.API.Regions = []string{"global", "ir"}
 	c.MarketData.Candles.Quotes = []string{"USDT", "IRT"}
+	c.Venues = openBaoVenues(map[string]VenueConfig{"nobitex": liveVenue(), "binance": liveVenue()})
 	c.Sites.Default = "global"
 	c.Sites.List = []SiteConfig{
 		{ID: "global", Domain: "example.com", Locales: []string{"en"}},
@@ -47,6 +48,7 @@ func TestRegion_InternationalRefusesTheIranOnlyFeatures(t *testing.T) {
 	for _, key := range []string{
 		"identity.mobile_ownership.provider", "notifications.sms.provider", "market_data.sources.nobitex.enabled",
 		"market_data.sources.wallex.enabled", "market_data.api.regions", "market_data.candles.quotes", "sites.list[1].countries",
+		"venues.exchanges.nobitex.enabled",
 	} {
 		found := false
 		for _, p := range problems {
@@ -58,7 +60,7 @@ func TestRegion_InternationalRefusesTheIranOnlyFeatures(t *testing.T) {
 		}
 		assert.True(t, found, "%s is not refused: %v", key, problems)
 	}
-	assert.Len(t, problems, 7, "binance is a global venue: %v", problems)
+	assert.Len(t, problems, 8, "binance is a global venue: %v", problems)
 	assert.Contains(t, strings.Join(problems, "\n"),
 		`identity.mobile_ownership.provider (IDENTITY_MOBILE_OWNERSHIP_PROVIDER) is "jibit", which turns on the Shahkar check of Iranian mobile numbers (#253)`)
 
@@ -69,6 +71,7 @@ func TestRegion_InternationalRefusesTheIranOnlyFeatures(t *testing.T) {
 	c.MarketData.API.Regions = []string{"global"}
 	c.MarketData.Candles.Quotes = []string{"USDT"}
 	c.Sites.List = c.Sites.List[:1]
+	delete(c.Venues.Exchanges, "nobitex")
 	assert.Empty(t, problemsOf(c), "an international release without them starts")
 }
 

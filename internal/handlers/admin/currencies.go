@@ -16,12 +16,15 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
+	"github.com/mdastpak/crypto-exchange/internal/otc"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
 	"github.com/mdastpak/crypto-exchange/internal/priceoverride"
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/venues/state"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -82,6 +85,16 @@ type AdminHandler struct {
 	Prices          PriceReader
 	PriceOverrides  PriceOverrideStore
 	OverrideWatcher OverrideRefresher
+
+	// Venues is the state of the external venues (#385); without it, the
+	// routes answer venues_unavailable.
+	Venues VenueStates
+
+	// RoutingRules keeps the versions of the OTC routing rules, and
+	// RouteExplainer explains a route by the latest of them (#386).
+	// Without them, the routes answer routing_unavailable.
+	RoutingRules   RoutingRules
+	RouteExplainer RouteExplainer
 }
 
 // NewHandler returns the handler with the stores of the services in is. A
@@ -101,6 +114,14 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 		h.Rebrands = rebrand.Store{DB: db}
 		h.Audit = audit.Log{DB: db}
 		h.Findings = rowseal.Findings{DB: db}
+		h.Venues = state.New(db, state.OptionsOf(is.Settings().Venues.State))
+		rules := &routing.Store{DB: db, Config: is.Settings}
+		h.RoutingRules = rules
+		if router, err := otc.NewRouter(db, is.Settings, rules, rules); err == nil {
+			h.RouteExplainer = router
+		} else {
+			log.Printf("The OTC routes cannot be explained: %v", err)
+		}
 		bounds := is.Settings().Price.Overrides
 		h.PriceOverrides = priceoverride.Store{DB: db, MaxDeviationBPS: bounds.Deviation(), ApprovalWindow: bounds.ApprovalWindow()}
 	}

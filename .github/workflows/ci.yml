@@ -144,12 +144,28 @@ jobs:
       # the race detector, which slows the code ten times or more: in the
       # run above, other packages share the machine, and the tests have a
       # larger budget.
+      #
+      # The OTC load test first runs on the base of the change (the base of
+      # the pull request, or the parent of a push), on the same runner, and
+      # its p99 bounds the change's at one and a half times the base's when
+      # that is above the 10 ms target (#486): a shared runner that is slow
+      # that day is slow for both. A base that cannot run gives no baseline,
+      # and the target holds alone.
       - name: Load tests
         env:
           LOAD_TESTS: "1"
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -o pipefail
-          go test -count=1 -p 1 -v -run 'TestAggregator_Load|TestService_LoadTest' ./internal/price/ ./internal/otc/ 2>&1 | tee -a test.log
+          go test -count=1 -p 1 -v -run 'TestAggregator_Load' ./internal/price/ 2>&1 | tee -a test.log
+          baseline=""
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] \
+            && git fetch -q --depth=1 origin "$BASE_SHA" && git worktree add -q ../base "$BASE_SHA"; then
+            (cd ../base && go test -count=1 -p 1 -v -run 'TestService_LoadTest' ./internal/otc/) > baseline.log 2>&1 || true
+            sed 's/^/[base] /' baseline.log
+            baseline="$PWD/baseline.log"
+          fi
+          LOAD_BASELINE="$baseline" go test -count=1 -p 1 -v -run 'TestService_LoadTest' ./internal/otc/ 2>&1 | tee -a test.log
 
       # Tests skip themselves when a service is unreachable, which would turn
       # a broken service container into a green check.

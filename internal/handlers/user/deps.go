@@ -36,6 +36,11 @@ type QuoteService interface {
 	Quote(ctx context.Context, req otc.Request) (otc.Quote, error)
 }
 
+// TradeService executes the OTC quotes (#62): *otc.Executor.
+type TradeService interface {
+	Execute(ctx context.Context, r otc.ExecuteRequest, origin audit.Event) (otc.Execution, error)
+}
+
 // ConversionService converts the user's holdings of the sources of
 // optional currency migrations (#215): rebrand.Store.
 type ConversionService interface {

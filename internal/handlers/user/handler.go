@@ -60,6 +60,9 @@ type UserHandler struct {
 	// Quotes gives the OTC quotes (#61). The server sets it; without it,
 	// the route answers otc_unavailable.
 	Quotes QuoteService
+	// Trades executes the OTC quotes (#62). The server sets it; without
+	// it, the route answers otc_unavailable.
+	Trades TradeService
 	// Conversions converts holdings of the sources of optional migrations
 	// (#215).
 	Conversions ConversionService

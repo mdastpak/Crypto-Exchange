@@ -1,0 +1,1 @@
+- The OTC load test in CI no longer fails on a slow shared runner for changes outside the quote path ([#486](https://github.com/mdastpak/Crypto-Exchange/issues/486)): it first runs on the base of the change in the same job, and the change's p99 must stay under 10 ms or one and a half times the base's, whichever is more.
