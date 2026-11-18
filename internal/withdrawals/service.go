@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -224,6 +225,9 @@ func (s Service) dryRun(ctx context.Context, userHK string, r Request, origin au
 // request rolled back, and returns ErrRefused.
 func (s Service) refuse(ctx context.Context, d aml.Decision, origin audit.Event) error {
 	if err := s.AML.Enforce(ctx, s.DB, d, origin); !errors.Is(err, aml.ErrRefused) {
+		// Refused all the same; the answer does not say why, so the
+		// failure to record it, or to freeze the account, is logged here.
+		log.Printf("SECURITY: a withdrawal of user %s refused by the AML rules (%s) was not recorded: %v", d.Event.UserHK, d.Action, err)
 		return errors.Join(ErrRefused, err)
 	}
 	return ErrRefused
