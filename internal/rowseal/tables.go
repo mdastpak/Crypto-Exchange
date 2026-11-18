@@ -262,6 +262,22 @@ var (
 		{Name: "body", Expr: `encode(sha256(%[1]sbody), 'hex')`, Secret: true}, text("entry_count"),
 		timestamptz("fetched_at"), timestamptz("checked_at"),
 	}, SealedFromStart: true}
+	// KYCApplications covers a KYC application (#72): who asked for which
+	// tier, its form, its status, and who reviewed it. One approved in SQL
+	// grants nothing.
+	KYCApplications = &Table{Name: "kyc_applications", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("requested_tier"), text("status"), sealedBytes("form_data_enc"), timestamptz("submitted_at"),
+		timestamptz("reviewed_at"), text("reviewed_by"), text("reason"), text("provider"), text("provider_ref_id"),
+		timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// KYCDocuments covers a document of a KYC application (#72): its
+	// application, type, kind of file, and the object and the digest of its
+	// encrypted content. An object swapped in the storage, or a document
+	// moved in SQL, is refused.
+	KYCDocuments = &Table{Name: "kyc_documents", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("application_id"), text("type"), text("status"), text("file_size"), text("mime_type"),
+		text("storage_path"), sealedBytes("content_digest"), timestamptz("created_at"),
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
 	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
@@ -460,6 +476,7 @@ var Tables = []*Table{
 	UserNationalIDs, IdentityChecks,
 	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
 	SanctionsLists,
+	KYCApplications, KYCDocuments,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

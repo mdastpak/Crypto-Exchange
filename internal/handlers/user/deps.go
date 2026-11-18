@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/idcheck"
+	"github.com/mdastpak/crypto-exchange/internal/kyc"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -84,6 +85,15 @@ type RestrictionReader interface {
 type IdentityService interface {
 	Status(ctx context.Context, userHK string) (idcheck.Status, error)
 	Submit(ctx context.Context, userHK, nationalID, birthDate string, origin audit.Event) (idcheck.Status, error)
+}
+
+// KYCApplications are the user's KYC applications for level 2 (#72):
+// kyc.Service.
+type KYCApplications interface {
+	Current(ctx context.Context, userHK string) (kyc.Application, error)
+	Apply(ctx context.Context, userHK string, form kyc.Form, origin audit.Event) (kyc.Application, error)
+	Upload(ctx context.Context, userHK, id string, docType kyc.DocumentType, content []byte, origin audit.Event) (kyc.Document, error)
+	Submit(ctx context.Context, userHK, id string, origin audit.Event) (kyc.Application, error)
 }
 
 // BalanceReader reads the balances of a user and the history of their

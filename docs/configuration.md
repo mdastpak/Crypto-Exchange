@@ -47,6 +47,7 @@ At start the server logs one line with its posture: the mode, the region, the ro
 | `otp.auth.dev_log_codes` | `false` |
 | `keys.provider` | Set, not `local`, and a Transit address with `https`. The data keys protect the sign-in codes, the authenticator secrets of administrators, and the row seals, and every instance must share them. |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
+| `compliance.kyc.storage.use_tls` | `true` while `compliance.kyc.storage.endpoint` is set: the KYC documents reach their storage over HTTPS |
 | `venues.credentials.provider` | `openbao`, with an `https` address, while a venue is enabled: release mode never reads the keys of the exchanges from a file. See [`venues`](#venues). |
 | `venues.exchanges.<name>.base_url` | Empty, or an `https://` address |
 
@@ -816,7 +817,7 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
-| `compliance` | KYC providers. `compliance.sanctions` is read for its `ofac` provider: while it is enabled, its `endpoint`, the `sdn.csv` of OFAC, is downloaded every `refresh_hours` (24), and the [sanctions rules](aml.md#sanctions-screening) screen against it; a list that no download found current for `max_list_age_hours` (72) holds every operation they screen for review; names match from `name_match_threshold` (0.92), above 0 and at most 1. Chainalysis and TRM are not read yet. `compliance.aml` is read: `enabled` turns the [AML rules](aml.md) on, which evaluate each withdrawal, and `rules_path` names their file; empty is the file built into the release, `config/aml_rules.yaml` of its source. A file that does not load, or that lists the country of the deployment as high-risk, keeps the server from starting. `config.example.yaml` turns them on. | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
+| `compliance` | KYC providers. `compliance.kyc.storage` is read: while its `endpoint` is set, with the data keys, the [KYC applications](api.md#kyc-applications) store their documents in that S3-compatible `bucket`, encrypted by the server, and with `server_side_encryption` also by the storage (SSE-S3); `access_key` and `secret_key` (`KYC_STORAGE_ACCESS_KEY`, `KYC_STORAGE_SECRET_KEY`) and the bucket are required with it. `compliance.sanctions` is read for its `ofac` provider: while it is enabled, its `endpoint`, the `sdn.csv` of OFAC, is downloaded every `refresh_hours` (24), and the [sanctions rules](aml.md#sanctions-screening) screen against it; a list that no download found current for `max_list_age_hours` (72) holds every operation they screen for review; names match from `name_match_threshold` (0.92), above 0 and at most 1. Chainalysis and TRM are not read yet. `compliance.aml` is read: `enabled` turns the [AML rules](aml.md) on, which evaluate each withdrawal, and `rules_path` names their file; empty is the file built into the release, `config/aml_rules.yaml` of its source. A file that does not load, or that lists the country of the deployment as high-risk, keeps the server from starting. `config.example.yaml` turns them on. | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
 
 ## Environment variables
 
@@ -1028,6 +1029,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `CHAINALYSIS_API_KEY` | `api_key` of the `chainalysis` provider in `compliance.sanctions` |
 | `TRM_API_KEY` | `api_key` of the `trm` provider in `compliance.sanctions` |
 | `SUMSUB_API_KEY` | `api_key` of the `sumsub` provider in `compliance.kyc` |
+| `KYC_STORAGE_ACCESS_KEY` | `compliance.kyc.storage.access_key` |
+| `KYC_STORAGE_SECRET_KEY` | `compliance.kyc.storage.secret_key` |
 | `ONFIDO_API_KEY` | `api_key` of the `onfido` provider in `compliance.kyc` |
 
 ## Secrets

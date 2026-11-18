@@ -56,6 +56,11 @@ var adminRoutes = map[string]admin.RouteClass{
 	"POST /withdrawals/:id/approve": admin.RouteSensitive,
 	"POST /withdrawals/:id/reject":  admin.RouteSensitive,
 
+	// Deciding a KYC application (#72): an approval raises the user to
+	// level 2.
+	"POST /kyc/applications/:id/approve": admin.RouteSensitive,
+	"POST /kyc/applications/:id/reject":  admin.RouteSensitive,
+
 	// Working an AML alert (#73): it releases nothing, as a held
 	// withdrawal and a freeze have routes of their own.
 	"POST /aml/alerts/:id/transition": admin.RouteChange,

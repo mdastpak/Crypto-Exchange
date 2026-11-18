@@ -280,6 +280,17 @@ const (
 	// An administrator, or the escalation, moved an AML alert to another
 	// status (#73).
 	ActionAMLAlertStatus = "aml.alert_status"
+	// A user applied for level 2 with a KYC application, added a document
+	// to it, or submitted it (#72).
+	ActionUserKYCApply    = "user.kyc_apply"
+	ActionUserKYCDocument = "user.kyc_document_add"
+	ActionUserKYCSubmit   = "user.kyc_submit"
+	// An administrator read a KYC application with its personal data, or
+	// one of its documents, or approved or rejected it (#72).
+	ActionAdminKYCView         = "admin.kyc_view"
+	ActionAdminKYCDocumentView = "admin.kyc_document_view"
+	ActionAdminKYCApprove      = "admin.kyc_approve"
+	ActionAdminKYCReject       = "admin.kyc_reject"
 )
 
 // Target types.
@@ -307,6 +318,9 @@ const (
 	TargetAMLRule = "aml_rule"
 	// TargetAMLAlert is an AML alert (#73), by its id.
 	TargetAMLAlert = "aml_alert"
+	// TargetKYCApplication is a KYC application (#72), by its id; its
+	// documents are named in the changes.
+	TargetKYCApplication = "kyc_application"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"
