@@ -366,6 +366,12 @@ var envVars = []EnvVar{
 			}
 		}
 	}),
+	stringVar("KYC_STORAGE_ACCESS_KEY", "compliance.kyc.storage.access_key", func(c *Configuration) *string {
+		return &c.Compliance.KYC.Storage.AccessKey
+	}),
+	stringVar("KYC_STORAGE_SECRET_KEY", "compliance.kyc.storage.secret_key", func(c *Configuration) *string {
+		return &c.Compliance.KYC.Storage.SecretKey
+	}),
 	providerVar("SUMSUB_API_KEY", "compliance.kyc.providers[sumsub].api_key", func(c *Configuration, v string) {
 		for i := range c.Compliance.KYC.Providers {
 			if c.Compliance.KYC.Providers[i].Name == "sumsub" {

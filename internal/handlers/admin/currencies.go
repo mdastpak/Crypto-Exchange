@@ -50,7 +50,9 @@ type AdminHandler struct {
 	AML AMLDesk
 	// Sanctions is the state of the OFAC list (#73); nil while the
 	// provider is off.
-	Sanctions    SanctionsStatus
+	Sanctions SanctionsStatus
+	// KYC are the KYC applications to review (#72); nil answers 503.
+	KYC          KYCReviews
 	Restrictions RestrictionStore
 	Controls     ControlStore
 	Delistings   DelistingStore

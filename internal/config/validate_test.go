@@ -707,3 +707,25 @@ func TestValidateServer_PriceSignatures(t *testing.T) {
 	c.Price.Signatures = "maybe"
 	assert.Contains(t, strings.Join(problemsOf(c), "\n"), "it must be on or off")
 }
+
+// The storage of the KYC documents (#72) needs a bucket and keys with an
+// endpoint; release mode reaches it over HTTPS.
+func TestValidate_KYCStorage(t *testing.T) {
+	problemsOf := func(s KYCStorageConfig) string {
+		p := &problems{}
+		kycStorageProblems(p, s)
+		return strings.Join(*p, "\n")
+	}
+	assert.Empty(t, problemsOf(KYCStorageConfig{}), "off")
+	assert.Empty(t, problemsOf(KYCStorageConfig{Endpoint: "minio:9000", Bucket: "kyc", AccessKey: "a", SecretKey: "s"}))
+	assert.Empty(t, problemsOf(KYCStorageConfig{Endpoint: "s3.ir-thr-at1.arvanstorage.ir", Bucket: "kyc", AccessKey: "a", SecretKey: "s"}))
+	assert.Contains(t, problemsOf(KYCStorageConfig{Endpoint: "minio:9000", AccessKey: "a", SecretKey: "s"}), "compliance.kyc.storage.bucket")
+	assert.Contains(t, problemsOf(KYCStorageConfig{Endpoint: "minio:9000", Bucket: "kyc"}), "KYC_STORAGE_ACCESS_KEY")
+	assert.Contains(t, problemsOf(KYCStorageConfig{Endpoint: "https://minio:9000", Bucket: "kyc", AccessKey: "a", SecretKey: "s"}), "without a scheme")
+
+	c := Configuration{}
+	c.Compliance.KYC.Storage = KYCStorageConfig{Endpoint: "minio:9000"}
+	p := &problems{}
+	c.releaseProblems(p)
+	assert.Contains(t, strings.Join(*p, "\n"), "compliance.kyc.storage.use_tls")
+}

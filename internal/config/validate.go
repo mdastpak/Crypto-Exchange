@@ -247,6 +247,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	}
 	passkeyProblems(p, c)
 	legalProblems(p, c)
+	kycStorageProblems(p, c.Compliance.KYC.Storage)
 	if m := c.Security.Recovery.Mode; m != RecoveryStandard && m != RecoveryStrict {
 		p.add("security.recovery.mode", "is %q; it must be %q or %q", m, RecoveryStandard, RecoveryStrict)
 	}
@@ -415,6 +416,9 @@ func (c *Configuration) releaseProblems(p *problems) {
 	}
 	if c.Identity.MobileOwnership.Provider == MobileOwnershipStub {
 		p.add("identity.mobile_ownership.provider", "is \"stub\", which matches every mobile number; release mode needs a real provider, or none")
+	}
+	if s := c.Compliance.KYC.Storage; s.Endpoint != "" && !s.UseTLS {
+		p.add("compliance.kyc.storage.use_tls", "is off; release mode reaches the storage of the KYC documents over HTTPS")
 	}
 	t := c.Server.TLS
 	if !t.Enabled && !t.BehindProxy {
@@ -1004,4 +1008,26 @@ func legalProblems(p *problems, c *Configuration) {
 			p.add("legal.signup.blocked_countries", "has %q; a country is an ISO 3166-1 alpha-2 code in upper case", country)
 		}
 	}
+}
+
+// kycStorageProblems checks the storage of the KYC documents (#72): with an
+// endpoint, the bucket and the keys are required.
+func kycStorageProblems(p *problems, s KYCStorageConfig) {
+	if s.Endpoint == "" {
+		return
+	}
+	if !validHostPort(s.Endpoint) && !validHost(s.Endpoint) {
+		p.add("compliance.kyc.storage.endpoint", "is %q; it is a host, or a host and port, without a scheme", s.Endpoint)
+	}
+	if s.Bucket == "" {
+		p.add("compliance.kyc.storage.bucket", "is required with an endpoint")
+	}
+	if s.AccessKey == "" || s.SecretKey == "" {
+		p.add("compliance.kyc.storage.access_key", "and secret_key are required with an endpoint (KYC_STORAGE_ACCESS_KEY, KYC_STORAGE_SECRET_KEY)")
+	}
+}
+
+// validHost reports whether s is a host name without a port.
+func validHost(s string) bool {
+	return s != "" && !strings.ContainsAny(s, "/:@ ")
 }

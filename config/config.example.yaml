@@ -1011,6 +1011,16 @@ compliance:
     rules_path: ""
 
   kyc:
+    # The S3-compatible storage of the documents of the KYC applications
+    # (#72), which the server encrypts before storing; empty turns the
+    # applications off. Set the keys with KYC_STORAGE_ACCESS_KEY and
+    # KYC_STORAGE_SECRET_KEY.
+    storage:
+      endpoint: ""
+      region: ""
+      bucket: ""
+      use_tls: true
+      server_side_encryption: true
     providers:
       - name: "manual"
         enabled: true

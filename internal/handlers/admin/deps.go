@@ -12,6 +12,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
 	"github.com/mdastpak/crypto-exchange/internal/domain/currency"
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
+	"github.com/mdastpak/crypto-exchange/internal/kyc"
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -66,6 +67,17 @@ type AMLDesk interface {
 	Alerts(ctx context.Context, status aml.Status, userHK string, limit int) ([]aml.Alert, error)
 	Alert(ctx context.Context, id string) (aml.Alert, error)
 	Transition(ctx context.Context, id string, to aml.Status, adminHK, resolution string, origin audit.Event) (aml.Alert, error)
+}
+
+// KYCReviews are the KYC applications that administrators review (#72):
+// kyc.Service.
+type KYCReviews interface {
+	Queue(ctx context.Context, status kyc.Status, limit int) ([]kyc.Application, error)
+	Detail(ctx context.Context, id string, origin audit.Event) (kyc.Review, error)
+	Approve(ctx context.Context, id, adminHK, notes string, origin audit.Event) (kyc.Application, error)
+	Reject(ctx context.Context, id, adminHK, reason, notes string, origin audit.Event) (kyc.Application, error)
+	Link(ctx context.Context, docID, adminHK string) (kyc.Link, error)
+	Content(ctx context.Context, docID, adminHK, expires, sig string, origin audit.Event) ([]byte, string, error)
 }
 
 // SanctionsStatus is the state of the sanctions list (#73):

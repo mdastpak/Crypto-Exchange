@@ -121,6 +121,14 @@ func (d *Document) Check(method, urlPath string, status int, contentType string,
 	if resp.Schema == nil {
 		return true, nil
 	}
+	// A file, such as a document that the server streams, is any body of
+	// a content type that is not JSON.
+	if resp.Schema.Type == "file" {
+		if strings.HasPrefix(contentType, "application/json") {
+			return true, []string{fmt.Sprintf("%s %s %d: a file is answered as JSON", method, template, status)}
+		}
+		return true, nil
+	}
 	if !strings.HasPrefix(contentType, "application/json") {
 		return true, []string{fmt.Sprintf("%s %s %d: the content type is %q, not JSON", method, template, status, contentType)}
 	}

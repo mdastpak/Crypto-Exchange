@@ -627,6 +627,10 @@ type Configuration struct {
 			RulesPath string `yaml:"rules_path"`
 		} `yaml:"aml"`
 		KYC struct {
+			// Storage is where the documents of the KYC applications are
+			// kept (#72): an S3-compatible bucket. The applications are
+			// available while it is set, with data keys.
+			Storage            KYCStorageConfig    `yaml:"storage"`
 			Providers          []KYCProviderConfig `yaml:"providers"`
 			DefaultTier        string              `yaml:"default_tier"`
 			AutoApproveLowRisk bool                `yaml:"auto_approve_low_risk"`
@@ -1623,6 +1627,26 @@ const (
 const DefaultJibitEndpoint = "https://napi.jibit.ir/ide"
 
 // KYCProviderConfig holds configuration for a KYC provider
+// KYCStorageConfig is the S3-compatible storage of the KYC documents (#72).
+// The documents are encrypted by the server before they are stored.
+type KYCStorageConfig struct {
+	// Endpoint is the host and port of the storage, such as
+	// s3.ir-thr-at1.arvanstorage.ir or minio:9000; empty turns the KYC
+	// applications off.
+	Endpoint string `yaml:"endpoint"`
+	Region   string `yaml:"region"`
+	Bucket   string `yaml:"bucket"`
+	// AccessKey and SecretKey sign the requests; set them with
+	// KYC_STORAGE_ACCESS_KEY and KYC_STORAGE_SECRET_KEY.
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	// UseTLS reaches the storage over HTTPS; release mode requires it.
+	UseTLS bool `yaml:"use_tls"`
+	// ServerSideEncryption asks the storage to encrypt the objects with
+	// its own keys as well (SSE-S3).
+	ServerSideEncryption bool `yaml:"server_side_encryption"`
+}
+
 type KYCProviderConfig struct {
 	Name          string `yaml:"name"`
 	Enabled       bool   `yaml:"enabled"`

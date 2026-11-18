@@ -331,6 +331,10 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
+	// The KYC applications for level 2 (#72).
+	if err := useKYC(handlers, services.Postgres.DB, &config.Config); err != nil {
+		return err
+	}
 	// The AML rules (#73), which the withdrawals evaluate.
 	amlRules, err := useAML(handlers, services.Postgres.DB, &config.Config, otpChannels.Email)
 	if err != nil {
@@ -1346,6 +1350,13 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	// are cached, so the REST limit is enough.
 	ih.MarketData.Register(g, service)
 
+	// A KYC document is opened by a link signed for one administrator
+	// (#72), which a browser opens without the token: where the admin
+	// routes can be reached from is checked, then the signature.
+	adminLinkGroup := g.Group("/admin/kyc/documents")
+	adminLinkGroup.Use(adminAccess.Middleware())
+	adminLinkGroup.GET("/:id/content", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.KYCDocumentContent)
+
 	adminGroup := g.Group("/admin")
 	adminGroup.Use(adminAccess.Middleware())
 	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
@@ -1396,6 +1407,12 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/aml/alerts/:id", ih.Admin.GetAMLAlert)
 		adminGroup.POST("/aml/alerts/:id/transition", ih.Admin.TransitionAMLAlert)
 		adminGroup.GET("/aml/sanctions", ih.Admin.GetSanctionsStatus)
+		// The KYC review (#72).
+		adminGroup.GET("/kyc/applications", ih.Admin.ListKYCApplications)
+		adminGroup.GET("/kyc/applications/:id", ih.Admin.GetKYCApplication)
+		adminGroup.POST("/kyc/applications/:id/approve", ih.Admin.ApproveKYCApplication)
+		adminGroup.POST("/kyc/applications/:id/reject", ih.Admin.RejectKYCApplication)
+		adminGroup.GET("/kyc/documents/:id/link", ih.Admin.KYCDocumentLink)
 		// The payouts that administrators pay by hand (#70).
 		adminGroup.GET("/payouts", ih.Admin.ListPayouts)
 		adminGroup.GET("/payouts/:id", ih.Admin.GetPayout)
@@ -1487,6 +1504,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// request, and the checks of a user are limited per day.
 		activeGroup.GET("/identity", ih.User.GetIdentity)
 		activeGroup.POST("/identity", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.SubmitIdentity)
+		// The KYC applications for level 2 (#72).
+		activeGroup.GET("/kyc", ih.User.GetKYC)
+		activeGroup.POST("/kyc/applications", profileChanges, ih.User.ApplyKYC)
+		activeGroup.POST("/kyc/applications/:id/documents", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.UploadKYCDocument)
+		activeGroup.POST("/kyc/applications/:id/submit", profileChanges, ih.User.SubmitKYC)
 		// The user's own balances and their history (#365): reads, with
 		// the limits of every user route.
 		activeGroup.GET("/balances", ih.User.GetBalances)

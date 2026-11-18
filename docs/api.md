@@ -1594,6 +1594,32 @@ The check of a user's identity ([#158](https://github.com/mdastpak/Crypto-Exchan
 
 The route has the rate limit of a code request and needs the profile changes to be open. Audited as `user.identity_check`, with the check, the provider, and its reference, never the values. A check is a sealed row of `identity_checks`, and the verified national ID a sealed row of `user_national_ids` ([data protection](data-protection.md#row-seals)).
 
+## KYC applications
+
+A user at level 1, whose identity is verified ([Identity](#identity)), applies for level 2 with a KYC application ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)): a form, documents, and a review by an administrator. Personal data is never stored or logged in plaintext: the form is sealed with the field key, and each document is encrypted by the server before it is stored in the S3-compatible storage of [`compliance.kyc.storage`](configuration.md#settings-reserved-for-roadmap-features), which encrypts it again (SSE-S3). The name of a file is not kept. Without the storage or the data keys, the routes answer `503 kyc_unavailable`.
+
+| Route | |
+| --- | --- |
+| `GET /user/kyc` | The user's newest application: `status`, `reason` of a rejection, and its `documents` (type, kind of file, size), without their content; `404 kyc_application_not_found` without one |
+| `POST /user/kyc/applications` | `{"form": {"address", "city", "postal_code", "occupation", "source_of_funds"}}` opens an application for level 2 (`201`). `403 identity_verification_required` below level 1, `409 kyc_application_open` while one is open, `409 kyc_already_verified` at level 2 |
+| `POST /user/kyc/applications/{id}/documents` | `multipart/form-data` with `type` and `file`: a JPEG, a PNG, or a PDF, by its content, of at most 10 MB, at most 10 per application (`409 kyc_documents_exceeded`). Only while the application is `PENDING` (`409 kyc_application_submitted`) |
+| `POST /user/kyc/applications/{id}/submit` | Sends it for review (`UNDER_REVIEW`), once it has an identity document (`NATIONAL_ID`, `PASSPORT`, or `DRIVERS_LICENSE`), a `SELFIE`, and a proof of address (`PROOF_OF_ADDRESS`, `UTILITY_BILL`, or `BANK_STATEMENT`); otherwise `409 kyc_documents_missing` with `info.missing`, the groups it lacks |
+
+The statuses: `PENDING`, `UNDER_REVIEW`, then `APPROVED` or `REJECTED`, which is final; a rejected user applies again. Opening, adding, and submitting need the profile changes to be open; an upload has the rate limit of a code request. Audited as `user.kyc_apply`, `user.kyc_document_add` (type, kind, and size), and `user.kyc_submit`.
+
+For administrators:
+
+| Route | |
+| --- | --- |
+| `GET /admin/kyc/applications?status=&limit=` | The applications of a status, `UNDER_REVIEW` by default, the oldest submitted first, with `user_hk` |
+| `GET /admin/kyc/applications/{id}` | One, with its form opened; audited as `admin.kyc_view` |
+| `GET /admin/kyc/documents/{id}/link` | A link to the content of a document, signed for the administrator for a minute, to open in a browser without the token |
+| `GET /admin/kyc/documents/{id}/content?admin=&expires=&sig=` | The document, decrypted: no token, but the signature of the link, for its administrator, who must still be active (`403 kyc_link_invalid`), from where the admin routes are reached. Never cached, sandboxed, and audited as `admin.kyc_document_view`. A document whose stored content is not what was stored answers `409 kyc_document_changed` |
+| `POST /admin/kyc/applications/{id}/approve` | `{"notes"}`: approves an application `UNDER_REVIEW`, and raises the user to level 2 in the same transaction, with the user's row locked first (`user.verification_set` and `admin.kyc_approve`). A user who lost level 1 meanwhile is not raised (`403 identity_verification_required`) |
+| `POST /admin/kyc/applications/{id}/reject` | `{"reason", "notes"}`: rejects it with a reason of 1 to 500 characters that the user reads (`admin.kyc_reject`) |
+
+Approving and rejecting are sensitive routes: they need a step-up. A decision on an application that does not wait for one answers `409 kyc_application_not_under_review`. An application or a document changed in SQL answers `409 row_unverified`: an application approved in SQL grants nothing, and an object swapped in the storage is refused, as the row seals the digest of what was stored, and the encryption binds the content to its document.
+
 ## Withdrawal destinations
 
 A withdrawal goes only to a destination in the user's list, which the withdrawal names by its `id`. A number or address typed with the withdrawal is never used ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).

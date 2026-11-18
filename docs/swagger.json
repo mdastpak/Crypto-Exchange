@@ -2932,6 +2932,536 @@
                 }
             }
         },
+        "/api/v1/admin/kyc/applications": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The KYC applications of a status (#72), UNDER_REVIEW by default, the oldest submitted first, at most limit (100). Each has the user's user_hk and its documents, without their content.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "List KYC applications",
+                "parameters": [
+                    {
+                        "enum": [
+                            "PENDING",
+                            "UNDER_REVIEW",
+                            "APPROVED",
+                            "REJECTED"
+                        ],
+                        "type": "string",
+                        "description": "A status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1 to 100; 100 by default",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/kyc.Application"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A KYC application with its form, decrypted, its documents, and its review (#72). Each reading is audited as admin.kyc_view, as it shows personal data.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Get a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Review"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications/{id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Approves an application under review (#72), and raises the user to level 2 in the same transaction (audited as user.verification_set and admin.kyc_approve). A user who lost level 1 meanwhile is not raised (403 identity_verification_required). A sensitive route: it needs a step-up.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Approve a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Notes",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/admin.kycDecision"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required or identity_verification_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_not_under_review or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications/{id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Rejects an application under review with a reason that the user reads (#72); the user may apply again. A sensitive route: it needs a step-up. Audited as admin.kyc_reject.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Reject a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The reason",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.kycDecision"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_not_under_review or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/documents/{id}/content": {
+            "get": {
+                "description": "The content of a document (#72), decrypted, for a link of GET /admin/kyc/documents/{id}/link: no token, but the signature of the link, for its administrator, who must still be active, until it expires. It answers with the kind of the file, never cached, and is audited as admin.kyc_document_view.",
+                "produces": [
+                    "image/png",
+                    "image/jpeg",
+                    "application/pdf",
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Open a KYC document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The document",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The administrator the link is for",
+                        "name": "admin",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "When the link expires, in Unix seconds",
+                        "name": "expires",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The signature",
+                        "name": "sig",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The document",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "403": {
+                        "description": "kyc_link_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_document_changed or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/documents/{id}/link": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A link to the content of a document (#72), signed for the administrator for a minute, to open in a browser without the token. The link is checked, the administrator must still be active, and each opening is audited as admin.kyc_document_view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Get a link to a KYC document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The document",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Link"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/logout": {
             "post": {
                 "security": [
@@ -10930,6 +11460,348 @@
                 }
             }
         },
+        "/api/v1/user/kyc": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's newest application for level 2 (#72): its status, the reason of a rejection, and its documents, without their content. 404 kyc_application_not_found when the user has none.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Get the user's KYC application",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/applications": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Opens a KYC application for level 2 (#72) with the user's address, occupation, and source of funds, which are stored encrypted. The user must be at level 1, with a verified identity (403 identity_verification_required), and have no open application (409 kyc_application_open). Then add the documents, and submit it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Apply for level 2",
+                "parameters": [
+                    {
+                        "description": "The form",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.kycApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "identity_verification_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_open, kyc_already_verified, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/applications/{id}/documents": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a document to the user's pending application (#72), as multipart/form-data: type, and file, a JPEG, a PNG, or a PDF of at most 10 MB, by its content. At most 10 documents. The file is encrypted before it is stored, and its name is not kept.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Add a document to a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "NATIONAL_ID",
+                            "PASSPORT",
+                            "DRIVERS_LICENSE",
+                            "SELFIE",
+                            "PROOF_OF_ADDRESS",
+                            "UTILITY_BILL",
+                            "BANK_STATEMENT",
+                            "SOURCE_OF_FUNDS",
+                            "CORPORATE_DOCUMENT"
+                        ],
+                        "type": "string",
+                        "description": "The type of the document",
+                        "name": "type",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "The document",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Document"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_submitted, kyc_documents_exceeded, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "validation_failed: the request is larger than a document",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/applications/{id}/submit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends the user's pending application for review (#72), once it has an identity document (NATIONAL_ID, PASSPORT, or DRIVERS_LICENSE), a SELFIE, and a proof of address (PROOF_OF_ADDRESS, UTILITY_BILL, or BANK_STATEMENT); 409 kyc_documents_missing names the groups that it lacks.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Submit a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_documents_missing (with info.missing), kyc_application_submitted, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/logout": {
             "post": {
                 "security": [
@@ -13882,6 +14754,21 @@
                 }
             }
         },
+        "admin.kycDecision": {
+            "type": "object",
+            "properties": {
+                "notes": {
+                    "description": "Notes are for the administrators, at most 1000 characters.",
+                    "type": "string",
+                    "example": "Address matches the utility bill."
+                },
+                "reason": {
+                    "description": "Reason, for a rejection, is what the user reads, 1 to 500\ncharacters.",
+                    "type": "string",
+                    "example": "The selfie is blurred; please take it again in daylight."
+                }
+            }
+        },
         "admin.marketRequest": {
             "type": "object",
             "properties": {
@@ -15648,6 +16535,226 @@
                     "type": "string"
                 }
             }
+        },
+        "internal_kyc.DocumentType": {
+            "type": "string",
+            "enum": [
+                "NATIONAL_ID",
+                "PASSPORT",
+                "DRIVERS_LICENSE",
+                "SELFIE",
+                "PROOF_OF_ADDRESS",
+                "UTILITY_BILL",
+                "BANK_STATEMENT",
+                "SOURCE_OF_FUNDS",
+                "CORPORATE_DOCUMENT"
+            ],
+            "x-enum-varnames": [
+                "DocNationalID",
+                "DocPassport",
+                "DocDriversLicense",
+                "DocSelfie",
+                "DocProofOfAddress",
+                "DocUtilityBill",
+                "DocBankStatement",
+                "DocSourceOfFunds",
+                "DocCorporate"
+            ]
+        },
+        "kyc.Application": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/kyc.Document"
+                    }
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "level": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "reviewed_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "enum": [
+                        "PENDING",
+                        "UNDER_REVIEW",
+                        "APPROVED",
+                        "REJECTED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/kyc.Status"
+                        }
+                    ]
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "kyc.Document": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "mime_type": {
+                    "type": "string",
+                    "example": "image/jpeg"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "type": {
+                    "enum": [
+                        "NATIONAL_ID",
+                        "PASSPORT",
+                        "DRIVERS_LICENSE",
+                        "SELFIE",
+                        "PROOF_OF_ADDRESS",
+                        "UTILITY_BILL",
+                        "BANK_STATEMENT",
+                        "SOURCE_OF_FUNDS",
+                        "CORPORATE_DOCUMENT"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_kyc.DocumentType"
+                        }
+                    ]
+                }
+            }
+        },
+        "kyc.Form": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "No. 12, Vali Asr St."
+                },
+                "city": {
+                    "type": "string",
+                    "example": "Tehran"
+                },
+                "occupation": {
+                    "type": "string",
+                    "example": "Software engineer"
+                },
+                "postal_code": {
+                    "type": "string",
+                    "example": "1234567890"
+                },
+                "source_of_funds": {
+                    "type": "string",
+                    "example": "Salary"
+                }
+            }
+        },
+        "kyc.Link": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "/api/v1/admin/kyc/documents/4b8f.../content?admin=...\u0026expires=...\u0026sig=..."
+                }
+            }
+        },
+        "kyc.Review": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/kyc.Document"
+                    }
+                },
+                "form": {
+                    "$ref": "#/definitions/kyc.Form"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "level": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "review_notes": {
+                    "type": "string"
+                },
+                "reviewed_at": {
+                    "type": "string"
+                },
+                "reviewed_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "enum": [
+                        "PENDING",
+                        "UNDER_REVIEW",
+                        "APPROVED",
+                        "REJECTED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/kyc.Status"
+                        }
+                    ]
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "kyc.Status": {
+            "type": "string",
+            "enum": [
+                "PENDING",
+                "UNDER_REVIEW",
+                "APPROVED",
+                "REJECTED"
+            ],
+            "x-enum-varnames": [
+                "StatusPending",
+                "StatusUnderReview",
+                "StatusApproved",
+                "StatusRejected"
+            ]
         },
         "market.Market": {
             "type": "object",
@@ -19762,6 +20869,14 @@
                     "description": "SubAccountID is the sub-account that asked for the quote; empty is\nthe main account.",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "user.kycApplicationRequest": {
+            "type": "object",
+            "properties": {
+                "form": {
+                    "$ref": "#/definitions/kyc.Form"
                 }
             }
         },
