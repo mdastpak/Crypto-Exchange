@@ -3,6 +3,8 @@ package app
 import (
 	"database/sql"
 	"log"
+	"net/http"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
@@ -32,6 +34,13 @@ func useKYC(h *InfraHandlers, db *sql.DB, settings *config.Configuration) error 
 		return err
 	}
 	s := kyc.Service{DB: db, Store: store, LinkPath: kycDocumentPath}
+	// A provider verifies the new applications (#72); the region check
+	// keeps Sumsub to the international region.
+	if p := settings.KYCProvider(); p != nil {
+		s.Provider = &kyc.Sumsub{BaseURL: p.Endpoint, AppToken: p.APIKey, SecretKey: p.APISecret, WebhookSecret: p.WebhookSecret,
+			Level: p.Level, Client: &http.Client{Timeout: time.Duration(max(p.Timeout, 10)) * time.Second}}
+		log.Printf("KYC applications are verified by %s", s.Provider.Name())
+	}
 	h.User.KYC, h.Admin.KYC = s, s
 	return nil
 }

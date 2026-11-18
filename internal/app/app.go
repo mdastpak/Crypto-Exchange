@@ -1350,6 +1350,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	// are cached, so the REST limit is enough.
 	ih.MarketData.Register(g, service)
 
+	// The webhooks of the KYC provider (#72), verified by their signature,
+	// under the REST limit of every route.
+	g.POST("/kyc/webhooks/sumsub", ih.User.KYCWebhook)
+
 	// A KYC document is opened by a link signed for one administrator
 	// (#72), which a browser opens without the token: where the admin
 	// routes can be reached from is checked, then the signature.
@@ -1506,6 +1510,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.POST("/identity", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.SubmitIdentity)
 		// The KYC applications for level 2 (#72).
 		activeGroup.GET("/kyc", ih.User.GetKYC)
+		activeGroup.GET("/kyc/session", ih.User.GetKYCSession)
 		activeGroup.POST("/kyc/applications", profileChanges, ih.User.ApplyKYC)
 		activeGroup.POST("/kyc/applications/:id/documents", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.UploadKYCDocument)
 		activeGroup.POST("/kyc/applications/:id/submit", profileChanges, ih.User.SubmitKYC)

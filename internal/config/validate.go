@@ -248,6 +248,7 @@ func (c *Configuration) rangeProblems(p *problems) {
 	passkeyProblems(p, c)
 	legalProblems(p, c)
 	kycStorageProblems(p, c.Compliance.KYC.Storage)
+	kycProviderProblems(p, c)
 	if m := c.Security.Recovery.Mode; m != RecoveryStandard && m != RecoveryStrict {
 		p.add("security.recovery.mode", "is %q; it must be %q or %q", m, RecoveryStandard, RecoveryStrict)
 	}
@@ -1030,4 +1031,27 @@ func kycStorageProblems(p *problems, s KYCStorageConfig) {
 // validHost reports whether s is a host name without a port.
 func validHost(s string) bool {
 	return s != "" && !strings.ContainsAny(s, "/:@ ")
+}
+
+// kycProviderProblems checks the KYC provider (#72): Sumsub needs its keys,
+// its webhook secret, its level, an https endpoint, and the storage of the
+// applications, which it extends.
+func kycProviderProblems(p *problems, c *Configuration) {
+	sumsub := c.KYCProvider()
+	if sumsub == nil {
+		return
+	}
+	const key = "compliance.kyc.providers[sumsub]"
+	if sumsub.APIKey == "" || sumsub.APISecret == "" {
+		p.add(key+".api_key", "and api_secret are required while Sumsub is enabled (SUMSUB_API_KEY, SUMSUB_API_SECRET)")
+	}
+	if sumsub.WebhookSecret == "" {
+		p.add(key+".webhook_secret", "is required while Sumsub is enabled (SUMSUB_WEBHOOK_SECRET): a webhook without it is not verified")
+	}
+	if sumsub.Level == "" {
+		p.add(key+".level", "is required while Sumsub is enabled")
+	}
+	if !strings.HasPrefix(sumsub.Endpoint, "https://") {
+		p.add(key+".endpoint", "is %q; Sumsub is reached over https", sumsub.Endpoint)
+	}
 }

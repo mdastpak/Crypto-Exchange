@@ -379,6 +379,20 @@ var envVars = []EnvVar{
 			}
 		}
 	}),
+	providerVar("SUMSUB_API_SECRET", "compliance.kyc.providers[sumsub].api_secret", func(c *Configuration, v string) {
+		for i := range c.Compliance.KYC.Providers {
+			if c.Compliance.KYC.Providers[i].Name == "sumsub" {
+				c.Compliance.KYC.Providers[i].APISecret = v
+			}
+		}
+	}),
+	providerVar("SUMSUB_WEBHOOK_SECRET", "compliance.kyc.providers[sumsub].webhook_secret", func(c *Configuration, v string) {
+		for i := range c.Compliance.KYC.Providers {
+			if c.Compliance.KYC.Providers[i].Name == "sumsub" {
+				c.Compliance.KYC.Providers[i].WebhookSecret = v
+			}
+		}
+	}),
 	providerVar("ONFIDO_API_KEY", "compliance.kyc.providers[onfido].api_key", func(c *Configuration, v string) {
 		for i := range c.Compliance.KYC.Providers {
 			if c.Compliance.KYC.Providers[i].Name == "onfido" {

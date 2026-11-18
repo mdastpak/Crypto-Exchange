@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,12 @@ func (f *fakeKYC) Upload(_ context.Context, _, _ string, docType kyc.DocumentTyp
 	return kyc.Document{ID: "d1", Type: docType}, f.err
 }
 
+func (f *fakeKYC) Session(context.Context, string) (kyc.Session, error) {
+	return kyc.Session{Provider: kyc.ProviderSumsub, Token: "token"}, f.err
+}
+
+func (f *fakeKYC) Webhook(context.Context, http.Header, []byte, audit.Event) error { return f.err }
+
 func (f *fakeKYC) Submit(context.Context, string, string, audit.Event) (kyc.Application, error) {
 	return kyc.Application{ID: "a1", Status: kyc.StatusUnderReview, Documents: []kyc.Document{}}, f.err
 }
@@ -55,6 +62,8 @@ func serveKYC(t *testing.T, h *UserHandler, req *http.Request) (int, map[string]
 	r.POST("/kyc/applications", h.ApplyKYC)
 	r.POST("/kyc/applications/:id/documents", h.UploadKYCDocument)
 	r.POST("/kyc/applications/:id/submit", h.SubmitKYC)
+	r.GET("/kyc/session", h.GetKYCSession)
+	r.POST("/kyc/webhooks/sumsub", h.KYCWebhook)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	var resp map[string]any
@@ -122,6 +131,23 @@ func TestKYCRoutes_RunWithoutInfrastructure(t *testing.T) {
 		assert.Equal(t, c.status, status, c.err.Error())
 		assert.Equal(t, c.code, resp["code"], c.err.Error())
 	}
+
+	fake.err = nil
+	status, _ = serveKYC(t, h, httptest.NewRequest(http.MethodGet, "/kyc/session", nil))
+	assert.Equal(t, http.StatusOK, status)
+	status, _ = serveKYC(t, h, httptest.NewRequest(http.MethodPost, "/kyc/webhooks/sumsub", bytes.NewBufferString(`{}`)))
+	assert.Equal(t, http.StatusOK, status)
+	fake.err = kyc.ErrWebhookSignature
+	status, resp = serveKYC(t, h, httptest.NewRequest(http.MethodPost, "/kyc/webhooks/sumsub", bytes.NewBufferString(`{}`)))
+	assert.Equal(t, http.StatusUnauthorized, status)
+	assert.Equal(t, codeKYCWebhookUnsigned, resp["code"])
+	fake.err = errors.New("database down")
+	status, _ = serveKYC(t, h, httptest.NewRequest(http.MethodPost, "/kyc/webhooks/sumsub", bytes.NewBufferString(`{}`)))
+	assert.Equal(t, http.StatusInternalServerError, status, "the provider sends it again")
+	fake.err = kyc.ErrProviderFlow
+	status, resp = serveKYC(t, h, httptest.NewRequest(http.MethodGet, "/kyc/session", nil))
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, codeKYCProviderFlow, resp["code"])
 
 	status, resp = serveKYC(t, &UserHandler{}, httptest.NewRequest(http.MethodGet, "/kyc", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, status)

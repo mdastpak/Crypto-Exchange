@@ -69,6 +69,12 @@ In an international release, the server and the market data worker refuse to sta
 | A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
 | Nobitex as a venue of the OTC trades ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)) | `venues.exchanges.nobitex.enabled` | server |
 
+The other way round, an `ir` release refuses a feature of the `international` region:
+
+| Feature | Setting that turns it on | Checked by |
+| --- | --- | --- |
+| Sumsub as the KYC provider ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)), which does not serve Iran | `compliance.kyc.providers[sumsub].enabled` | server |
+
 The defaults that depend on the region:
 
 | Setting | `ir` | `international` |
@@ -817,7 +823,7 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
 | `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
-| `compliance` | KYC providers. `compliance.kyc.storage` is read: while its `endpoint` is set, with the data keys, the [KYC applications](api.md#kyc-applications) store their documents in that S3-compatible `bucket`, encrypted by the server, and with `server_side_encryption` also by the storage (SSE-S3); `access_key` and `secret_key` (`KYC_STORAGE_ACCESS_KEY`, `KYC_STORAGE_SECRET_KEY`) and the bucket are required with it. `compliance.sanctions` is read for its `ofac` provider: while it is enabled, its `endpoint`, the `sdn.csv` of OFAC, is downloaded every `refresh_hours` (24), and the [sanctions rules](aml.md#sanctions-screening) screen against it; a list that no download found current for `max_list_age_hours` (72) holds every operation they screen for review; names match from `name_match_threshold` (0.92), above 0 and at most 1. Chainalysis and TRM are not read yet. `compliance.aml` is read: `enabled` turns the [AML rules](aml.md) on, which evaluate each withdrawal, and `rules_path` names their file; empty is the file built into the release, `config/aml_rules.yaml` of its source. A file that does not load, or that lists the country of the deployment as high-risk, keeps the server from starting. `config.example.yaml` turns them on. | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
+| `compliance` | `compliance.kyc.providers` is read for `sumsub`: while it is enabled, in the international region only, the [KYC applications](api.md#kyc-applications) are verified by Sumsub at its `level`, with `api_key` (`SUMSUB_API_KEY`), the app token, `api_secret` (`SUMSUB_API_SECRET`), the secret key that signs the requests, and `webhook_secret` (`SUMSUB_WEBHOOK_SECRET`), which verifies its webhooks, all required with an `https` `endpoint`; `manual`, the review by hand, is the default. `compliance.kyc.storage` is read: while its `endpoint` is set, with the data keys, the [KYC applications](api.md#kyc-applications) store their documents in that S3-compatible `bucket`, encrypted by the server, and with `server_side_encryption` also by the storage (SSE-S3); `access_key` and `secret_key` (`KYC_STORAGE_ACCESS_KEY`, `KYC_STORAGE_SECRET_KEY`) and the bucket are required with it. `compliance.sanctions` is read for its `ofac` provider: while it is enabled, its `endpoint`, the `sdn.csv` of OFAC, is downloaded every `refresh_hours` (24), and the [sanctions rules](aml.md#sanctions-screening) screen against it; a list that no download found current for `max_list_age_hours` (72) holds every operation they screen for review; names match from `name_match_threshold` (0.92), above 0 and at most 1. Chainalysis and TRM are not read yet. `compliance.aml` is read: `enabled` turns the [AML rules](aml.md) on, which evaluate each withdrawal, and `rules_path` names their file; empty is the file built into the release, `config/aml_rules.yaml` of its source. A file that does not load, or that lists the country of the deployment as high-risk, keeps the server from starting. `config.example.yaml` turns them on. | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
 
 ## Environment variables
 
@@ -1029,6 +1035,8 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `CHAINALYSIS_API_KEY` | `api_key` of the `chainalysis` provider in `compliance.sanctions` |
 | `TRM_API_KEY` | `api_key` of the `trm` provider in `compliance.sanctions` |
 | `SUMSUB_API_KEY` | `api_key` of the `sumsub` provider in `compliance.kyc` |
+| `SUMSUB_API_SECRET` | `api_secret` of the `sumsub` provider in `compliance.kyc` |
+| `SUMSUB_WEBHOOK_SECRET` | `webhook_secret` of the `sumsub` provider in `compliance.kyc` |
 | `KYC_STORAGE_ACCESS_KEY` | `compliance.kyc.storage.access_key` |
 | `KYC_STORAGE_SECRET_KEY` | `compliance.kyc.storage.secret_key` |
 | `ONFIDO_API_KEY` | `api_key` of the `onfido` provider in `compliance.kyc` |

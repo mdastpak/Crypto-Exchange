@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/agreements"
@@ -94,6 +95,8 @@ type KYCApplications interface {
 	Apply(ctx context.Context, userHK string, form kyc.Form, origin audit.Event) (kyc.Application, error)
 	Upload(ctx context.Context, userHK, id string, docType kyc.DocumentType, content []byte, origin audit.Event) (kyc.Document, error)
 	Submit(ctx context.Context, userHK, id string, origin audit.Event) (kyc.Application, error)
+	Session(ctx context.Context, userHK string) (kyc.Session, error)
+	Webhook(ctx context.Context, header http.Header, body []byte, origin audit.Event) error
 }
 
 // BalanceReader reads the balances of a user and the history of their

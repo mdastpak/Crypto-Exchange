@@ -3,6 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -131,4 +134,82 @@ func TestKYC(t *testing.T) {
 	st, err := verification.Store{}.Level(ctx, env.db, userID)
 	require.NoError(t, err)
 	assert.Equal(t, verification.Level2, st.Level)
+}
+
+// TestKYCProvider walks through the provider flow of #72 on the routes: an
+// application of a level-1 user is opened at Sumsub, the user gets a
+// token of its SDK, and Sumsub's signed webhooks approve it.
+func TestKYCProvider(t *testing.T) {
+	env := newE2EEnv(t)
+	ctx := context.Background()
+	sealer := rowseal.New(env.db, env.handlers.DataKeys, rowseal.ModeEnforce)
+	t.Cleanup(rowseal.Use(sealer))
+	t.Cleanup(audit.UseSealer(sealer))
+	t.Cleanup(field.Use(field.New(env.handlers.DataKeys)))
+	sumsub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/resources/applicants":
+			_, _ = w.Write([]byte(`{"id":"applicant-1"}`))
+		case "/resources/accessTokens":
+			_, _ = w.Write([]byte(`{"token":"_act-sdk","userId":"` + r.URL.Query().Get("userId") + `"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(sumsub.Close)
+	const secret = "webhook-secret"
+	service := kyc.Service{DB: env.db, Store: &kyc.Memory{}, LinkPath: kycDocumentPath,
+		Provider: &kyc.Sumsub{BaseURL: sumsub.URL, AppToken: "app", SecretKey: "key", WebhookSecret: secret, Level: "basic-kyc-level",
+			Client: sumsub.Client()}}
+	env.handlers.User.KYC, env.handlers.Admin.KYC = service, service
+
+	token, userID := env.signedInUser(t, "kyc-provider@example.com")
+	tx, err := env.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = verification.SetLevel(ctx, tx, userID, verification.Level1, "identity verified", audit.Event{ActorType: audit.ActorSystem})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	status, raw := env.call(t, http.MethodPost, "/api/v1/user/kyc/applications", map[string]any{"form": kyc.Form{
+		Address: "1 Main Street", City: "Dubai", PostalCode: "00000", Occupation: "Trader", SourceOfFunds: "Business"}}, token)
+	require.Equal(t, http.StatusCreated, status, string(raw))
+	var opened struct {
+		Info kyc.Application `json:"info"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &opened))
+	assert.Equal(t, kyc.ProviderSumsub, opened.Info.Provider)
+
+	status, raw = env.upload(t, opened.Info.ID, "SELFIE", kycJPEG, token)
+	require.Equal(t, http.StatusConflict, status, string(raw))
+	assert.Contains(t, string(raw), "kyc_provider_flow")
+	status, raw = env.call(t, http.MethodGet, "/api/v1/user/kyc/session", nil, token)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	assert.Contains(t, string(raw), "_act-sdk")
+
+	webhook := func(body string, sign bool) (int, []byte) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/kyc/webhooks/sumsub", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(body))
+		if sign {
+			req.Header.Set("X-Payload-Digest", hex.EncodeToString(mac.Sum(nil)))
+		} else {
+			req.Header.Set("X-Payload-Digest", "00")
+		}
+		rec := httptest.NewRecorder()
+		env.router.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.Bytes()
+	}
+	approved := `{"applicantId":"applicant-1","externalUserId":"` + opened.Info.ID +
+		`","type":"applicantReviewed","reviewResult":{"reviewAnswer":"GREEN"}}`
+	status, raw = webhook(approved, false)
+	require.Equal(t, http.StatusUnauthorized, status, string(raw))
+	assert.Contains(t, string(raw), "kyc_webhook_unsigned")
+	status, raw = webhook(approved, true)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	st, err := verification.Store{}.Level(ctx, env.db, userID)
+	require.NoError(t, err)
+	assert.Equal(t, verification.Level2, st.Level)
+	status, raw = webhook(approved, true)
+	assert.Equal(t, http.StatusOK, status, "a repeated webhook is acknowledged: %s", raw)
 }

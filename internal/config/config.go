@@ -1655,6 +1655,23 @@ type KYCProviderConfig struct {
 	Endpoint      string `yaml:"endpoint"`
 	WebhookSecret string `yaml:"webhook_secret"`
 	Timeout       int    `yaml:"timeout_seconds"`
+	// Level is the verification level of the provider's account that the
+	// applicants are checked at, such as Sumsub's "basic-kyc-level" (#72).
+	Level string `yaml:"level"`
+}
+
+// KYCProviderSumsub names the Sumsub provider of compliance.kyc.providers.
+const KYCProviderSumsub = "sumsub"
+
+// KYCProvider returns the enabled provider of compliance.kyc.providers that
+// verifies the applications (#72), other than manual, or nil.
+func (c *Configuration) KYCProvider() *KYCProviderConfig {
+	for i, p := range c.Compliance.KYC.Providers {
+		if p.Enabled && p.Name == KYCProviderSumsub {
+			return &c.Compliance.KYC.Providers[i]
+		}
+	}
+	return nil
 }
 
 // LoadConfig loads the configuration as Load does, and stops the process

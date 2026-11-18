@@ -21,7 +21,8 @@ type querier interface {
 // stored is an application as read: its review, and its sealed form.
 type stored struct {
 	Review
-	form []byte
+	form        []byte
+	providerRef string
 }
 
 // read reads an application and its documents, each checked against its
@@ -57,6 +58,7 @@ func (s Service) readApplication(ctx context.Context, q querier, id, lock string
 	col := func(name string) string { return r.Values[t.Index(name)].String }
 	a.ID, a.UserHK, a.Status, a.Reason = r.Key, col("user_id"), Status(col("status")), col("reason")
 	a.Level, a.ReviewedBy, a.ReviewNotes, a.form = 2, col("reviewed_by"), notes.String, form
+	a.Provider, a.providerRef = col("provider"), col("provider_ref_id")
 	a.CreatedAt = a.CreatedAt.UTC()
 	if submitted.Valid {
 		at := submitted.Time.UTC()
