@@ -729,3 +729,41 @@ func TestValidate_KYCStorage(t *testing.T) {
 	c.releaseProblems(p)
 	assert.Contains(t, strings.Join(*p, "\n"), "compliance.kyc.storage.use_tls")
 }
+
+// Sumsub needs its keys, its webhook secret, its level, and https, and is a
+// feature of the international region (#72).
+func TestValidate_KYCProvider(t *testing.T) {
+	problemsOf := func(p KYCProviderConfig) string {
+		c := Configuration{}
+		c.Compliance.KYC.Providers = []KYCProviderConfig{{Name: "manual", Enabled: true}, p}
+		ps := &problems{}
+		kycProviderProblems(ps, &c)
+		return strings.Join(*ps, "\n")
+	}
+	ok := KYCProviderConfig{Name: "sumsub", Enabled: true, APIKey: "k", APISecret: "s", WebhookSecret: "w",
+		Endpoint: "https://api.sumsub.com", Level: "basic-kyc-level"}
+	assert.Empty(t, problemsOf(ok))
+	off := ok
+	off.Enabled, off.WebhookSecret = false, ""
+	assert.Empty(t, problemsOf(off), "off")
+	noSecret := ok
+	noSecret.WebhookSecret = ""
+	assert.Contains(t, problemsOf(noSecret), "SUMSUB_WEBHOOK_SECRET")
+	plain := ok
+	plain.Endpoint = "http://api.sumsub.com"
+	assert.Contains(t, problemsOf(plain), "https")
+	noLevel := ok
+	noLevel.Level = ""
+	assert.Contains(t, problemsOf(noLevel), ".level")
+
+	c := Configuration{}
+	c.Deployment.Region = "ir"
+	c.Compliance.KYC.Providers = []KYCProviderConfig{ok}
+	ps := &problems{}
+	c.regionProblems(ps, false)
+	assert.Contains(t, strings.Join(*ps, "\n"), "Sumsub as the KYC provider", "not in the ir region")
+	c.Deployment.Region = "international"
+	ps = &problems{}
+	c.regionProblems(ps, false)
+	assert.NotContains(t, strings.Join(*ps, "\n"), "Sumsub")
+}

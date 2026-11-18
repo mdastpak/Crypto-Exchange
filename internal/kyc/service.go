@@ -38,7 +38,21 @@ type Service struct {
 	LinkPath string
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// Provider verifies the new applications, such as Sumsub; nil is the
+	// manual review.
+	Provider Provider
 }
+
+// providerName is the provider of the new applications.
+func (s Service) providerName() string {
+	if s.Provider == nil {
+		return ProviderManual
+	}
+	return s.Provider.Name()
+}
+
+// ProviderManual names the review by hand.
+const ProviderManual = "manual"
 
 func (s Service) now() time.Time {
 	if s.Now != nil {
@@ -99,6 +113,19 @@ func (s Service) Apply(ctx context.Context, userHK string, form Form, origin aud
 	if err != nil {
 		return Application{}, err
 	}
+	// A provider opens the verification before the transaction, which
+	// waits for no network; a level that changes in between is checked
+	// again under the lock, and an applicant that nothing records is
+	// harmless.
+	var providerRef string
+	if s.Provider != nil {
+		if err := s.eligible(ctx, userHK); err != nil {
+			return Application{}, err
+		}
+		if providerRef, err = s.Provider.Start(ctx, id); err != nil {
+			return Application{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		}
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Application{}, err
@@ -107,18 +134,11 @@ func (s Service) Apply(ctx context.Context, userHK string, form Form, origin aud
 	if err := lockUser(ctx, tx, userHK, false); err != nil {
 		return Application{}, err
 	}
-	st, err := verification.Store{}.Level(ctx, tx, userHK)
-	if err != nil {
+	if err := s.eligible(ctx, userHK, tx); err != nil {
 		return Application{}, err
 	}
-	switch {
-	case st.Level >= verification.Level2:
-		return Application{}, ErrAlreadyVerified
-	case st.Level < verification.Level1:
-		return Application{}, ErrLevelRequired
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO kyc_applications (id, user_id, requested_tier, status, form_data_enc, provider)
-		VALUES ($1, $2, 'STANDARD', 'PENDING', $3, 'manual')`, id, userHK, sealed)
+	_, err = tx.ExecContext(ctx, `INSERT INTO kyc_applications (id, user_id, requested_tier, status, form_data_enc, provider, provider_ref_id)
+		VALUES ($1, $2, 'STANDARD', 'PENDING', $3, $4, NULLIF($5, ''))`, id, userHK, sealed, s.providerName(), providerRef)
 	if isUnique(err, "kyc_applications_open") {
 		return Application{}, ErrOpenApplication
 	}
@@ -139,6 +159,26 @@ func (s Service) Apply(ctx context.Context, userHK string, form Form, origin aud
 		return Application{}, err
 	}
 	return a.Application, tx.Commit()
+}
+
+// eligible refuses a user who is not at level 1, read in q, or the
+// database.
+func (s Service) eligible(ctx context.Context, userHK string, q ...querier) error {
+	var conn querier = s.DB
+	if len(q) > 0 {
+		conn = q[0]
+	}
+	st, err := verification.Store{}.Level(ctx, conn, userHK)
+	if err != nil {
+		return err
+	}
+	switch {
+	case st.Level >= verification.Level2:
+		return ErrAlreadyVerified
+	case st.Level < verification.Level1:
+		return ErrLevelRequired
+	}
+	return nil
 }
 
 func isUnique(err error, constraint string) bool {
@@ -175,6 +215,8 @@ func (s Service) Upload(ctx context.Context, userHK, id string, docType Document
 	}
 	if a, err := s.read(ctx, s.DB, id); err != nil || a.UserHK != userHK {
 		return Document{}, notFound(err)
+	} else if a.Provider != ProviderManual {
+		return Document{}, ErrProviderFlow
 	} else if a.Status != StatusPending {
 		return Document{}, ErrNotPending
 	}
@@ -265,6 +307,9 @@ func (s Service) Submit(ctx context.Context, userHK, id string, origin audit.Eve
 	a, err := s.lock(ctx, tx, id)
 	if err != nil || a.UserHK != userHK {
 		return Application{}, notFound(err)
+	}
+	if a.Provider != ProviderManual {
+		return Application{}, ErrProviderFlow
 	}
 	if a.Status != StatusPending {
 		return Application{}, ErrNotPending
@@ -480,7 +525,7 @@ func (s Service) Content(ctx context.Context, docID, adminHK, expires, sig strin
 // the same transaction, with the user's row locked first. A user who lost
 // level 1 since is not raised.
 func (s Service) Approve(ctx context.Context, id, adminHK, notes string, origin audit.Event) (Application, error) {
-	return s.review(ctx, id, adminHK, true, "", notes, origin)
+	return s.review(ctx, id, adminHK, true, "", notes, origin, StatusUnderReview)
 }
 
 // Reject rejects an application under review with reason, which the user
@@ -490,10 +535,13 @@ func (s Service) Reject(ctx context.Context, id, adminHK, reason, notes string, 
 	if n := len([]rune(reason)); n < 1 || n > 500 {
 		return Application{}, Invalid{"reason": "must be 1 to 500 characters"}
 	}
-	return s.review(ctx, id, adminHK, false, reason, notes, origin)
+	return s.review(ctx, id, adminHK, false, reason, notes, origin, StatusUnderReview)
 }
 
-func (s Service) review(ctx context.Context, id, adminHK string, approve bool, reason, notes string, origin audit.Event) (Application, error) {
+// review decides an application of one of the statuses from, as the
+// administrator adminHK, or as the provider for "".
+func (s Service) review(ctx context.Context, id, adminHK string, approve bool, reason, notes string, origin audit.Event,
+	from ...Status) (Application, error) {
 	if n := len([]rune(notes)); n > 1000 {
 		return Application{}, Invalid{"notes": "must be at most 1000 characters"}
 	}
@@ -516,12 +564,18 @@ func (s Service) review(ctx context.Context, id, adminHK string, approve bool, r
 	if err != nil || a.UserHK != userHK {
 		return Application{}, notFound(err)
 	}
-	if a.Status != StatusUnderReview {
+	if !slices.Contains(from, a.Status) {
 		return Application{}, ErrNotUnderReview
 	}
 	status, action := StatusRejected, audit.ActionAdminKYCReject
+	if adminHK == "" {
+		action = audit.ActionKYCProviderVerdict
+	}
 	if approve {
-		status, action = StatusApproved, audit.ActionAdminKYCApprove
+		status = StatusApproved
+		if adminHK != "" {
+			action = audit.ActionAdminKYCApprove
+		}
 		st, err := verification.Store{}.Level(ctx, tx, userHK)
 		if err != nil {
 			return Application{}, err
@@ -533,7 +587,7 @@ func (s Service) review(ctx context.Context, id, adminHK string, approve bool, r
 			return Application{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE kyc_applications SET status = $2::kyc_status, reviewed_at = NOW(), reviewed_by = $3,
+	if _, err := tx.ExecContext(ctx, `UPDATE kyc_applications SET status = $2::kyc_status, reviewed_at = NOW(), reviewed_by = NULLIF($3, '')::uuid, submitted_at = COALESCE(submitted_at, NOW()),
 			reason = NULLIF($4, ''), review_notes = NULLIF($5, '') WHERE id = $1`, id, string(status), adminHK, reason, notes); err != nil {
 		return Application{}, fmt.Errorf("kyc: review the application: %w", err)
 	}
@@ -561,4 +615,122 @@ func notFound(err error) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+// Session returns a token of the provider's SDK for the user's open
+// application, which a provider verifies.
+func (s Service) Session(ctx context.Context, userHK string) (Session, error) {
+	if s.Provider == nil {
+		return Session{}, ErrProviderFlow
+	}
+	var id string
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM kyc_applications WHERE user_id = $1 AND status IN ('PENDING', 'UNDER_REVIEW')`,
+		userHK).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrNotFound
+	}
+	if err != nil {
+		return Session{}, err
+	}
+	a, err := s.read(ctx, s.DB, id)
+	if err != nil {
+		return Session{}, err
+	}
+	if a.Provider != s.Provider.Name() {
+		return Session{}, ErrProviderFlow
+	}
+	session, err := s.Provider.Session(ctx, id)
+	if err != nil {
+		return Session{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	return session, nil
+}
+
+// rejectedByProvider is what a user reads of a final rejection by the
+// provider; its labels are for the administrators.
+const rejectedByProvider = "The verification was not successful. Please contact support."
+
+// Webhook applies a webhook of the provider, once its signature is
+// verified: a submission moves the application under review, an approval
+// grants level 2, a final rejection rejects it, and a rejection that the
+// user may answer sends it back to pending. A webhook of an application
+// that is decided, or that changes nothing, is accepted and ignored, as
+// the provider sends again what it did not see acknowledged.
+func (s Service) Webhook(ctx context.Context, header http.Header, body []byte, origin audit.Event) error {
+	if s.Provider == nil {
+		return ErrProviderFlow
+	}
+	v, err := s.Provider.Verify(header, body)
+	if err != nil {
+		return err
+	}
+	if v.Outcome == OutcomeNone {
+		return nil
+	}
+	if _, err := uuid.Parse(v.Ref); err != nil {
+		return nil
+	}
+	a, err := s.read(ctx, s.DB, v.Ref)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if a.Provider != s.Provider.Name() || a.providerRef != v.ProviderRef {
+		log.Printf("SECURITY: a %s webhook names application %s, which is not its applicant %s", s.Provider.Name(), v.Ref, v.ProviderRef)
+		return nil
+	}
+	origin.ActorType, origin.ActorID = audit.ActorSystem, ""
+	switch v.Outcome {
+	case OutcomeApproved:
+		_, err = s.review(ctx, a.ID, "", true, "", "", origin, StatusPending, StatusUnderReview)
+	case OutcomeRejected:
+		_, err = s.review(ctx, a.ID, "", false, rejectedByProvider, strings.Join(v.Labels, ", "), origin, StatusPending, StatusUnderReview)
+	case OutcomePending:
+		err = s.move(ctx, a, StatusPending, StatusUnderReview, v, origin)
+	case OutcomeRetry:
+		err = s.move(ctx, a, StatusUnderReview, StatusPending, v, origin)
+	}
+	if errors.Is(err, ErrNotUnderReview) || errors.Is(err, ErrNotPending) {
+		return nil
+	}
+	return err
+}
+
+// move moves an application from one status to another on a webhook, with
+// the user's row locked first.
+func (s Service) move(ctx context.Context, a stored, from, to Status, v Verdict, origin audit.Event) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockUser(ctx, tx, a.UserHK, false); err != nil {
+		return err
+	}
+	locked, err := s.lock(ctx, tx, a.ID)
+	if err != nil {
+		return err
+	}
+	if locked.Status != from {
+		return ErrNotPending
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE kyc_applications SET status = $2::kyc_status,
+			submitted_at = CASE WHEN $2 = 'PENDING' THEN NULL ELSE NOW() END WHERE id = $1`, a.ID, string(to)); err != nil {
+		return fmt.Errorf("kyc: move the application: %w", err)
+	}
+	if err := rowseal.Reseal(ctx, tx, rowseal.KYCApplications, "id = $1", a.ID); err != nil {
+		return err
+	}
+	e := audit.Of(origin, audit.ActionKYCProviderVerdict, audit.TargetKYCApplication, a.ID)
+	after := map[string]any{"status": string(to)}
+	if len(v.Labels) > 0 {
+		after["labels"] = v.Labels
+	}
+	e.Changes = &audit.Changes{Before: map[string]any{"status": string(from)}, After: after}
+	if err := audit.Record(ctx, tx, e); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

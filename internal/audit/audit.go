@@ -291,6 +291,9 @@ const (
 	ActionAdminKYCDocumentView = "admin.kyc_document_view"
 	ActionAdminKYCApprove      = "admin.kyc_approve"
 	ActionAdminKYCReject       = "admin.kyc_reject"
+	// A KYC provider's webhook moved an application (#72): submitted at
+	// the provider, approved, rejected, or sent back for new documents.
+	ActionKYCProviderVerdict = "kyc.provider_verdict"
 )
 
 // Target types.

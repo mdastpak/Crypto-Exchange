@@ -117,10 +117,14 @@ func (f Form) Validate() error {
 
 // Application is an application, as the user sees it.
 type Application struct {
-	ID          string     `json:"id" format:"uuid"`
-	UserHK      string     `json:"user_hk,omitempty" format:"uuid"`
-	Level       int        `json:"level" example:"2"`
-	Status      Status     `json:"status" enums:"PENDING,UNDER_REVIEW,APPROVED,REJECTED"`
+	ID     string `json:"id" format:"uuid"`
+	UserHK string `json:"user_hk,omitempty" format:"uuid"`
+	Level  int    `json:"level" example:"2"`
+	Status Status `json:"status" enums:"PENDING,UNDER_REVIEW,APPROVED,REJECTED"`
+	// Provider verifies the application: manual, with the documents
+	// uploaded here, or a provider, such as sumsub, whose SDK takes them
+	// with a token of GET /user/kyc/session.
+	Provider    string     `json:"provider" enums:"manual,sumsub"`
 	Reason      string     `json:"reason,omitempty"`
 	SubmittedAt *time.Time `json:"submitted_at,omitempty"`
 	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`

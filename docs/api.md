@@ -1605,7 +1605,18 @@ A user at level 1, whose identity is verified ([Identity](#identity)), applies f
 | `POST /user/kyc/applications/{id}/documents` | `multipart/form-data` with `type` and `file`: a JPEG, a PNG, or a PDF, by its content, of at most 10 MB, at most 10 per application (`409 kyc_documents_exceeded`). Only while the application is `PENDING` (`409 kyc_application_submitted`) |
 | `POST /user/kyc/applications/{id}/submit` | Sends it for review (`UNDER_REVIEW`), once it has an identity document (`NATIONAL_ID`, `PASSPORT`, or `DRIVERS_LICENSE`), a `SELFIE`, and a proof of address (`PROOF_OF_ADDRESS`, `UTILITY_BILL`, or `BANK_STATEMENT`); otherwise `409 kyc_documents_missing` with `info.missing`, the groups it lacks |
 
-The statuses: `PENDING`, `UNDER_REVIEW`, then `APPROVED` or `REJECTED`, which is final; a rejected user applies again. Opening, adding, and submitting need the profile changes to be open; an upload has the rate limit of a code request. Audited as `user.kyc_apply`, `user.kyc_document_add` (type, kind, and size), and `user.kyc_submit`.
+The statuses: `PENDING`, `UNDER_REVIEW`, then `APPROVED` or `REJECTED`, which is final; a rejected user applies again.
+
+### With a provider
+
+While Sumsub is the provider ([configuration](configuration.md#settings-reserved-for-roadmap-features)), a new application has `provider: sumsub`: the server opens a Sumsub applicant named by the application's id, and the user gives the documents to Sumsub through its SDK instead of the upload route (`409 kyc_provider_flow`).
+
+| Route | |
+| --- | --- |
+| `GET /user/kyc/session` | A token of Sumsub's SDK for the user's open application, which expires in minutes; ask again for another. Never cached |
+| `POST /kyc/webhooks/sumsub` | Sumsub's webhooks: no token, but the hex HMAC of the raw body under the webhook secret in `X-Payload-Digest`, by the algorithm of `X-Payload-Digest-Alg` (SHA-256 by default, SHA-512, or SHA-1), compared in constant time; otherwise `401 kyc_webhook_unsigned`. A webhook must name the application and its applicant together |
+
+The webhooks move the application: `applicantPending` puts it `UNDER_REVIEW`; `applicantReviewed` `GREEN` approves it and grants level 2, with the user's row locked first; `RED` with `RETRY` sends it back to `PENDING`, for new documents at the provider; `RED` with `FINAL` rejects it with a general reason for the user, and the provider's labels in the review notes for the administrators. A webhook of a decided application, or of none, answers `200` and changes nothing, so that Sumsub stops sending it; an error answers `500`, and Sumsub sends it again. Audited as `kyc.provider_verdict`, and the level as `user.verification_set`, by the system. Administrators may still decide an application of the provider that is `UNDER_REVIEW`. Opening, adding, and submitting need the profile changes to be open; an upload has the rate limit of a code request. Audited as `user.kyc_apply`, `user.kyc_document_add` (type, kind, and size), and `user.kyc_submit`.
 
 For administrators:
 

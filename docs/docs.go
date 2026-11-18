@@ -7922,6 +7922,62 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/kyc/webhooks/sumsub": {
+            "post": {
+                "description": "Sumsub's webhook of an applicant (#72): no token, but the HMAC of the raw body under the webhook secret, in X-Payload-Digest by the algorithm of X-Payload-Digest-Alg (401 kyc_webhook_unsigned otherwise). applicantPending moves the application under review; applicantReviewed GREEN approves it and grants level 2, RED with FINAL rejects it, and RED with RETRY sends it back to pending. An event of a decided application, or of no application, answers 200 and changes nothing, so that the provider stops sending it. Audited as kyc.provider_verdict, and the level as user.verification_set, by the system.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kyc-webhooks"
+                ],
+                "summary": "Receive a webhook of the KYC provider",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The hex HMAC of the body",
+                        "name": "X-Payload-Digest",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC_SHA256_HEX, the default, HMAC_SHA512_HEX, or HMAC_SHA1_HEX",
+                        "name": "X-Payload-Digest-Alg",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "kyc_webhook_unsigned",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code: the provider sends the webhook again",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/market-data/assets": {
             "get": {
                 "description": "The crypto assets of the global catalog. sort=rank (the default) lists them by market cap rank, the unranked last; sort=newest lists the one the catalog first collected last first, by created_at. A cursor holds its order: a cursor of one order is refused by the other. Every asset is unverified unless it is linked to a currency listed on this exchange. Cached for market_data.api.cache_seconds, with an ETag.",
@@ -11535,7 +11591,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Opens a KYC application for level 2 (#72) with the user's address, occupation, and source of funds, which are stored encrypted. The user must be at level 1, with a verified identity (403 identity_verification_required), and have no open application (409 kyc_application_open). Then add the documents, and submit it.",
+                "description": "Opens a KYC application for level 2 (#72) with the user's address, occupation, and source of funds, which are stored encrypted. The user must be at level 1, with a verified identity (403 identity_verification_required), and have no open application (409 kyc_application_open). Then, for an application reviewed by hand (provider manual), add the documents, and submit it; for one of a provider (provider sumsub), run its SDK with a token of GET /user/kyc/session, and the provider's verdict decides it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -11706,7 +11762,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "kyc_application_submitted, kyc_documents_exceeded, or row_unverified",
+                        "description": "kyc_application_submitted, kyc_documents_exceeded, kyc_provider_flow, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -11789,7 +11845,74 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "kyc_documents_missing (with info.missing), kyc_application_submitted, or row_unverified",
+                        "description": "kyc_documents_missing (with info.missing), kyc_application_submitted, kyc_provider_flow, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/session": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A token of the KYC provider's SDK (#72), such as Sumsub's WebSDK, for the user's open application, which the provider verifies: the app runs the SDK with it, and the user gives the documents to the provider. It expires in minutes; ask again for another. 409 kyc_provider_flow for an application reviewed by hand, which takes its documents on POST /user/kyc/applications/{id}/documents.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Get a session of the KYC provider",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Session"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_provider_flow or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -16588,6 +16711,14 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 2
                 },
+                "provider": {
+                    "description": "Provider verifies the application: manual, with the documents\nuploaded here, or a provider, such as sumsub, whose SDK takes them\nwith a token of GET /user/kyc/session.",
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "sumsub"
+                    ]
+                },
                 "reason": {
                     "type": "string"
                 },
@@ -16713,6 +16844,14 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 2
                 },
+                "provider": {
+                    "description": "Provider verifies the application: manual, with the documents\nuploaded here, or a provider, such as sumsub, whose SDK takes them\nwith a token of GET /user/kyc/session.",
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "sumsub"
+                    ]
+                },
                 "reason": {
                     "type": "string"
                 },
@@ -16745,6 +16884,21 @@ const docTemplate = `{
                 "user_hk": {
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "kyc.Session": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "sumsub"
+                },
+                "token": {
+                    "type": "string"
                 }
             }
         },

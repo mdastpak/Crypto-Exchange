@@ -535,5 +535,9 @@
   "KYC_APPLICATION_NOT_UNDER_REVIEW": "This application is not waiting for a review.",
   "KYC_LINK_INVALID": "This link is not valid or has expired.",
   "KYC_DOCUMENT_CHANGED": "The stored document was changed and cannot be shown.",
-  "KYC_ACCOUNT_INACTIVE": "The account is not active."
+  "KYC_ACCOUNT_INACTIVE": "The account is not active.",
+  "KYC_SESSION_CREATED": "Verification session created",
+  "KYC_WEBHOOK_ACCEPTED": "Webhook accepted",
+  "KYC_WEBHOOK_UNSIGNED": "The webhook is not signed.",
+  "KYC_PROVIDER_FLOW": "This application is verified by the verification provider."
 }

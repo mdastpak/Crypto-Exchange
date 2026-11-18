@@ -1031,8 +1031,11 @@ compliance:
         api_key: ""  # Set with SUMSUB_API_KEY
         api_secret: ""
         endpoint: "https://api.sumsub.com"
-        webhook_secret: ""
+        webhook_secret: ""  # Set with SUMSUB_WEBHOOK_SECRET; api_secret with SUMSUB_API_SECRET
         timeout_seconds: 30
+        # The level of the Sumsub account that the applicants are checked
+        # at (#72). Sumsub serves the international region only.
+        level: "basic-kyc-level"
       - name: "onfido"
         enabled: false
         api_key: ""  # Set with ONFIDO_API_KEY

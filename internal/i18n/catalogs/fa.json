@@ -535,5 +535,9 @@
   "KYC_APPLICATION_NOT_UNDER_REVIEW": "این درخواست در انتظار بررسی نیست.",
   "KYC_LINK_INVALID": "این پیوند معتبر نیست یا منقضی شده است.",
   "KYC_DOCUMENT_CHANGED": "مدرک ذخیره‌شده تغییر کرده و قابل نمایش نیست.",
-  "KYC_ACCOUNT_INACTIVE": "حساب فعال نیست."
+  "KYC_ACCOUNT_INACTIVE": "حساب فعال نیست.",
+  "KYC_SESSION_CREATED": "نشست احراز هویت ایجاد شد",
+  "KYC_WEBHOOK_ACCEPTED": "وب‌هوک پذیرفته شد",
+  "KYC_WEBHOOK_UNSIGNED": "وب‌هوک امضا نشده است.",
+  "KYC_PROVIDER_FLOW": "این درخواست توسط ارائه‌دهنده احراز هویت بررسی می‌شود."
 }
