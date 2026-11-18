@@ -996,9 +996,12 @@ compliance:
     screen_on_trade: false
     periodic_rescreen_hours: 24
 
+  # The AML rules (#73), which evaluate each withdrawal. rules_path names
+  # a rules file; empty is the file built into this release,
+  # config/aml_rules.yaml of its source.
   aml:
     enabled: true
-    rules_path: "config/aml_rules.yaml"
+    rules_path: ""
 
   kyc:
     providers:

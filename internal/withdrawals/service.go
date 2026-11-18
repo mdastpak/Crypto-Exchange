@@ -6,10 +6,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/mdastpak/crypto-exchange/internal/aml"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
@@ -45,6 +47,14 @@ type LevelLimits interface {
 	CheckWithdrawal(ctx context.Context, tx *sql.Tx, userHK, currencyHK string, amount shared.Decimal) error
 }
 
+// AML evaluates the AML rules on a withdrawal (#73), in its transaction:
+// *aml.Engine.
+type AML interface {
+	Evaluate(ctx context.Context, tx *sql.Tx, ev aml.Event) (aml.Decision, error)
+	Enforce(ctx context.Context, db *sql.DB, d aml.Decision, origin audit.Event) error
+	Notify(ctx context.Context, notices []aml.Notice)
+}
+
 // Service runs the withdrawals.
 type Service struct {
 	DB           *sql.DB
@@ -55,6 +65,12 @@ type Service struct {
 	// ReviewAbove holds, by currency symbol, the amount from which a
 	// withdrawal waits for an administrator.
 	ReviewAbove map[string]shared.Decimal
+	// AML evaluates the AML rules; nil evaluates none, while
+	// compliance.aml is off.
+	AML AML
+	// FiatCountry is the country of the banks of the fiat destinations,
+	// for the AML rules: IR in the ir region, "" when not known.
+	FiatCountry string
 }
 
 // Request asks for a withdrawal of Amount of the currency CurrencyHK, on
@@ -70,6 +86,9 @@ type Request struct {
 	// IdempotencyKey names the request: the same key returns the same
 	// withdrawal.
 	IdempotencyKey string
+	// Country is the country of the request, for the AML rules; it is not
+	// part of what the confirmation is bound to.
+	Country string
 }
 
 // Outcome is the answer to a request: a confirmation to confirm, or the
@@ -137,6 +156,8 @@ type plan struct {
 	fee, total  shared.Decimal
 	details     confirm.Details
 	review      string
+	// aml is the decision of the AML rules (#73).
+	aml *aml.Decision
 }
 
 // Request asks for a withdrawal of the user. Without a confirmation, it
@@ -152,7 +173,7 @@ func (s Service) Request(ctx context.Context, userHK string, r Request, client s
 		return Outcome{Withdrawal: w, Replayed: true}, err
 	}
 	if r.ConfirmationID == "" {
-		p, err := s.dryRun(ctx, userHK, r)
+		p, err := s.dryRun(ctx, userHK, r, origin)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -181,14 +202,35 @@ func isConstraint(err error, name string) bool {
 }
 
 // dryRun checks the request in a transaction that it rolls back, so that
-// no code is sent for a withdrawal that would be refused.
-func (s Service) dryRun(ctx context.Context, userHK string, r Request) (plan, error) {
+// no code is sent for a withdrawal that would be refused. A refusal of the
+// AML rules is recorded once the transaction rolled back.
+func (s Service) dryRun(ctx context.Context, userHK string, r Request, origin audit.Event) (plan, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return plan{}, err
 	}
 	defer tx.Rollback()
-	return s.check(ctx, tx, userHK, r, false)
+	p, err := s.check(ctx, tx, userHK, r, false, uuid.NewString())
+	if err != nil {
+		return p, err
+	}
+	if p.aml != nil && p.aml.Action.Refuses() {
+		_ = tx.Rollback()
+		return p, s.refuse(ctx, *p.aml, origin)
+	}
+	return p, nil
+}
+
+// refuse records a refusal of the AML rules, after the transaction of the
+// request rolled back, and returns ErrRefused.
+func (s Service) refuse(ctx context.Context, d aml.Decision, origin audit.Event) error {
+	if err := s.AML.Enforce(ctx, s.DB, d, origin); !errors.Is(err, aml.ErrRefused) {
+		// Refused all the same; the answer does not say why, so the
+		// failure to record it, or to freeze the account, is logged here.
+		log.Printf("SECURITY: a withdrawal of user %s refused by the AML rules (%s) was not recorded: %v", d.Event.UserHK, d.Action, err)
+		return errors.Join(ErrRefused, err)
+	}
+	return ErrRefused
 }
 
 // run records the withdrawal and locks its funds, in one transaction.
@@ -206,9 +248,14 @@ func (s Service) run(ctx context.Context, userHK string, r Request, digest []byt
 	if w, err := s.replay(ctx, tx, userHK, r.IdempotencyKey, digest); w != nil || err != nil {
 		return Outcome{Withdrawal: w, Replayed: true}, err
 	}
-	p, err := s.check(ctx, tx, userHK, r, true)
+	id := uuid.NewString()
+	p, err := s.check(ctx, tx, userHK, r, true, id)
 	if err != nil {
 		return Outcome{}, err
+	}
+	if p.aml != nil && p.aml.Action.Refuses() {
+		_ = tx.Rollback()
+		return Outcome{}, s.refuse(ctx, *p.aml, origin)
 	}
 	if err := s.Confirm.Consume(ctx, tx, userHK, r.ConfirmationID, confirm.PurposeWithdrawal, r.confirmationDigest(p.fee)); err != nil {
 		if errors.Is(err, confirm.ErrMismatch) {
@@ -222,12 +269,11 @@ func (s Service) run(ctx context.Context, userHK string, r Request, digest []byt
 	if p.review != "" {
 		status = StatusReview
 	}
-	var id string
-	err = tx.QueryRowContext(ctx, `INSERT INTO withdrawals (user_id, currency_hk, network, destination_id, amount, fee, status,
+	_, err = tx.ExecContext(ctx, `INSERT INTO withdrawals (id, user_id, currency_hk, network, destination_id, amount, fee, status,
 			idempotency_key, request_digest, confirmation_id, review_reason)
-		VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8, $9, $10, NULLIF($11, '')) RETURNING id`,
-		userHK, r.CurrencyHK, r.Network, r.DestinationID, r.Amount.String(), p.fee.String(), string(status),
-		r.IdempotencyKey, digest, r.ConfirmationID, p.review).Scan(&id)
+		VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, $10, $11, NULLIF($12, ''))`,
+		id, userHK, r.CurrencyHK, r.Network, r.DestinationID, r.Amount.String(), p.fee.String(), string(status),
+		r.IdempotencyKey, digest, r.ConfirmationID, p.review)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("record the withdrawal: %w", err)
 	}
@@ -247,11 +293,23 @@ func (s Service) run(ctx context.Context, userHK string, r Request, digest []byt
 	if err := audit.Record(ctx, tx, e); err != nil {
 		return Outcome{}, err
 	}
+	var notices []aml.Notice
+	if p.aml != nil {
+		if notices, err = aml.Record(ctx, tx, *p.aml, origin); err != nil {
+			return Outcome{}, err
+		}
+	}
 	w, err := read(ctx, tx, `w.id = $1`, id)
 	if err != nil {
 		return Outcome{}, err
 	}
-	return Outcome{Withdrawal: &w}, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return Outcome{}, err
+	}
+	if len(notices) > 0 {
+		s.AML.Notify(ctx, notices)
+	}
+	return Outcome{Withdrawal: &w}, nil
 }
 
 // feeChanged tells, for a confirmation that does not match the request,
@@ -309,8 +367,10 @@ func (s Service) replay(ctx context.Context, q querier, userHK, key string, dige
 
 // check checks a request in tx, as it would run. With lock, the network
 // is share-locked, so that it does not change before the withdrawal
-// commits. The destination always is.
-func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request, lock bool) (plan, error) {
+// commits. The destination always is. Last, the AML rules evaluate it as
+// the withdrawal id: a review holds it, and the caller refuses it for a
+// refusal.
+func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request, lock bool, id string) (plan, error) {
 	var p plan
 	if err := restrictions.Check(ctx, tx, userHK, restrictions.OpWithdraw, r.CurrencyHK); err != nil {
 		return p, err
@@ -387,6 +447,23 @@ func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request
 		return p, invalid("amount", "has too many digits for the confirmation message")
 	}
 	p.review = s.reviewOf(append([]string{cur.Info.Symbol}, cur.PreviousSymbols...), r.Amount)
+	if s.AML != nil {
+		ev := aml.Event{Kind: aml.KindWithdrawal, Ref: id, UserHK: userHK, CurrencyHK: r.CurrencyHK,
+			Symbol: cur.Info.Symbol, Amount: r.Amount.Decimal(), IPCountry: r.Country, Counterparty: d.ID}
+		if d.Fiat() {
+			ev.CounterpartyCountry = s.FiatCountry
+		}
+		since := d.CreatedAt
+		ev.CounterpartySince = &since
+		decision, err := s.AML.Evaluate(ctx, tx, ev)
+		if err != nil {
+			return p, err
+		}
+		p.aml = &decision
+		if decision.Action == aml.ActionReview {
+			p.review = ReviewAML
+		}
+	}
 	return p, nil
 }
 

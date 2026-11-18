@@ -362,6 +362,28 @@ definitions:
       totp:
         type: string
     type: object
+  admin.amlTransition:
+    properties:
+      resolution:
+        description: |-
+          Resolution, 1 to 1000 characters, is required to resolve or dismiss
+          the alert, and refused otherwise.
+        example: The deposits are the user's salary; documents on file.
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/aml.Status'
+        description: |-
+          Status is the new status: INVESTIGATING assigns the alert to the
+          administrator.
+        enum:
+        - INVESTIGATING
+        - RESOLVED
+        - DISMISSED
+        - ESCALATED
+    required:
+    - status
+    type: object
   admin.currencyInfoFields:
     properties:
       contract:
@@ -576,6 +598,220 @@ definitions:
         example: 2026-11
         type: string
     type: object
+  aml.Action:
+    enum:
+    - ""
+    - ALERT
+    - REVIEW
+    - BLOCK
+    - FREEZE
+    type: string
+    x-enum-varnames:
+    - ActionNone
+    - ActionAlert
+    - ActionReview
+    - ActionBlock
+    - ActionFreeze
+  aml.Alert:
+    properties:
+      action:
+        allOf:
+        - $ref: '#/definitions/aml.Action'
+        enum:
+        - ALERT
+        - REVIEW
+        - BLOCK
+        - FREEZE
+      assigned_to:
+        format: uuid
+        type: string
+      created_at:
+        type: string
+      escalated_at:
+        type: string
+      event_id:
+        format: uuid
+        type: string
+      event_kind:
+        enum:
+        - deposit
+        - withdrawal
+        - trade
+        type: string
+      event_ref:
+        type: string
+      id:
+        format: uuid
+        type: string
+      resolution:
+        type: string
+      resolved_at:
+        type: string
+      resolved_by:
+        format: uuid
+        type: string
+      risk_score:
+        example: "75"
+        type: string
+      rule_code:
+        example: structuring_withdrawal
+        type: string
+      rule_id:
+        format: uuid
+        type: string
+      rule_version:
+        type: integer
+      status:
+        allOf:
+        - $ref: '#/definitions/aml.Status'
+        enum:
+        - OPEN
+        - INVESTIGATING
+        - RESOLVED
+        - DISMISSED
+        - ESCALATED
+      trigger_data:
+        additionalProperties: {}
+        description: Data is what the rule saw, by rule type.
+        type: object
+      user_hk:
+        format: uuid
+        type: string
+    type: object
+  aml.Kind:
+    enum:
+    - deposit
+    - withdrawal
+    - trade
+    type: string
+    x-enum-varnames:
+    - KindDeposit
+    - KindWithdrawal
+    - KindTrade
+  aml.RuleConfig:
+    properties:
+      amount_deviation_multiplier:
+        type: string
+      ceiling:
+        description: 'Structuring: the band is ThresholdAmount up to Ceiling, excluded.'
+        type: string
+      check_fields:
+        items:
+          type: string
+        type: array
+      checks:
+        items:
+          type: string
+        type: array
+      countries:
+        description: High-risk country.
+        items:
+          type: string
+        type: array
+      cross_border:
+        type: boolean
+      dormant_days:
+        type: integer
+      history_days:
+        type: integer
+      home_country:
+        type: string
+      list:
+        type: string
+      metric:
+        description: Velocity.
+        type: string
+      new_destination_days:
+        type: integer
+      pattern:
+        description: Unusual pattern.
+        type: string
+      providers:
+        description: 'Screening: the providers or the list a screening rule asks.'
+        items:
+          type: string
+        type: array
+      screen:
+        type: string
+      time_deviation_hours:
+        type: integer
+      velocity_spike_multiplier:
+        type: string
+    type: object
+  aml.Status:
+    enum:
+    - OPEN
+    - INVESTIGATING
+    - RESOLVED
+    - DISMISSED
+    - ESCALATED
+    type: string
+    x-enum-varnames:
+    - StatusOpen
+    - StatusInvestigating
+    - StatusResolved
+    - StatusDismissed
+    - StatusEscalated
+  aml.Stored:
+    properties:
+      action:
+        $ref: '#/definitions/aml.Action'
+      applies_to:
+        items:
+          $ref: '#/definitions/aml.Kind'
+        type: array
+      code:
+        type: string
+      config:
+        $ref: '#/definitions/aml.RuleConfig'
+      description:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        format: uuid
+        type: string
+      name:
+        type: string
+      retired_at:
+        type: string
+      rule_type:
+        $ref: '#/definitions/aml.Type'
+      severity:
+        type: string
+      threshold_amount:
+        example: "10000"
+        type: string
+      threshold_count:
+        description: |-
+          ThresholdCount and ThresholdAmount, in USDT, mean what the type says;
+          zero is no threshold.
+        type: integer
+      time_window_hours:
+        type: integer
+      version:
+        type: integer
+    type: object
+  aml.Type:
+    enum:
+    - VELOCITY
+    - STRUCTURING
+    - HIGH_RISK_COUNTRY
+    - UNUSUAL_PATTERN
+    - MIXER
+    - DARKNET
+    - SANCTIONS
+    - PEP
+    type: string
+    x-enum-varnames:
+    - TypeVelocity
+    - TypeStructuring
+    - TypeHighRiskCountry
+    - TypeUnusualPattern
+    - TypeMixer
+    - TypeDarknet
+    - TypeSanctions
+    - TypePEP
   antiphishing.Status:
     properties:
       change_reason:
@@ -5187,6 +5423,7 @@ definitions:
         enum:
         - amount
         - no_threshold
+        - aml
         type: string
       reviewed_at:
         type: string
@@ -5221,6 +5458,225 @@ info:
   title: Crypto Exchange API
   version: "1"
 paths:
+  /api/v1/admin/aml/alerts:
+    get:
+      description: 'The AML alerts, newest first: of a status, of a user, or all;
+        at most limit (100). Each names its rule and the version of the rule, the
+        operation that raised it, if any, and the action that was taken. An alert
+        changed in SQL answers 409 row_unverified.'
+      parameters:
+      - description: A status
+        enum:
+        - OPEN
+        - INVESTIGATING
+        - RESOLVED
+        - DISMISSED
+        - ESCALATED
+        in: query
+        name: status
+        type: string
+      - description: A user
+        format: uuid
+        in: query
+        name: user_hk
+        type: string
+      - description: 1 to 100; 100 by default
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/aml.Alert'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List AML alerts
+      tags:
+      - admin aml
+  /api/v1/admin/aml/alerts/{id}:
+    get:
+      description: An AML alert, with what its rule saw (trigger_data).
+      parameters:
+      - description: The alert
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/aml.Alert'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: aml_alert_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get an AML alert
+      tags:
+      - admin aml
+  /api/v1/admin/aml/alerts/{id}/transition:
+    post:
+      consumes:
+      - application/json
+      description: 'Moves an alert to another status (#73). OPEN may become INVESTIGATING,
+        which assigns it to the administrator, ESCALATED, RESOLVED, or DISMISSED;
+        INVESTIGATING may become ESCALATED, RESOLVED, or DISMISSED; ESCALATED may
+        become INVESTIGATING, RESOLVED, or DISMISSED. RESOLVED and DISMISSED are final
+        and need a resolution. An alert open for engine.alert_escalation_hours is
+        escalated by the server. Moving an alert releases nothing: a withdrawal held
+        for review is approved or rejected on its own route, and a freeze is lifted
+        on the user''s restrictions. Audited as aml.alert_status.'
+      parameters:
+      - description: The alert
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The new status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.amlTransition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/aml.Alert'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: aml_alert_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: aml_alert_transition_invalid or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Move an AML alert
+      tags:
+      - admin aml
+  /api/v1/admin/aml/rules:
+    get:
+      description: Every AML rule as the server synced it from config/aml_rules.yaml,
+        with its version and whether it is retired (#73), by code. A rule changed
+        in SQL answers 409 row_unverified, and no withdrawal is evaluated until it
+        is reviewed.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/aml.Stored'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the AML rules
+      tags:
+      - admin aml
   /api/v1/admin/audit:
     get:
       description: The events that the filters select, newest first. Every filter
@@ -13627,8 +14083,12 @@ paths:
         of its currency waits for an administrator (status review, review_reason amount);
         while thresholds are configured, one of a currency without a threshold and
         without a "*" default waits whatever the amount (review_reason no_threshold,
-        #406); the others are queued for their payouts. Closed by the withdrawals
-        lockdown, the user''s restrictions, and the security hold.'
+        #406); the others are queued for their payouts. The AML rules evaluate each
+        step (#73): one may hold the withdrawal for review (review_reason aml), or
+        refuse it (403 withdrawal_refused, at step one before any code is sent, or
+        at step two); while they cannot be evaluated, 503 withdrawals_unavailable.
+        Closed by the withdrawals lockdown, the user''s restrictions, and the security
+        hold.'
       parameters:
       - description: 1 to 100 letters, digits, dots, colons, underscores, or hyphens;
           the same for both steps
@@ -13682,7 +14142,8 @@ paths:
             $ref: '#/definitions/models.APIResponse'
         "403":
           description: verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured,
-            account_frozen, operation_restricted, asset_restricted, or security_hold
+            account_frozen, operation_restricted, asset_restricted, security_hold,
+            or withdrawal_refused
           schema:
             $ref: '#/definitions/models.APIResponse'
         "409":

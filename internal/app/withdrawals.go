@@ -23,8 +23,9 @@ import (
 // with the confirmations that send their codes: it runs after
 // useConfirmationSender, which sets the sender of those codes. Without the
 // confirmations, the destinations, or the verification levels, the routes
-// answer withdrawals_unavailable.
-func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration) error {
+// answer withdrawals_unavailable. rules, when set, are the AML rules that
+// evaluate each withdrawal (#73).
+func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration, rules *amlSetup) error {
 	confirmer, ok := h.User.Confirmations.(confirm.Service)
 	book, bookOK := h.User.Destinations.(withdrawals.DestinationBook)
 	levels, levelsOK := h.User.Verification.(withdrawals.LevelLimits)
@@ -50,6 +51,9 @@ func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration
 	}
 	s := withdrawals.Service{DB: db, Confirm: confirmer, Destinations: book, Levels: levels, Ledger: ledger.Ledger{DB: db},
 		ReviewAbove: review}
+	if rules != nil {
+		s.AML, s.FiatCountry = rules.engine, homeCountry(settings)
+	}
 	if store, ok := levels.(verification.Store); ok {
 		warnUnconfigured(db, store.Policy, review)
 	}

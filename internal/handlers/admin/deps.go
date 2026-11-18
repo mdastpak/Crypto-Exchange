@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/adminauth"
+	"github.com/mdastpak/crypto-exchange/internal/aml"
 	"github.com/mdastpak/crypto-exchange/internal/assetregistry"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
@@ -55,6 +56,15 @@ type WithdrawalReviews interface {
 	Review(ctx context.Context, status withdrawals.Status, limit int) ([]withdrawals.Withdrawal, error)
 	Approve(ctx context.Context, id, adminHK string, origin audit.Event) (withdrawals.Withdrawal, error)
 	Reject(ctx context.Context, id, adminHK, reason string, origin audit.Event) (withdrawals.Withdrawal, error)
+}
+
+// AMLDesk is where administrators read the AML rules and work the alerts
+// (#73): aml.Desk.
+type AMLDesk interface {
+	Rules(ctx context.Context) ([]aml.Stored, error)
+	Alerts(ctx context.Context, status aml.Status, userHK string, limit int) ([]aml.Alert, error)
+	Alert(ctx context.Context, id string) (aml.Alert, error)
+	Transition(ctx context.Context, id string, to aml.Status, adminHK, resolution string, origin audit.Event) (aml.Alert, error)
 }
 
 // PayoutDesk is where administrators pay the payouts of withdrawals by

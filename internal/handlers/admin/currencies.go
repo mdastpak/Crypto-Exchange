@@ -44,7 +44,10 @@ type AdminHandler struct {
 	// sets it; without it, the routes answer withdrawals_unavailable.
 	Withdrawals WithdrawalReviews
 	// Payouts are the payouts that administrators pay by hand (#70).
-	Payouts      PayoutDesk
+	Payouts PayoutDesk
+	// AML is the desk of the AML rules and alerts (#73); nil answers 503
+	// while compliance.aml is off.
+	AML          AMLDesk
 	Restrictions RestrictionStore
 	Controls     ControlStore
 	Delistings   DelistingStore

@@ -15,6 +15,340 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/admin/aml/alerts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The AML alerts, newest first: of a status, of a user, or all; at most limit (100). Each names its rule and the version of the rule, the operation that raised it, if any, and the action that was taken. An alert changed in SQL answers 409 row_unverified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "List AML alerts",
+                "parameters": [
+                    {
+                        "enum": [
+                            "OPEN",
+                            "INVESTIGATING",
+                            "RESOLVED",
+                            "DISMISSED",
+                            "ESCALATED"
+                        ],
+                        "type": "string",
+                        "description": "A status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "A user",
+                        "name": "user_hk",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1 to 100; 100 by default",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/aml.Alert"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/alerts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "An AML alert, with what its rule saw (trigger_data).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "Get an AML alert",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The alert",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/aml.Alert"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "aml_alert_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/alerts/{id}/transition": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moves an alert to another status (#73). OPEN may become INVESTIGATING, which assigns it to the administrator, ESCALATED, RESOLVED, or DISMISSED; INVESTIGATING may become ESCALATED, RESOLVED, or DISMISSED; ESCALATED may become INVESTIGATING, RESOLVED, or DISMISSED. RESOLVED and DISMISSED are final and need a resolution. An alert open for engine.alert_escalation_hours is escalated by the server. Moving an alert releases nothing: a withdrawal held for review is approved or rejected on its own route, and a freeze is lifted on the user's restrictions. Audited as aml.alert_status.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "Move an AML alert",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The alert",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.amlTransition"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/aml.Alert"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "aml_alert_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "aml_alert_transition_invalid or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/rules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every AML rule as the server synced it from config/aml_rules.yaml, with its version and whether it is retired (#73), by code. A rule changed in SQL answers 409 row_unverified, and no withdrawal is evaluated until it is reviewed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "List the AML rules",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/aml.Stored"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/audit": {
             "get": {
                 "security": [
@@ -12569,7 +12903,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a \"*\" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
+                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a \"*\" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. The AML rules evaluate each step (#73): one may hold the withdrawal for review (review_reason aml), or refuse it (403 withdrawal_refused, at step one before any code is sent, or at step two); while they cannot be evaluated, 503 withdrawals_unavailable. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
                 "consumes": [
                     "application/json"
                 ],
@@ -12666,7 +13000,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold",
+                        "description": "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, security_hold, or withdrawal_refused",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -13426,6 +13760,33 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.amlTransition": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "resolution": {
+                    "description": "Resolution, 1 to 1000 characters, is required to resolve or dismiss\nthe alert, and refused otherwise.",
+                    "type": "string",
+                    "example": "The deposits are the user's salary; documents on file."
+                },
+                "status": {
+                    "description": "Status is the new status: INVESTIGATING assigns the alert to the\nadministrator.",
+                    "enum": [
+                        "INVESTIGATING",
+                        "RESOLVED",
+                        "DISMISSED",
+                        "ESCALATED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/aml.Status"
+                        }
+                    ]
+                }
+            }
+        },
         "admin.currencyInfoFields": {
             "type": "object",
             "properties": {
@@ -13693,6 +14054,300 @@ const docTemplate = `{
                     "example": "2026-11"
                 }
             }
+        },
+        "aml.Action": {
+            "type": "string",
+            "enum": [
+                "",
+                "ALERT",
+                "REVIEW",
+                "BLOCK",
+                "FREEZE"
+            ],
+            "x-enum-varnames": [
+                "ActionNone",
+                "ActionAlert",
+                "ActionReview",
+                "ActionBlock",
+                "ActionFreeze"
+            ]
+        },
+        "aml.Alert": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "enum": [
+                        "ALERT",
+                        "REVIEW",
+                        "BLOCK",
+                        "FREEZE"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/aml.Action"
+                        }
+                    ]
+                },
+                "assigned_to": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "escalated_at": {
+                    "type": "string"
+                },
+                "event_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "event_kind": {
+                    "type": "string",
+                    "enum": [
+                        "deposit",
+                        "withdrawal",
+                        "trade"
+                    ]
+                },
+                "event_ref": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "resolution": {
+                    "type": "string"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "risk_score": {
+                    "type": "string",
+                    "example": "75"
+                },
+                "rule_code": {
+                    "type": "string",
+                    "example": "structuring_withdrawal"
+                },
+                "rule_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "rule_version": {
+                    "type": "integer"
+                },
+                "status": {
+                    "enum": [
+                        "OPEN",
+                        "INVESTIGATING",
+                        "RESOLVED",
+                        "DISMISSED",
+                        "ESCALATED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/aml.Status"
+                        }
+                    ]
+                },
+                "trigger_data": {
+                    "description": "Data is what the rule saw, by rule type.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "aml.Kind": {
+            "type": "string",
+            "enum": [
+                "deposit",
+                "withdrawal",
+                "trade"
+            ],
+            "x-enum-varnames": [
+                "KindDeposit",
+                "KindWithdrawal",
+                "KindTrade"
+            ]
+        },
+        "aml.RuleConfig": {
+            "type": "object",
+            "properties": {
+                "amount_deviation_multiplier": {
+                    "type": "string"
+                },
+                "ceiling": {
+                    "description": "Structuring: the band is ThresholdAmount up to Ceiling, excluded.",
+                    "type": "string"
+                },
+                "check_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "countries": {
+                    "description": "High-risk country.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "cross_border": {
+                    "type": "boolean"
+                },
+                "dormant_days": {
+                    "type": "integer"
+                },
+                "history_days": {
+                    "type": "integer"
+                },
+                "home_country": {
+                    "type": "string"
+                },
+                "list": {
+                    "type": "string"
+                },
+                "metric": {
+                    "description": "Velocity.",
+                    "type": "string"
+                },
+                "new_destination_days": {
+                    "type": "integer"
+                },
+                "pattern": {
+                    "description": "Unusual pattern.",
+                    "type": "string"
+                },
+                "providers": {
+                    "description": "Screening: the providers or the list a screening rule asks.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "screen": {
+                    "type": "string"
+                },
+                "time_deviation_hours": {
+                    "type": "integer"
+                },
+                "velocity_spike_multiplier": {
+                    "type": "string"
+                }
+            }
+        },
+        "aml.Status": {
+            "type": "string",
+            "enum": [
+                "OPEN",
+                "INVESTIGATING",
+                "RESOLVED",
+                "DISMISSED",
+                "ESCALATED"
+            ],
+            "x-enum-varnames": [
+                "StatusOpen",
+                "StatusInvestigating",
+                "StatusResolved",
+                "StatusDismissed",
+                "StatusEscalated"
+            ]
+        },
+        "aml.Stored": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "$ref": "#/definitions/aml.Action"
+                },
+                "applies_to": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/aml.Kind"
+                    }
+                },
+                "code": {
+                    "type": "string"
+                },
+                "config": {
+                    "$ref": "#/definitions/aml.RuleConfig"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "retired_at": {
+                    "type": "string"
+                },
+                "rule_type": {
+                    "$ref": "#/definitions/aml.Type"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "threshold_amount": {
+                    "type": "string",
+                    "example": "10000"
+                },
+                "threshold_count": {
+                    "description": "ThresholdCount and ThresholdAmount, in USDT, mean what the type says;\nzero is no threshold.",
+                    "type": "integer"
+                },
+                "time_window_hours": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "aml.Type": {
+            "type": "string",
+            "enum": [
+                "VELOCITY",
+                "STRUCTURING",
+                "HIGH_RISK_COUNTRY",
+                "UNUSUAL_PATTERN",
+                "MIXER",
+                "DARKNET",
+                "SANCTIONS",
+                "PEP"
+            ],
+            "x-enum-varnames": [
+                "TypeVelocity",
+                "TypeStructuring",
+                "TypeHighRiskCountry",
+                "TypeUnusualPattern",
+                "TypeMixer",
+                "TypeDarknet",
+                "TypeSanctions",
+                "TypePEP"
+            ]
         },
         "antiphishing.Status": {
             "type": "object",
@@ -19677,7 +20332,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "amount",
-                        "no_threshold"
+                        "no_threshold",
+                        "aml"
                     ]
                 },
                 "reviewed_at": {

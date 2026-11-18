@@ -56,6 +56,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | OTC execution | Implemented | `POST /user/otc/execute` takes a quote once and settles it in one transaction: the controls are checked again under its locks, the ledger settles the trade against the exchange's inventory, the trade is recorded sealed with the parts of its price, the inventory is bounded per currency by `otc.inventory_limits`, and `TradeExecuted` and `BalanceChanged` go through the outbox. A retry of the idempotency key returns the first trade ([#62](https://github.com/mdastpak/Crypto-Exchange/issues/62)). See [docs/api.md](docs/api.md#post-userotcexecute). |
 | Venue state | Implemented | A job of `cmd/market-worker` per enabled venue snapshots its markets, networks, and balances into PostgreSQL, under a lease; a stale snapshot, a suspended network, or a halted market is not routable. Each venue has house accounts in the ledger, a reconciliation with the books that posts the fees a venue reports and holds a currency on a difference until an operator clears it, and reservations of its balances under row locks, so two nodes never plan the same funds ([#385](https://github.com/mdastpak/Crypto-Exchange/issues/385)). See [docs/venues.md](docs/venues.md#state). |
 | OTC routing rules | Implemented | Versioned, audited rules pick the inventory, one venue, or a weighted split across venues for each OTC trade, by market, side, network, notional, region, and verification level, within each venue's balance share, reserve, daily limit, and a cost ceiling. A quote is priced with the cost of its route and refused when there is none; the execution routes again against fresh state. Every instance applies a new version within its cache window ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)). Each venue leg becomes a limit order at its venue within a slippage guard, placed once by its own client id, followed to its fill in the ledger, and past its deadline cancelled and its remainder routed again ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)). See [docs/otc-routing.md](docs/otc-routing.md). |
+| AML rules | Partial | `config/aml_rules.yaml` is synced into sealed rules with a version per change, which evaluate each withdrawal in its transaction: velocity, structuring, high-risk and cross-border countries, unusual withdrawals, and dormant accounts, with amounts in USDT at the price engine's price, held for review without one. A rule holds a withdrawal for review, refuses it, or refuses it and freezes the account; a batch at an interval catches the patterns that no single operation completed, and administrators work the alerts (`/admin/aml/*`). Sanctions, mixer, darknet, and PEP screening, and the hooks of deposits and trades, are still to come ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)). See [docs/aml.md](docs/aml.md). |
 | Custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
 
@@ -314,11 +315,12 @@ cmd/market-worker/      Worker of the global market data catalog (docs/market-da
 cmd/price-aggregator/   Price engine: reference prices from several providers (docs/price-engine.md)
 cmd/server/             Application entry point; it calls internal/app
 config/                 Configuration files: the example and Compose configurations,
-                        the local config.yaml (ignored), and the asset registry and
-                        AML rules (not loaded yet)
+                        the local config.yaml (ignored), the asset registry, and
+                        the AML rules
 docs/                   Generated Swagger files and project documentation
 internal/adminauth/     Administrator accounts and authenticator (TOTP) enrollment
 internal/agreements/    Legal documents: the versions each user accepted, sign-up countries
+internal/aml/           AML rules: sync of the rules file, evaluation, alerts, the batch
 internal/app/           The composition root of the server: wiring, routes, lifecycle,
                         and the end-to-end tests
 internal/antiphishing/  The anti-phishing codes that emails show, and the reminders to change them

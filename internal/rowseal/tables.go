@@ -226,6 +226,34 @@ var (
 		text("user_hk"), sealedBytes("national_id_sealed"), sealedBytes("national_id_bidx"), sealedBytes("birth_date_sealed"),
 		text("status"), text("provider"), text("provider_ref"), timestamptz("decided_at"),
 	}, SealedFromStart: true}
+	// AMLRules covers each AML rule as the sync wrote it from
+	// config/aml_rules.yaml (#73): a rule disabled, loosened, or retired in
+	// SQL is refused, and nothing is evaluated until it is reviewed.
+	AMLRules = &Table{Name: "aml_rules", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("code"), text("name"), text("rule_type"), text("config"), text("threshold_amount"), text("threshold_count"),
+		text("time_window_hours"), text("action"), text("severity"), text("enabled"), text("applies_to"),
+		text("rule_version"), timestamptz("retired_at"),
+	}, SealedFromStart: true}
+	// AMLRuleHistory covers each version of an AML rule (#73), which the
+	// alerts name.
+	AMLRuleHistory = &Table{Name: "aml_rule_history", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("rule_id"), text("rule_version"), text("definition"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// AMLEvents covers the operations that the AML rules count over a
+	// window (#73): one deleted or lowered in SQL would let structuring
+	// pass under its threshold.
+	AMLEvents = &Table{Name: "aml_events", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("kind"), text("ref"), text("currency_hk"), text("amount"), text("value_usdt"),
+		text("counterparty"), text("ip_country"), text("counterparty_country"), timestamptz("occurred_at"),
+		text("refused"),
+	}, SealedFromStart: true}
+	// AMLAlerts covers an AML alert and its lifecycle (#73): one closed or
+	// reassigned in SQL is detected.
+	AMLAlerts = &Table{Name: "aml_alerts", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("rule_id"), text("rule_version"), text("user_id"), text("event_id"), text("action"), text("trigger_data"),
+		text("risk_score"), text("status"), text("assigned_to"), timestamptz("resolved_at"), text("resolved_by"),
+		text("resolution"), text("dedupe_key"), timestamptz("escalated_at"), timestamptz("created_at"),
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
 	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
@@ -422,6 +450,7 @@ var Tables = []*Table{
 	VenueReservations, VenueHolds,
 	OTCRoutingRules, OTCRoutingUsage, OTCRoutedOrders,
 	UserNationalIDs, IdentityChecks,
+	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

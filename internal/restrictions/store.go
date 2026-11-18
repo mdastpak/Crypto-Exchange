@@ -99,7 +99,21 @@ func Create(ctx context.Context, db *sql.DB, n New, origin audit.Event) (Created
 		return Created{}, fmt.Errorf("failed to start the restriction: %w", err)
 	}
 	defer tx.Rollback()
+	created, err := CreateIn(ctx, tx, n, origin)
+	if err != nil {
+		return Created{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Created{}, fmt.Errorf("failed to record the restriction: %w", err)
+	}
+	return created, nil
+}
 
+// CreateIn records a restriction as Create does, in tx, which the caller
+// commits: the AML engine freezes an account in the transaction of the
+// alert that asks for it (#73). It locks the user's row first, so the
+// caller locks nothing of the user before it.
+func CreateIn(ctx context.Context, tx *sql.Tx, n New, origin audit.Event) (Created, error) {
 	if err := lockUser(ctx, tx, n.UserHK); err != nil {
 		return Created{}, err
 	}
@@ -181,9 +195,6 @@ func Create(ctx context.Context, db *sql.DB, n New, origin audit.Event) (Created
 			}
 		}
 		created.EndedSessions = len(ended)
-	}
-	if err := tx.Commit(); err != nil {
-		return Created{}, fmt.Errorf("failed to record the restriction: %w", err)
 	}
 	return created, nil
 }
