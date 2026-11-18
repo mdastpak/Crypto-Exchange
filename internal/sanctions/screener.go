@@ -110,6 +110,10 @@ func (s *Screener) current() *List {
 
 // Screen implements aml.Screener.
 func (s *Screener) Screen(ctx context.Context, q aml.Querier, r aml.Stored, e aml.Event) (aml.Action, map[string]any, error) {
+	if r.Config.Screen == "counterparty" && e.CounterpartyAddress == "" {
+		// Nothing to screen, such as a fiat destination, list or not.
+		return aml.ActionNone, nil, nil
+	}
 	list := s.current()
 	if list == nil {
 		return aml.ActionReview, map[string]any{"reason": reasonListUnavailable, "list": s.Provider}, nil
