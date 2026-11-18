@@ -1206,6 +1206,7 @@ The alerts of the [AML rules](aml.md) ([#73](https://github.com/mdastpak/Crypto-
 | `GET /admin/aml/rules` | Every rule as the server synced it from the rules file: its code, type, settings, action, `version`, and `retired_at` for one that left the file |
 | `GET /admin/aml/alerts?status=&user_hk=&limit=` | The alerts, newest first, of a status or a user, at most `limit` (100) |
 | `GET /admin/aml/alerts/{id}` | One alert (`404 aml_alert_not_found`) |
+| `GET /admin/aml/sanctions` | The version of the OFAC list in use: `version`, `entries`, `fetched_at`, `checked_at`, and `stale`, a list too old or missing, which holds every operation that a sanctions rule screens; `503 aml_unavailable` while the provider is off |
 | `POST /admin/aml/alerts/{id}/transition` | Moves an alert: `{"status": "INVESTIGATING"}`, which assigns it to the administrator, `ESCALATED`, or `RESOLVED` and `DISMISSED` with a `resolution` of 1 to 1000 characters, which only they take. A move that its status does not allow answers `409 aml_alert_transition_invalid` with `from` and `to` |
 
 An alert has its `rule_code` and `rule_version`, the operation that raised it (`event_kind`, `event_ref`, such as the id of a withdrawal; none for the batch), the `action` that was taken, `trigger_data`, what the rule saw, `risk_score`, `status`, and who investigated and closed it. A rule or an alert changed in SQL answers `409 row_unverified`.

@@ -73,6 +73,14 @@ func (a Action) Stronger(b Action) Action {
 	return a
 }
 
+// Weaker returns the weaker of a and b.
+func (a Action) Weaker(b Action) Action {
+	if b.rank() < a.rank() {
+		return b
+	}
+	return a
+}
+
 // Refuses reports whether a refuses the operation.
 func (a Action) Refuses() bool { return a == ActionBlock || a == ActionFreeze }
 

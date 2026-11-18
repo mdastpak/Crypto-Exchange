@@ -2,7 +2,7 @@
 
 The anti-money-laundering rules ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)) evaluate each operation that moves money, in its transaction, and raise alerts that administrators work. This document describes the rules file, what each rule type means, how a decision is enforced, and how the alerts move. The admin routes are in [the API](api.md#aml-alerts).
 
-Sanctions, mixer, darknet, and PEP screening need a screening provider, which a later change of #73 adds. Until then those rules are loaded, synced, and listed, but not evaluated, and the server names each one at startup.
+The `SANCTIONS` rules that name the `ofac` provider screen against the OFAC list (see [Sanctions screening](#sanctions-screening)). Mixer, darknet, and PEP screening, and sanctions rules that name only Chainalysis or TRM, need those providers, which implement the same interface (`aml.Screener`); until one is configured, those rules are loaded, synced, and listed, but not evaluated, and the server names each one at startup.
 
 ## The rules file
 
@@ -77,7 +77,19 @@ Without a threshold, the rule hits each operation that matches. With `threshold_
 
 ### Screening types
 
-`SANCTIONS` (`config.providers`: `ofac`, `chainalysis`, `trm`; `config.screen`: `user` or `counterparty`), `MIXER` and `DARKNET` (`config.list`), and `PEP` (`config.providers`) ask a screening provider, which is not part of this change.
+`SANCTIONS` (`config.providers`: `ofac`, `chainalysis`, `trm`; `config.screen`: `user` or `counterparty`), `MIXER` and `DARKNET` (`config.list`), and `PEP` (`config.providers`) ask a screening provider. The engine has one screening provider: `ofac` while it is enabled, which screens the `SANCTIONS` rules that name it; the other screening rules are not evaluated.
+
+## Sanctions screening
+
+While the `ofac` provider of `compliance.sanctions` is enabled ([configuration](configuration.md#settings-reserved-for-roadmap-features)), each instance:
+
+- downloads the OFAC list of Specially Designated Nationals, `sdn.csv` from the provider's `endpoint` and `alt.csv`, the other names, beside it, when the stored list was last found current more than `refresh_hours` (24) ago. Every entry keeps its names, its programs, its type, and the addresses on chain that its remarks list (`Digital Currency Address - XBT ...`). A list that differs from the last is stored as a new version in `sanctions_lists`, compressed; the same list only records that it is current (`checked_at`). The first instance to store wins; the others find it current;
+- loads the newest version every minute, checked against its seal, which covers the body by its SHA-256: an entry removed in SQL fails the load, with its finding;
+- screens in memory, by `config.screen`:
+  - `counterparty`: the address of a crypto destination against the addresses of the list, exactly, and hex addresses in any case. A match takes the rule's action, such as `BLOCK`.
+  - `user`: the user's first and last name, as the profile has them, against the names and other names of the list, by Jaro-Winkler similarity from `name_match_threshold` (0.92), over the words in any order and without accents or punctuation. A name of one word matches nothing, nor do vessels and aircraft. A name alone does not tell a person, so a match holds the operation for a review, never more, whatever the rule's action. The names are read with the seal of the user's row: a name changed in SQL to slip past the list is refused. A user without a name is not screened by name; the names are not transliterated, so Persian names are compared as they are written.
+
+Without a list, or with one that no download found current for `max_list_age_hours` (72), every operation that a sanctions rule screens is held for review (`reason: list_unavailable`): the screening fails closed. `GET /admin/aml/sanctions` shows the version, when it was downloaded and found current, its entries, and whether it is stale. An alert of a match names the entries (id, name, type, programs, score), at most five, never the user's name.
 
 ## Decisions
 

@@ -254,6 +254,14 @@ var (
 		text("risk_score"), text("status"), text("assigned_to"), timestamptz("resolved_at"), text("resolved_by"),
 		text("resolution"), text("dedupe_key"), timestamptz("escalated_at"), timestamptz("created_at"),
 	}, SealedFromStart: true}
+	// SanctionsLists covers a version of a sanctions list (#73): its body,
+	// by its SHA-256, and when a download last found it current. An entry
+	// removed in SQL would let a sanctioned address through.
+	SanctionsLists = &Table{Name: "sanctions_lists", Key: "id", KeyType: "bigint", Columns: []Column{
+		text("provider"), sealedBytes("source_digest"),
+		{Name: "body", Expr: `encode(sha256(%[1]sbody), 'hex')`, Secret: true}, text("entry_count"),
+		timestamptz("fetched_at"), timestamptz("checked_at"),
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
 	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
@@ -451,6 +459,7 @@ var Tables = []*Table{
 	OTCRoutingRules, OTCRoutingUsage, OTCRoutedOrders,
 	UserNationalIDs, IdentityChecks,
 	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
+	SanctionsLists,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

@@ -3,12 +3,14 @@ package withdrawals
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mdastpak/crypto-exchange/internal/aml"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
+	"github.com/mdastpak/crypto-exchange/internal/sanctions"
 )
 
 const amlRules = `
@@ -117,4 +119,50 @@ func TestAML_RuleChangedInSQL_RefusesEveryWithdrawal(t *testing.T) {
 	_, err = f.Request(context.Background(), f.user, f.request("100", "any"), "client", origin)
 	require.ErrorIs(t, err, aml.ErrUnavailable)
 	assert.Zero(t, f.count(`SELECT COUNT(*) FROM operation_confirmations`))
+}
+
+const sanctionsRules = `
+aml_rules:
+  - id: "sanctioned_address"
+    name: "Sanctioned Address"
+    rule_type: "SANCTIONS"
+    enabled: true
+    applies_to: ["withdrawal"]
+    config:
+      providers: ["ofac"]
+      screen: "counterparty"
+    time_window_hours: 1
+    action: "BLOCK"
+    severity: "CRITICAL"
+engine:
+  evaluation_interval_seconds: 60
+  alert_escalation_hours: 24
+`
+
+// A withdrawal to an address on the OFAC list is refused before any code
+// is sent, with an alert that names the entry (#73).
+func TestAML_SanctionedAddress(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "")
+	file, err := aml.Parse([]byte(sanctionsRules))
+	require.NoError(t, err)
+	_, err = aml.Sync(ctx, f.DB, file)
+	require.NoError(t, err)
+	entries := []sanctions.Entry{{ID: 306, Name: "HOSSEINI, Ali", Type: sanctions.TypeIndividual, Programs: []string{"SDGT"},
+		Addresses: []sanctions.Address{{Currency: "TRX", Value: "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8"}}}}
+	_, _, err = sanctions.Save(ctx, f.DB, sanctions.ProviderOFAC, []byte("fixture"), entries)
+	require.NoError(t, err)
+	screener := &sanctions.Screener{DB: f.DB, Provider: sanctions.ProviderOFAC, MaxAge: time.Hour}
+	require.NoError(t, screener.Refresh(ctx))
+	f.AML = &aml.Engine{Screener: screener}
+
+	_, err = f.Request(ctx, f.user, f.request("100", "to-sdn"), "client", origin)
+	require.ErrorIs(t, err, ErrRefused)
+	assert.Zero(t, f.count(`SELECT COUNT(*) FROM operation_confirmations`), "no code was sent")
+	alerts, err := aml.Alerts(ctx, f.DB, aml.StatusOpen, f.user, 10)
+	require.NoError(t, err)
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "sanctioned_address", alerts[0].RuleCode)
+	assert.Equal(t, aml.ActionBlock, alerts[0].Action)
+	assert.Equal(t, "address", alerts[0].Data["matched"])
 }

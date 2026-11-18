@@ -514,5 +514,6 @@
   "AML_ALERT_NOT_FOUND": "AML alert not found",
   "AML_ALERT_TRANSITION_INVALID": "The alert cannot move to this status.",
   "AML_RULES_RETRIEVED": "AML rules retrieved",
-  "AML_UNAVAILABLE": "The AML rules cannot be read until a changed row is reviewed."
+  "AML_UNAVAILABLE": "The AML rules cannot be read until a changed row is reviewed.",
+  "SANCTIONS_LIST_RETRIEVED": "Sanctions list retrieved"
 }

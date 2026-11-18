@@ -611,6 +611,16 @@ type Configuration struct {
 			ScreenOnWithdrawal    bool                      `yaml:"screen_on_withdrawal"`
 			ScreenOnTrade         bool                      `yaml:"screen_on_trade"`
 			PeriodicRescreenHours int                       `yaml:"periodic_rescreen_hours"`
+			// RefreshHours is how often the OFAC list is downloaded (#73);
+			// 0 is 24.
+			RefreshHours int `yaml:"refresh_hours"`
+			// MaxListAgeHours is how long a list that no download found
+			// current is screened against; after it, every operation that
+			// a sanctions rule screens is held for review. 0 is 72.
+			MaxListAgeHours int `yaml:"max_list_age_hours"`
+			// NameMatchThreshold is the similarity, above 0 and up to 1,
+			// from which a name matches the list; 0 is 0.92.
+			NameMatchThreshold float64 `yaml:"name_match_threshold"`
 		} `yaml:"sanctions"`
 		AML struct {
 			Enabled   bool   `yaml:"enabled"`

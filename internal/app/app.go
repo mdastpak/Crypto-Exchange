@@ -341,6 +341,9 @@ func run() error {
 	}
 	if amlRules != nil {
 		workers = append(workers, startAMLBatch(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
+		if amlRules.sanctions != nil {
+			workers = append(workers, startSanctions(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
+		}
 	}
 	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config, relay.Nudge); err != nil {
 		return err
@@ -1392,6 +1395,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/aml/alerts", ih.Admin.ListAMLAlerts)
 		adminGroup.GET("/aml/alerts/:id", ih.Admin.GetAMLAlert)
 		adminGroup.POST("/aml/alerts/:id/transition", ih.Admin.TransitionAMLAlert)
+		adminGroup.GET("/aml/sanctions", ih.Admin.GetSanctionsStatus)
 		// The payouts that administrators pay by hand (#70).
 		adminGroup.GET("/payouts", ih.Admin.ListPayouts)
 		adminGroup.GET("/payouts/:id", ih.Admin.GetPayout)
