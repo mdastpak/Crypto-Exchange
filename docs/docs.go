@@ -349,6 +349,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/aml/sanctions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The version of the OFAC list that the sanctions rules screen against (#73): when it was downloaded, when a download last found it current, its entries, and whether it is stale, too old or missing, which holds every operation that a sanctions rule screens for review. 503 aml_unavailable while the provider or the AML rules are off.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "Get the state of the sanctions list",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/sanctions.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/audit": {
             "get": {
                 "security": [
@@ -18741,6 +18802,31 @@ const docTemplate = `{
                 },
                 "table": {
                     "type": "string"
+                }
+            }
+        },
+        "sanctions.Status": {
+            "type": "object",
+            "properties": {
+                "checked_at": {
+                    "type": "string"
+                },
+                "entries": {
+                    "type": "integer"
+                },
+                "fetched_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "ofac"
+                },
+                "stale": {
+                    "description": "Stale is a list that no download found current for the maximum\nage, or none: every operation that a rule screens is held.",
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },

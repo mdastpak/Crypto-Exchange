@@ -33,6 +33,12 @@ type Event struct {
 	// user's book, and CounterpartySince is when the user added it.
 	Counterparty      string
 	CounterpartySince *time.Time
+	// CounterpartyAddress is the address on chain of the other side, such
+	// as that of a crypto destination, which the sanctions lists screen;
+	// "" for a fiat one.
+	CounterpartyAddress string
+	// CounterpartyNetwork is the network of that address.
+	CounterpartyNetwork string
 }
 
 // Hit is a rule that hit an operation, and what it asks.
@@ -60,10 +66,14 @@ type Prices interface {
 }
 
 // Screener asks a screening provider about an operation for a rule of a
-// screening type (#73's sanctions screening): whether it hits, and what it
-// matched.
+// screening type (#73): the action to take, ActionNone when nothing
+// matched, and what it matched. It may take less than the rule's action,
+// such as a review for a match that a person must confirm. A rule that it
+// cannot screen, as no provider of the rule is configured, is evaluated by
+// none: Screens reports it.
 type Screener interface {
-	Screen(ctx context.Context, q Querier, r Stored, e Event) (bool, map[string]any, error)
+	Screen(ctx context.Context, q Querier, r Stored, e Event) (Action, map[string]any, error)
+	Screens(r Rule) bool
 }
 
 // Engine evaluates the rules.
@@ -138,11 +148,14 @@ func (e *Engine) screen(ctx context.Context, q Querier, r Stored, ev Event) (*Hi
 	if e.Screener == nil {
 		return nil, nil
 	}
-	hit, data, err := e.Screener.Screen(ctx, q, r, ev)
-	if err != nil || !hit {
+	if !e.Screener.Screens(r.Rule) {
+		return nil, nil
+	}
+	action, data, err := e.Screener.Screen(ctx, q, r, ev)
+	if err != nil || action == ActionNone {
 		return nil, err
 	}
-	return &Hit{Rule: r, Action: r.Action, Data: data}, nil
+	return &Hit{Rule: r, Action: action, Data: data}, nil
 }
 
 // valueOf values amount of symbol in USDT, at the mid of a live price of

@@ -47,7 +47,10 @@ type AdminHandler struct {
 	Payouts PayoutDesk
 	// AML is the desk of the AML rules and alerts (#73); nil answers 503
 	// while compliance.aml is off.
-	AML          AMLDesk
+	AML AMLDesk
+	// Sanctions is the state of the OFAC list (#73); nil while the
+	// provider is off.
+	Sanctions    SanctionsStatus
 	Restrictions RestrictionStore
 	Controls     ControlStore
 	Delistings   DelistingStore

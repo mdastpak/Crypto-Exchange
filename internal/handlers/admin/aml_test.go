@@ -17,6 +17,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/auth"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/sanctions"
 )
 
 // fakeAML answers with err, and keeps what it was asked.
@@ -48,6 +49,13 @@ func (f *fakeAML) Transition(_ context.Context, _ string, to aml.Status, adminHK
 	return aml.Alert{ID: "a1", Status: to}, f.err
 }
 
+// fakeSanctions answers with the state of a list.
+type fakeSanctions struct{ err error }
+
+func (f fakeSanctions) Status(context.Context) (sanctions.Status, error) {
+	return sanctions.Status{Version: sanctions.Version{ID: 3, Provider: "ofac", EntryCount: 18000}}, f.err
+}
+
 func serveAML(t *testing.T, h *AdminHandler, adminID, method, path, body string) (int, map[string]any) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -57,6 +65,7 @@ func serveAML(t *testing.T, h *AdminHandler, adminID, method, path, body string)
 	r.GET("/aml/alerts", h.ListAMLAlerts)
 	r.GET("/aml/alerts/:id", h.GetAMLAlert)
 	r.POST("/aml/alerts/:id/transition", h.TransitionAMLAlert)
+	r.GET("/aml/sanctions", h.GetSanctionsStatus)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
 	var resp map[string]any
@@ -109,4 +118,12 @@ func TestAMLRoutes_RunWithoutInfrastructure(t *testing.T) {
 	status, resp = serveAML(t, &AdminHandler{}, admin, http.MethodGet, "/aml/alerts", "")
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 	assert.Equal(t, codeAMLUnavailable, resp["code"])
+
+	status, resp = serveAML(t, &AdminHandler{Sanctions: fakeSanctions{}}, admin, http.MethodGet, "/aml/sanctions", "")
+	require.Equal(t, http.StatusOK, status, resp)
+	assert.Equal(t, float64(3), resp["info"].(map[string]any)["version"])
+	_, resp = serveAML(t, &AdminHandler{Sanctions: fakeSanctions{err: rowseal.ErrUnverified}}, admin, http.MethodGet, "/aml/sanctions", "")
+	assert.Equal(t, codeRowUnverified, resp["code"])
+	status, _ = serveAML(t, &AdminHandler{}, admin, http.MethodGet, "/aml/sanctions", "")
+	assert.Equal(t, http.StatusServiceUnavailable, status, "the provider is off")
 }

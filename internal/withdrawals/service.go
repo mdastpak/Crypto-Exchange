@@ -452,6 +452,8 @@ func (s Service) check(ctx context.Context, tx *sql.Tx, userHK string, r Request
 			Symbol: cur.Info.Symbol, Amount: r.Amount.Decimal(), IPCountry: r.Country, Counterparty: d.ID}
 		if d.Fiat() {
 			ev.CounterpartyCountry = s.FiatCountry
+		} else {
+			ev.CounterpartyAddress, ev.CounterpartyNetwork = d.Value, d.Network
 		}
 		since := d.CreatedAt
 		ev.CounterpartySince = &since

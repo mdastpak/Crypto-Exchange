@@ -22,6 +22,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/rebrand"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
+	"github.com/mdastpak/crypto-exchange/internal/sanctions"
 	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
 )
 
@@ -65,6 +66,12 @@ type AMLDesk interface {
 	Alerts(ctx context.Context, status aml.Status, userHK string, limit int) ([]aml.Alert, error)
 	Alert(ctx context.Context, id string) (aml.Alert, error)
 	Transition(ctx context.Context, id string, to aml.Status, adminHK, resolution string, origin audit.Event) (aml.Alert, error)
+}
+
+// SanctionsStatus is the state of the sanctions list (#73):
+// *sanctions.Screener.
+type SanctionsStatus interface {
+	Status(ctx context.Context) (sanctions.Status, error)
 }
 
 // PayoutDesk is where administrators pay the payouts of withdrawals by

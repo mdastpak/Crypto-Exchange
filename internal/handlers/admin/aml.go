@@ -192,6 +192,32 @@ func (h *AdminHandler) TransitionAMLAlert(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, i18n.M("AML_ALERT_UPDATED"), a)
 }
 
+// @Summary Get the state of the sanctions list
+// @Description The version of the OFAC list that the sanctions rules screen against (#73): when it was downloaded, when a download last found it current, its entries, and whether it is stale, too old or missing, which holds every operation that a sanctions rule screens for review. 503 aml_unavailable while the provider or the AML rules are off.
+// @Tags admin aml
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse{info=sanctions.Status}
+// @Failure 401 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "row_unverified"
+// @Failure 503 {object} models.APIResponse "aml_unavailable"
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/aml/sanctions [get]
+func (h *AdminHandler) GetSanctionsStatus(c *gin.Context) {
+	if h.Sanctions == nil {
+		helpers.SendError(c, http.StatusServiceUnavailable, codeAMLUnavailable, i18n.M("AML_UNAVAILABLE"), nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	st, err := h.Sanctions.Status(ctx)
+	if err != nil {
+		sendAMLError(c, err)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SANCTIONS_LIST_RETRIEVED"), st)
+}
+
 func sendAMLError(c *gin.Context, err error) {
 	var transition *aml.ErrTransition
 	switch {

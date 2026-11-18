@@ -175,7 +175,9 @@ aml_rules:
     severity: "HIGH"
 
   # Screening rules ask a provider; without one configured they are not
-  # evaluated, and the server says so at startup.
+  # evaluated, and the server says so at startup. The SANCTIONS rules that
+  # name ofac screen against the OFAC list; the others wait for Chainalysis
+  # or TRM.
   - id: "mixer_deposit"
     name: "Mixer/Tumbler Deposit Detection"
     description: "Deposits from known mixer or tumbler addresses"
@@ -224,9 +226,11 @@ aml_rules:
     action: "BLOCK"
     severity: "CRITICAL"
 
+  # A name alone does not tell a person: a match of the user's name holds
+  # the operation for a review, whatever the action.
   - id: "sanctions_user"
     name: "Sanctioned User"
-    description: "The account holder is on a sanctions list"
+    description: "The account holder's name is on a sanctions list"
     rule_type: "SANCTIONS"
     enabled: true
     applies_to: ["deposit", "withdrawal", "trade"]
@@ -234,7 +238,7 @@ aml_rules:
       providers: ["ofac", "chainalysis", "trm"]
       screen: "user"
     time_window_hours: 1
-    action: "FREEZE"
+    action: "REVIEW"
     severity: "CRITICAL"
 
   - id: "sanctions_deposit_address"

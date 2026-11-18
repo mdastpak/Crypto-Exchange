@@ -995,6 +995,13 @@ compliance:
     screen_on_withdrawal: true
     screen_on_trade: false
     periodic_rescreen_hours: 24
+    # The OFAC list (#73), which the AML rules of type SANCTIONS screen
+    # against: downloaded every refresh_hours, held for review past
+    # max_list_age_hours without a download, and matched by name from
+    # name_match_threshold.
+    refresh_hours: 24
+    max_list_age_hours: 72
+    name_match_threshold: 0.92
 
   # The AML rules (#73), which evaluate each withdrawal. rules_path names
   # a rules file; empty is the file built into this release,
