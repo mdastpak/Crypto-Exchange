@@ -1500,7 +1500,7 @@ The deposit, withdrawal (#70), OTC (#61, #62), and order (#76) paths all check t
 
 ### Granting a level
 
-The identity checks ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [#162](https://github.com/mdastpak/Crypto-Exchange/issues/162)) and the KYC review ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#71](https://github.com/mdastpak/Crypto-Exchange/issues/71)) will grant the levels. Until then, an operator sets the level of a user with `cmd/admin` ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)). This is for the testnet run of M2 and for manual review:
+The identity checks ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)) grant level 1, and an approved [KYC application](#kyc-applications) ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)) grants level 2. An operator may still set the level of a user with `cmd/admin` ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)), as for the testnet run of M2, or to lower a level:
 
 ```sh
 admin -operator "Sara" verification grant -user alice@example.com -level 2 -reason "testnet run" -dry-run
