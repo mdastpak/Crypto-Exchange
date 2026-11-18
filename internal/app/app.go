@@ -42,6 +42,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/idcheck"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/logging"
@@ -286,6 +287,9 @@ func run() error {
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
+	// The identity checks and the destinations that wait for their
+	// provider (#158).
+	workers = append(workers, startIdentityRetries(handlers, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
 	// The snapshots and the reconciliation of the books (#60).
 	workers = append(workers, startLedgerAudit(services.Postgres.DB))
 	if otpWorker != nil {
@@ -837,15 +841,27 @@ func useConfirmationSender(h *InfraHandlers, sender notify.OTPSender) {
 // destinations (#160), and the keys that read the national IDs it is
 // checked against.
 func configureDestinations(h *InfraHandlers) error {
-	bank, err := identity.BankFromConfig(config.Config.Identity.BankOwnership)
+	bank, err := identity.BankFromConfig(config.Config.Identity.BankOwnership, config.Config.Identity.MobileOwnership)
 	if err != nil {
 		return err
+	}
+	// The identity checks (#158) ask the same provider about a national ID
+	// and its date of birth, and the mobile ownership provider about the
+	// user's number.
+	if bank != nil && h.DataKeys != nil && h.UserStore != nil {
+		mobile, _ := identity.FromConfig(config.Config.Identity.MobileOwnership)
+		h.User.Identity = idcheck.Service{DB: h.UserStore.DB, Inquiry: bank, Mobile: mobile, Sealer: h.DataKeys,
+			Timeout: config.Config.Identity.BankOwnership.Timeout()}
 	}
 	store, ok := h.User.Destinations.(destinations.Store)
 	if !ok {
 		return nil
 	}
-	store.Ownership, store.OwnershipTimeout = bank, config.Config.Identity.BankOwnership.Timeout()
+	store.Ownership = nil
+	if bank != nil {
+		store.Ownership = bank
+	}
+	store.OwnershipTimeout = config.Config.Identity.BankOwnership.Timeout()
 	if h.DataKeys != nil {
 		store.NationalIDs = h.DataKeys
 	}
@@ -854,6 +870,55 @@ func configureDestinations(h *InfraHandlers) error {
 		log.Println("WARNING: identity.bank_ownership.provider is none: users cannot add cards, IBANs, or bank accounts as withdrawal destinations")
 	}
 	return nil
+}
+
+// identityRetryInterval is how often each instance asks the provider again
+// about the identity checks and the destinations that wait for it (#158).
+const identityRetryInterval = time.Minute
+
+// startIdentityRetries asks the provider again, every minute, about the
+// pending identity checks and the cards and IBANs added pending (#158),
+// while the scheduler is not paused. Each instance runs it; a check is
+// decided once, by the first to commit.
+func startIdentityRetries(h *InfraHandlers, paused func() bool) worker {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(identityRetryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if paused() {
+				continue
+			}
+			runCtx, stop := context.WithTimeout(ctx, identityRetryInterval)
+			if service, ok := h.User.Identity.(idcheck.Service); ok {
+				if _, err := service.RetryDue(runCtx, 100); err != nil {
+					log.Printf("Error retrying the identity checks: %v", err)
+				}
+			}
+			if store, ok := h.User.Destinations.(destinations.Store); ok {
+				if _, err := store.CheckPending(runCtx, 100); err != nil {
+					log.Printf("Error checking the pending withdrawal destinations: %v", err)
+				}
+			}
+			stop()
+		}
+	}()
+	return worker{"identity retries", func(stopCtx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-stopCtx.Done():
+			return stopCtx.Err()
+		}
+	}}
 }
 
 // configureAdminSignIn enables admin sign-in when the data keys are loaded:
@@ -1400,6 +1465,11 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/verification", ih.User.GetVerification)
+		// The identity checks of #158: a national ID and its date of birth.
+		// A check asks a paid provider, so it has the limit of a code
+		// request, and the checks of a user are limited per day.
+		activeGroup.GET("/identity", ih.User.GetIdentity)
+		activeGroup.POST("/identity", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.SubmitIdentity)
 		// The user's own balances and their history (#365): reads, with
 		// the limits of every user route.
 		activeGroup.GET("/balances", ih.User.GetBalances)

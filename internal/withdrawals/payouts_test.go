@@ -262,7 +262,9 @@ func (f fixture) rials(t *testing.T, balance string) (iban, irr string) {
 	ctx := context.Background()
 	book, ok := f.Destinations.(destinations.Store)
 	require.True(t, ok)
-	require.NoError(t, identity.SaveNationalID(ctx, f.DB, book.NationalIDs, f.user, "0499370899", "stub", "", time.Now()))
+	require.NoError(t, identity.Save(ctx, f.DB, book.NationalIDs, f.user, identity.Verified{
+		Person:   identity.Person{NationalID: "0499370899", BirthDate: time.Date(1990, 3, 21, 0, 0, 0, 0, time.UTC)},
+		Provider: "stub", At: time.Now()}))
 	d, err := book.Add(ctx, f.user, destinations.Request{Kind: destinations.KindIBAN, Number: makeIBAN("0540102680020817909002")}, origin)
 	require.NoError(t, err)
 	require.NoError(t, f.DB.QueryRow(`SELECT hk FROM currencies WHERE info->>'symbol' = 'IRR'`).Scan(&irr))

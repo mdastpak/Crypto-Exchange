@@ -34,6 +34,7 @@ const (
 	codeWithdrawalNotFound           = "withdrawal_not_found"
 	codeWithdrawalNotCancellable     = "withdrawal_not_cancellable"
 	codeDestinationNotUsableYet      = "destination_not_usable_yet"
+	codeDestinationOwnershipPending  = "destination_ownership_pending"
 	codeConfirmationNotConfirmed     = "confirmation_not_confirmed"
 	codeConfirmationConsumed         = "confirmation_consumed"
 	codeConfirmationOfAnotherRequest = "confirmation_mismatch"
@@ -87,7 +88,7 @@ func (h *UserHandler) withdrawalsCaller(c *gin.Context) (string, bool) {
 // @Failure 400 {object} models.APIResponse "validation_failed, or idempotency_key_required"
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold"
-// @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified"
+// @Failure 409 {object} models.APIResponse "insufficient_balance, withdrawals_closed, destination_not_usable_yet, destination_ownership_pending, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified"
 // @Failure 503 {object} models.APIResponse "withdrawals_unavailable or feature_locked"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/user/withdrawals [post]
@@ -250,6 +251,8 @@ func sendWithdrawalError(c *gin.Context, userHK string, err error) {
 	case errors.As(err, &notYet):
 		helpers.SendError(c, http.StatusConflict, codeDestinationNotUsableYet, i18n.M("DESTINATION_NOT_USABLE_YET"),
 			gin.H{"usable_from": notYet.Until.UTC().Format(time.RFC3339)})
+	case errors.Is(err, destinations.ErrOwnershipPending):
+		helpers.SendError(c, http.StatusConflict, codeDestinationOwnershipPending, i18n.M("DESTINATION_OWNERSHIP_PENDING"), nil)
 	case errors.Is(err, withdrawals.ErrIdempotencyConflict):
 		helpers.SendError(c, http.StatusConflict, codeIdempotencyKeyReused, i18n.M("IDEMPOTENCY_KEY_REUSED"), nil)
 	case errors.Is(err, withdrawals.ErrClosed):

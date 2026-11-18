@@ -6,20 +6,26 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Providers of identity.bank_ownership.provider. The providers' APIs, such
-// as Jibit's and Finnotech's, are added as their contracts arrive.
+// Providers of identity.bank_ownership.provider (#158). jibit uses the
+// endpoint and the credentials of identity.mobile_ownership, one Jibit
+// account for both.
 const (
-	BankOwnershipNone = "none"
-	BankOwnershipStub = "stub"
+	BankOwnershipNone  = "none"
+	BankOwnershipStub  = "stub"
+	BankOwnershipJibit = "jibit"
 )
 
 // BankOwnershipConfig configures the check that a card, an IBAN, or a bank
 // account belongs to the national ID of its user (#158, #160).
 type BankOwnershipConfig struct {
-	// Provider is none or stub. With none, no card, IBAN, or account can
-	// be added to the withdrawal destinations, since its owner cannot be
-	// checked. stub matches every number, for development, and is refused
-	// in release mode.
+	// Provider is none, stub, or jibit. It checks the owner of a card or an
+	// IBAN, and the national ID with its date of birth (#158). With none,
+	// no card, IBAN, or account can be added to the withdrawal
+	// destinations, and no identity can be checked. stub matches every
+	// number and every national ID, for development, and is refused in
+	// release mode. jibit needs identity.mobile_ownership to be jibit too,
+	// whose endpoint and credentials it uses; it checks cards and IBANs,
+	// not bank account numbers.
 	Provider string `yaml:"provider"`
 	// TimeoutSeconds bounds one check, with its retries.
 	TimeoutSeconds int `yaml:"timeout_seconds"`
@@ -95,8 +101,12 @@ func (w WithdrawalsConfig) Destinations() int {
 func (c *Configuration) withdrawalProblems(p *problems) {
 	switch c.Identity.BankOwnership.Provider {
 	case "", BankOwnershipNone, BankOwnershipStub:
+	case BankOwnershipJibit:
+		if c.Identity.MobileOwnership.Provider != MobileOwnershipJibit {
+			p.add("identity.bank_ownership.provider", "is \"jibit\", which uses the Jibit account of identity.mobile_ownership; set that provider to jibit too")
+		}
 	default:
-		p.add("identity.bank_ownership.provider", "is %q; it must be none or stub until a provider's API is added", c.Identity.BankOwnership.Provider)
+		p.add("identity.bank_ownership.provider", "is %q; it must be none, stub, or jibit", c.Identity.BankOwnership.Provider)
 	}
 	if v := c.Identity.BankOwnership.TimeoutSeconds; v < 0 || v > 60 {
 		p.add("identity.bank_ownership.timeout_seconds", "is %d; it must be from 1 to 60", v)

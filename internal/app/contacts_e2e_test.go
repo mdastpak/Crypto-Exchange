@@ -443,7 +443,9 @@ func (e *e2eEnv) withNationalID(t *testing.T, userID, nationalID string) *identi
 	}
 	e.handlers.UserStore.Sealer, e.handlers.UserStore.Ownership, e.handlers.User.Ownership = sealer, stub, stub
 	e.handlers.SignIn.Sealer, e.handlers.SignIn.Ownership, e.handlers.Public.Ownership = sealer, stub, stub
-	require.NoError(t, identity.SaveNationalID(context.Background(), e.db, sealer, userID, nationalID, "stub", "", time.Now()))
+	require.NoError(t, identity.Save(context.Background(), e.db, sealer, userID, identity.Verified{
+		Person:   identity.Person{NationalID: nationalID, BirthDate: time.Date(1990, 3, 21, 0, 0, 0, 0, time.UTC)},
+		Provider: "stub", At: time.Now()}))
 	return stub
 }
 

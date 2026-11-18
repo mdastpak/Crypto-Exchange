@@ -10378,6 +10378,170 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/user/identity": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The state of the signed-in user's identity: none, pending while the provider cannot answer and the server asks again, verified, or rejected with its reason (mismatched or taken). national_id is masked. attempts_left is how many more checks may fail today. A verified national ID and a card or IBAN of the user's withdrawal destinations whose owner the provider matched raise the user to verification level 1.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-identity"
+                ],
+                "summary": "My identity check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/idcheck.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "identity_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks the national ID and the date of birth of the signed-in user at the national registry, through the identity provider, and, when the account has a verified mobile number, that the number is registered to the national ID. 200 with the identity: verified, or rejected with the reason mismatched, which is final for that check; 202 while the provider cannot answer: the check is pending, the server asks again, and nothing is approved on a failure. One person has one account: a national ID verified for another account answers 409 national_id_taken. A verified identity cannot be changed here (409 identity_already_verified); one check is pending at a time (409 identity_check_pending); five failed checks in a day stop the checks until the next (429 identity_attempts_exceeded). Audited as user.identity_check, never with the values.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-identity"
+                ],
+                "summary": "Verify my identity",
+                "parameters": [
+                    {
+                        "description": "The national ID and the date of birth",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.IdentityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/idcheck.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/idcheck.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "national_id_taken, identity_already_verified, identity_check_pending, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "identity_attempts_exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "identity_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/logout": {
             "post": {
                 "security": [
@@ -12169,7 +12333,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID, which the provider checks now: 409 national_id_required without one, 403 destination_not_owned when it is someone else's, 503 ownership_check_unavailable when the provider cannot answer. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.",
+                "description": "Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID and date of birth (#158), which the provider checks now: 409 national_id_required without them (verify them with POST /user/identity), 403 destination_not_owned when it is someone else's. When the provider cannot answer, the card or IBAN is added pending (202, ownership_pending true): it is not usable, the server checks it again until the provider answers, and removes it if its owner does not match. 503 ownership_check_unavailable without a provider, or for a bank account number, which the provider does not check. A matched card, IBAN, or account of a user with a verified identity at level 0 raises them to level 1; such a user may add one before, though their withdrawals still need the level. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.",
                 "consumes": [
                     "application/json"
                 ],
@@ -12194,6 +12358,24 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/destinations.Destination"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
                             "allOf": [
                                 {
@@ -12490,7 +12672,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified",
+                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, destination_ownership_pending, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -14548,6 +14730,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "tron"
                 },
+                "ownership_pending": {
+                    "description": "OwnershipPending is a card or an IBAN whose owner the provider could\nnot check yet (#158): it is not usable, and is checked again until\nthe provider answers. A mismatch then removes it.",
+                    "type": "boolean"
+                },
                 "usable_from": {
                     "description": "UsableFrom is when a withdrawal may use it.",
                     "type": "string"
@@ -14717,6 +14903,40 @@ const docTemplate = `{
                     "description": "NativeName is the name of the language in itself, for a language\nswitcher.",
                     "type": "string",
                     "example": "فارسی"
+                }
+            }
+        },
+        "idcheck.Status": {
+            "type": "object",
+            "properties": {
+                "attempts_left": {
+                    "description": "AttemptsLeft is how many more checks may fail today.",
+                    "type": "integer"
+                },
+                "national_id": {
+                    "description": "NationalID is the national ID of a verified or pending identity,\nmasked.",
+                    "type": "string",
+                    "example": "00******79"
+                },
+                "reason": {
+                    "description": "Reason is why the last check was rejected: mismatched, when the\nregistry does not have that national ID with that date of birth or\nthe mobile number is not registered to it, or taken, when the\nnational ID is verified for another account.",
+                    "type": "string",
+                    "enum": [
+                        "mismatched",
+                        "taken"
+                    ]
+                },
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "none",
+                        "pending",
+                        "verified",
+                        "rejected"
+                    ]
+                },
+                "verified_at": {
+                    "type": "string"
                 }
             }
         },
@@ -18459,6 +18679,26 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "user.IdentityRequest": {
+            "type": "object",
+            "required": [
+                "birth_date",
+                "national_id"
+            ],
+            "properties": {
+                "birth_date": {
+                    "description": "BirthDate is the date of birth in the Gregorian calendar, YYYY-MM-DD.",
+                    "type": "string",
+                    "format": "date",
+                    "example": "1991-08-16"
+                },
+                "national_id": {
+                    "description": "NationalID is the ten digits of the Iranian national ID.",
+                    "type": "string",
+                    "example": "0012345679"
                 }
             }
         },

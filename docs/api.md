@@ -64,6 +64,11 @@ An error response contains only a fixed message for each error. Internal details
 | `verification_required` | `403` | The user's [verification level](#verification-levels) does not allow the action; `info.required_level` is the level it needs |
 | `withdrawal_limit_exceeded` | `403` | The withdrawal is above a limit of the user's [verification level](#verification-levels); `info` has the limit and, for the daily one, what remains |
 | `withdrawal_limit_unconfigured` | `403` | The currency has no withdrawal limit at the user's level, which limits other currencies: a configuration error, refused rather than unlimited ([#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); `info` has `action`, `level`, and `currency_hk` |
+| `national_id_taken` | `409` | The national ID of an [identity check](#identity) is verified for another account: one person has one account |
+| `identity_already_verified`, `identity_check_pending` | `409` | The [identity](#identity) is verified already, or its check waits for the provider |
+| `identity_attempts_exceeded` | `429` | Five [identity checks](#identity) failed today |
+| `identity_unavailable` | `503` | Identities cannot be checked now: no provider, or no data keys |
+| `destination_ownership_pending` | `409` | The [withdrawal destination](#withdrawal-destinations) is a card or an IBAN whose owner the provider has not checked yet |
 | `account_not_found` | `404` | The `account` of a [balance or history](#balances-and-history) request is not a sub-account of the user: another user's, unknown, or deleted, alike |
 | `balance_unverified` | `503` | A [balance](#get-userbalances) failed its row seal and is not shown; `info.currency_hk` names its currency, and an integrity finding is recorded |
 | `destination_not_owned` | `403` | The card, IBAN, or account of a new [withdrawal destination](#withdrawal-destinations) is not the user's |
@@ -1549,6 +1554,32 @@ One entry can change several balances, such as a transfer's `LOCK` and `TRANSFER
 
 Each combination of filters is a range scan of `balance_changes_user_history` or, with a currency, `balance_changes_user_currency_history` (migration 43). A test shows this with `EXPLAIN`.
 
+## Identity
+
+The check of a user's identity ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)): their national ID and date of birth, at the national registry through the identity provider, and, when the account has a verified mobile number, that the number is registered to the national ID. A verified national ID, with a card or an IBAN of the user's [withdrawal destinations](#withdrawal-destinations) whose owner the provider matched, raises the user to [verification level](#verification-levels) 1.
+
+### `GET /user/identity`
+
+`info.state` is `none`, `pending` while the provider cannot answer and the server asks again, `verified`, or `rejected`, with `reason`:
+
+- `mismatched`: the registry does not have that national ID with that date of birth, or the mobile number is not registered to it. Final for that check.
+- `taken`: the national ID is verified for another account.
+
+`national_id` is masked, such as `00******79`, `verified_at` is when it was verified, and `attempts_left` is how many more checks may fail today.
+
+### `POST /user/identity`
+
+`{"national_id": "0012345679", "birth_date": "1991-08-16"}`, the date of birth in the Gregorian calendar. The answer is `200` with the identity, verified or rejected, or `202` while the provider cannot answer. A pending check is asked again every minute or so, waiting from a minute to an hour between attempts, and nothing is approved on a failure.
+
+- **One person, one account.** A national ID verified for another account answers `409 national_id_taken`, and the refusal is recorded and audited. The national ID is stored encrypted with a keyed blind index, unique among verified accounts.
+- `409 identity_already_verified` for a verified identity, which only support can change. A national ID stored without a date of birth may be checked again with one, but not replaced.
+- `409 identity_check_pending` while a check of the user waits for the provider.
+- `429 identity_attempts_exceeded` after five failed checks, mismatched or taken, in a day, so that national IDs cannot be tried one by one.
+- `400 validation_failed` for a national ID that is not ten digits with a valid check digit, or a date that is not a date of birth.
+- `503 identity_unavailable` without a provider or without the data keys.
+
+The route has the rate limit of a code request and needs the profile changes to be open. Audited as `user.identity_check`, with the check, the provider, and its reference, never the values. A check is a sealed row of `identity_checks`, and the verified national ID a sealed row of `user_national_ids` ([data protection](data-protection.md#row-seals)).
+
 ## Withdrawal destinations
 
 A withdrawal goes only to a destination in the user's list, which the withdrawal names by its `id`. A number or address typed with the withdrawal is never used ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).
@@ -1560,11 +1591,13 @@ A withdrawal goes only to a destination in the user's list, which the withdrawal
 | `account` | A bank account number, 5 to 26 digits, with its `bank` | It must belong to the user's verified national ID |
 | `crypto` | An address on a `network`: `bitcoin` (legacy, P2SH, or SegWit), `ethereum` (in one case or EIP-55 checksummed), or `tron` | It must be valid for its network |
 
-**Ownership.** A provider checks, when a card, an IBAN, or an account is added, that it belongs to the user's verified national ID ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [`identity.bank_ownership`](configuration.md#identity)).
+**Ownership.** A provider checks, when a card, an IBAN, or an account is added, that it belongs to the user's verified national ID and date of birth ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [`identity.bank_ownership`](configuration.md#identity)).
 
-- Without a verified national ID, the answer is `409 national_id_required`.
+- Without a verified [identity](#identity), with its date of birth, the answer is `409 national_id_required`.
 - When the card, IBAN, or account is someone else's, the answer is `403 destination_not_owned`, and the attempt is audited.
-- When the provider cannot answer, the answer is `503 ownership_check_unavailable`.
+- When the provider cannot answer, the card or IBAN is added **pending**: the answer is `202` with `ownership_pending: true`. It is listed but not usable (`409 destination_ownership_pending` for a withdrawal). Each instance asks the provider again every minute, waiting from a minute to an hour between attempts. A match makes it usable, and a mismatch removes it, audited as `withdrawal_destination.ownership_check`. Nothing is approved on a failure.
+- Without a provider, or for a bank account number, which Jibit does not check, the answer is `503 ownership_check_unavailable`.
+- **Level 1.** A matched card, IBAN, or account of a user with a verified identity at level 0 raises them to level 1, in the same transaction, audited as `user.verification_set`. Such a user may add one at level 0, since it is how they reach level 1. Their withdrawals still need the level.
 - A card, an IBAN, or an account can be in only one user's list at a time (`409 destination_taken`). The same crypto address can be in several lists.
 
 **Bank.** Each fiat destination records its bank: from the card's prefix, from the IBAN's bank code, or as given for an account. Payouts prefer an account-to-account transfer when they can make one in the same bank ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). A card whose prefix is not known has no bank.

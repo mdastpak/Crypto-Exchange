@@ -174,6 +174,10 @@ type Destination struct {
 	CreatedAt  time.Time `json:"created_at"`
 	// Version is the version of the row, for the removal.
 	Version int64 `json:"version" example:"1"`
+	// OwnershipPending is a card or an IBAN whose owner the provider could
+	// not check yet (#158): it is not usable, and is checked again until
+	// the provider answers. A mismatch then removes it.
+	OwnershipPending bool `json:"ownership_pending,omitempty"`
 }
 
 // Resolved is a destination that a withdrawal may use now, with its number
