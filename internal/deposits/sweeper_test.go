@@ -169,6 +169,19 @@ func TestSweeper_SweepChangedInSQL(t *testing.T) {
 	var findings int
 	require.NoError(t, w.DB.QueryRow(`SELECT COUNT(*) FROM integrity_findings WHERE table_name = 'sweeps'`).Scan(&findings))
 	assert.Positive(t, findings)
+
+	// A contract changed in SQL is not swept.
+	w2 := newWatch(t)
+	w2.credited()
+	other := w2.signer()
+	other.set(usdtContract, SweepState{Status: SweepPending})
+	_, err = w2.DB.Exec(`UPDATE currency_networks SET contract_address = 'TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL' WHERE network = 'tron' AND currency_hk = $1`, w2.usdt)
+	require.NoError(t, err)
+	_, err = w2.sweeper(other).Run(ctx)
+	require.NoError(t, err)
+	for _, c := range other.calls {
+		assert.NotEqual(t, "TNPeeaaFB7K9cmo4uQpcU32zGK8G1NYqeL", c.asset, "the contract changed in SQL is never asked")
+	}
 }
 
 // Sweepers that run at once start one sweep per address.

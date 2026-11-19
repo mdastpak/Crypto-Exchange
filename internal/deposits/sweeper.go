@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/rowseal"
 )
 
@@ -222,13 +223,14 @@ func addressOf(ctx context.Context, q querier, id string) (address string, index
 // assetOf names a currency of the network to the signer: a token by its
 // contract, and the native asset by TRX.
 func (s *Sweeper) assetOf(ctx context.Context, currencyHK string) (string, error) {
-	var contract sql.NullString
-	if err := s.DB.QueryRowContext(ctx, `SELECT contract_address FROM currency_networks WHERE currency_hk = $1 AND network = $2`,
-		currencyHK, s.Network).Scan(&contract); err != nil {
+	// Checked against its seal: a contract changed in SQL would have the
+	// signer sweep another asset.
+	n, err := currencies.NetworkOf(ctx, s.DB, currencyHK, s.Network, false)
+	if err != nil {
 		return "", err
 	}
-	if contract.String != "" {
-		return contract.String, nil
+	if n.ContractAddress != "" {
+		return n.ContractAddress, nil
 	}
 	return "TRX", nil
 }
