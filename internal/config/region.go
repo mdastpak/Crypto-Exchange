@@ -122,6 +122,16 @@ var regionFeatures = []regionFeature{
 		on:      venueRegionSettings,
 	},
 	{
+		what:    "Sumsub as the KYC provider (#72), which does not serve Iran",
+		regions: []region.Region{region.International},
+		on: func(c *Configuration) []regionSetting {
+			if c.KYCProvider() != nil {
+				return []regionSetting{{"compliance.kyc.providers[sumsub].enabled", "true", "turn it off; the manual review serves every region"}}
+			}
+			return nil
+		},
+	},
+	{
 		what:    "a site for visitors from Iran",
 		regions: []region.Region{region.Iran},
 		on: func(c *Configuration) []regionSetting {

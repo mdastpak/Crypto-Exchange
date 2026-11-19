@@ -1,0 +1,5 @@
+- The TRON signer sweeps the deposit addresses ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). See [sweeps](docs/custody.md#sweeps).
+  - `POST /v1/sweeps` takes the sweep of an asset from a deposit address a step further, once by its key. For a token, the hot wallet first sends the address the TRX of its fee (`sweeps.top_up_sun`). The address then sends its whole balance, TRX less `sweeps.reserve_sun`, signed with its own key, and the sweep completes once that is final.
+  - An asset with a `hot_cap` goes to `sweeps.cold_address` when the hot wallet would hold more than its cap.
+  - A transaction that expired untaken is signed again; one that failed on chain fails the sweep.
+  - `tron.Node` reads the TRX of an address and its balance of a token.

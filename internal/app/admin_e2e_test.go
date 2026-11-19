@@ -286,7 +286,9 @@ func newE2EEnv(t *testing.T, options ...func(*config.Configuration)) *e2eEnv {
 	handlers.Public.OTPSender = sender
 	handlers.User.OTPSender = sender
 	useConfirmationSender(handlers, sender)
-	require.NoError(t, useWithdrawals(handlers, services.Postgres.DB, &config.Config))
+	rules, err := useAML(handlers, services.Postgres.DB, &config.Config, nil)
+	require.NoError(t, err)
+	require.NoError(t, useWithdrawals(handlers, services.Postgres.DB, &config.Config, rules))
 	_, _, err = newPayouts(handlers, services.Postgres.DB, &config.Config)
 	require.NoError(t, err)
 	require.NoError(t, configureAdminSignIn(handlers, services, sender))

@@ -47,6 +47,7 @@ At start the server logs one line with its posture: the mode, the region, the ro
 | `otp.auth.dev_log_codes` | `false` |
 | `keys.provider` | Set, not `local`, and a Transit address with `https`. The data keys protect the sign-in codes, the authenticator secrets of administrators, and the row seals, and every instance must share them. |
 | `identity.mobile_ownership.provider` | Not `stub`, which matches every mobile number |
+| `compliance.kyc.storage.use_tls` | `true` while `compliance.kyc.storage.endpoint` is set: the KYC documents reach their storage over HTTPS |
 | `venues.credentials.provider` | `openbao`, with an `https` address, while a venue is enabled: release mode never reads the keys of the exchanges from a file. See [`venues`](#venues). |
 | `venues.exchanges.<name>.base_url` | Empty, or an `https://` address |
 
@@ -67,6 +68,12 @@ In an international release, the server and the market data worker refuse to sta
 | Prices in tomans | `IRT` in `market_data.candles.quotes` | market data worker |
 | A site for Iran | `IR` in the `countries` of a site in `sites.list` | server |
 | Nobitex as a venue of the OTC trades ([#384](https://github.com/mdastpak/Crypto-Exchange/issues/384)) | `venues.exchanges.nobitex.enabled` | server |
+
+The other way round, an `ir` release refuses a feature of the `international` region:
+
+| Feature | Setting that turns it on | Checked by |
+| --- | --- | --- |
+| Sumsub as the KYC provider ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)), which does not serve Iran | `compliance.kyc.providers[sumsub].enabled` | server |
 
 The defaults that depend on the region:
 
@@ -425,8 +432,8 @@ The mobile ownership check ([#253](https://github.com/mdastpak/Crypto-Exchange/i
 | `mobile_ownership.api_key`, `mobile_ownership.secret_key` | none | The provider's credentials, required for `jibit`. Set them with `IDENTITY_MOBILE_OWNERSHIP_API_KEY` and `IDENTITY_MOBILE_OWNERSHIP_SECRET_KEY`. |
 | `mobile_ownership.timeout_seconds` | `10` | From 1 to 60. How long one check may take, with its retries. A check that does not finish changes nothing and answers `503 identity_unavailable`. |
 | `mobile_ownership.recheck_days` | `30` | From 1 to 365. How long a successful check of a number counts before a sign-in with it checks it again ([#252](https://github.com/mdastpak/Crypto-Exchange/issues/252)). |
-| `bank_ownership.provider` | `none` | `none` or `stub`, until the APIs of Jibit and Finnotech are added. It checks that a card, an IBAN, or a bank account belongs to the user's verified national ID before it joins the [withdrawal destinations](api.md#withdrawal-destinations) ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)). With `none`, cards, IBANs, and accounts cannot be added (`503 ownership_check_unavailable`); crypto addresses are not affected. `stub` matches every number, for development; release mode refuses it. |
-| `bank_ownership.timeout_seconds` | `10` | From 1 to 60. How long one check may take. A check that does not finish adds nothing and answers `503 ownership_check_unavailable`. |
+| `bank_ownership.provider` | `none` | `none`, `stub`, or `jibit` ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)). It checks that a card, an IBAN, or a bank account belongs to the user's verified national ID and date of birth before it joins the [withdrawal destinations](api.md#withdrawal-destinations) ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)), and the national ID with its date of birth when the user [verifies their identity](api.md#identity). With `none`, cards, IBANs, and accounts cannot be added (`503 ownership_check_unavailable`) and identities cannot be checked (`503 identity_unavailable`); crypto addresses are not affected. `stub` matches every number and national ID, for development; release mode refuses it. `jibit` uses the endpoint and the credentials of `mobile_ownership`, which must be `jibit` too: one Jibit account. It checks cards and IBANs, not bank account numbers. The client follows the documented shape of Jibit's Identicator API (the matching service, with the date of birth in the Persian calendar); check it against the contracted version and its sandbox before production. |
+| `bank_ownership.timeout_seconds` | `10` | From 1 to 60. How long one check may take. When the provider cannot answer, a card or an IBAN is added pending and an identity check stays pending: each instance asks again every minute, waiting from a minute to an hour between attempts, and approves nothing on a failure. |
 
 ### `favorites`
 
@@ -814,9 +821,9 @@ The following sections are parsed, and some receive defaults, but no code uses t
 | --- | --- | --- |
 | `exchange` | Display name and time zone. The maintenance window that was reserved here is replaced by the scheduled [maintenance controls](api.md#maintenance-and-lockdowns) ([#235](https://github.com/mdastpak/Crypto-Exchange/issues/235)); `exchange.maintenance_window` is no longer read. | none |
 | `markets` | Default maker and taker fees, order type switches | [#57](https://github.com/mdastpak/Crypto-Exchange/issues/57), [#77](https://github.com/mdastpak/Crypto-Exchange/issues/77) |
-| `custody` | Custody providers per chain | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
+| `custody` | Custody providers per chain. Read: the `xpub` of an enabled provider of `network: tron`, the extended public key of the account m/44'/195'/0', from which the [deposit addresses](api.md#deposit-addresses) are derived; never an extended private key, which stops the server, as does an xpub that does not parse. Without one, the users get no TRON deposit address. With it, the first of `rpc_endpoints` that is not a JSON-RPC one is the node that the [deposit watcher](api.md#deposits) reads, with `api_key` (`TRONGRID_API_KEY`), and is required; it reads every `block_poll_interval_seconds` (3), credits after `confirmations_required` (19), reads `reorg_depth` (19) blocks again after a reorg, starts at `start_block` (0, the newest block) when it has read none, and takes no transfer from `hot_wallet_address` or `cold_wallet_address` as a deposit. `signer` names the [TRON signer](custody.md#the-signer) that pays the withdrawals on TRON: its `url`, which must be `https://`, the server's client certificate and key (`cert_file`, `key_file`), and the CA of the signer's certificate (`ca_file`); certificates that do not load stop the server. Without its `url`, an administrator pays them by hand. | [#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), [#69](https://github.com/mdastpak/Crypto-Exchange/issues/69) |
 | `fiat` | Banking providers | [#74](https://github.com/mdastpak/Crypto-Exchange/issues/74) |
-| `compliance` | Sanctions providers, AML rules path (`config/aml_rules.yaml`), KYC providers | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
+| `compliance` | `compliance.kyc.providers` is read for `sumsub`: while it is enabled, in the international region only, the [KYC applications](api.md#kyc-applications) are verified by Sumsub at its `level`, with `api_key` (`SUMSUB_API_KEY`), the app token, `api_secret` (`SUMSUB_API_SECRET`), the secret key that signs the requests, and `webhook_secret` (`SUMSUB_WEBHOOK_SECRET`), which verifies its webhooks, all required with an `https` `endpoint`; `manual`, the review by hand, is the default. `compliance.kyc.storage` is read: while its `endpoint` is set, with the data keys, the [KYC applications](api.md#kyc-applications) store their documents in that S3-compatible `bucket`, encrypted by the server, and with `server_side_encryption` also by the storage (SSE-S3); `access_key` and `secret_key` (`KYC_STORAGE_ACCESS_KEY`, `KYC_STORAGE_SECRET_KEY`) and the bucket are required with it. `compliance.sanctions` is read for its `ofac` provider: while it is enabled, its `endpoint`, the `sdn.csv` of OFAC, is downloaded every `refresh_hours` (24), and the [sanctions rules](aml.md#sanctions-screening) screen against it; a list that no download found current for `max_list_age_hours` (72) holds every operation they screen for review; names match from `name_match_threshold` (0.92), above 0 and at most 1. Chainalysis and TRM are not read yet. `compliance.aml` is read: `enabled` turns the [AML rules](aml.md) on, which evaluate each withdrawal, and `rules_path` names their file; empty is the file built into the release, `config/aml_rules.yaml` of its source. A file that does not load, or that lists the country of the deployment as high-risk, keeps the server from starting. `config.example.yaml` turns them on. | [#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#73](https://github.com/mdastpak/Crypto-Exchange/issues/73) |
 
 ## Environment variables
 
@@ -1028,6 +1035,11 @@ Each variable overrides one setting, and an unset or empty variable leaves it un
 | `CHAINALYSIS_API_KEY` | `api_key` of the `chainalysis` provider in `compliance.sanctions` |
 | `TRM_API_KEY` | `api_key` of the `trm` provider in `compliance.sanctions` |
 | `SUMSUB_API_KEY` | `api_key` of the `sumsub` provider in `compliance.kyc` |
+| `SUMSUB_API_SECRET` | `api_secret` of the `sumsub` provider in `compliance.kyc` |
+| `SUMSUB_WEBHOOK_SECRET` | `webhook_secret` of the `sumsub` provider in `compliance.kyc` |
+| `TRONGRID_API_KEY` | `api_key` of the custody providers of `network: tron` |
+| `KYC_STORAGE_ACCESS_KEY` | `compliance.kyc.storage.access_key` |
+| `KYC_STORAGE_SECRET_KEY` | `compliance.kyc.storage.secret_key` |
 | `ONFIDO_API_KEY` | `api_key` of the `onfido` provider in `compliance.kyc` |
 
 ## Secrets

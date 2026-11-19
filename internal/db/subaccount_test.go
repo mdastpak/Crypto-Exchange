@@ -37,7 +37,7 @@ func TestSchema_ASubAccountBelongsToItsUser(t *testing.T) {
 	var session string
 	require.NoError(t, conn.QueryRow(`INSERT INTO sessions (user_id, sub_account_id, auth_method, access_token_hash, refresh_token_hash, expires_at)
 		VALUES ($1, $2, 'otp', 'a', 'r', NOW() + interval '1 hour') RETURNING id::text`, alice, trading).Scan(&session))
-	_, err = conn.Exec(`INSERT INTO deposit_addresses (user_id, sub_account_id, currency_hk, address) VALUES ($1, $2, $3, 'T1')`,
+	_, err = conn.Exec(`INSERT INTO deposit_addresses (user_id, sub_account_id, currency_hk, network, address) VALUES ($1, $2, $3, 'tron', 'T1')`,
 		alice, trading, currency)
 	require.NoError(t, err)
 	_, err = conn.Exec(`DELETE FROM balances WHERE sub_account_id = $1`, trading)

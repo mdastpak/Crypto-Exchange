@@ -124,6 +124,19 @@ const (
 	// with the provider's reference.
 	ActionUserDestinationAdd    = "user.withdrawal_destination_add"
 	ActionUserDestinationRemove = "user.withdrawal_destination_remove"
+	// The scheduler checking again the owner of a card or an IBAN that was
+	// added pending, because the provider could not answer (#158). The
+	// target is the destination; the outcome is success when the owner
+	// matched, and failure, with the reason not_owned, when it did not and
+	// the destination was removed.
+	ActionDestinationOwnershipCheck = "withdrawal_destination.ownership_check"
+	// A check of a user's national ID and date of birth (#158), when its
+	// provider answered: success when it matched and the national ID was
+	// stored, failure with the reason mismatched, or taken when the national
+	// ID is verified for another account. The target is the user; the event
+	// holds the check, the provider, and its reference, never the values.
+	// The scheduler's retries are the system's.
+	ActionUserIdentityCheck = "user.identity_check"
 	// A user choosing how withdrawals are confirmed (#161): SMS, email, or
 	// the authenticator app. The target is the user.
 	ActionUserConfirmationMethodSet = "user.confirmation_method_set"
@@ -258,6 +271,37 @@ const (
 	// An administrator saved a new version of the OTC routing rules
 	// (#386).
 	ActionAdminOTCRoutingRules = "admin.otc_routing_rules"
+	// The AML rules file changed a rule, added one, or retired one (#73),
+	// at the sync of startup.
+	ActionAMLRuleSync = "aml.rule_sync"
+	// An AML rule hit an operation and raised an alert (#73), and what was
+	// done: an alert, a review, a refusal, or a freeze.
+	ActionAMLAlert = "aml.alert"
+	// An administrator, or the escalation, moved an AML alert to another
+	// status (#73).
+	ActionAMLAlertStatus = "aml.alert_status"
+	// A user applied for level 2 with a KYC application, added a document
+	// to it, or submitted it (#72).
+	ActionUserKYCApply    = "user.kyc_apply"
+	ActionUserKYCDocument = "user.kyc_document_add"
+	ActionUserKYCSubmit   = "user.kyc_submit"
+	// An administrator read a KYC application with its personal data, or
+	// one of its documents, or approved or rejected it (#72).
+	ActionAdminKYCView         = "admin.kyc_view"
+	ActionAdminKYCDocumentView = "admin.kyc_document_view"
+	ActionAdminKYCApprove      = "admin.kyc_approve"
+	ActionAdminKYCReject       = "admin.kyc_reject"
+	// A KYC provider's webhook moved an application (#72): submitted at
+	// the provider, approved, rejected, or sent back for new documents.
+	ActionKYCProviderVerdict = "kyc.provider_verdict"
+	// A user was given a deposit address on a network (#68), derived from
+	// the extended public key of the custody.
+	ActionUserDepositAddress = "user.deposit_address"
+	// A confirmed deposit was held rather than credited (#68): below the
+	// minimum, deposits closed, the user's deposits restricted, or the AML
+	// rules. An administrator credited a held deposit after review.
+	ActionDepositHeld        = "deposit.held"
+	ActionAdminDepositCredit = "admin.deposit_credit"
 )
 
 // Target types.
@@ -281,6 +325,15 @@ const (
 	// TargetOTCRoutingRules is a version of the OTC routing rules (#386),
 	// by its number.
 	TargetOTCRoutingRules = "otc_routing_rules"
+	// TargetAMLRule is an AML rule (#73), by its code.
+	TargetAMLRule = "aml_rule"
+	// TargetAMLAlert is an AML alert (#73), by its id.
+	TargetAMLAlert = "aml_alert"
+	// TargetDeposit is a deposit on chain (#68), by its id.
+	TargetDeposit = "deposit"
+	// TargetKYCApplication is a KYC application (#72), by its id; its
+	// documents are named in the changes.
+	TargetKYCApplication = "kyc_application"
 	// TargetOperationConfirmation is a confirmation of an operation with
 	// the second factor (#161), by its id.
 	TargetOperationConfirmation = "operation_confirmation"

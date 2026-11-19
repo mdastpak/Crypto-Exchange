@@ -45,6 +45,9 @@ var (
 	// ErrNoKeys is a store without data keys, which cannot encrypt the
 	// numbers and addresses.
 	ErrNoKeys = errors.New("the data-protection keys are not loaded")
+	// ErrOwnershipPending is a destination whose owner the provider has
+	// not checked yet (#158): it is not usable until it is.
+	ErrOwnershipPending = errors.New("the ownership of the withdrawal destination is not checked yet")
 	// ErrNotUsableYet is a destination still in its waiting period.
 	ErrNotUsableYet = errors.New("the withdrawal destination is not usable yet")
 	// ErrUnverified is a destination that does not match its seal: it
@@ -90,10 +93,11 @@ func place(id, column string) field.Place {
 // kind.
 func indexDomain(k Kind) string { return "withdrawal_destinations.value:" + string(k) }
 
-const listed = `id::text, kind, COALESCE(label, ''), masked, COALESCE(bank, ''), COALESCE(network, ''), usable_from, created_at, row_version`
+const listed = `id::text, kind, COALESCE(label, ''), masked, COALESCE(bank, ''), COALESCE(network, ''), usable_from, created_at, row_version,
+	ownership_pending_since IS NOT NULL`
 
 func scanListed(scan func(...any) error, d *Destination) error {
-	return scan(&d.ID, &d.Kind, &d.Label, &d.Masked, &d.Bank, &d.Network, &d.UsableFrom, &d.CreatedAt, &d.Version)
+	return scan(&d.ID, &d.Kind, &d.Label, &d.Masked, &d.Bank, &d.Network, &d.UsableFrom, &d.CreatedAt, &d.Version, &d.OwnershipPending)
 }
 
 // List returns the destinations of the user's book, the newest first. A
@@ -149,7 +153,17 @@ func (s Store) Add(ctx context.Context, userHK string, r Request, origin audit.E
 		return Destination{}, ErrNoKeys
 	}
 	if err := s.Levels.Check(ctx, s.DB, userHK, verification.WithdrawAction(n.Kind.Fiat())); err != nil {
-		return Destination{}, err
+		// A matched card or IBAN is how a user with a verified national ID
+		// reaches level 1 (#158), so its owner may add one before: the
+		// withdrawals themselves still need the level.
+		var refusal *verification.Refusal
+		if !n.Kind.Fiat() || !errors.As(err, &refusal) || refusal.Code != verification.CodeVerificationRequired ||
+			refusal.Required > verification.Level1 {
+			return Destination{}, err
+		}
+		if _, has, nerr := identity.NationalID(ctx, s.DB, s.NationalIDs, userHK); nerr != nil || !has {
+			return Destination{}, err
+		}
 	}
 	if err := restrictions.CheckSecurityHold(ctx, s.DB, userHK, restrictions.OpWithdraw); err != nil {
 		return Destination{}, err
@@ -168,8 +182,17 @@ func (s Store) Add(ctx context.Context, userHK string, r Request, origin audit.E
 		after["network"] = n.Network
 	}
 	var verifiedBy, verificationRef *string
+	pending := false
 	if n.Kind.Fiat() {
 		match, provider, err := s.checkOwner(ctx, userHK, n)
+		if errors.Is(err, identity.ErrUnavailable) {
+			// The provider cannot answer now (#158): the destination is
+			// added pending, unusable, and checked again until it does.
+			// Nothing is approved on a failure.
+			pending = true
+			after["ownership_provider"], after["ownership_pending"] = provider, true
+			return s.insert(ctx, userHK, n, cipher, nil, nil, pending, event, after)
+		}
 		if err != nil {
 			return Destination{}, err
 		}
@@ -186,7 +209,7 @@ func (s Store) Add(ctx context.Context, userHK string, r Request, origin audit.E
 		}
 		verifiedBy, verificationRef = &provider, &match.Ref
 	}
-	return s.insert(ctx, userHK, n, cipher, verifiedBy, verificationRef, event, after)
+	return s.insert(ctx, userHK, n, cipher, verifiedBy, verificationRef, pending, event, after)
 }
 
 // checkBook refuses a destination that the book has already, a fiat one
@@ -223,11 +246,13 @@ func (s Store) checkBook(ctx context.Context, userHK string, n normalized) error
 func (s Store) checkOwner(ctx context.Context, userHK string, n normalized) (identity.Match, string, error) {
 	// The national ID first: a user without one can do something about
 	// it, and a user with one waits for the provider.
-	nationalID, has, err := identity.NationalID(ctx, s.DB, s.NationalIDs, userHK)
+	person, has, err := identity.PersonOf(ctx, s.DB, s.NationalIDs, userHK)
 	if err != nil {
 		return identity.Match{}, "", fmt.Errorf("read the national ID: %w", err)
 	}
-	if !has {
+	// The providers check a card or an IBAN with the date of birth too
+	// (#158): a national ID verified without one is verified again.
+	if !has || person.BirthDate.IsZero() {
 		return identity.Match{}, "", ErrNationalIDRequired
 	}
 	if s.Ownership == nil {
@@ -239,15 +264,15 @@ func (s Store) checkOwner(ctx context.Context, userHK string, n normalized) (ide
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	match, err := s.Ownership.MatchBank(checkCtx, nationalID, identity.BankAccount{Kind: string(n.Kind), Number: n.Value, Bank: n.Bank})
+	match, err := s.Ownership.MatchBank(checkCtx, person, identity.BankAccount{Kind: string(n.Kind), Number: n.Value, Bank: n.Bank})
 	if err != nil {
-		return identity.Match{}, "", fmt.Errorf("%w: %s: %w", ErrOwnershipUnavailable, s.Ownership.Provider(), err)
+		return identity.Match{}, s.Ownership.Provider(), fmt.Errorf("%w: %s: %w", ErrOwnershipUnavailable, s.Ownership.Provider(), err)
 	}
 	return match, s.Ownership.Provider(), nil
 }
 
 func (s Store) insert(ctx context.Context, userHK string, n normalized, cipher *field.Cipher, verifiedBy, verificationRef *string,
-	event audit.Event, after map[string]interface{}) (Destination, error) {
+	pending bool, event audit.Event, after map[string]interface{}) (Destination, error) {
 	id := uuid.NewString()
 	value, err := cipher.Seal(place(id, "value_enc"), n.Value)
 	if err != nil {
@@ -268,6 +293,11 @@ func (s Store) insert(ctx context.Context, userHK string, n normalized, cipher *
 		return Destination{}, err
 	}
 	defer tx.Rollback()
+	// The user's row first, as every change of a user locks it: a matched
+	// card or IBAN may raise the user's level below (#158).
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM users WHERE hk = $1 FOR UPDATE`, userHK); err != nil {
+		return Destination{}, fmt.Errorf("lock the user: %w", err)
+	}
 	// The additions of one user take turns, so two at once cannot both
 	// find room for one more in a full list: the count is taken again
 	// under the lock.
@@ -285,11 +315,13 @@ func (s Store) insert(ctx context.Context, userHK string, n normalized, cipher *
 	}
 	var d Destination
 	err = scanListed(tx.QueryRowContext(ctx, `INSERT INTO withdrawal_destinations
-			(id, user_hk, kind, value_enc, value_bidx, masked, label, bank, network, memo_enc, verified_by, verification_ref, usable_from)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, $11, $12, NOW() + make_interval(secs => $13))
+			(id, user_hk, kind, value_enc, value_bidx, masked, label, bank, network, memo_enc, verified_by, verification_ref, usable_from,
+			ownership_pending_since, ownership_next_check)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10, $11, $12, NOW() + make_interval(secs => $13),
+			CASE WHEN $14 THEN NOW() END, CASE WHEN $14 THEN NOW() + make_interval(secs => $15) END)
 		RETURNING `+listed,
 		id, userHK, n.Kind, value, index, n.Masked, n.Label, n.Bank, n.Network, memo, verifiedBy, verificationRef,
-		s.Settings.DestinationWait(n.Kind.Fiat()).Seconds()).Scan, &d)
+		s.Settings.DestinationWait(n.Kind.Fiat()).Seconds(), pending, FirstOwnershipRetry.Seconds()).Scan, &d)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		if n.Kind.Fiat() {
@@ -308,6 +340,13 @@ func (s Store) insert(ctx context.Context, userHK string, n normalized, cipher *
 	event.TargetID, event.Outcome, event.Changes = id, audit.Success, &audit.Changes{After: after}
 	if err := audit.Record(ctx, tx, event); err != nil {
 		return Destination{}, err
+	}
+	// A matched card or IBAN, with the verified national ID, is level 1
+	// (#158).
+	if verifiedBy != nil {
+		if _, err := verification.GrantIdentityLevel(ctx, tx, userHK, systemOrigin(event)); err != nil {
+			return Destination{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Destination{}, err
@@ -393,7 +432,7 @@ func (s Store) resolve(ctx context.Context, q Querier, userHK, id string, forReq
 	err := q.QueryRowContext(ctx, `SELECT `+listed+`, value_enc, memo_enc, usable_from <= NOW(), `+rowseal.WithdrawalDestinations.Fields("")+`
 		FROM withdrawal_destinations WHERE `+where, id, userHK).
 		Scan(append([]any{&r.ID, &r.Kind, &r.Label, &r.Masked, &r.Bank, &r.Network, &r.UsableFrom, &r.CreatedAt, &r.Version,
-			&value, &memo, &usable}, row.Dest()...)...)
+			&r.OwnershipPending, &value, &memo, &usable}, row.Dest()...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Resolved{}, ErrNotFound
 	}
@@ -402,6 +441,9 @@ func (s Store) resolve(ctx context.Context, q Querier, userHK, id string, forReq
 	}
 	if err := rowseal.Check(ctx, rowseal.WithdrawalDestinations, row); err != nil {
 		return Resolved{}, err
+	}
+	if forRequest && r.OwnershipPending {
+		return Resolved{}, ErrOwnershipPending
 	}
 	if forRequest && !usable {
 		return Resolved{}, &NotUsableYet{Until: r.UsableFrom}

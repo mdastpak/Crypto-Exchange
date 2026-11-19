@@ -1,0 +1,5 @@
+- The withdrawals on TRON are paid by the signer ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). See [withdrawals](docs/api.md#withdrawals).
+  - With `custody.providers[].signer` set, a crypto withdrawal on TRON is planned with the provider `tron-signer` and sent to it over mutual TLS, by its key, with its asset's contract and its amount in the smallest unit, from the sealed registry.
+  - Each pass reads where the signer's payouts are. A payout completes once its transaction has 19 confirmations, with the hash as its tracking number. One that failed on chain, or that the signer refused, fails. One that the signer never got, or whose transaction expired untaken, is sent again with the same key.
+  - An administrator cannot complete or fail a payout of the signer by hand (`409 payout_automatic`). An instance without the signer leaves its payouts to one that has it.
+  - The signer takes a token by its contract as well as by its symbol, which a rename of the currency does not change.

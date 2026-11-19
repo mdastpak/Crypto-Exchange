@@ -35,3 +35,9 @@ var EmailTemplates embed.FS
 //
 //go:embed assets.yaml
 var AssetRegistry []byte
+
+// AMLRules is aml_rules.yaml, the AML rules of this release (#73): the
+// server syncs them when compliance.aml.rules_path names no other file.
+//
+//go:embed aml_rules.yaml
+var AMLRules []byte

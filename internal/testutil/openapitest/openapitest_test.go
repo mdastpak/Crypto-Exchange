@@ -29,7 +29,8 @@ const testDocument = `{
         "default": {"schema": {"$ref": "#/definitions/Envelope"}}
       }}
     },
-    "/ws": {"get": {"responses": {"101": {"description": "Switching Protocols"}}}}
+    "/ws": {"get": {"responses": {"101": {"description": "Switching Protocols"}}}},
+    "/files/{id}": {"get": {"responses": {"200": {"description": "A file", "schema": {"type": "file"}}}}}
   },
   "definitions": {
     "Envelope": {"type": "object", "properties": {
@@ -86,6 +87,12 @@ func TestCheck_AcceptsWhatTheDocumentDescribes(t *testing.T) {
 	documented, problems := d.Check("GET", "/ws", 101, "", nil)
 	assert.True(t, documented)
 	assert.Empty(t, problems, "a response without a schema has no body to check")
+
+	documented, problems = d.Check("GET", "/files/3", 200, "image/jpeg", []byte{0xff, 0xd8})
+	assert.True(t, documented)
+	assert.Empty(t, problems, "a file is any body that is not JSON")
+	_, problems = d.Check("GET", "/files/3", 200, "application/json", []byte(`{}`))
+	assert.Contains(t, strings.Join(problems, "\n"), "a file is answered as JSON")
 }
 
 func TestCheck_ReportsWhatDiffers(t *testing.T) {

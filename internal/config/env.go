@@ -366,10 +366,37 @@ var envVars = []EnvVar{
 			}
 		}
 	}),
+	stringVar("KYC_STORAGE_ACCESS_KEY", "compliance.kyc.storage.access_key", func(c *Configuration) *string {
+		return &c.Compliance.KYC.Storage.AccessKey
+	}),
+	stringVar("KYC_STORAGE_SECRET_KEY", "compliance.kyc.storage.secret_key", func(c *Configuration) *string {
+		return &c.Compliance.KYC.Storage.SecretKey
+	}),
 	providerVar("SUMSUB_API_KEY", "compliance.kyc.providers[sumsub].api_key", func(c *Configuration, v string) {
 		for i := range c.Compliance.KYC.Providers {
 			if c.Compliance.KYC.Providers[i].Name == "sumsub" {
 				c.Compliance.KYC.Providers[i].APIKey = v
+			}
+		}
+	}),
+	providerVar("SUMSUB_API_SECRET", "compliance.kyc.providers[sumsub].api_secret", func(c *Configuration, v string) {
+		for i := range c.Compliance.KYC.Providers {
+			if c.Compliance.KYC.Providers[i].Name == "sumsub" {
+				c.Compliance.KYC.Providers[i].APISecret = v
+			}
+		}
+	}),
+	providerVar("SUMSUB_WEBHOOK_SECRET", "compliance.kyc.providers[sumsub].webhook_secret", func(c *Configuration, v string) {
+		for i := range c.Compliance.KYC.Providers {
+			if c.Compliance.KYC.Providers[i].Name == "sumsub" {
+				c.Compliance.KYC.Providers[i].WebhookSecret = v
+			}
+		}
+	}),
+	providerVar("TRONGRID_API_KEY", "custody.providers[tron].api_key", func(c *Configuration, v string) {
+		for i := range c.Custody.Providers {
+			if c.Custody.Providers[i].Network == "tron" {
+				c.Custody.Providers[i].APIKey = v
 			}
 		}
 	}),

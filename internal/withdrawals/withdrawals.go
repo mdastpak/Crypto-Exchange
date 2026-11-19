@@ -70,6 +70,8 @@ const (
 	// threshold, under none of its symbols, and no default (#406): it is
 	// held whatever the amount, rather than never.
 	ReviewUnconfigured = "no_threshold"
+	// ReviewAML is a withdrawal that an AML rule holds for review (#73).
+	ReviewAML = "aml"
 )
 
 // reviewOf returns why a withdrawal of amount of the currency known by
@@ -117,7 +119,7 @@ type Withdrawal struct {
 	Total  shared.Decimal `json:"total" swaggertype:"string" example:"101"`
 	Status Status         `json:"status" enums:"review,queued,processing,partially_paid,completed,cancelled,rejected,failed" example:"queued"`
 	// ReviewReason is why it waits, or waited, for an administrator.
-	ReviewReason string `json:"review_reason,omitempty" enums:"amount,no_threshold"`
+	ReviewReason string `json:"review_reason,omitempty" enums:"amount,no_threshold,aml"`
 	// Reason is why it was rejected or failed.
 	Reason      string     `json:"reason,omitempty"`
 	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`
@@ -153,6 +155,9 @@ var (
 	// ErrInsufficientBalance is a withdrawal of more than the available
 	// balance.
 	ErrInsufficientBalance = ledger.ErrInsufficientBalance
+	// ErrRefused is a withdrawal that an AML rule refused (#73). The user
+	// is told no more than that.
+	ErrRefused = errors.New("the withdrawal is refused")
 )
 
 // Invalid is a request with problems, by field.

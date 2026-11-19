@@ -42,6 +42,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/handlers/user"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/i18n"
+	"github.com/mdastpak/crypto-exchange/internal/idcheck"
 	"github.com/mdastpak/crypto-exchange/internal/identity"
 	"github.com/mdastpak/crypto-exchange/internal/keys"
 	"github.com/mdastpak/crypto-exchange/internal/logging"
@@ -286,6 +287,9 @@ func run() error {
 	scheduler.Paused = func() bool { return watcher.Paused(platform.FeatureScheduler) }
 	scheduler.Start()
 	workers = append(workers, worker{"delisting scheduler", scheduler.Stop})
+	// The identity checks and the destinations that wait for their
+	// provider (#158).
+	workers = append(workers, startIdentityRetries(handlers, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
 	// The snapshots and the reconciliation of the books (#60).
 	workers = append(workers, startLedgerAudit(services.Postgres.DB))
 	if otpWorker != nil {
@@ -327,8 +331,34 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
-	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config); err != nil {
+	// The KYC applications for level 2 (#72).
+	if err := useKYC(handlers, services.Postgres.DB, &config.Config); err != nil {
 		return err
+	}
+	// The AML rules (#73), which the withdrawals evaluate.
+	amlRules, err := useAML(handlers, services.Postgres.DB, &config.Config, otpChannels.Email)
+	if err != nil {
+		return err
+	}
+	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config, amlRules); err != nil {
+		return err
+	}
+	// The deposit addresses of the custody, and the watchers of the
+	// deposits to them (#68), which the AML rules evaluate.
+	watches, err := useDeposits(handlers, services.Postgres.DB, &config.Config, amlRules)
+	if err != nil {
+		return err
+	}
+	for _, d := range watches {
+		workers = append(workers, startDepositWatch(d, func() bool {
+			return watcher.Paused(platform.FeatureScheduler) || watcher.Paused(platform.FeatureDeposits)
+		}))
+	}
+	if amlRules != nil {
+		workers = append(workers, startAMLBatch(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
+		if amlRules.sanctions != nil {
+			workers = append(workers, startSanctions(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
+		}
 	}
 	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config, relay.Nudge); err != nil {
 		return err
@@ -837,15 +867,27 @@ func useConfirmationSender(h *InfraHandlers, sender notify.OTPSender) {
 // destinations (#160), and the keys that read the national IDs it is
 // checked against.
 func configureDestinations(h *InfraHandlers) error {
-	bank, err := identity.BankFromConfig(config.Config.Identity.BankOwnership)
+	bank, err := identity.BankFromConfig(config.Config.Identity.BankOwnership, config.Config.Identity.MobileOwnership)
 	if err != nil {
 		return err
+	}
+	// The identity checks (#158) ask the same provider about a national ID
+	// and its date of birth, and the mobile ownership provider about the
+	// user's number.
+	if bank != nil && h.DataKeys != nil && h.UserStore != nil {
+		mobile, _ := identity.FromConfig(config.Config.Identity.MobileOwnership)
+		h.User.Identity = idcheck.Service{DB: h.UserStore.DB, Inquiry: bank, Mobile: mobile, Sealer: h.DataKeys,
+			Timeout: config.Config.Identity.BankOwnership.Timeout()}
 	}
 	store, ok := h.User.Destinations.(destinations.Store)
 	if !ok {
 		return nil
 	}
-	store.Ownership, store.OwnershipTimeout = bank, config.Config.Identity.BankOwnership.Timeout()
+	store.Ownership = nil
+	if bank != nil {
+		store.Ownership = bank
+	}
+	store.OwnershipTimeout = config.Config.Identity.BankOwnership.Timeout()
 	if h.DataKeys != nil {
 		store.NationalIDs = h.DataKeys
 	}
@@ -854,6 +896,55 @@ func configureDestinations(h *InfraHandlers) error {
 		log.Println("WARNING: identity.bank_ownership.provider is none: users cannot add cards, IBANs, or bank accounts as withdrawal destinations")
 	}
 	return nil
+}
+
+// identityRetryInterval is how often each instance asks the provider again
+// about the identity checks and the destinations that wait for it (#158).
+const identityRetryInterval = time.Minute
+
+// startIdentityRetries asks the provider again, every minute, about the
+// pending identity checks and the cards and IBANs added pending (#158),
+// while the scheduler is not paused. Each instance runs it; a check is
+// decided once, by the first to commit.
+func startIdentityRetries(h *InfraHandlers, paused func() bool) worker {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(identityRetryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if paused() {
+				continue
+			}
+			runCtx, stop := context.WithTimeout(ctx, identityRetryInterval)
+			if service, ok := h.User.Identity.(idcheck.Service); ok {
+				if _, err := service.RetryDue(runCtx, 100); err != nil {
+					log.Printf("Error retrying the identity checks: %v", err)
+				}
+			}
+			if store, ok := h.User.Destinations.(destinations.Store); ok {
+				if _, err := store.CheckPending(runCtx, 100); err != nil {
+					log.Printf("Error checking the pending withdrawal destinations: %v", err)
+				}
+			}
+			stop()
+		}
+	}()
+	return worker{"identity retries", func(stopCtx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-stopCtx.Done():
+			return stopCtx.Err()
+		}
+	}}
 }
 
 // configureAdminSignIn enables admin sign-in when the data keys are loaded:
@@ -1270,6 +1361,17 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 	// are cached, so the REST limit is enough.
 	ih.MarketData.Register(g, service)
 
+	// The webhooks of the KYC provider (#72), verified by their signature,
+	// under the REST limit of every route.
+	g.POST("/kyc/webhooks/sumsub", ih.User.KYCWebhook)
+
+	// A KYC document is opened by a link signed for one administrator
+	// (#72), which a browser opens without the token: where the admin
+	// routes can be reached from is checked, then the signature.
+	adminLinkGroup := g.Group("/admin/kyc/documents")
+	adminLinkGroup.Use(adminAccess.Middleware())
+	adminLinkGroup.GET("/:id/content", rl.AuthRateLimit(middleware.AuthOTP), ih.Admin.KYCDocumentContent)
+
 	adminGroup := g.Group("/admin")
 	adminGroup.Use(adminAccess.Middleware())
 	adminGroup.Use(auth.JWTAdminVerification(ih.TokenBlacklist))
@@ -1314,6 +1416,21 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/withdrawals", ih.Admin.ListWithdrawals)
 		adminGroup.POST("/withdrawals/:id/approve", ih.Admin.ApproveWithdrawal)
 		adminGroup.POST("/withdrawals/:id/reject", ih.Admin.RejectWithdrawal)
+		// The AML rules and alerts (#73).
+		adminGroup.GET("/aml/rules", ih.Admin.ListAMLRules)
+		adminGroup.GET("/aml/alerts", ih.Admin.ListAMLAlerts)
+		adminGroup.GET("/aml/alerts/:id", ih.Admin.GetAMLAlert)
+		adminGroup.POST("/aml/alerts/:id/transition", ih.Admin.TransitionAMLAlert)
+		adminGroup.GET("/aml/sanctions", ih.Admin.GetSanctionsStatus)
+		// The deposits on chain (#68).
+		adminGroup.GET("/deposits", ih.Admin.ListDeposits)
+		adminGroup.POST("/deposits/:id/credit", ih.Admin.CreditDeposit)
+		// The KYC review (#72).
+		adminGroup.GET("/kyc/applications", ih.Admin.ListKYCApplications)
+		adminGroup.GET("/kyc/applications/:id", ih.Admin.GetKYCApplication)
+		adminGroup.POST("/kyc/applications/:id/approve", ih.Admin.ApproveKYCApplication)
+		adminGroup.POST("/kyc/applications/:id/reject", ih.Admin.RejectKYCApplication)
+		adminGroup.GET("/kyc/documents/:id/link", ih.Admin.KYCDocumentLink)
 		// The payouts that administrators pay by hand (#70).
 		adminGroup.GET("/payouts", ih.Admin.ListPayouts)
 		adminGroup.GET("/payouts/:id", ih.Admin.GetPayout)
@@ -1400,6 +1517,17 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		activeGroup.GET("/contacts", ih.User.ListContacts)
 		activeGroup.GET("/restrictions", ih.User.ListRestrictions)
 		activeGroup.GET("/verification", ih.User.GetVerification)
+		// The identity checks of #158: a national ID and its date of birth.
+		// A check asks a paid provider, so it has the limit of a code
+		// request, and the checks of a user are limited per day.
+		activeGroup.GET("/identity", ih.User.GetIdentity)
+		activeGroup.POST("/identity", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.SubmitIdentity)
+		// The KYC applications for level 2 (#72).
+		activeGroup.GET("/kyc", ih.User.GetKYC)
+		activeGroup.GET("/kyc/session", ih.User.GetKYCSession)
+		activeGroup.POST("/kyc/applications", profileChanges, ih.User.ApplyKYC)
+		activeGroup.POST("/kyc/applications/:id/documents", rl.AuthRateLimit(middleware.AuthOTP), profileChanges, ih.User.UploadKYCDocument)
+		activeGroup.POST("/kyc/applications/:id/submit", profileChanges, ih.User.SubmitKYC)
 		// The user's own balances and their history (#365): reads, with
 		// the limits of every user route.
 		activeGroup.GET("/balances", ih.User.GetBalances)
@@ -1422,6 +1550,10 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// Withdrawals (#70): a request starts a confirmation, and runs once
 		// it is confirmed. The code store limits the codes it sends.
 		activeGroup.POST("/withdrawals", gate.Require(platform.FeatureWithdrawals), ih.User.RequestWithdrawal)
+		// The deposit addresses of the custody (#68).
+		activeGroup.GET("/deposit-addresses", ih.User.ListDepositAddresses)
+		activeGroup.POST("/deposit-addresses", gate.Require(platform.FeatureDeposits), ih.User.GetDepositAddress)
+		activeGroup.GET("/deposits", ih.User.ListDeposits)
 		activeGroup.GET("/withdrawals", ih.User.ListWithdrawals)
 		activeGroup.GET("/withdrawals/:id", ih.User.GetWithdrawal)
 		activeGroup.POST("/withdrawals/:id/cancel", ih.User.CancelWithdrawal)

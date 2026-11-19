@@ -362,6 +362,28 @@ definitions:
       totp:
         type: string
     type: object
+  admin.amlTransition:
+    properties:
+      resolution:
+        description: |-
+          Resolution, 1 to 1000 characters, is required to resolve or dismiss
+          the alert, and refused otherwise.
+        example: The deposits are the user's salary; documents on file.
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/aml.Status'
+        description: |-
+          Status is the new status: INVESTIGATING assigns the alert to the
+          administrator.
+        enum:
+        - INVESTIGATING
+        - RESOLVED
+        - DISMISSED
+        - ESCALATED
+    required:
+    - status
+    type: object
   admin.currencyInfoFields:
     properties:
       contract:
@@ -391,6 +413,19 @@ definitions:
           When it is sent and the currency has changed since, the update is
           refused with 409. A create may not send it.
         type: integer
+    type: object
+  admin.kycDecision:
+    properties:
+      notes:
+        description: Notes are for the administrators, at most 1000 characters.
+        example: Address matches the utility bill.
+        type: string
+      reason:
+        description: |-
+          Reason, for a rejection, is what the user reads, 1 to 500
+          characters.
+        example: The selfie is blurred; please take it again in daylight.
+        type: string
     type: object
   admin.marketRequest:
     properties:
@@ -576,6 +611,220 @@ definitions:
         example: 2026-11
         type: string
     type: object
+  aml.Action:
+    enum:
+    - ""
+    - ALERT
+    - REVIEW
+    - BLOCK
+    - FREEZE
+    type: string
+    x-enum-varnames:
+    - ActionNone
+    - ActionAlert
+    - ActionReview
+    - ActionBlock
+    - ActionFreeze
+  aml.Alert:
+    properties:
+      action:
+        allOf:
+        - $ref: '#/definitions/aml.Action'
+        enum:
+        - ALERT
+        - REVIEW
+        - BLOCK
+        - FREEZE
+      assigned_to:
+        format: uuid
+        type: string
+      created_at:
+        type: string
+      escalated_at:
+        type: string
+      event_id:
+        format: uuid
+        type: string
+      event_kind:
+        enum:
+        - deposit
+        - withdrawal
+        - trade
+        type: string
+      event_ref:
+        type: string
+      id:
+        format: uuid
+        type: string
+      resolution:
+        type: string
+      resolved_at:
+        type: string
+      resolved_by:
+        format: uuid
+        type: string
+      risk_score:
+        example: "75"
+        type: string
+      rule_code:
+        example: structuring_withdrawal
+        type: string
+      rule_id:
+        format: uuid
+        type: string
+      rule_version:
+        type: integer
+      status:
+        allOf:
+        - $ref: '#/definitions/aml.Status'
+        enum:
+        - OPEN
+        - INVESTIGATING
+        - RESOLVED
+        - DISMISSED
+        - ESCALATED
+      trigger_data:
+        additionalProperties: {}
+        description: Data is what the rule saw, by rule type.
+        type: object
+      user_hk:
+        format: uuid
+        type: string
+    type: object
+  aml.Kind:
+    enum:
+    - deposit
+    - withdrawal
+    - trade
+    type: string
+    x-enum-varnames:
+    - KindDeposit
+    - KindWithdrawal
+    - KindTrade
+  aml.RuleConfig:
+    properties:
+      amount_deviation_multiplier:
+        type: string
+      ceiling:
+        description: 'Structuring: the band is ThresholdAmount up to Ceiling, excluded.'
+        type: string
+      check_fields:
+        items:
+          type: string
+        type: array
+      checks:
+        items:
+          type: string
+        type: array
+      countries:
+        description: High-risk country.
+        items:
+          type: string
+        type: array
+      cross_border:
+        type: boolean
+      dormant_days:
+        type: integer
+      history_days:
+        type: integer
+      home_country:
+        type: string
+      list:
+        type: string
+      metric:
+        description: Velocity.
+        type: string
+      new_destination_days:
+        type: integer
+      pattern:
+        description: Unusual pattern.
+        type: string
+      providers:
+        description: 'Screening: the providers or the list a screening rule asks.'
+        items:
+          type: string
+        type: array
+      screen:
+        type: string
+      time_deviation_hours:
+        type: integer
+      velocity_spike_multiplier:
+        type: string
+    type: object
+  aml.Status:
+    enum:
+    - OPEN
+    - INVESTIGATING
+    - RESOLVED
+    - DISMISSED
+    - ESCALATED
+    type: string
+    x-enum-varnames:
+    - StatusOpen
+    - StatusInvestigating
+    - StatusResolved
+    - StatusDismissed
+    - StatusEscalated
+  aml.Stored:
+    properties:
+      action:
+        $ref: '#/definitions/aml.Action'
+      applies_to:
+        items:
+          $ref: '#/definitions/aml.Kind'
+        type: array
+      code:
+        type: string
+      config:
+        $ref: '#/definitions/aml.RuleConfig'
+      description:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        format: uuid
+        type: string
+      name:
+        type: string
+      retired_at:
+        type: string
+      rule_type:
+        $ref: '#/definitions/aml.Type'
+      severity:
+        type: string
+      threshold_amount:
+        example: "10000"
+        type: string
+      threshold_count:
+        description: |-
+          ThresholdCount and ThresholdAmount, in USDT, mean what the type says;
+          zero is no threshold.
+        type: integer
+      time_window_hours:
+        type: integer
+      version:
+        type: integer
+    type: object
+  aml.Type:
+    enum:
+    - VELOCITY
+    - STRUCTURING
+    - HIGH_RISK_COUNTRY
+    - UNUSUAL_PATTERN
+    - MIXER
+    - DARKNET
+    - SANCTIONS
+    - PEP
+    type: string
+    x-enum-varnames:
+    - TypeVelocity
+    - TypeStructuring
+    - TypeHighRiskCountry
+    - TypeUnusualPattern
+    - TypeMixer
+    - TypeDarknet
+    - TypeSanctions
+    - TypePEP
   antiphishing.Status:
     properties:
       change_reason:
@@ -1349,6 +1598,110 @@ definitions:
           already, which only support can follow.
         type: integer
     type: object
+  deposits.Address:
+    properties:
+      address:
+        example: TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7
+        type: string
+      created_at:
+        type: string
+      network:
+        example: tron
+        type: string
+    type: object
+  deposits.Deposit:
+    properties:
+      address:
+        type: string
+      amount:
+        example: "25.5"
+        type: string
+      block_hash:
+        type: string
+      block_height:
+        type: integer
+      credited_at:
+        type: string
+      currency_hk:
+        type: string
+      detected_at:
+        type: string
+      from_address:
+        type: string
+      hold_reason:
+        $ref: '#/definitions/deposits.Hold'
+      id:
+        type: string
+      log_index:
+        description: |-
+          LogIndex is the index of the transfer's event in its transaction; -1
+          for a transfer of the native asset.
+        type: integer
+      network:
+        example: tron
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/deposits.Status'
+        example: CREDITED
+      tx_hash:
+        type: string
+      user_id:
+        type: string
+    type: object
+  deposits.Hold:
+    enum:
+    - below_minimum
+    - deposits_closed
+    - restricted
+    - aml
+    type: string
+    x-enum-varnames:
+    - HoldBelowMinimum
+    - HoldDepositsClosed
+    - HoldRestricted
+    - HoldAML
+  deposits.Status:
+    enum:
+    - DETECTED
+    - CONFIRMED
+    - CREDITED
+    - FAILED
+    type: string
+    x-enum-varnames:
+    - StatusDetected
+    - StatusConfirmed
+    - StatusCredited
+    - StatusFailed
+  deposits.UserDeposit:
+    properties:
+      address:
+        type: string
+      amount:
+        example: "25.5"
+        type: string
+      block_height:
+        type: integer
+      credited_at:
+        type: string
+      currency_hk:
+        type: string
+      detected_at:
+        type: string
+      id:
+        type: string
+      network:
+        example: tron
+        type: string
+      on_hold:
+        type: boolean
+      status:
+        allOf:
+        - $ref: '#/definitions/deposits.Status'
+        example: CREDITED
+      tx_hash:
+        type: string
+    type: object
   destinations.Destination:
     properties:
       bank:
@@ -1377,6 +1730,12 @@ definitions:
         description: Network is the network of a crypto destination.
         example: tron
         type: string
+      ownership_pending:
+        description: |-
+          OwnershipPending is a card or an IBAN whose owner the provider could
+          not check yet (#158): it is not usable, and is checked again until
+          the provider answers. A mismatch then removes it.
+        type: boolean
       usable_from:
         description: UsableFrom is when a withdrawal may use it.
         type: string
@@ -1512,6 +1871,222 @@ definitions:
         example: فارسی
         type: string
     type: object
+  idcheck.Status:
+    properties:
+      attempts_left:
+        description: AttemptsLeft is how many more checks may fail today.
+        type: integer
+      national_id:
+        description: |-
+          NationalID is the national ID of a verified or pending identity,
+          masked.
+        example: 00******79
+        type: string
+      reason:
+        description: |-
+          Reason is why the last check was rejected: mismatched, when the
+          registry does not have that national ID with that date of birth or
+          the mobile number is not registered to it, or taken, when the
+          national ID is verified for another account.
+        enum:
+        - mismatched
+        - taken
+        type: string
+      state:
+        enum:
+        - none
+        - pending
+        - verified
+        - rejected
+        type: string
+      verified_at:
+        type: string
+    type: object
+  internal_kyc.DocumentType:
+    enum:
+    - NATIONAL_ID
+    - PASSPORT
+    - DRIVERS_LICENSE
+    - SELFIE
+    - PROOF_OF_ADDRESS
+    - UTILITY_BILL
+    - BANK_STATEMENT
+    - SOURCE_OF_FUNDS
+    - CORPORATE_DOCUMENT
+    type: string
+    x-enum-varnames:
+    - DocNationalID
+    - DocPassport
+    - DocDriversLicense
+    - DocSelfie
+    - DocProofOfAddress
+    - DocUtilityBill
+    - DocBankStatement
+    - DocSourceOfFunds
+    - DocCorporate
+  kyc.Application:
+    properties:
+      created_at:
+        type: string
+      documents:
+        items:
+          $ref: '#/definitions/kyc.Document'
+        type: array
+      id:
+        format: uuid
+        type: string
+      level:
+        example: 2
+        type: integer
+      provider:
+        description: |-
+          Provider verifies the application: manual, with the documents
+          uploaded here, or a provider, such as sumsub, whose SDK takes them
+          with a token of GET /user/kyc/session.
+        enum:
+        - manual
+        - sumsub
+        type: string
+      reason:
+        type: string
+      reviewed_at:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/kyc.Status'
+        enum:
+        - PENDING
+        - UNDER_REVIEW
+        - APPROVED
+        - REJECTED
+      submitted_at:
+        type: string
+      user_hk:
+        format: uuid
+        type: string
+    type: object
+  kyc.Document:
+    properties:
+      created_at:
+        type: string
+      id:
+        format: uuid
+        type: string
+      mime_type:
+        example: image/jpeg
+        type: string
+      size:
+        type: integer
+      type:
+        allOf:
+        - $ref: '#/definitions/internal_kyc.DocumentType'
+        enum:
+        - NATIONAL_ID
+        - PASSPORT
+        - DRIVERS_LICENSE
+        - SELFIE
+        - PROOF_OF_ADDRESS
+        - UTILITY_BILL
+        - BANK_STATEMENT
+        - SOURCE_OF_FUNDS
+        - CORPORATE_DOCUMENT
+    type: object
+  kyc.Form:
+    properties:
+      address:
+        example: No. 12, Vali Asr St.
+        type: string
+      city:
+        example: Tehran
+        type: string
+      occupation:
+        example: Software engineer
+        type: string
+      postal_code:
+        example: "1234567890"
+        type: string
+      source_of_funds:
+        example: Salary
+        type: string
+    type: object
+  kyc.Link:
+    properties:
+      expires_at:
+        type: string
+      url:
+        example: /api/v1/admin/kyc/documents/4b8f.../content?admin=...&expires=...&sig=...
+        type: string
+    type: object
+  kyc.Review:
+    properties:
+      created_at:
+        type: string
+      documents:
+        items:
+          $ref: '#/definitions/kyc.Document'
+        type: array
+      form:
+        $ref: '#/definitions/kyc.Form'
+      id:
+        format: uuid
+        type: string
+      level:
+        example: 2
+        type: integer
+      provider:
+        description: |-
+          Provider verifies the application: manual, with the documents
+          uploaded here, or a provider, such as sumsub, whose SDK takes them
+          with a token of GET /user/kyc/session.
+        enum:
+        - manual
+        - sumsub
+        type: string
+      reason:
+        type: string
+      review_notes:
+        type: string
+      reviewed_at:
+        type: string
+      reviewed_by:
+        format: uuid
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/kyc.Status'
+        enum:
+        - PENDING
+        - UNDER_REVIEW
+        - APPROVED
+        - REJECTED
+      submitted_at:
+        type: string
+      user_hk:
+        format: uuid
+        type: string
+    type: object
+  kyc.Session:
+    properties:
+      expires_at:
+        type: string
+      provider:
+        example: sumsub
+        type: string
+      token:
+        type: string
+    type: object
+  kyc.Status:
+    enum:
+    - PENDING
+    - UNDER_REVIEW
+    - APPROVED
+    - REJECTED
+    type: string
+    x-enum-varnames:
+    - StatusPending
+    - StatusUnderReview
+    - StatusApproved
+    - StatusRejected
   market.Market:
     properties:
       base_currency_hk:
@@ -3904,6 +4479,25 @@ definitions:
       table:
         type: string
     type: object
+  sanctions.Status:
+    properties:
+      checked_at:
+        type: string
+      entries:
+        type: integer
+      fetched_at:
+        type: string
+      provider:
+        example: ofac
+        type: string
+      stale:
+        description: |-
+          Stale is a list that no download found current for the maximum
+          age, or none: every operation that a rule screens is held.
+        type: boolean
+      version:
+        type: integer
+    type: object
   shared.KYCStatus:
     enum:
     - PENDING
@@ -4346,6 +4940,21 @@ definitions:
           type: string
         type: array
     type: object
+  user.IdentityRequest:
+    properties:
+      birth_date:
+        description: BirthDate is the date of birth in the Gregorian calendar, YYYY-MM-DD.
+        example: "1991-08-16"
+        format: date
+        type: string
+      national_id:
+        description: NationalID is the ten digits of the Iranian national ID.
+        example: "0012345679"
+        type: string
+    required:
+    - birth_date
+    - national_id
+    type: object
   user.PasskeyAdded:
     properties:
       passkey:
@@ -4600,6 +5209,18 @@ definitions:
         format: uuid
         type: string
     type: object
+  user.depositAddressRequest:
+    properties:
+      currency_hk:
+        format: uuid
+        type: string
+      network:
+        example: tron
+        type: string
+    required:
+    - currency_hk
+    - network
+    type: object
   user.executeRequest:
     properties:
       idempotency_key:
@@ -4617,6 +5238,11 @@ definitions:
           the main account.
         format: uuid
         type: string
+    type: object
+  user.kycApplicationRequest:
+    properties:
+      form:
+        $ref: '#/definitions/kyc.Form'
     type: object
   user.profileUpdate:
     properties:
@@ -5135,6 +5761,7 @@ definitions:
         enum:
         - amount
         - no_threshold
+        - aml
         type: string
       reviewed_at:
         type: string
@@ -5169,6 +5796,265 @@ info:
   title: Crypto Exchange API
   version: "1"
 paths:
+  /api/v1/admin/aml/alerts:
+    get:
+      description: 'The AML alerts, newest first: of a status, of a user, or all;
+        at most limit (100). Each names its rule and the version of the rule, the
+        operation that raised it, if any, and the action that was taken. An alert
+        changed in SQL answers 409 row_unverified.'
+      parameters:
+      - description: A status
+        enum:
+        - OPEN
+        - INVESTIGATING
+        - RESOLVED
+        - DISMISSED
+        - ESCALATED
+        in: query
+        name: status
+        type: string
+      - description: A user
+        format: uuid
+        in: query
+        name: user_hk
+        type: string
+      - description: 1 to 100; 100 by default
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/aml.Alert'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List AML alerts
+      tags:
+      - admin aml
+  /api/v1/admin/aml/alerts/{id}:
+    get:
+      description: An AML alert, with what its rule saw (trigger_data).
+      parameters:
+      - description: The alert
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/aml.Alert'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: aml_alert_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get an AML alert
+      tags:
+      - admin aml
+  /api/v1/admin/aml/alerts/{id}/transition:
+    post:
+      consumes:
+      - application/json
+      description: 'Moves an alert to another status (#73). OPEN may become INVESTIGATING,
+        which assigns it to the administrator, ESCALATED, RESOLVED, or DISMISSED;
+        INVESTIGATING may become ESCALATED, RESOLVED, or DISMISSED; ESCALATED may
+        become INVESTIGATING, RESOLVED, or DISMISSED. RESOLVED and DISMISSED are final
+        and need a resolution. An alert open for engine.alert_escalation_hours is
+        escalated by the server. Moving an alert releases nothing: a withdrawal held
+        for review is approved or rejected on its own route, and a freeze is lifted
+        on the user''s restrictions. Audited as aml.alert_status.'
+      parameters:
+      - description: The alert
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The new status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.amlTransition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/aml.Alert'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: aml_alert_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: aml_alert_transition_invalid or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Move an AML alert
+      tags:
+      - admin aml
+  /api/v1/admin/aml/rules:
+    get:
+      description: Every AML rule as the server synced it from config/aml_rules.yaml,
+        with its version and whether it is retired (#73), by code. A rule changed
+        in SQL answers 409 row_unverified, and no withdrawal is evaluated until it
+        is reviewed.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/aml.Stored'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the AML rules
+      tags:
+      - admin aml
+  /api/v1/admin/aml/sanctions:
+    get:
+      description: 'The version of the OFAC list that the sanctions rules screen against
+        (#73): when it was downloaded, when a download last found it current, its
+        entries, and whether it is stale, too old or missing, which holds every operation
+        that a sanctions rule screens for review. 503 aml_unavailable while the provider
+        or the AML rules are off.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/sanctions.Status'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: aml_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the state of the sanctions list
+      tags:
+      - admin aml
   /api/v1/admin/audit:
     get:
       description: The events that the filters select, newest first. Every filter
@@ -6748,6 +7634,125 @@ paths:
       summary: Release a previous symbol of a currency
       tags:
       - admin currencies
+  /api/v1/admin/deposits:
+    get:
+      description: 'The newest deposits on chain (#68), at most 200, with the user''s
+        user_id and, for a held one, its hold_reason: below_minimum (FAILED), or deposits_closed,
+        restricted, or aml (CONFIRMED, still pending in the user''s balance). held=true
+        lists only those on hold. A deposit that fails its seal answers 409 row_unverified.'
+      parameters:
+      - description: The user
+        format: uuid
+        in: query
+        name: user_id
+        type: string
+      - description: The status
+        enum:
+        - DETECTED
+        - CONFIRMED
+        - CREDITED
+        - FAILED
+        in: query
+        name: status
+        type: string
+      - description: Only the deposits on hold
+        in: query
+        name: held
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.Deposit'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List deposits
+      tags:
+      - admin deposits
+  /api/v1/admin/deposits/{id}/credit:
+    post:
+      description: 'Credits a deposit on hold (#68), after review: one held at confirmation,
+        whose amount moves from pending to available, or one below the minimum, which
+        is first recorded as pending. A deposit dropped by a reorg cannot be credited.
+        A sensitive route: it needs a step-up. Audited as admin.deposit_credit, with
+        the hold.'
+      parameters:
+      - description: The deposit
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/deposits.Deposit'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: deposit_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: deposit_not_held or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Credit a held deposit
+      tags:
+      - admin deposits
   /api/v1/admin/integrity/findings:
     get:
       description: 'The protected rows (accounts, contacts, sessions) that did not
@@ -6895,6 +7900,354 @@ paths:
       summary: Re-seal the row of an integrity finding
       tags:
       - admin integrity
+  /api/v1/admin/kyc/applications:
+    get:
+      description: The KYC applications of a status (#72), UNDER_REVIEW by default,
+        the oldest submitted first, at most limit (100). Each has the user's user_hk
+        and its documents, without their content.
+      parameters:
+      - description: A status
+        enum:
+        - PENDING
+        - UNDER_REVIEW
+        - APPROVED
+        - REJECTED
+        in: query
+        name: status
+        type: string
+      - description: 1 to 100; 100 by default
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/kyc.Application'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List KYC applications
+      tags:
+      - admin kyc
+  /api/v1/admin/kyc/applications/{id}:
+    get:
+      description: A KYC application with its form, decrypted, its documents, and
+        its review (#72). Each reading is audited as admin.kyc_view, as it shows personal
+        data.
+      parameters:
+      - description: The application
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Review'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a KYC application
+      tags:
+      - admin kyc
+  /api/v1/admin/kyc/applications/{id}/approve:
+    post:
+      consumes:
+      - application/json
+      description: 'Approves an application under review (#72), and raises the user
+        to level 2 in the same transaction (audited as user.verification_set and admin.kyc_approve).
+        A user who lost level 1 meanwhile is not raised (403 identity_verification_required).
+        A sensitive route: it needs a step-up.'
+      parameters:
+      - description: The application
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Notes
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/admin.kycDecision'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Application'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required or identity_verification_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_application_not_under_review or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Approve a KYC application
+      tags:
+      - admin kyc
+  /api/v1/admin/kyc/applications/{id}/reject:
+    post:
+      consumes:
+      - application/json
+      description: 'Rejects an application under review with a reason that the user
+        reads (#72); the user may apply again. A sensitive route: it needs a step-up.
+        Audited as admin.kyc_reject.'
+      parameters:
+      - description: The application
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The reason
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.kycDecision'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Application'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_application_not_under_review or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Reject a KYC application
+      tags:
+      - admin kyc
+  /api/v1/admin/kyc/documents/{id}/content:
+    get:
+      description: 'The content of a document (#72), decrypted, for a link of GET
+        /admin/kyc/documents/{id}/link: no token, but the signature of the link, for
+        its administrator, who must still be active, until it expires. It answers
+        with the kind of the file, never cached, and is audited as admin.kyc_document_view.'
+      parameters:
+      - description: The document
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The administrator the link is for
+        format: uuid
+        in: query
+        name: admin
+        required: true
+        type: string
+      - description: When the link expires, in Unix seconds
+        in: query
+        name: expires
+        required: true
+        type: integer
+      - description: The signature
+        in: query
+        name: sig
+        required: true
+        type: string
+      produces:
+      - image/png
+      - image/jpeg
+      - application/pdf
+      - application/json
+      responses:
+        "200":
+          description: The document
+          schema:
+            type: file
+        "403":
+          description: kyc_link_invalid
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_document_changed or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Open a KYC document
+      tags:
+      - admin kyc
+  /api/v1/admin/kyc/documents/{id}/link:
+    get:
+      description: A link to the content of a document (#72), signed for the administrator
+        for a minute, to open in a browser without the token. The link is checked,
+        the administrator must still be active, and each opening is audited as admin.kyc_document_view.
+      parameters:
+      - description: The document
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Link'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a link to a KYC document
+      tags:
+      - admin kyc
   /api/v1/admin/logout:
     post:
       produces:
@@ -8709,7 +10062,7 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "409":
-          description: payout_not_open or row_unverified
+          description: payout_not_open, payout_automatic, or row_unverified
           schema:
             $ref: '#/definitions/models.APIResponse'
         default:
@@ -8772,7 +10125,7 @@ paths:
           schema:
             $ref: '#/definitions/models.APIResponse'
         "409":
-          description: payout_not_open or row_unverified
+          description: payout_not_open, payout_automatic, or row_unverified
           schema:
             $ref: '#/definitions/models.APIResponse'
         default:
@@ -9811,6 +11164,51 @@ paths:
       summary: Reject a withdrawal
       tags:
       - admin withdrawals
+  /api/v1/kyc/webhooks/sumsub:
+    post:
+      consumes:
+      - application/json
+      description: 'Sumsub''s webhook of an applicant (#72): no token, but the HMAC
+        of the raw body under the webhook secret, in X-Payload-Digest by the algorithm
+        of X-Payload-Digest-Alg (401 kyc_webhook_unsigned otherwise). applicantPending
+        moves the application under review; applicantReviewed GREEN approves it and
+        grants level 2, RED with FINAL rejects it, and RED with RETRY sends it back
+        to pending. An event of a decided application, or of no application, answers
+        200 and changes nothing, so that the provider stops sending it. Audited as
+        kyc.provider_verdict, and the level as user.verification_set, by the system.'
+      parameters:
+      - description: The hex HMAC of the body
+        in: header
+        name: X-Payload-Digest
+        required: true
+        type: string
+      - description: HMAC_SHA256_HEX, the default, HMAC_SHA512_HEX, or HMAC_SHA1_HEX
+        in: header
+        name: X-Payload-Digest-Alg
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: kyc_webhook_unsigned
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: 'Any other error, in the envelope with a code: the provider
+            sends the webhook again'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      summary: Receive a webhook of the KYC provider
+      tags:
+      - kyc-webhooks
   /api/v1/market-data/assets:
     get:
       description: 'The crypto assets of the global catalog. sort=rank (the default)
@@ -11814,6 +13212,149 @@ paths:
       summary: Convert a holding of a migrating currency
       tags:
       - user-currencies
+  /api/v1/user/deposit-addresses:
+    get:
+      description: The user's deposit addresses, one per network (#68).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.Address'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the deposit addresses
+      tags:
+      - user-deposits
+    post:
+      consumes:
+      - application/json
+      description: 'The user''s deposit address of a currency on a network (#68),
+        given at the first request and the same after: every currency of a network
+        shares it, such as TRX and USDT on TRON. It is derived from the extended public
+        key of the custody, so the server holds no private key. The user must be allowed
+        crypto deposits by their level and restrictions, and the currency must take
+        deposits on the network (409 deposits_closed). Closed by the deposits lockdown.
+        Audited as user.deposit_address when it is given.'
+      parameters:
+      - description: The currency and its network
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.depositAddressRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/deposits.Address'
+              type: object
+        "400":
+          description: validation_failed or deposit_network_unsupported
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: verification_required, account_frozen, operation_restricted,
+            or asset_restricted
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: currency_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: deposits_closed or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable or feature_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a deposit address
+      tags:
+      - user-deposits
+  /api/v1/user/deposits:
+    get:
+      description: 'The user''s newest deposits on chain (#68), at most 200: DETECTED
+        while their block has too few confirmations (19 on TRON) and the amount is
+        pending in the balance, CREDITED once available, FAILED when a reorg dropped
+        the transaction or the amount was below the minimum, and CONFIRMED with on_hold
+        while support reviews it. Why a deposit is held is not told.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.UserDeposit'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the deposits
+      tags:
+      - user-deposits
   /api/v1/user/favorites:
     get:
       description: 'The favorite currencies and trading pairs of the signed-in user,
@@ -12088,6 +13629,392 @@ paths:
       summary: Add a favorite trading pair
       tags:
       - user favorites
+  /api/v1/user/identity:
+    get:
+      description: 'The state of the signed-in user''s identity: none, pending while
+        the provider cannot answer and the server asks again, verified, or rejected
+        with its reason (mismatched or taken). national_id is masked. attempts_left
+        is how many more checks may fail today. A verified national ID and a card
+        or IBAN of the user''s withdrawal destinations whose owner the provider matched
+        raise the user to verification level 1.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/idcheck.Status'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: identity_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: My identity check
+      tags:
+      - user-identity
+    post:
+      consumes:
+      - application/json
+      description: 'Checks the national ID and the date of birth of the signed-in
+        user at the national registry, through the identity provider, and, when the
+        account has a verified mobile number, that the number is registered to the
+        national ID. 200 with the identity: verified, or rejected with the reason
+        mismatched, which is final for that check; 202 while the provider cannot answer:
+        the check is pending, the server asks again, and nothing is approved on a
+        failure. One person has one account: a national ID verified for another account
+        answers 409 national_id_taken. A verified identity cannot be changed here
+        (409 identity_already_verified); one check is pending at a time (409 identity_check_pending);
+        five failed checks in a day stop the checks until the next (429 identity_attempts_exceeded).
+        Audited as user.identity_check, never with the values.'
+      parameters:
+      - description: The national ID and the date of birth
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.IdentityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/idcheck.Status'
+              type: object
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/idcheck.Status'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: national_id_taken, identity_already_verified, identity_check_pending,
+            or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "429":
+          description: identity_attempts_exceeded
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: identity_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Verify my identity
+      tags:
+      - user-identity
+  /api/v1/user/kyc:
+    get:
+      description: 'The user''s newest application for level 2 (#72): its status,
+        the reason of a rejection, and its documents, without their content. 404 kyc_application_not_found
+        when the user has none.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Application'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the user's KYC application
+      tags:
+      - user-kyc
+  /api/v1/user/kyc/applications:
+    post:
+      consumes:
+      - application/json
+      description: Opens a KYC application for level 2 (#72) with the user's address,
+        occupation, and source of funds, which are stored encrypted. The user must
+        be at level 1, with a verified identity (403 identity_verification_required),
+        and have no open application (409 kyc_application_open). Then, for an application
+        reviewed by hand (provider manual), add the documents, and submit it; for
+        one of a provider (provider sumsub), run its SDK with a token of GET /user/kyc/session,
+        and the provider's verdict decides it.
+      parameters:
+      - description: The form
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.kycApplicationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Application'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: identity_verification_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_application_open, kyc_already_verified, or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Apply for level 2
+      tags:
+      - user-kyc
+  /api/v1/user/kyc/applications/{id}/documents:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 'Adds a document to the user''s pending application (#72), as multipart/form-data:
+        type, and file, a JPEG, a PNG, or a PDF of at most 10 MB, by its content.
+        At most 10 documents. The file is encrypted before it is stored, and its name
+        is not kept.'
+      parameters:
+      - description: The application
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The type of the document
+        enum:
+        - NATIONAL_ID
+        - PASSPORT
+        - DRIVERS_LICENSE
+        - SELFIE
+        - PROOF_OF_ADDRESS
+        - UTILITY_BILL
+        - BANK_STATEMENT
+        - SOURCE_OF_FUNDS
+        - CORPORATE_DOCUMENT
+        in: formData
+        name: type
+        required: true
+        type: string
+      - description: The document
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Document'
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_application_submitted, kyc_documents_exceeded, kyc_provider_flow,
+            or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "413":
+          description: 'validation_failed: the request is larger than a document'
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a document to a KYC application
+      tags:
+      - user-kyc
+  /api/v1/user/kyc/applications/{id}/submit:
+    post:
+      description: Sends the user's pending application for review (#72), once it
+        has an identity document (NATIONAL_ID, PASSPORT, or DRIVERS_LICENSE), a SELFIE,
+        and a proof of address (PROOF_OF_ADDRESS, UTILITY_BILL, or BANK_STATEMENT);
+        409 kyc_documents_missing names the groups that it lacks.
+      parameters:
+      - description: The application
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Application'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_documents_missing (with info.missing), kyc_application_submitted,
+            kyc_provider_flow, or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Submit a KYC application
+      tags:
+      - user-kyc
+  /api/v1/user/kyc/session:
+    get:
+      description: 'A token of the KYC provider''s SDK (#72), such as Sumsub''s WebSDK,
+        for the user''s open application, which the provider verifies: the app runs
+        the SDK with it, and the user gives the documents to the provider. It expires
+        in minutes; ask again for another. 409 kyc_provider_flow for an application
+        reviewed by hand, which takes its documents on POST /user/kyc/applications/{id}/documents.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/kyc.Session'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: kyc_application_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: kyc_provider_flow or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: kyc_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a session of the KYC provider
+      tags:
+      - user-kyc
   /api/v1/user/logout:
     post:
       description: Both routes end the session. POST /api/v1/public/auth/logout exists
@@ -13285,10 +15212,17 @@ paths:
       - application/json
       description: 'Adds a card, an IBAN (Sheba), a bank account, or a crypto address.
         Numbers may have spaces and dashes, and Persian or Arabic digits. A card,
-        an IBAN, or an account must belong to the user''s verified national ID, which
-        the provider checks now: 409 national_id_required without one, 403 destination_not_owned
-        when it is someone else''s, 503 ownership_check_unavailable when the provider
-        cannot answer. A crypto address must be valid for its network (bitcoin, ethereum,
+        an IBAN, or an account must belong to the user''s verified national ID and
+        date of birth (#158), which the provider checks now: 409 national_id_required
+        without them (verify them with POST /user/identity), 403 destination_not_owned
+        when it is someone else''s. When the provider cannot answer, the card or IBAN
+        is added pending (202, ownership_pending true): it is not usable, the server
+        checks it again until the provider answers, and removes it if its owner does
+        not match. 503 ownership_check_unavailable without a provider, or for a bank
+        account number, which the provider does not check. A matched card, IBAN, or
+        account of a user with a verified identity at level 0 raises them to level
+        1; such a user may add one before, though their withdrawals still need the
+        level. A crypto address must be valid for its network (bitcoin, ethereum,
         tron). The verification level must allow the withdrawals it is for (403 verification_required),
         and a recent change of a security setting holds new destinations (403 security_hold).
         It needs a fresh proof of the second factor (403 step_up_required). A new
@@ -13306,6 +15240,15 @@ paths:
       responses:
         "201":
           description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/destinations.Destination'
+              type: object
+        "202":
+          description: Accepted
           schema:
             allOf:
             - $ref: '#/definitions/models.APIResponse'
@@ -13446,8 +15389,12 @@ paths:
         of its currency waits for an administrator (status review, review_reason amount);
         while thresholds are configured, one of a currency without a threshold and
         without a "*" default waits whatever the amount (review_reason no_threshold,
-        #406); the others are queued for their payouts. Closed by the withdrawals
-        lockdown, the user''s restrictions, and the security hold.'
+        #406); the others are queued for their payouts. The AML rules evaluate each
+        step (#73): one may hold the withdrawal for review (review_reason aml), or
+        refuse it (403 withdrawal_refused, at step one before any code is sent, or
+        at step two); while they cannot be evaluated, 503 withdrawals_unavailable.
+        Closed by the withdrawals lockdown, the user''s restrictions, and the security
+        hold.'
       parameters:
       - description: 1 to 100 letters, digits, dots, colons, underscores, or hyphens;
           the same for both steps
@@ -13501,14 +15448,16 @@ paths:
             $ref: '#/definitions/models.APIResponse'
         "403":
           description: verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured,
-            account_frozen, operation_restricted, asset_restricted, or security_hold
+            account_frozen, operation_restricted, asset_restricted, security_hold,
+            or withdrawal_refused
           schema:
             $ref: '#/definitions/models.APIResponse'
         "409":
           description: insufficient_balance, withdrawals_closed, destination_not_usable_yet,
-            idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed,
-            confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed
-            (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified
+            destination_ownership_pending, idempotency_key_reused, confirmation_method_required,
+            confirmation_not_confirmed, confirmation_expired, confirmation_consumed,
+            confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee
+            and info.fee), confirmation_denied, or row_unverified
           schema:
             $ref: '#/definitions/models.APIResponse'
         "503":

@@ -64,6 +64,11 @@ An error response contains only a fixed message for each error. Internal details
 | `verification_required` | `403` | The user's [verification level](#verification-levels) does not allow the action; `info.required_level` is the level it needs |
 | `withdrawal_limit_exceeded` | `403` | The withdrawal is above a limit of the user's [verification level](#verification-levels); `info` has the limit and, for the daily one, what remains |
 | `withdrawal_limit_unconfigured` | `403` | The currency has no withdrawal limit at the user's level, which limits other currencies: a configuration error, refused rather than unlimited ([#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); `info` has `action`, `level`, and `currency_hk` |
+| `national_id_taken` | `409` | The national ID of an [identity check](#identity) is verified for another account: one person has one account |
+| `identity_already_verified`, `identity_check_pending` | `409` | The [identity](#identity) is verified already, or its check waits for the provider |
+| `identity_attempts_exceeded` | `429` | Five [identity checks](#identity) failed today |
+| `identity_unavailable` | `503` | Identities cannot be checked now: no provider, or no data keys |
+| `destination_ownership_pending` | `409` | The [withdrawal destination](#withdrawal-destinations) is a card or an IBAN whose owner the provider has not checked yet |
 | `account_not_found` | `404` | The `account` of a [balance or history](#balances-and-history) request is not a sub-account of the user: another user's, unknown, or deleted, alike |
 | `balance_unverified` | `503` | A [balance](#get-userbalances) failed its row seal and is not shown; `info.currency_hk` names its currency, and an integrity finding is recorded |
 | `destination_not_owned` | `403` | The card, IBAN, or account of a new [withdrawal destination](#withdrawal-destinations) is not the user's |
@@ -1192,6 +1197,20 @@ The administration of the [market data catalog](market-data.md#administration) (
 
 An unknown source, venue, asset, pair, or conflict answers `404 market_not_found`, an invalid parameter or body `400 validation_failed`.
 
+## AML alerts
+
+The alerts of the [AML rules](aml.md) ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)), for active administrators. While `compliance.aml.enabled` is off, they answer `503 aml_unavailable`.
+
+| Route | |
+| --- | --- |
+| `GET /admin/aml/rules` | Every rule as the server synced it from the rules file: its code, type, settings, action, `version`, and `retired_at` for one that left the file |
+| `GET /admin/aml/alerts?status=&user_hk=&limit=` | The alerts, newest first, of a status or a user, at most `limit` (100) |
+| `GET /admin/aml/alerts/{id}` | One alert (`404 aml_alert_not_found`) |
+| `GET /admin/aml/sanctions` | The version of the OFAC list in use: `version`, `entries`, `fetched_at`, `checked_at`, and `stale`, a list too old or missing, which holds every operation that a sanctions rule screens; `503 aml_unavailable` while the provider is off |
+| `POST /admin/aml/alerts/{id}/transition` | Moves an alert: `{"status": "INVESTIGATING"}`, which assigns it to the administrator, `ESCALATED`, or `RESOLVED` and `DISMISSED` with a `resolution` of 1 to 1000 characters, which only they take. A move that its status does not allow answers `409 aml_alert_transition_invalid` with `from` and `to` |
+
+An alert has its `rule_code` and `rule_version`, the operation that raised it (`event_kind`, `event_ref`, such as the id of a withdrawal; none for the batch), the `action` that was taken, `trigger_data`, what the rule saw, `risk_score`, `status`, and who investigated and closed it. A rule or an alert changed in SQL answers `409 row_unverified`.
+
 ## Integrity findings
 
 The rows that did not match their [row seal](data-protection.md#row-seals) ([#139](https://github.com/mdastpak/Crypto-Exchange/issues/139)), for active administrators.
@@ -1481,7 +1500,7 @@ The deposit, withdrawal (#70), OTC (#61, #62), and order (#76) paths all check t
 
 ### Granting a level
 
-The identity checks ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [#162](https://github.com/mdastpak/Crypto-Exchange/issues/162)) and the KYC review ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72), [#71](https://github.com/mdastpak/Crypto-Exchange/issues/71)) will grant the levels. Until then, an operator sets the level of a user with `cmd/admin` ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)). This is for the testnet run of M2 and for manual review:
+The identity checks ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)) grant level 1, and an approved [KYC application](#kyc-applications) ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)) grants level 2. An operator may still set the level of a user with `cmd/admin` ([#440](https://github.com/mdastpak/Crypto-Exchange/issues/440)), as for the testnet run of M2, or to lower a level:
 
 ```sh
 admin -operator "Sara" verification grant -user alice@example.com -level 2 -reason "testnet run" -dry-run
@@ -1549,6 +1568,101 @@ One entry can change several balances, such as a transfer's `LOCK` and `TRANSFER
 
 Each combination of filters is a range scan of `balance_changes_user_history` or, with a currency, `balance_changes_user_currency_history` (migration 43). A test shows this with `EXPLAIN`.
 
+## Identity
+
+The check of a user's identity ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158)): their national ID and date of birth, at the national registry through the identity provider, and, when the account has a verified mobile number, that the number is registered to the national ID. A verified national ID, with a card or an IBAN of the user's [withdrawal destinations](#withdrawal-destinations) whose owner the provider matched, raises the user to [verification level](#verification-levels) 1.
+
+### `GET /user/identity`
+
+`info.state` is `none`, `pending` while the provider cannot answer and the server asks again, `verified`, or `rejected`, with `reason`:
+
+- `mismatched`: the registry does not have that national ID with that date of birth, or the mobile number is not registered to it. Final for that check.
+- `taken`: the national ID is verified for another account.
+
+`national_id` is masked, such as `00******79`, `verified_at` is when it was verified, and `attempts_left` is how many more checks may fail today.
+
+### `POST /user/identity`
+
+`{"national_id": "0012345679", "birth_date": "1991-08-16"}`, the date of birth in the Gregorian calendar. The answer is `200` with the identity, verified or rejected, or `202` while the provider cannot answer. A pending check is asked again every minute or so, waiting from a minute to an hour between attempts, and nothing is approved on a failure.
+
+- **One person, one account.** A national ID verified for another account answers `409 national_id_taken`, and the refusal is recorded and audited. The national ID is stored encrypted with a keyed blind index, unique among verified accounts.
+- `409 identity_already_verified` for a verified identity, which only support can change. A national ID stored without a date of birth may be checked again with one, but not replaced.
+- `409 identity_check_pending` while a check of the user waits for the provider.
+- `429 identity_attempts_exceeded` after five failed checks, mismatched or taken, in a day, so that national IDs cannot be tried one by one.
+- `400 validation_failed` for a national ID that is not ten digits with a valid check digit, or a date that is not a date of birth.
+- `503 identity_unavailable` without a provider or without the data keys.
+
+The route has the rate limit of a code request and needs the profile changes to be open. Audited as `user.identity_check`, with the check, the provider, and its reference, never the values. A check is a sealed row of `identity_checks`, and the verified national ID a sealed row of `user_national_ids` ([data protection](data-protection.md#row-seals)).
+
+## Deposit addresses
+
+Each user has one deposit address per network, which every currency of the network shares, such as TRX and USDT on TRON ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). It is derived by BIP32 from the extended public key of the custody's account, `m/44'/195'/0'/0/<index>` on TRON, with the next index of the network, so the server holds no private key: the signer holds the seed. The address is recorded and sealed: one swapped in SQL is refused, as it would credit another user's deposits.
+
+| Route | |
+| --- | --- |
+| `POST /user/deposit-addresses` | `{"currency_hk", "network"}`: the user's address of the network, given at the first request and the same after. The user must be allowed crypto deposits by their level (`403 verification_required`) and restrictions, the currency must take deposits on the network (`409 deposits_closed`), and the network must have an xpub (`400 deposit_network_unsupported`). Closed by the deposits lockdown. Audited as `user.deposit_address` when it is given |
+| `GET /user/deposit-addresses` | The user's addresses |
+
+Without a network that has an xpub, the routes answer `503 deposits_unavailable`.
+
+### Deposits
+
+The watcher of each network finds the deposits to the addresses ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). On TRON it reads every block from a node with the HTTP API of TronGrid (the first of `rpc_endpoints`, with `TRONGRID_API_KEY`): the successful transfers of TRX, and the TRC20 `Transfer` events of the listed tokens, such as USDT by its contract. A transfer from the hot or the cold wallet, such as the fee of a sweep, is no deposit. A deposit is one per transaction and event (`log_index`, -1 for TRX), so a block read twice credits nothing twice.
+
+| Status | |
+| --- | --- |
+| `DETECTED` | In its block, pending in the user's balance (`pending_deposit`) |
+| `CREDITED` | Once its block has `confirmations_required` confirmations (19 on TRON, the deposit's block included) and is still in the chain: the amount is available |
+| `CONFIRMED` | Confirmed and on hold: still pending, until support credits it |
+| `FAILED` | Below the network's `min_deposit`, never pending; or dropped from the chain by a reorg, when it leaves the pending balance |
+
+A confirmed deposit is held when the deposits of its currency or network are closed (`deposits_closed`), when the user's deposits are restricted (`restricted`), or when the [AML rules](aml.md) review or refuse it (`aml`); a refusal is recorded first, with the freeze it asks for. The holds are audited as `deposit.held`.
+
+Each block is recorded in one transaction with the cursor of the network, which must be the block's parent: a block that is not is a reorg, and the watcher reads again from `reorg_depth` blocks back. A deposit found in another block moves to it; one whose block is no longer in the chain, and whose transaction is in none, fails, and is pending again if the transaction comes back. Every instance runs the watcher every `block_poll_interval_seconds`, paused with the scheduler and with the deposits lockdown; the locked cursor lets one record each block. A network without a cursor starts at `start_block`, or at the newest block. The deposits and the cursors are [sealed](data-protection.md#row-seals): a deposit raised or moved in SQL is refused with its finding, and credits nothing, and a cursor moved in SQL stops the watcher.
+
+| Route | |
+| --- | --- |
+| `GET /user/deposits` | The user's 200 newest deposits, with `on_hold` but not why |
+| `GET /admin/deposits` | The 200 newest deposits, with the user and the `hold_reason`; filtered by `user_id`, `status`, and `held=true` |
+| `POST /admin/deposits/{id}/credit` | Credits a held deposit after review, one below the minimum included; not one dropped by a reorg (`409 deposit_not_held`). Sensitive: it needs a step-up. Audited as `admin.deposit_credit` |
+
+## KYC applications
+
+A user at level 1, whose identity is verified ([Identity](#identity)), applies for level 2 with a KYC application ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)): a form, documents, and a review by an administrator. Personal data is never stored or logged in plaintext: the form is sealed with the field key, and each document is encrypted by the server before it is stored in the S3-compatible storage of [`compliance.kyc.storage`](configuration.md#settings-reserved-for-roadmap-features), which encrypts it again (SSE-S3). The name of a file is not kept. Without the storage or the data keys, the routes answer `503 kyc_unavailable`.
+
+| Route | |
+| --- | --- |
+| `GET /user/kyc` | The user's newest application: `status`, `reason` of a rejection, and its `documents` (type, kind of file, size), without their content; `404 kyc_application_not_found` without one |
+| `POST /user/kyc/applications` | `{"form": {"address", "city", "postal_code", "occupation", "source_of_funds"}}` opens an application for level 2 (`201`). `403 identity_verification_required` below level 1, `409 kyc_application_open` while one is open, `409 kyc_already_verified` at level 2 |
+| `POST /user/kyc/applications/{id}/documents` | `multipart/form-data` with `type` and `file`: a JPEG, a PNG, or a PDF, by its content, of at most 10 MB, at most 10 per application (`409 kyc_documents_exceeded`). Only while the application is `PENDING` (`409 kyc_application_submitted`) |
+| `POST /user/kyc/applications/{id}/submit` | Sends it for review (`UNDER_REVIEW`), once it has an identity document (`NATIONAL_ID`, `PASSPORT`, or `DRIVERS_LICENSE`), a `SELFIE`, and a proof of address (`PROOF_OF_ADDRESS`, `UTILITY_BILL`, or `BANK_STATEMENT`); otherwise `409 kyc_documents_missing` with `info.missing`, the groups it lacks |
+
+The statuses: `PENDING`, `UNDER_REVIEW`, then `APPROVED` or `REJECTED`, which is final; a rejected user applies again.
+
+### With a provider
+
+While Sumsub is the provider ([configuration](configuration.md#settings-reserved-for-roadmap-features)), a new application has `provider: sumsub`: the server opens a Sumsub applicant named by the application's id, and the user gives the documents to Sumsub through its SDK instead of the upload route (`409 kyc_provider_flow`).
+
+| Route | |
+| --- | --- |
+| `GET /user/kyc/session` | A token of Sumsub's SDK for the user's open application, which expires in minutes; ask again for another. Never cached |
+| `POST /kyc/webhooks/sumsub` | Sumsub's webhooks: no token, but the hex HMAC of the raw body under the webhook secret in `X-Payload-Digest`, by the algorithm of `X-Payload-Digest-Alg` (SHA-256 by default, SHA-512, or SHA-1), compared in constant time; otherwise `401 kyc_webhook_unsigned`. A webhook must name the application and its applicant together |
+
+The webhooks move the application: `applicantPending` puts it `UNDER_REVIEW`; `applicantReviewed` `GREEN` approves it and grants level 2, with the user's row locked first; `RED` with `RETRY` sends it back to `PENDING`, for new documents at the provider; `RED` with `FINAL` rejects it with a general reason for the user, and the provider's labels in the review notes for the administrators. A webhook of a decided application, or of none, answers `200` and changes nothing, so that Sumsub stops sending it; an error answers `500`, and Sumsub sends it again. An approval of a user who lost level 1 meanwhile, or whose account is not active, is acknowledged and not applied: the application stays under review for an administrator. Audited as `kyc.provider_verdict`, and the level as `user.verification_set`, by the system. Administrators may still decide an application of the provider that is `UNDER_REVIEW`. Opening, adding, and submitting need the profile changes to be open; an upload has the rate limit of a code request. Audited as `user.kyc_apply`, `user.kyc_document_add` (type, kind, and size), and `user.kyc_submit`.
+
+For administrators:
+
+| Route | |
+| --- | --- |
+| `GET /admin/kyc/applications?status=&limit=` | The applications of a status, `UNDER_REVIEW` by default, the oldest submitted first, with `user_hk` |
+| `GET /admin/kyc/applications/{id}` | One, with its form opened; audited as `admin.kyc_view` |
+| `GET /admin/kyc/documents/{id}/link` | A link to the content of a document, signed for the administrator for a minute, to open in a browser without the token |
+| `GET /admin/kyc/documents/{id}/content?admin=&expires=&sig=` | The document, decrypted: no token, but the signature of the link, for its administrator, who must still be active (`403 kyc_link_invalid`), from where the admin routes are reached. Never cached, sandboxed, and audited as `admin.kyc_document_view`. A document whose stored content is not what was stored answers `409 kyc_document_changed` |
+| `POST /admin/kyc/applications/{id}/approve` | `{"notes"}`: approves an application `UNDER_REVIEW`, and raises the user to level 2 in the same transaction, with the user's row locked first (`user.verification_set` and `admin.kyc_approve`). A user who lost level 1 meanwhile is not raised (`403 identity_verification_required`) |
+| `POST /admin/kyc/applications/{id}/reject` | `{"reason", "notes"}`: rejects it with a reason of 1 to 500 characters that the user reads (`admin.kyc_reject`) |
+
+Approving and rejecting are sensitive routes: they need a step-up. A decision on an application that does not wait for one answers `409 kyc_application_not_under_review`. An application or a document changed in SQL answers `409 row_unverified`: an application approved in SQL grants nothing, and an object swapped in the storage is refused, as the row seals the digest of what was stored, and the encryption binds the content to its document.
+
 ## Withdrawal destinations
 
 A withdrawal goes only to a destination in the user's list, which the withdrawal names by its `id`. A number or address typed with the withdrawal is never used ([#160](https://github.com/mdastpak/Crypto-Exchange/issues/160)).
@@ -1560,11 +1674,13 @@ A withdrawal goes only to a destination in the user's list, which the withdrawal
 | `account` | A bank account number, 5 to 26 digits, with its `bank` | It must belong to the user's verified national ID |
 | `crypto` | An address on a `network`: `bitcoin` (legacy, P2SH, or SegWit), `ethereum` (in one case or EIP-55 checksummed), or `tron` | It must be valid for its network |
 
-**Ownership.** A provider checks, when a card, an IBAN, or an account is added, that it belongs to the user's verified national ID ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [`identity.bank_ownership`](configuration.md#identity)).
+**Ownership.** A provider checks, when a card, an IBAN, or an account is added, that it belongs to the user's verified national ID and date of birth ([#158](https://github.com/mdastpak/Crypto-Exchange/issues/158), [`identity.bank_ownership`](configuration.md#identity)).
 
-- Without a verified national ID, the answer is `409 national_id_required`.
+- Without a verified [identity](#identity), with its date of birth, the answer is `409 national_id_required`.
 - When the card, IBAN, or account is someone else's, the answer is `403 destination_not_owned`, and the attempt is audited.
-- When the provider cannot answer, the answer is `503 ownership_check_unavailable`.
+- When the provider cannot answer, the card or IBAN is added **pending**: the answer is `202` with `ownership_pending: true`. It is listed but not usable (`409 destination_ownership_pending` for a withdrawal). Each instance asks the provider again every minute, waiting from a minute to an hour between attempts. A match makes it usable, and a mismatch removes it, audited as `withdrawal_destination.ownership_check`. Nothing is approved on a failure.
+- Without a provider, or for a bank account number, which Jibit does not check, the answer is `503 ownership_check_unavailable`.
+- **Level 1.** A matched card, IBAN, or account of a user with a verified identity at level 0 raises them to level 1, in the same transaction, audited as `user.verification_set`. Such a user may add one at level 0, since it is how they reach level 1. Their withdrawals still need the level.
 - A card, an IBAN, or an account can be in only one user's list at a time (`409 destination_taken`). The same crypto address can be in several lists.
 
 **Bank.** Each fiat destination records its bank: from the card's prefix, from the IBAN's bank code, or as given for an account. Payouts prefer an account-to-account transfer when they can make one in the same bank ([#70](https://github.com/mdastpak/Crypto-Exchange/issues/70)). A card whose prefix is not known has no bank.
@@ -1722,6 +1838,8 @@ The checks:
 
 A withdrawal of at least `withdrawals.review_above` of its currency ([configuration](configuration.md#withdrawals)) waits for an administrator (`status: review`, `review_reason: amount`). While thresholds are configured, a currency that has none, under any of its symbols, and no `"*"` default, waits whatever the amount (`review_reason: no_threshold`, [#406](https://github.com/mdastpak/Crypto-Exchange/issues/406)); the others are `queued` for their payouts. Audited as `user.withdrawal_request`.
 
+The [AML rules](aml.md) evaluate both steps ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)). A rule may hold the withdrawal for an administrator (`status: review`, `review_reason: aml`), or refuse it: `403 withdrawal_refused`, at step one before any code is sent, or at step two, with nothing locked. The answer never names the rule. While the rules cannot be evaluated, such as for a rule changed in SQL, withdrawals answer `503 withdrawals_unavailable`.
+
 **The withdrawal:**
 
 | Field | Meaning |
@@ -1762,6 +1880,15 @@ A payout has `id`, `seq`, `rail`, `amount`, `fee`, `status` (`planned`, `submitt
 - `POST /admin/payouts/{id}/fail` with `{"reason": "…"}` records it failed, as above. Audited as `withdrawal.payout_fail`.
 
 Both are sensitive routes: they need a [step-up](#post-adminstep-up). `409 payout_not_open` for a payout that is not planned or submitted, so a payout is never paid twice. Payouts are sealed: one raised, completed, or released in SQL is not acted on.
+
+**The TRON signer** pays the withdrawals on TRON when `custody.providers[].signer` names it ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), see [custody](custody.md#the-signer)). A payout records its provider when it is planned, `tron-signer` for these, and is sent to it with its key, the destination's address, and the asset by its contract (`TRX` for the native one), in the smallest unit of its precision from the registry. Each pass asks the signer where its submitted payouts are:
+
+- **Completed:** the payout completes once its transaction has 19 confirmations, with the hash as `tracking_id`.
+- **Failed:** a transaction that failed on chain fails the payout, as above.
+- **Not received:** a transaction that expired untaken, or a payout that the signer never recorded, is sent again with the same key.
+- **Refused:** a payout that the signer refuses, by its caps or its assets, fails.
+
+An administrator cannot complete or fail a payout of the signer (`409 payout_automatic`): its report settles it, as one recorded by hand could be paid twice. An instance without the signer leaves its payouts to one that has it.
 
 ### Review (admin)
 

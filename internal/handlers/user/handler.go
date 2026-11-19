@@ -44,6 +44,13 @@ type UserHandler struct {
 	Verification VerificationReader
 	// Balances reads the user's balances and their history (#365).
 	Balances BalanceReader
+	// Identity checks the user's national ID and date of birth (#158).
+	Identity IdentityService
+	// KYC are the applications for level 2 (#72); nil answers 503.
+	KYC KYCApplications
+	// Deposits are the deposit addresses of the custody (#68); nil
+	// answers 503.
+	Deposits DepositAddresses
 	// Destinations keeps the withdrawal destinations of the user (#160).
 	// The server sets the provider that checks the owner of a card, an
 	// IBAN, or an account, and the keys that read the national IDs.

@@ -46,12 +46,39 @@ type Payouts struct {
 	DB           *sql.DB
 	Ledger       ledger.Ledger
 	Destinations PayoutBook
-	Provider     Provider
-	Settings     config.PayoutsConfig
+	// Provider pays every payout that Chains does not: the manual one.
+	Provider Provider
+	// Chains pays the payouts on chain of a network, by the network, such
+	// as the TRON signer (#68).
+	Chains   map[string]Provider
+	Settings config.PayoutsConfig
 	// Location is the zone of the rails' hours and days.
 	Location *time.Location
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
+}
+
+// providerFor is the provider that pays a part on rail of a withdrawal on
+// network.
+func (p Payouts) providerFor(rail, network string) Provider {
+	if c, ok := p.Chains[network]; ok && rail == RailChain {
+		return c
+	}
+	return p.Provider
+}
+
+// byName is the provider that a payout was planned with; false for one
+// that this instance does not have, which it leaves to another.
+func (p Payouts) byName(name string) (Provider, bool) {
+	if p.Provider != nil && p.Provider.Name() == name {
+		return p.Provider, true
+	}
+	for _, c := range p.Chains {
+		if c.Name() == name {
+			return c, true
+		}
+	}
+	return nil, false
 }
 
 // batch bounds the rows of each step of a pass.
@@ -204,7 +231,7 @@ func (p Payouts) insertParts(ctx context.Context, tx *sql.Tx, w Withdrawal, part
 		if _, err := tx.ExecContext(ctx, `INSERT INTO withdrawal_payouts (withdrawal_id, seq, rail, provider, amount, fee, status,
 				scheduled_for, idempotency_key)
 			VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, 'planned', $7, $8)`,
-			w.ID, n, part.Rail, p.Provider.Name(), part.Amount.String(), fees[i].String(), when, fmt.Sprintf("%s-%d", w.ID, n)); err != nil {
+			w.ID, n, part.Rail, p.providerFor(part.Rail, w.Network).Name(), part.Amount.String(), fees[i].String(), when, fmt.Sprintf("%s-%d", w.ID, n)); err != nil {
 			return fmt.Errorf("record a payout: %w", err)
 		}
 	}
@@ -240,7 +267,8 @@ func (p Payouts) used(ctx context.Context, tx *sql.Tx, destinationID string, tod
 }
 
 func (p Payouts) submitDue(ctx context.Context) (int, error) {
-	ids, err := p.ids(ctx, `SELECT id FROM withdrawal_payouts WHERE status = 'planned' AND scheduled_for <= $1 ORDER BY scheduled_for, seq`, p.now())
+	ids, err := p.ids(ctx, `SELECT id FROM withdrawal_payouts WHERE status = 'planned' AND scheduled_for <= $1
+		AND provider = ANY(string_to_array($2, ',')) ORDER BY scheduled_for, seq`, p.now(), strings.Join(p.names(), ","))
 	if err != nil {
 		return 0, err
 	}
@@ -267,7 +295,11 @@ func (p Payouts) submit(ctx context.Context, id string) (bool, error) {
 	if err != nil || !ok {
 		return false, err
 	}
+	provider, known := p.byName(pay.Provider)
 	t, err := p.transfer(ctx, pay)
+	if err == nil && !known {
+		err = fmt.Errorf("the provider %s of the payout is not configured", pay.Provider)
+	}
 	if err != nil {
 		// Nothing reached the provider: the payout waits for the next pass.
 		if undo := p.resend(ctx, id); undo != nil {
@@ -275,7 +307,7 @@ func (p Payouts) submit(ctx context.Context, id string) (bool, error) {
 		}
 		return false, err
 	}
-	ref, err := p.Provider.Submit(ctx, t)
+	ref, err := provider.Submit(ctx, t)
 	tx, txErr := p.DB.BeginTx(ctx, nil)
 	if txErr != nil {
 		return true, txErr
@@ -377,16 +409,45 @@ func (p Payouts) transfer(ctx context.Context, pay Payout) (Transfer, error) {
 	if err != nil {
 		return Transfer{}, err
 	}
-	return Transfer{PayoutID: pay.ID, IdempotencyKey: pay.idempotencyKey, Ref: pay.providerRef, Rail: pay.Rail,
-		Currency: pay.Currency, Amount: pay.Amount, Destination: d}, nil
+	t := Transfer{PayoutID: pay.ID, IdempotencyKey: pay.idempotencyKey, Ref: pay.providerRef, Rail: pay.Rail,
+		Currency: pay.Currency, Amount: pay.Amount, Destination: d}
+	if pay.Rail == RailChain {
+		// The asset by its contract, which a rename of the currency keeps,
+		// and its precision, from the registry, checked against its seal.
+		n, err := currencies.NetworkOf(ctx, p.DB, pay.currencyHK, pay.Network, false)
+		if err != nil {
+			return Transfer{}, err
+		}
+		t.Network, t.Contract, t.Decimals = pay.Network, n.ContractAddress, n.Decimals
+	}
+	return t, nil
+}
+
+// names are the providers of this instance.
+func (p Payouts) names() []string {
+	out := []string{}
+	if p.Provider != nil {
+		out = append(out, p.Provider.Name())
+	}
+	for _, c := range p.Chains {
+		out = append(out, c.Name())
+	}
+	return out
 }
 
 func (p Payouts) checkSubmitted(ctx context.Context) (int, error) {
-	if p.Provider.Name() == config.PayoutProviderManual {
-		// An administrator records each one.
+	// An administrator records each payout of the manual provider.
+	var automatic []string
+	for _, name := range p.names() {
+		if name != config.PayoutProviderManual {
+			automatic = append(automatic, name)
+		}
+	}
+	if len(automatic) == 0 {
 		return 0, nil
 	}
-	ids, err := p.ids(ctx, `SELECT id FROM withdrawal_payouts WHERE status = 'submitted' ORDER BY submitted_at`)
+	ids, err := p.ids(ctx, `SELECT id FROM withdrawal_payouts WHERE status = 'submitted' AND provider = ANY(string_to_array($1, ',')) ORDER BY submitted_at`,
+		strings.Join(automatic, ","))
 	if err != nil {
 		return 0, err
 	}
@@ -396,13 +457,17 @@ func (p Payouts) checkSubmitted(ctx context.Context) (int, error) {
 		if err != nil {
 			continue
 		}
+		provider, known := p.byName(pay.Provider)
+		if !known {
+			continue
+		}
 		t, err := p.transfer(ctx, pay)
 		if err != nil {
 			continue
 		}
-		state, err := p.Provider.Status(ctx, t)
+		state, err := provider.Status(ctx, t)
 		if err != nil {
-			log.Printf("Failed to read the state of payout %s from %s: %v", id, p.Provider.Name(), err)
+			log.Printf("Failed to read the state of payout %s from %s: %v", id, pay.Provider, err)
 			continue
 		}
 		origin := audit.Event{ActorType: audit.ActorSystem}
@@ -464,6 +529,9 @@ func (p Payouts) Complete(ctx context.Context, id, trackingID string, origin aud
 		if pay.Status != PayoutSubmitted {
 			return ErrPayoutNotOpen
 		}
+		if byHand(origin, pay) {
+			return ErrPayoutAutomatic
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE withdrawal_payouts SET status = 'completed', tracking_id = $2, completed_at = NOW(),
 				last_error = NULL WHERE id = $1`, id, trackingID); err != nil {
 			return err
@@ -492,8 +560,18 @@ func (p Payouts) Fail(ctx context.Context, id, reason string, origin audit.Event
 		return Payout{}, invalid("reason", "is required, at most %d characters", MaxTrackingID)
 	}
 	return p.settlePayout(ctx, id, func(tx *sql.Tx, _ Withdrawal, pay Payout) error {
+		if byHand(origin, pay) {
+			return ErrPayoutAutomatic
+		}
 		return p.fail(ctx, tx, pay, reason, origin)
 	})
+}
+
+// byHand reports an administrator who records a payout that a provider
+// pays by itself: its provider's report settles it, as one recorded by
+// hand could be paid twice, or released while it is paid.
+func byHand(origin audit.Event, pay Payout) bool {
+	return origin.ActorType == audit.ActorAdmin && pay.Provider != config.PayoutProviderManual
 }
 
 // settlePayout runs change on the payout id and its withdrawal, both

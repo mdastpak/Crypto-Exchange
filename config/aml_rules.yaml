@@ -1,378 +1,292 @@
-# AML Rules Configuration
-# Rules for anti-money laundering monitoring
-# Each rule has a type, configuration, thresholds, and action
+# AML rules (#73).
+#
+# The server syncs this file into the aml_rules table at startup when
+# compliance.aml.enabled is on: a rule whose definition changed gets a new
+# version, and a rule removed from the file is retired. See
+# docs/aml.md for what each type, metric, and check means.
+#
+# Every key is checked: an unknown key, a field that the type does not use,
+# or a missing threshold keeps the server from starting. Amounts are in
+# USDT, valued at the current price of the price engine; an operation whose
+# value needs a price that is not current goes to review.
+#
+# applies_to names the operations a rule evaluates: deposit, withdrawal,
+# or trade. action is ALERT (an alert only), REVIEW (the operation waits for
+# an administrator), BLOCK (refused), or FREEZE (refused, and the account is
+# frozen). The strongest action of the rules that hit decides.
 
 aml_rules:
-  # Velocity Rules - Transaction frequency/volume monitoring
+  # Velocity: how often, and how much, over a window.
   - id: "velocity_high_frequency"
     name: "High Frequency Trading"
-    description: "Detect unusually high transaction frequency from a single account"
+    description: "Unusually many trades from one account in an hour"
     rule_type: "VELOCITY"
     enabled: true
+    applies_to: ["trade"]
     config:
-      metric: "trade_count"
-      window_hours: 1
-      group_by: "user_id"
+      metric: "count"
     threshold_count: 100
-    threshold_amount: "0"
     time_window_hours: 1
     action: "ALERT"
     severity: "MEDIUM"
 
   - id: "velocity_high_volume"
     name: "High Volume Trading"
-    description: "Detect unusually high trading volume from a single account"
+    description: "Unusually high trading volume from one account in a day"
     rule_type: "VELOCITY"
     enabled: true
+    applies_to: ["trade"]
     config:
-      metric: "quote_volume"
-      window_hours: 24
-      group_by: "user_id"
-    threshold_count: 0
-    threshold_amount: "1000000"  # $1M in 24h
+      metric: "volume"
+    threshold_amount: "1000000"
     time_window_hours: 24
     action: "REVIEW"
     severity: "HIGH"
 
   - id: "velocity_deposit_withdrawal"
     name: "Rapid Deposit-Withdrawal Cycles"
-    description: "Detect rapid deposit followed by withdrawal (potential layering)"
+    description: "Withdrawals right after deposits (potential layering)"
     rule_type: "VELOCITY"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      metric: "deposit_withdrawal_ratio"
-      window_hours: 24
-      group_by: "user_id"
+      metric: "deposit_withdrawal_cycles"
     threshold_count: 5
-    threshold_amount: "0"
     time_window_hours: 24
     action: "REVIEW"
     severity: "HIGH"
 
-  # Structuring Rules - Breaking large amounts into smaller ones
+  - id: "large_transaction_report"
+    name: "Large Transaction Reporting"
+    description: "One operation at or above the reporting threshold"
+    rule_type: "VELOCITY"
+    enabled: true
+    applies_to: ["deposit", "withdrawal", "trade"]
+    config:
+      metric: "single_amount"
+    threshold_amount: "10000"
+    time_window_hours: 1
+    action: "ALERT"
+    severity: "MEDIUM"
+
+  # Structuring: several operations just below the reporting threshold.
   - id: "structuring_withdrawal"
     name: "Withdrawal Structuring"
-    description: "Multiple withdrawals just below reporting threshold"
+    description: "Several withdrawals just below the reporting threshold"
     rule_type: "STRUCTURING"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      threshold_amount: "9000"  # Just below $10k
-      window_hours: 24
-      min_transactions: 3
-      group_by: "user_id"
-    threshold_count: 3
+      ceiling: "10000"
     threshold_amount: "9000"
+    threshold_count: 3
     time_window_hours: 24
     action: "BLOCK"
     severity: "CRITICAL"
 
   - id: "structuring_deposit"
     name: "Deposit Structuring"
-    description: "Multiple deposits just below reporting threshold"
+    description: "Several deposits just below the reporting threshold"
     rule_type: "STRUCTURING"
     enabled: true
+    applies_to: ["deposit"]
     config:
-      threshold_amount: "9000"
-      window_hours: 24
-      min_transactions: 3
-      group_by: "user_id"
-    threshold_count: 3
+      ceiling: "10000"
     threshold_amount: "9000"
+    threshold_count: 3
     time_window_hours: 24
     action: "REVIEW"
     severity: "HIGH"
 
-  # High-Risk Country Rules
+  # High-risk countries. The country of the deployment must not be listed:
+  # an Iranian deployment refuses a file that lists IR.
   - id: "high_risk_country_deposit"
     name: "Deposits from High-Risk Jurisdictions"
-    description: "Flag deposits originating from high-risk countries"
+    description: "Deposits from, or requested from, high-risk countries"
     rule_type: "HIGH_RISK_COUNTRY"
     enabled: true
+    applies_to: ["deposit"]
     config:
-      high_risk_countries:
-        - "KP"  # North Korea
-        - "IR"  # Iran
-        - "SY"  # Syria
-        - "CU"  # Cuba
-        - "VE"  # Venezuela
-        - "BY"  # Belarus
-        - "MM"  # Myanmar
-        - "AF"  # Afghanistan
-      check_fields:
-        - "user_country"
-        - "counterparty_country"
-        - "ip_country"
-    threshold_count: 1
-    threshold_amount: "0"
+      countries: ["KP", "SY", "CU", "VE", "BY", "MM", "AF"]
+      check_fields: ["counterparty_country", "ip_country"]
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
   - id: "high_risk_country_withdrawal"
     name: "Withdrawals to High-Risk Jurisdictions"
-    description: "Block withdrawals to sanctioned/high-risk countries"
+    description: "Withdrawals to, or requested from, high-risk countries"
     rule_type: "HIGH_RISK_COUNTRY"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      high_risk_countries:
-        - "KP"
-        - "IR"
-        - "SY"
-        - "CU"
-        - "VE"
-        - "BY"
-        - "MM"
-        - "AF"
-      check_fields:
-        - "destination_country"
-        - "ip_country"
-    threshold_count: 1
-    threshold_amount: "0"
+      countries: ["KP", "SY", "CU", "VE", "BY", "MM", "AF"]
+      check_fields: ["counterparty_country", "ip_country"]
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
-  # Mixer/Tumbler Detection
+  - id: "cross_border_high_value"
+    name: "High Value Cross-Border Flows"
+    description: "High value moved to or from another country in a day"
+    rule_type: "HIGH_RISK_COUNTRY"
+    enabled: true
+    applies_to: ["deposit", "withdrawal"]
+    config:
+      cross_border: true
+      home_country: "IR"
+      check_fields: ["counterparty_country"]
+    threshold_amount: "50000"
+    time_window_hours: 24
+    action: "REVIEW"
+    severity: "HIGH"
+
+  # Unusual patterns.
+  - id: "unusual_withdrawal_pattern"
+    name: "Unusual Withdrawal Pattern"
+    description: "A withdrawal unlike the account's own: new destination, large amount, odd time, or a burst"
+    rule_type: "UNUSUAL_PATTERN"
+    enabled: true
+    applies_to: ["withdrawal"]
+    config:
+      pattern: "withdrawal_profile"
+      checks: ["new_destination", "amount_deviation", "time_deviation", "velocity_spike"]
+      history_days: 30
+      new_destination_days: 30
+      amount_deviation_multiplier: "5"
+      time_deviation_hours: 6
+      velocity_spike_multiplier: "5"
+    threshold_count: 2
+    time_window_hours: 24
+    action: "REVIEW"
+    severity: "HIGH"
+
+  - id: "dormant_account_activation"
+    name: "Dormant Account Sudden Activity"
+    description: "Activity from an account that had none for 90 days"
+    rule_type: "UNUSUAL_PATTERN"
+    enabled: true
+    applies_to: ["deposit", "withdrawal", "trade"]
+    config:
+      pattern: "dormant_account"
+      dormant_days: 90
+    time_window_hours: 24
+    action: "REVIEW"
+    severity: "HIGH"
+
+  # Screening rules ask a provider; without one configured they are not
+  # evaluated, and the server says so at startup. The SANCTIONS rules that
+  # name ofac screen against the OFAC list; the others wait for Chainalysis
+  # or TRM.
   - id: "mixer_deposit"
     name: "Mixer/Tumbler Deposit Detection"
-    description: "Detect deposits from known mixer/tumbler addresses"
+    description: "Deposits from known mixer or tumbler addresses"
     rule_type: "MIXER"
     enabled: true
+    applies_to: ["deposit"]
     config:
-      mixer_address_list: "chainalysis_mixer"
-      check_direction: "deposit"
-      require_confirmations: 3
-    threshold_count: 1
-    threshold_amount: "0"
+      list: "chainalysis_mixer"
     time_window_hours: 1
     action: "REVIEW"
     severity: "HIGH"
 
   - id: "mixer_withdrawal"
     name: "Mixer/Tumbler Withdrawal Detection"
-    description: "Detect withdrawals to known mixer/tumbler addresses"
+    description: "Withdrawals to known mixer or tumbler addresses"
     rule_type: "MIXER"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      mixer_address_list: "chainalysis_mixer"
-      check_direction: "withdrawal"
-    threshold_count: 1
-    threshold_amount: "0"
+      list: "chainalysis_mixer"
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
-  # Darknet Market Interaction
   - id: "darknet_deposit"
-    name: "Darknet Market Deposit"
-    description: "Detect deposits from known darknet market addresses"
+    name: "Darknet Market Deposit Detection"
+    description: "Deposits from known darknet market addresses"
     rule_type: "DARKNET"
     enabled: true
+    applies_to: ["deposit"]
     config:
-      darknet_address_list: "chainalysis_darknet"
-      check_direction: "deposit"
-    threshold_count: 1
-    threshold_amount: "0"
+      list: "chainalysis_darknet"
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
   - id: "darknet_withdrawal"
-    name: "Darknet Market Withdrawal"
-    description: "Detect withdrawals to known darknet market addresses"
+    name: "Darknet Market Withdrawal Detection"
+    description: "Withdrawals to known darknet market addresses"
     rule_type: "DARKNET"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      darknet_address_list: "chainalysis_darknet"
-      check_direction: "withdrawal"
-    threshold_count: 1
-    threshold_amount: "0"
+      list: "chainalysis_darknet"
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
-  # Sanctions Screening
-  - id: "sanctions_user_onboarding"
-    name: "User Onboarding Sanctions Check"
-    description: "Screen all new users against sanctions lists"
+  # A name alone does not tell a person: a match of the user's name holds
+  # the operation for a review, whatever the action.
+  - id: "sanctions_user"
+    name: "Sanctioned User"
+    description: "The account holder's name is on a sanctions list"
     rule_type: "SANCTIONS"
     enabled: true
+    applies_to: ["deposit", "withdrawal", "trade"]
     config:
-      screen_type: "USER_ONBOARDING"
       providers: ["ofac", "chainalysis", "trm"]
-      block_on_match: true
-    threshold_count: 1
-    threshold_amount: "0"
+      screen: "user"
     time_window_hours: 1
-    action: "BLOCK"
+    action: "REVIEW"
     severity: "CRITICAL"
 
   - id: "sanctions_deposit_address"
-    name: "Deposit Address Sanctions Check"
-    description: "Screen deposit addresses against sanctions lists"
+    name: "Sanctioned Deposit Address"
+    description: "Deposits from sanctioned addresses"
     rule_type: "SANCTIONS"
     enabled: true
+    applies_to: ["deposit"]
     config:
-      screen_type: "DEPOSIT_ADDRESS"
       providers: ["ofac", "chainalysis"]
-      block_on_match: true
-    threshold_count: 1
-    threshold_amount: "0"
+      screen: "counterparty"
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
   - id: "sanctions_withdrawal_address"
-    name: "Withdrawal Address Sanctions Check"
-    description: "Screen withdrawal destination addresses"
+    name: "Sanctioned Withdrawal Address"
+    description: "Withdrawals to sanctioned addresses"
     rule_type: "SANCTIONS"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      screen_type: "WITHDRAWAL_ADDRESS"
       providers: ["ofac", "chainalysis", "trm"]
-      block_on_match: true
-    threshold_count: 1
-    threshold_amount: "0"
+      screen: "counterparty"
     time_window_hours: 1
     action: "BLOCK"
     severity: "CRITICAL"
 
-  - id: "sanctions_counterparty"
-    name: "Counterparty Sanctions Check"
-    description: "Screen trading counterparties"
-    rule_type: "SANCTIONS"
-    enabled: true
-    config:
-      screen_type: "COUNTERPARTY"
-      providers: ["ofac"]
-    threshold_count: 1
-    threshold_amount: "0"
-    time_window_hours: 1
-    action: "REVIEW"
-    severity: "HIGH"
-
-  # Politically Exposed Persons (PEP)
-  - id: "pep_user_onboarding"
-    name: "PEP Screening on Onboarding"
-    description: "Check if user is a Politically Exposed Person"
+  - id: "pep_user"
+    name: "Politically Exposed Person"
+    description: "The account holder is a politically exposed person"
     rule_type: "PEP"
     enabled: true
+    applies_to: ["withdrawal"]
     config:
-      pep_list_provider: "chainalysis"
-      enhanced_due_diligence: true
-    threshold_count: 1
-    threshold_amount: "0"
+      providers: ["chainalysis"]
     time_window_hours: 1
     action: "REVIEW"
     severity: "HIGH"
 
-  # Unusual Pattern Detection (ML-based)
-  - id: "unusual_trading_pattern"
-    name: "Unusual Trading Pattern"
-    description: "ML-based anomaly detection for trading behavior"
-    rule_type: "UNUSUAL_PATTERN"
-    enabled: false  # Requires ML model
-    config:
-      model: "isolation_forest"
-      features:
-        - "trade_frequency"
-        - "order_size_distribution"
-        - "time_of_day_pattern"
-        - "market_preference"
-        - "cancellation_rate"
-      training_window_days: 30
-      inference_window_hours: 1
-      contamination: 0.01
-    threshold_count: 0
-    threshold_amount: "0"
-    time_window_hours: 1
-    action: "ALERT"
-    severity: "MEDIUM"
-
-  - id: "unusual_withdrawal_pattern"
-    name: "Unusual Withdrawal Pattern"
-    description: "Detect unusual withdrawal patterns (new address, large amount, odd time)"
-    rule_type: "UNUSUAL_PATTERN"
-    enabled: true
-    config:
-      checks:
-        - "new_address"
-        - "amount_deviation"
-        - "time_deviation"
-        - "velocity_spike"
-      new_address_threshold_days: 30
-      amount_deviation_multiplier: 5.0
-      time_deviation_hours: 6
-    threshold_count: 2
-    threshold_amount: "0"
-    time_window_hours: 24
-    action: "REVIEW"
-    severity: "HIGH"
-
-  # Large Transaction Reporting
-  - id: "large_transaction_report"
-    name: "Large Transaction Reporting"
-    description: "Flag transactions above regulatory reporting threshold"
-    rule_type: "VELOCITY"
-    enabled: true
-    config:
-      metric: "single_transaction_amount"
-      threshold_usd: 10000
-      auto_file_ctr: false  # Currency Transaction Report
-    threshold_count: 1
-    threshold_amount: "10000"
-    time_window_hours: 1
-    action: "ALERT"
-    severity: "MEDIUM"
-
-  # Dormant Account Activation
-  - id: "dormant_account_activation"
-    name: "Dormant Account Sudden Activity"
-    description: "Detect sudden high activity from previously dormant accounts"
-    rule_type: "UNUSUAL_PATTERN"
-    enabled: true
-    config:
-      dormant_threshold_days: 90
-      activity_spike_multiplier: 10.0
-    threshold_count: 1
-    threshold_amount: "0"
-    time_window_hours: 24
-    action: "REVIEW"
-    severity: "HIGH"
-
-  # Cross-Border Flow Monitoring
-  - id: "cross_border_high_value"
-    name: "High Value Cross-Border Flows"
-    description: "Monitor high-value cross-border movements"
-    rule_type: "HIGH_RISK_COUNTRY"
-    enabled: true
-    config:
-      threshold_usd: 50000
-      monitor_corridors: true
-    threshold_count: 1
-    threshold_amount: "50000"
-    time_window_hours: 24
-    action: "REVIEW"
-    severity: "HIGH"
-
-# Rule Engine Configuration
 engine:
+  # The batch evaluation of the velocity and structuring rules, and the
+  # escalation of old alerts.
   evaluation_interval_seconds: 60
-  max_concurrent_evaluations: 100
-  alert_retention_days: 90
   alert_escalation_hours: 24
-  
-  # Notification channels
+  # The alerts that hold or refuse an operation, and escalations.
   notifications:
     email:
-      enabled: true
+      enabled: false
       recipients:
         - "compliance@example.com"
-    webhook:
-      enabled: false
-      url: ""
-      secret: ""
-    slack:
-      enabled: false
-      webhook_url: ""
-      channel: "#compliance-alerts"

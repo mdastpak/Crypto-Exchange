@@ -611,12 +611,26 @@ type Configuration struct {
 			ScreenOnWithdrawal    bool                      `yaml:"screen_on_withdrawal"`
 			ScreenOnTrade         bool                      `yaml:"screen_on_trade"`
 			PeriodicRescreenHours int                       `yaml:"periodic_rescreen_hours"`
+			// RefreshHours is how often the OFAC list is downloaded (#73);
+			// 0 is 24.
+			RefreshHours int `yaml:"refresh_hours"`
+			// MaxListAgeHours is how long a list that no download found
+			// current is screened against; after it, every operation that
+			// a sanctions rule screens is held for review. 0 is 72.
+			MaxListAgeHours int `yaml:"max_list_age_hours"`
+			// NameMatchThreshold is the similarity, above 0 and up to 1,
+			// from which a name matches the list; 0 is 0.92.
+			NameMatchThreshold float64 `yaml:"name_match_threshold"`
 		} `yaml:"sanctions"`
 		AML struct {
 			Enabled   bool   `yaml:"enabled"`
 			RulesPath string `yaml:"rules_path"`
 		} `yaml:"aml"`
 		KYC struct {
+			// Storage is where the documents of the KYC applications are
+			// kept (#72): an S3-compatible bucket. The applications are
+			// available while it is set, with data keys.
+			Storage            KYCStorageConfig    `yaml:"storage"`
 			Providers          []KYCProviderConfig `yaml:"providers"`
 			DefaultTier        string              `yaml:"default_tier"`
 			AutoApproveLowRisk bool                `yaml:"auto_approve_low_risk"`
@@ -1174,6 +1188,26 @@ type CustodyProviderConfig struct {
 	BlockPollInterval     int      `yaml:"block_poll_interval_seconds"`
 	ReorgDepth            int      `yaml:"reorg_depth"`
 	SanctionsScreening    bool     `yaml:"sanctions_screening"`
+	// XPub is the extended public key of the account of the network, from
+	// which the deposit addresses are derived (#68): m/44'/195'/0' on
+	// TRON. Never an extended private key: the server holds none.
+	XPub string `yaml:"xpub"`
+	// StartBlock is the first block that the deposit watcher reads when it
+	// has read none (#68); 0 starts from the newest block.
+	StartBlock int64 `yaml:"start_block"`
+	// Signer is the signer that pays the withdrawals of the network from
+	// the hot wallet, cmd/tron-signer on TRON (#68); without its url, an
+	// administrator pays them by hand.
+	Signer SignerConfig `yaml:"signer"`
+}
+
+// SignerConfig is how the server reaches a signer of the custody: over
+// mutual TLS, with its client certificate, and the CA of the signer's.
+type SignerConfig struct {
+	URL      string `yaml:"url"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file"`
 }
 
 // FiatProviderConfig holds configuration for a fiat provider
@@ -1613,6 +1647,26 @@ const (
 const DefaultJibitEndpoint = "https://napi.jibit.ir/ide"
 
 // KYCProviderConfig holds configuration for a KYC provider
+// KYCStorageConfig is the S3-compatible storage of the KYC documents (#72).
+// The documents are encrypted by the server before they are stored.
+type KYCStorageConfig struct {
+	// Endpoint is the host and port of the storage, such as
+	// s3.ir-thr-at1.arvanstorage.ir or minio:9000; empty turns the KYC
+	// applications off.
+	Endpoint string `yaml:"endpoint"`
+	Region   string `yaml:"region"`
+	Bucket   string `yaml:"bucket"`
+	// AccessKey and SecretKey sign the requests; set them with
+	// KYC_STORAGE_ACCESS_KEY and KYC_STORAGE_SECRET_KEY.
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	// UseTLS reaches the storage over HTTPS; release mode requires it.
+	UseTLS bool `yaml:"use_tls"`
+	// ServerSideEncryption asks the storage to encrypt the objects with
+	// its own keys as well (SSE-S3).
+	ServerSideEncryption bool `yaml:"server_side_encryption"`
+}
+
 type KYCProviderConfig struct {
 	Name          string `yaml:"name"`
 	Enabled       bool   `yaml:"enabled"`
@@ -1621,6 +1675,23 @@ type KYCProviderConfig struct {
 	Endpoint      string `yaml:"endpoint"`
 	WebhookSecret string `yaml:"webhook_secret"`
 	Timeout       int    `yaml:"timeout_seconds"`
+	// Level is the verification level of the provider's account that the
+	// applicants are checked at, such as Sumsub's "basic-kyc-level" (#72).
+	Level string `yaml:"level"`
+}
+
+// KYCProviderSumsub names the Sumsub provider of compliance.kyc.providers.
+const KYCProviderSumsub = "sumsub"
+
+// KYCProvider returns the enabled provider of compliance.kyc.providers that
+// verifies the applications (#72), other than manual, or nil.
+func (c *Configuration) KYCProvider() *KYCProviderConfig {
+	for i, p := range c.Compliance.KYC.Providers {
+		if p.Enabled && p.Name == KYCProviderSumsub {
+			return &c.Compliance.KYC.Providers[i]
+		}
+	}
+	return nil
 }
 
 // LoadConfig loads the configuration as Load does, and stops the process

@@ -356,6 +356,9 @@ var sealedColumns = map[keys.Purpose][]sealedColumn{
 		{"users", "totp_secret", "CASE WHEN totp_secret LIKE 'v1:%' THEN decode(substring(totp_secret FROM 4), 'base64') END"},
 		{"user_totp", "secret_sealed", "secret_sealed"},
 		{"user_national_ids", "national_id_sealed", "national_id_sealed"},
+		{"user_national_ids", "birth_date_sealed", "birth_date_sealed"},
+		{"identity_checks", "national_id_sealed", "national_id_sealed"},
+		{"identity_checks", "birth_date_sealed", "birth_date_sealed"},
 		{"api_keys", "secret_sealed", "secret_sealed"},
 		{"withdrawal_destinations", "value_enc", "value_enc"},
 		{"withdrawal_destinations", "memo_enc", "memo_enc"},
@@ -364,6 +367,10 @@ var sealedColumns = map[keys.Purpose][]sealedColumn{
 	keys.PurposeBlindIndex: {
 		{"user_contacts", "value_bidx", "value_bidx"},
 		{"withdrawal_destinations", "value_bidx", "value_bidx"},
+		// One person, one account (#158): a retired version would let a
+		// national ID indexed with it be verified for a second account.
+		{"user_national_ids", "national_id_bidx", "national_id_bidx"},
+		{"identity_checks", "national_id_bidx", "national_id_bidx"},
 	},
 }
 

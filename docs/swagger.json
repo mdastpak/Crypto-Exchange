@@ -8,6 +8,401 @@
     },
     "basePath": "/",
     "paths": {
+        "/api/v1/admin/aml/alerts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The AML alerts, newest first: of a status, of a user, or all; at most limit (100). Each names its rule and the version of the rule, the operation that raised it, if any, and the action that was taken. An alert changed in SQL answers 409 row_unverified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "List AML alerts",
+                "parameters": [
+                    {
+                        "enum": [
+                            "OPEN",
+                            "INVESTIGATING",
+                            "RESOLVED",
+                            "DISMISSED",
+                            "ESCALATED"
+                        ],
+                        "type": "string",
+                        "description": "A status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "A user",
+                        "name": "user_hk",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1 to 100; 100 by default",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/aml.Alert"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/alerts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "An AML alert, with what its rule saw (trigger_data).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "Get an AML alert",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The alert",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/aml.Alert"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "aml_alert_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/alerts/{id}/transition": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moves an alert to another status (#73). OPEN may become INVESTIGATING, which assigns it to the administrator, ESCALATED, RESOLVED, or DISMISSED; INVESTIGATING may become ESCALATED, RESOLVED, or DISMISSED; ESCALATED may become INVESTIGATING, RESOLVED, or DISMISSED. RESOLVED and DISMISSED are final and need a resolution. An alert open for engine.alert_escalation_hours is escalated by the server. Moving an alert releases nothing: a withdrawal held for review is approved or rejected on its own route, and a freeze is lifted on the user's restrictions. Audited as aml.alert_status.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "Move an AML alert",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The alert",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.amlTransition"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/aml.Alert"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "aml_alert_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "aml_alert_transition_invalid or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/rules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every AML rule as the server synced it from config/aml_rules.yaml, with its version and whether it is retired (#73), by code. A rule changed in SQL answers 409 row_unverified, and no withdrawal is evaluated until it is reviewed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "List the AML rules",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/aml.Stored"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/aml/sanctions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The version of the OFAC list that the sanctions rules screen against (#73): when it was downloaded, when a download last found it current, its entries, and whether it is stale, too old or missing, which holds every operation that a sanctions rule screens for review. 503 aml_unavailable while the provider or the AML rules are off.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin aml"
+                ],
+                "summary": "Get the state of the sanctions list",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/sanctions.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "aml_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/audit": {
             "get": {
                 "security": [
@@ -2335,6 +2730,186 @@
                 }
             }
         },
+        "/api/v1/admin/deposits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The newest deposits on chain (#68), at most 200, with the user's user_id and, for a held one, its hold_reason: below_minimum (FAILED), or deposits_closed, restricted, or aml (CONFIRMED, still pending in the user's balance). held=true lists only those on hold. A deposit that fails its seal answers 409 row_unverified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin deposits"
+                ],
+                "summary": "List deposits",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The user",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "DETECTED",
+                            "CONFIRMED",
+                            "CREDITED",
+                            "FAILED"
+                        ],
+                        "type": "string",
+                        "description": "The status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only the deposits on hold",
+                        "name": "held",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.Deposit"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/deposits/{id}/credit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Credits a deposit on hold (#68), after review: one held at confirmation, whose amount moves from pending to available, or one below the minimum, which is first recorded as pending. A deposit dropped by a reorg cannot be credited. A sensitive route: it needs a step-up. Audited as admin.deposit_credit, with the hold.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin deposits"
+                ],
+                "summary": "Credit a held deposit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The deposit",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/deposits.Deposit"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "deposit_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "deposit_not_held or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/integrity/findings": {
             "get": {
                 "security": [
@@ -2524,6 +3099,536 @@
                     },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The KYC applications of a status (#72), UNDER_REVIEW by default, the oldest submitted first, at most limit (100). Each has the user's user_hk and its documents, without their content.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "List KYC applications",
+                "parameters": [
+                    {
+                        "enum": [
+                            "PENDING",
+                            "UNDER_REVIEW",
+                            "APPROVED",
+                            "REJECTED"
+                        ],
+                        "type": "string",
+                        "description": "A status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1 to 100; 100 by default",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/kyc.Application"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A KYC application with its form, decrypted, its documents, and its review (#72). Each reading is audited as admin.kyc_view, as it shows personal data.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Get a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Review"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications/{id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Approves an application under review (#72), and raises the user to level 2 in the same transaction (audited as user.verification_set and admin.kyc_approve). A user who lost level 1 meanwhile is not raised (403 identity_verification_required). A sensitive route: it needs a step-up.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Approve a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Notes",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/admin.kycDecision"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required or identity_verification_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_not_under_review or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/applications/{id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Rejects an application under review with a reason that the user reads (#72); the user may apply again. A sensitive route: it needs a step-up. Audited as admin.kyc_reject.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Reject a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The reason",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.kycDecision"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_not_under_review or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/documents/{id}/content": {
+            "get": {
+                "description": "The content of a document (#72), decrypted, for a link of GET /admin/kyc/documents/{id}/link: no token, but the signature of the link, for its administrator, who must still be active, until it expires. It answers with the kind of the file, never cached, and is audited as admin.kyc_document_view.",
+                "produces": [
+                    "image/png",
+                    "image/jpeg",
+                    "application/pdf",
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Open a KYC document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The document",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The administrator the link is for",
+                        "name": "admin",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "When the link expires, in Unix seconds",
+                        "name": "expires",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The signature",
+                        "name": "sig",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The document",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "403": {
+                        "description": "kyc_link_invalid",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_document_changed or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/kyc/documents/{id}/link": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A link to the content of a document (#72), signed for the administrator for a minute, to open in a browser without the token. The link is checked, the administrator must still be active, and each opening is audited as admin.kyc_document_view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin kyc"
+                ],
+                "summary": "Get a link to a KYC document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The document",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Link"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -5337,7 +6442,7 @@
                         }
                     },
                     "409": {
-                        "description": "payout_not_open or row_unverified",
+                        "description": "payout_not_open, payout_automatic, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -5432,7 +6537,7 @@
                         }
                     },
                     "409": {
-                        "description": "payout_not_open or row_unverified",
+                        "description": "payout_not_open, payout_automatic, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -6983,6 +8088,62 @@
                     },
                     "default": {
                         "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/kyc/webhooks/sumsub": {
+            "post": {
+                "description": "Sumsub's webhook of an applicant (#72): no token, but the HMAC of the raw body under the webhook secret, in X-Payload-Digest by the algorithm of X-Payload-Digest-Alg (401 kyc_webhook_unsigned otherwise). applicantPending moves the application under review; applicantReviewed GREEN approves it and grants level 2, RED with FINAL rejects it, and RED with RETRY sends it back to pending. An event of a decided application, or of no application, answers 200 and changes nothing, so that the provider stops sending it. Audited as kyc.provider_verdict, and the level as user.verification_set, by the system.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kyc-webhooks"
+                ],
+                "summary": "Receive a webhook of the KYC provider",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The hex HMAC of the body",
+                        "name": "X-Payload-Digest",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC_SHA256_HEX, the default, HMAC_SHA512_HEX, or HMAC_SHA1_HEX",
+                        "name": "X-Payload-Digest-Alg",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "kyc_webhook_unsigned",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code: the provider sends the webhook again",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -9932,6 +11093,225 @@
                 }
             }
         },
+        "/api/v1/user/deposit-addresses": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's deposit addresses, one per network (#68).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-deposits"
+                ],
+                "summary": "List the deposit addresses",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.Address"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's deposit address of a currency on a network (#68), given at the first request and the same after: every currency of a network shares it, such as TRX and USDT on TRON. It is derived from the extended public key of the custody, so the server holds no private key. The user must be allowed crypto deposits by their level and restrictions, and the currency must take deposits on the network (409 deposits_closed). Closed by the deposits lockdown. Audited as user.deposit_address when it is given.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-deposits"
+                ],
+                "summary": "Get a deposit address",
+                "parameters": [
+                    {
+                        "description": "The currency and its network",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.depositAddressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/deposits.Address"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed or deposit_network_unsupported",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "verification_required, account_frozen, operation_restricted, or asset_restricted",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "currency_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "deposits_closed or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable or feature_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/deposits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's newest deposits on chain (#68), at most 200: DETECTED while their block has too few confirmations (19 on TRON) and the amount is pending in the balance, CREDITED once available, FAILED when a reorg dropped the transaction or the amount was below the minimum, and CONFIRMED with on_hold while support reviews it. Why a deposit is held is not told.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-deposits"
+                ],
+                "summary": "List the deposits",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.UserDeposit"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/favorites": {
             "get": {
                 "security": [
@@ -10358,6 +11738,579 @@
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/identity": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The state of the signed-in user's identity: none, pending while the provider cannot answer and the server asks again, verified, or rejected with its reason (mismatched or taken). national_id is masked. attempts_left is how many more checks may fail today. A verified national ID and a card or IBAN of the user's withdrawal destinations whose owner the provider matched raise the user to verification level 1.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-identity"
+                ],
+                "summary": "My identity check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/idcheck.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "identity_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks the national ID and the date of birth of the signed-in user at the national registry, through the identity provider, and, when the account has a verified mobile number, that the number is registered to the national ID. 200 with the identity: verified, or rejected with the reason mismatched, which is final for that check; 202 while the provider cannot answer: the check is pending, the server asks again, and nothing is approved on a failure. One person has one account: a national ID verified for another account answers 409 national_id_taken. A verified identity cannot be changed here (409 identity_already_verified); one check is pending at a time (409 identity_check_pending); five failed checks in a day stop the checks until the next (429 identity_attempts_exceeded). Audited as user.identity_check, never with the values.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-identity"
+                ],
+                "summary": "Verify my identity",
+                "parameters": [
+                    {
+                        "description": "The national ID and the date of birth",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.IdentityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/idcheck.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/idcheck.Status"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "national_id_taken, identity_already_verified, identity_check_pending, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "identity_attempts_exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "identity_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's newest application for level 2 (#72): its status, the reason of a rejection, and its documents, without their content. 404 kyc_application_not_found when the user has none.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Get the user's KYC application",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/applications": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Opens a KYC application for level 2 (#72) with the user's address, occupation, and source of funds, which are stored encrypted. The user must be at level 1, with a verified identity (403 identity_verification_required), and have no open application (409 kyc_application_open). Then, for an application reviewed by hand (provider manual), add the documents, and submit it; for one of a provider (provider sumsub), run its SDK with a token of GET /user/kyc/session, and the provider's verdict decides it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Apply for level 2",
+                "parameters": [
+                    {
+                        "description": "The form",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.kycApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "identity_verification_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_open, kyc_already_verified, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/applications/{id}/documents": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a document to the user's pending application (#72), as multipart/form-data: type, and file, a JPEG, a PNG, or a PDF of at most 10 MB, by its content. At most 10 documents. The file is encrypted before it is stored, and its name is not kept.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Add a document to a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "NATIONAL_ID",
+                            "PASSPORT",
+                            "DRIVERS_LICENSE",
+                            "SELFIE",
+                            "PROOF_OF_ADDRESS",
+                            "UTILITY_BILL",
+                            "BANK_STATEMENT",
+                            "SOURCE_OF_FUNDS",
+                            "CORPORATE_DOCUMENT"
+                        ],
+                        "type": "string",
+                        "description": "The type of the document",
+                        "name": "type",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "The document",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Document"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_application_submitted, kyc_documents_exceeded, kyc_provider_flow, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "validation_failed: the request is larger than a document",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/applications/{id}/submit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends the user's pending application for review (#72), once it has an identity document (NATIONAL_ID, PASSPORT, or DRIVERS_LICENSE), a SELFIE, and a proof of address (PROOF_OF_ADDRESS, UTILITY_BILL, or BANK_STATEMENT); 409 kyc_documents_missing names the groups that it lacks.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Submit a KYC application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The application",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Application"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_documents_missing (with info.missing), kyc_application_submitted, kyc_provider_flow, or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/user/kyc/session": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A token of the KYC provider's SDK (#72), such as Sumsub's WebSDK, for the user's open application, which the provider verifies: the app runs the SDK with it, and the user gives the documents to the provider. It expires in minutes; ask again for another. 409 kyc_provider_flow for an application reviewed by hand, which takes its documents on POST /user/kyc/applications/{id}/documents.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-kyc"
+                ],
+                "summary": "Get a session of the KYC provider",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/kyc.Session"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "kyc_application_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "kyc_provider_flow or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kyc_unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -12162,7 +14115,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID, which the provider checks now: 409 national_id_required without one, 403 destination_not_owned when it is someone else's, 503 ownership_check_unavailable when the provider cannot answer. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.",
+                "description": "Adds a card, an IBAN (Sheba), a bank account, or a crypto address. Numbers may have spaces and dashes, and Persian or Arabic digits. A card, an IBAN, or an account must belong to the user's verified national ID and date of birth (#158), which the provider checks now: 409 national_id_required without them (verify them with POST /user/identity), 403 destination_not_owned when it is someone else's. When the provider cannot answer, the card or IBAN is added pending (202, ownership_pending true): it is not usable, the server checks it again until the provider answers, and removes it if its owner does not match. 503 ownership_check_unavailable without a provider, or for a bank account number, which the provider does not check. A matched card, IBAN, or account of a user with a verified identity at level 0 raises them to level 1; such a user may add one before, though their withdrawals still need the level. A crypto address must be valid for its network (bitcoin, ethereum, tron). The verification level must allow the withdrawals it is for (403 verification_required), and a recent change of a security setting holds new destinations (403 security_hold). It needs a fresh proof of the second factor (403 step_up_required). A new crypto address is usable after a waiting period, 24 hours by default; usable_from says when.",
                 "consumes": [
                     "application/json"
                 ],
@@ -12187,6 +14140,24 @@
                 "responses": {
                     "201": {
                         "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/destinations.Destination"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
                             "allOf": [
                                 {
@@ -12380,7 +14351,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a \"*\" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
+                "description": "Withdraws amount of a currency, on one of its networks, to a destination of the user's book (#160), in two steps under one Idempotency-Key. Without confirmation_id, the request is checked as it would run, and a confirmation of the user's second factor starts (#161): 202 with the confirmation, whose code went to the user by their method. Confirm it with POST /user/confirmations/{id}, then send the same request with confirmation_id: it runs in one transaction, under a lock of the user, and locks the amount and the fee of the network in the ledger. 201 with the withdrawal; the same request again answers 200 with it. The fee of the network is added to the amount, and both count towards the limits of the user's level (#157). A withdrawal of at least withdrawals.review_above of its currency waits for an administrator (status review, review_reason amount); while thresholds are configured, one of a currency without a threshold and without a \"*\" default waits whatever the amount (review_reason no_threshold, #406); the others are queued for their payouts. The AML rules evaluate each step (#73): one may hold the withdrawal for review (review_reason aml), or refuse it (403 withdrawal_refused, at step one before any code is sent, or at step two); while they cannot be evaluated, 503 withdrawals_unavailable. Closed by the withdrawals lockdown, the user's restrictions, and the security hold.",
                 "consumes": [
                     "application/json"
                 ],
@@ -12477,13 +14448,13 @@
                         }
                     },
                     "403": {
-                        "description": "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, or security_hold",
+                        "description": "verification_required, withdrawal_limit_exceeded, withdrawal_limit_unconfigured, account_frozen, operation_restricted, asset_restricted, security_hold, or withdrawal_refused",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
                     },
                     "409": {
-                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified",
+                        "description": "insufficient_balance, withdrawals_closed, destination_not_usable_yet, destination_ownership_pending, idempotency_key_reused, confirmation_method_required, confirmation_not_confirmed, confirmation_expired, confirmation_consumed, confirmation_mismatch, withdrawal_fee_changed (with info.confirmed_fee and info.fee), confirmation_denied, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -13237,6 +15208,33 @@
                 }
             }
         },
+        "admin.amlTransition": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "resolution": {
+                    "description": "Resolution, 1 to 1000 characters, is required to resolve or dismiss\nthe alert, and refused otherwise.",
+                    "type": "string",
+                    "example": "The deposits are the user's salary; documents on file."
+                },
+                "status": {
+                    "description": "Status is the new status: INVESTIGATING assigns the alert to the\nadministrator.",
+                    "enum": [
+                        "INVESTIGATING",
+                        "RESOLVED",
+                        "DISMISSED",
+                        "ESCALATED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/aml.Status"
+                        }
+                    ]
+                }
+            }
+        },
         "admin.currencyInfoFields": {
             "type": "object",
             "properties": {
@@ -13275,6 +15273,21 @@
                 "version": {
                     "description": "Version is the version of the currency that an update is based on.\nWhen it is sent and the currency has changed since, the update is\nrefused with 409. A create may not send it.",
                     "type": "integer"
+                }
+            }
+        },
+        "admin.kycDecision": {
+            "type": "object",
+            "properties": {
+                "notes": {
+                    "description": "Notes are for the administrators, at most 1000 characters.",
+                    "type": "string",
+                    "example": "Address matches the utility bill."
+                },
+                "reason": {
+                    "description": "Reason, for a rejection, is what the user reads, 1 to 500\ncharacters.",
+                    "type": "string",
+                    "example": "The selfie is blurred; please take it again in daylight."
                 }
             }
         },
@@ -13504,6 +15517,300 @@
                     "example": "2026-11"
                 }
             }
+        },
+        "aml.Action": {
+            "type": "string",
+            "enum": [
+                "",
+                "ALERT",
+                "REVIEW",
+                "BLOCK",
+                "FREEZE"
+            ],
+            "x-enum-varnames": [
+                "ActionNone",
+                "ActionAlert",
+                "ActionReview",
+                "ActionBlock",
+                "ActionFreeze"
+            ]
+        },
+        "aml.Alert": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "enum": [
+                        "ALERT",
+                        "REVIEW",
+                        "BLOCK",
+                        "FREEZE"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/aml.Action"
+                        }
+                    ]
+                },
+                "assigned_to": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "escalated_at": {
+                    "type": "string"
+                },
+                "event_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "event_kind": {
+                    "type": "string",
+                    "enum": [
+                        "deposit",
+                        "withdrawal",
+                        "trade"
+                    ]
+                },
+                "event_ref": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "resolution": {
+                    "type": "string"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "risk_score": {
+                    "type": "string",
+                    "example": "75"
+                },
+                "rule_code": {
+                    "type": "string",
+                    "example": "structuring_withdrawal"
+                },
+                "rule_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "rule_version": {
+                    "type": "integer"
+                },
+                "status": {
+                    "enum": [
+                        "OPEN",
+                        "INVESTIGATING",
+                        "RESOLVED",
+                        "DISMISSED",
+                        "ESCALATED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/aml.Status"
+                        }
+                    ]
+                },
+                "trigger_data": {
+                    "description": "Data is what the rule saw, by rule type.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "aml.Kind": {
+            "type": "string",
+            "enum": [
+                "deposit",
+                "withdrawal",
+                "trade"
+            ],
+            "x-enum-varnames": [
+                "KindDeposit",
+                "KindWithdrawal",
+                "KindTrade"
+            ]
+        },
+        "aml.RuleConfig": {
+            "type": "object",
+            "properties": {
+                "amount_deviation_multiplier": {
+                    "type": "string"
+                },
+                "ceiling": {
+                    "description": "Structuring: the band is ThresholdAmount up to Ceiling, excluded.",
+                    "type": "string"
+                },
+                "check_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "countries": {
+                    "description": "High-risk country.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "cross_border": {
+                    "type": "boolean"
+                },
+                "dormant_days": {
+                    "type": "integer"
+                },
+                "history_days": {
+                    "type": "integer"
+                },
+                "home_country": {
+                    "type": "string"
+                },
+                "list": {
+                    "type": "string"
+                },
+                "metric": {
+                    "description": "Velocity.",
+                    "type": "string"
+                },
+                "new_destination_days": {
+                    "type": "integer"
+                },
+                "pattern": {
+                    "description": "Unusual pattern.",
+                    "type": "string"
+                },
+                "providers": {
+                    "description": "Screening: the providers or the list a screening rule asks.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "screen": {
+                    "type": "string"
+                },
+                "time_deviation_hours": {
+                    "type": "integer"
+                },
+                "velocity_spike_multiplier": {
+                    "type": "string"
+                }
+            }
+        },
+        "aml.Status": {
+            "type": "string",
+            "enum": [
+                "OPEN",
+                "INVESTIGATING",
+                "RESOLVED",
+                "DISMISSED",
+                "ESCALATED"
+            ],
+            "x-enum-varnames": [
+                "StatusOpen",
+                "StatusInvestigating",
+                "StatusResolved",
+                "StatusDismissed",
+                "StatusEscalated"
+            ]
+        },
+        "aml.Stored": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "$ref": "#/definitions/aml.Action"
+                },
+                "applies_to": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/aml.Kind"
+                    }
+                },
+                "code": {
+                    "type": "string"
+                },
+                "config": {
+                    "$ref": "#/definitions/aml.RuleConfig"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "retired_at": {
+                    "type": "string"
+                },
+                "rule_type": {
+                    "$ref": "#/definitions/aml.Type"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "threshold_amount": {
+                    "type": "string",
+                    "example": "10000"
+                },
+                "threshold_count": {
+                    "description": "ThresholdCount and ThresholdAmount, in USDT, mean what the type says;\nzero is no threshold.",
+                    "type": "integer"
+                },
+                "time_window_hours": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "aml.Type": {
+            "type": "string",
+            "enum": [
+                "VELOCITY",
+                "STRUCTURING",
+                "HIGH_RISK_COUNTRY",
+                "UNUSUAL_PATTERN",
+                "MIXER",
+                "DARKNET",
+                "SANCTIONS",
+                "PEP"
+            ],
+            "x-enum-varnames": [
+                "TypeVelocity",
+                "TypeStructuring",
+                "TypeHighRiskCountry",
+                "TypeUnusualPattern",
+                "TypeMixer",
+                "TypeDarknet",
+                "TypeSanctions",
+                "TypePEP"
+            ]
         },
         "antiphishing.Status": {
             "type": "object",
@@ -14501,6 +16808,155 @@
                 }
             }
         },
+        "deposits.Address": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                }
+            }
+        },
+        "deposits.Deposit": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "string",
+                    "example": "25.5"
+                },
+                "block_hash": {
+                    "type": "string"
+                },
+                "block_height": {
+                    "type": "integer"
+                },
+                "credited_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "hold_reason": {
+                    "$ref": "#/definitions/deposits.Hold"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "log_index": {
+                    "description": "LogIndex is the index of the transfer's event in its transaction; -1\nfor a transfer of the native asset.",
+                    "type": "integer"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                },
+                "status": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/deposits.Status"
+                        }
+                    ],
+                    "example": "CREDITED"
+                },
+                "tx_hash": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "deposits.Hold": {
+            "type": "string",
+            "enum": [
+                "below_minimum",
+                "deposits_closed",
+                "restricted",
+                "aml"
+            ],
+            "x-enum-varnames": [
+                "HoldBelowMinimum",
+                "HoldDepositsClosed",
+                "HoldRestricted",
+                "HoldAML"
+            ]
+        },
+        "deposits.Status": {
+            "type": "string",
+            "enum": [
+                "DETECTED",
+                "CONFIRMED",
+                "CREDITED",
+                "FAILED"
+            ],
+            "x-enum-varnames": [
+                "StatusDetected",
+                "StatusConfirmed",
+                "StatusCredited",
+                "StatusFailed"
+            ]
+        },
+        "deposits.UserDeposit": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "string",
+                    "example": "25.5"
+                },
+                "block_height": {
+                    "type": "integer"
+                },
+                "credited_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                },
+                "on_hold": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/deposits.Status"
+                        }
+                    ],
+                    "example": "CREDITED"
+                },
+                "tx_hash": {
+                    "type": "string"
+                }
+            }
+        },
         "destinations.Destination": {
             "type": "object",
             "properties": {
@@ -14540,6 +16996,10 @@
                     "description": "Network is the network of a crypto destination.",
                     "type": "string",
                     "example": "tron"
+                },
+                "ownership_pending": {
+                    "description": "OwnershipPending is a card or an IBAN whose owner the provider could\nnot check yet (#158): it is not usable, and is checked again until\nthe provider answers. A mismatch then removes it.",
+                    "type": "boolean"
                 },
                 "usable_from": {
                     "description": "UsableFrom is when a withdrawal may use it.",
@@ -14712,6 +17172,291 @@
                     "example": "فارسی"
                 }
             }
+        },
+        "idcheck.Status": {
+            "type": "object",
+            "properties": {
+                "attempts_left": {
+                    "description": "AttemptsLeft is how many more checks may fail today.",
+                    "type": "integer"
+                },
+                "national_id": {
+                    "description": "NationalID is the national ID of a verified or pending identity,\nmasked.",
+                    "type": "string",
+                    "example": "00******79"
+                },
+                "reason": {
+                    "description": "Reason is why the last check was rejected: mismatched, when the\nregistry does not have that national ID with that date of birth or\nthe mobile number is not registered to it, or taken, when the\nnational ID is verified for another account.",
+                    "type": "string",
+                    "enum": [
+                        "mismatched",
+                        "taken"
+                    ]
+                },
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "none",
+                        "pending",
+                        "verified",
+                        "rejected"
+                    ]
+                },
+                "verified_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_kyc.DocumentType": {
+            "type": "string",
+            "enum": [
+                "NATIONAL_ID",
+                "PASSPORT",
+                "DRIVERS_LICENSE",
+                "SELFIE",
+                "PROOF_OF_ADDRESS",
+                "UTILITY_BILL",
+                "BANK_STATEMENT",
+                "SOURCE_OF_FUNDS",
+                "CORPORATE_DOCUMENT"
+            ],
+            "x-enum-varnames": [
+                "DocNationalID",
+                "DocPassport",
+                "DocDriversLicense",
+                "DocSelfie",
+                "DocProofOfAddress",
+                "DocUtilityBill",
+                "DocBankStatement",
+                "DocSourceOfFunds",
+                "DocCorporate"
+            ]
+        },
+        "kyc.Application": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/kyc.Document"
+                    }
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "level": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "provider": {
+                    "description": "Provider verifies the application: manual, with the documents\nuploaded here, or a provider, such as sumsub, whose SDK takes them\nwith a token of GET /user/kyc/session.",
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "sumsub"
+                    ]
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "reviewed_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "enum": [
+                        "PENDING",
+                        "UNDER_REVIEW",
+                        "APPROVED",
+                        "REJECTED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/kyc.Status"
+                        }
+                    ]
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "kyc.Document": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "mime_type": {
+                    "type": "string",
+                    "example": "image/jpeg"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "type": {
+                    "enum": [
+                        "NATIONAL_ID",
+                        "PASSPORT",
+                        "DRIVERS_LICENSE",
+                        "SELFIE",
+                        "PROOF_OF_ADDRESS",
+                        "UTILITY_BILL",
+                        "BANK_STATEMENT",
+                        "SOURCE_OF_FUNDS",
+                        "CORPORATE_DOCUMENT"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_kyc.DocumentType"
+                        }
+                    ]
+                }
+            }
+        },
+        "kyc.Form": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "No. 12, Vali Asr St."
+                },
+                "city": {
+                    "type": "string",
+                    "example": "Tehran"
+                },
+                "occupation": {
+                    "type": "string",
+                    "example": "Software engineer"
+                },
+                "postal_code": {
+                    "type": "string",
+                    "example": "1234567890"
+                },
+                "source_of_funds": {
+                    "type": "string",
+                    "example": "Salary"
+                }
+            }
+        },
+        "kyc.Link": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "/api/v1/admin/kyc/documents/4b8f.../content?admin=...\u0026expires=...\u0026sig=..."
+                }
+            }
+        },
+        "kyc.Review": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/kyc.Document"
+                    }
+                },
+                "form": {
+                    "$ref": "#/definitions/kyc.Form"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "level": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "provider": {
+                    "description": "Provider verifies the application: manual, with the documents\nuploaded here, or a provider, such as sumsub, whose SDK takes them\nwith a token of GET /user/kyc/session.",
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "sumsub"
+                    ]
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "review_notes": {
+                    "type": "string"
+                },
+                "reviewed_at": {
+                    "type": "string"
+                },
+                "reviewed_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "enum": [
+                        "PENDING",
+                        "UNDER_REVIEW",
+                        "APPROVED",
+                        "REJECTED"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/kyc.Status"
+                        }
+                    ]
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "user_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "kyc.Session": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "sumsub"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "kyc.Status": {
+            "type": "string",
+            "enum": [
+                "PENDING",
+                "UNDER_REVIEW",
+                "APPROVED",
+                "REJECTED"
+            ],
+            "x-enum-varnames": [
+                "StatusPending",
+                "StatusUnderReview",
+                "StatusApproved",
+                "StatusRejected"
+            ]
         },
         "market.Market": {
             "type": "object",
@@ -17862,6 +20607,31 @@
                 }
             }
         },
+        "sanctions.Status": {
+            "type": "object",
+            "properties": {
+                "checked_at": {
+                    "type": "string"
+                },
+                "entries": {
+                    "type": "integer"
+                },
+                "fetched_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "ofac"
+                },
+                "stale": {
+                    "description": "Stale is a list that no download found current for the maximum\nage, or none: every operation that a rule screens is held.",
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "shared.KYCStatus": {
             "type": "string",
             "enum": [
@@ -18455,6 +21225,26 @@
                 }
             }
         },
+        "user.IdentityRequest": {
+            "type": "object",
+            "required": [
+                "birth_date",
+                "national_id"
+            ],
+            "properties": {
+                "birth_date": {
+                    "description": "BirthDate is the date of birth in the Gregorian calendar, YYYY-MM-DD.",
+                    "type": "string",
+                    "format": "date",
+                    "example": "1991-08-16"
+                },
+                "national_id": {
+                    "description": "NationalID is the ten digits of the Iranian national ID.",
+                    "type": "string",
+                    "example": "0012345679"
+                }
+            }
+        },
         "user.PasskeyAdded": {
             "type": "object",
             "properties": {
@@ -18765,6 +21555,23 @@
                 }
             }
         },
+        "user.depositAddressRequest": {
+            "type": "object",
+            "required": [
+                "currency_hk",
+                "network"
+            ],
+            "properties": {
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                }
+            }
+        },
         "user.executeRequest": {
             "type": "object",
             "properties": {
@@ -18781,6 +21588,14 @@
                     "description": "SubAccountID is the sub-account that asked for the quote; empty is\nthe main account.",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "user.kycApplicationRequest": {
+            "type": "object",
+            "properties": {
+                "form": {
+                    "$ref": "#/definitions/kyc.Form"
                 }
             }
         },
@@ -19430,7 +22245,8 @@
                     "type": "string",
                     "enum": [
                         "amount",
-                        "no_threshold"
+                        "no_threshold",
+                        "aml"
                     ]
                 },
                 "reviewed_at": {

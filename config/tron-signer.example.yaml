@@ -1,0 +1,48 @@
+# The signer of the TRON custody, cmd/tron-signer (#68). It runs apart from
+# the server, holds the seed, and signs the hot wallet's payments. See
+# docs/custody.md. Secrets are in the environment: VAULT_TOKEN, which
+# decrypts the seed, and TRONGRID_API_KEY.
+listen: ":8443"
+node_url: "https://api.trongrid.io"
+tls:
+  cert_file: "/etc/tron-signer/tls/server.crt"
+  key_file: "/etc/tron-signer/tls/server.key"
+  # The CA of the server's client certificate, and the common names that
+  # may call.
+  client_ca_file: "/etc/tron-signer/tls/client-ca.crt"
+  allowed_clients: ["exchange-server"]
+seed:
+  vault_addr: "https://vault.internal:8200"
+  transit_key: "tron-seed"
+  # The seed, encrypted by the Transit key: "vault:v1:...".
+  ciphertext_file: "/etc/tron-signer/seed.enc"
+# The payments signed, by key, and the caps that each day used. One signer
+# writes it: run a single instance.
+state_path: "/var/lib/tron-signer/state.json"
+# The most TRX, in sun, that a token payment may burn: 30 TRX.
+fee_limit_sun: 30000000
+confirmations: 19
+# The sweeps of the deposit addresses (docs/custody.md#sweeps).
+sweeps:
+  # The cold storage, which this seed does not hold: an asset is swept
+  # there when the hot wallet would hold more than its hot_cap.
+  cold_address: ""
+  # The TRX, in sun, that a deposit address needs for a token sweep's fee,
+  # which the hot wallet sends it first: 30 TRX.
+  top_up_sun: 30000000
+  # The TRX, in sun, that a TRX sweep leaves on the address: 1 TRX.
+  reserve_sun: 1000000
+# The assets that the hot wallet pays, with their caps in the smallest unit
+# (6 decimals for both): any other asset is refused.
+assets:
+  - symbol: "TRX"
+    contract: ""
+    max_per_transfer: "50000000000"   # 50,000 TRX
+    max_per_day: "200000000000"       # 200,000 TRX
+  - symbol: "USDT"
+    contract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    max_per_transfer: "50000000000"   # 50,000 USDT
+    max_per_day: "250000000000"       # 250,000 USDT
+    # The most USDT that the hot wallet keeps; more is swept to the cold
+    # storage. Requires sweeps.cold_address.
+    # hot_cap: "500000000000"         # 500,000 USDT

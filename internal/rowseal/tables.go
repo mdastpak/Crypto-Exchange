@@ -206,6 +206,97 @@ var (
 		text("user_hk"), text("kind"), sealedBytes("value_enc"), sealedBytes("value_bidx"), text("masked"),
 		text("bank"), text("network"), sealedBytes("memo_enc"), text("verified_by"),
 		timestamptz("usable_from"), timestamptz("removed_at"),
+		// A destination pending its ownership check (#158) is unusable
+		// while this is set: cleared in SQL, it would pass for verified.
+		optional(timestamptz("ownership_pending_since")),
+	}, SealedFromStart: true}
+	// UserNationalIDs covers a user's verified national ID (#158): the
+	// value, encrypted, its blind index, which keeps one account per
+	// person, the date of birth, and who verified it and when. A national
+	// ID swapped in SQL is not relied on. Rows written without a seal are
+	// adopted in report mode, as in every table sealed after its rows.
+	UserNationalIDs = &Table{Name: "user_national_ids", Key: "user_hk", KeyType: "uuid", Columns: []Column{
+		sealedBytes("national_id_sealed"), timestamptz("verified_at"), text("provider"), text("provider_ref"),
+		optional(sealedBytes("national_id_bidx")), optional(sealedBytes("birth_date_sealed")),
+	}}
+	// IdentityChecks covers a check of a national ID and its date of birth
+	// (#158): what was submitted, and its outcome. A check marked matched
+	// in SQL verifies nothing.
+	IdentityChecks = &Table{Name: "identity_checks", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), sealedBytes("national_id_sealed"), sealedBytes("national_id_bidx"), sealedBytes("birth_date_sealed"),
+		text("status"), text("provider"), text("provider_ref"), timestamptz("decided_at"),
+	}, SealedFromStart: true}
+	// AMLRules covers each AML rule as the sync wrote it from
+	// config/aml_rules.yaml (#73): a rule disabled, loosened, or retired in
+	// SQL is refused, and nothing is evaluated until it is reviewed.
+	AMLRules = &Table{Name: "aml_rules", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("code"), text("name"), text("rule_type"), text("config"), text("threshold_amount"), text("threshold_count"),
+		text("time_window_hours"), text("action"), text("severity"), text("enabled"), text("applies_to"),
+		text("rule_version"), timestamptz("retired_at"),
+	}, SealedFromStart: true}
+	// AMLRuleHistory covers each version of an AML rule (#73), which the
+	// alerts name.
+	AMLRuleHistory = &Table{Name: "aml_rule_history", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("rule_id"), text("rule_version"), text("definition"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// AMLEvents covers the operations that the AML rules count over a
+	// window (#73): one deleted or lowered in SQL would let structuring
+	// pass under its threshold.
+	AMLEvents = &Table{Name: "aml_events", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_hk"), text("kind"), text("ref"), text("currency_hk"), text("amount"), text("value_usdt"),
+		text("counterparty"), text("ip_country"), text("counterparty_country"), timestamptz("occurred_at"),
+		text("refused"),
+	}, SealedFromStart: true}
+	// AMLAlerts covers an AML alert and its lifecycle (#73): one closed or
+	// reassigned in SQL is detected.
+	AMLAlerts = &Table{Name: "aml_alerts", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("rule_id"), text("rule_version"), text("user_id"), text("event_id"), text("action"), text("trigger_data"),
+		text("risk_score"), text("status"), text("assigned_to"), timestamptz("resolved_at"), text("resolved_by"),
+		text("resolution"), text("dedupe_key"), timestamptz("escalated_at"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// SanctionsLists covers a version of a sanctions list (#73): its body,
+	// by its SHA-256, and when a download last found it current. An entry
+	// removed in SQL would let a sanctioned address through.
+	SanctionsLists = &Table{Name: "sanctions_lists", Key: "id", KeyType: "bigint", Columns: []Column{
+		text("provider"), sealedBytes("source_digest"),
+		{Name: "body", Expr: `encode(sha256(%[1]sbody), 'hex')`, Secret: true}, text("entry_count"),
+		timestamptz("fetched_at"), timestamptz("checked_at"),
+	}, SealedFromStart: true}
+	// KYCApplications covers a KYC application (#72): who asked for which
+	// tier, its form, its status, and who reviewed it. One approved in SQL
+	// grants nothing.
+	KYCApplications = &Table{Name: "kyc_applications", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("requested_tier"), text("status"), sealedBytes("form_data_enc"), timestamptz("submitted_at"),
+		timestamptz("reviewed_at"), text("reviewed_by"), text("reason"), text("provider"), text("provider_ref_id"),
+		timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// KYCDocuments covers a document of a KYC application (#72): its
+	// application, type, kind of file, and the object and the digest of its
+	// encrypted content. An object swapped in the storage, or a document
+	// moved in SQL, is refused.
+	KYCDocuments = &Table{Name: "kyc_documents", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("application_id"), text("type"), text("status"), text("file_size"), text("mime_type"),
+		text("storage_path"), sealedBytes("content_digest"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// DepositAddresses covers a deposit address of a user (#68): its owner,
+	// network, address, and the index it is derived by. An address swapped
+	// in SQL would credit another user's deposits.
+	DepositAddresses = &Table{Name: "deposit_addresses", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("sub_account_id"), text("currency_hk"), text("network"), text("address"),
+		text("derivation_path"), text("index"), text("active"), timestamptz("created_at"),
+	}, SealedFromStart: true}
+	// Deposits covers a deposit on chain (#68): its user, currency, network,
+	// transaction and log, amount, status, block, and hold. A deposit raised
+	// or moved to another user in SQL is refused before it is credited.
+	Deposits = &Table{Name: "deposits", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("currency_hk"), text("network"), text("tx_hash"), text("log_index"), text("address"),
+		text("from_address"), text("amount"), text("status"), text("block_height"), text("block_hash"), text("hold_reason"),
+		timestamptz("detected_at"), timestamptz("credited_at"),
+	}, SealedFromStart: true}
+	// ChainCursors covers how far the watcher of a network has read (#68):
+	// a cursor moved in SQL would skip the deposits of the blocks between.
+	ChainCursors = &Table{Name: "chain_cursors", Key: "network", KeyType: "text", Columns: []Column{
+		text("block_number"), text("block_id"),
 	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
@@ -402,6 +493,11 @@ var Tables = []*Table{
 	OTCTrades, OTCHousePositions,
 	VenueReservations, VenueHolds,
 	OTCRoutingRules, OTCRoutingUsage, OTCRoutedOrders,
+	UserNationalIDs, IdentityChecks,
+	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
+	SanctionsLists,
+	KYCApplications, KYCDocuments,
+	DepositAddresses, Deposits, ChainCursors,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

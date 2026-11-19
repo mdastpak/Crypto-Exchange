@@ -932,8 +932,19 @@ custody:
       fee_asset_id: "TRX"
       hot_wallet_address: ""
       cold_wallet_address: ""
-      block_poll_interval_seconds: 10
+      block_poll_interval_seconds: 3
       reorg_depth: 19
+      # The first block that the deposit watcher reads when it has read
+      # none; 0 is the newest block.
+      start_block: 0
+      # The signer that pays the withdrawals on TRON (docs/custody.md),
+      # over mutual TLS; without its url, an administrator pays them by
+      # hand.
+      signer:
+        url: ""
+        cert_file: ""
+        key_file: ""
+        ca_file: ""
       sanctions_screening: true
 
     # Internal ledger (off-chain settlement)
@@ -995,12 +1006,32 @@ compliance:
     screen_on_withdrawal: true
     screen_on_trade: false
     periodic_rescreen_hours: 24
+    # The OFAC list (#73), which the AML rules of type SANCTIONS screen
+    # against: downloaded every refresh_hours, held for review past
+    # max_list_age_hours without a download, and matched by name from
+    # name_match_threshold.
+    refresh_hours: 24
+    max_list_age_hours: 72
+    name_match_threshold: 0.92
 
+  # The AML rules (#73), which evaluate each withdrawal. rules_path names
+  # a rules file; empty is the file built into this release,
+  # config/aml_rules.yaml of its source.
   aml:
     enabled: true
-    rules_path: "config/aml_rules.yaml"
+    rules_path: ""
 
   kyc:
+    # The S3-compatible storage of the documents of the KYC applications
+    # (#72), which the server encrypts before storing; empty turns the
+    # applications off. Set the keys with KYC_STORAGE_ACCESS_KEY and
+    # KYC_STORAGE_SECRET_KEY.
+    storage:
+      endpoint: ""
+      region: ""
+      bucket: ""
+      use_tls: true
+      server_side_encryption: true
     providers:
       - name: "manual"
         enabled: true
@@ -1011,8 +1042,11 @@ compliance:
         api_key: ""  # Set with SUMSUB_API_KEY
         api_secret: ""
         endpoint: "https://api.sumsub.com"
-        webhook_secret: ""
+        webhook_secret: ""  # Set with SUMSUB_WEBHOOK_SECRET; api_secret with SUMSUB_API_SECRET
         timeout_seconds: 30
+        # The level of the Sumsub account that the applicants are checked
+        # at (#72). Sumsub serves the international region only.
+        level: "basic-kyc-level"
       - name: "onfido"
         enabled: false
         api_key: ""  # Set with ONFIDO_API_KEY

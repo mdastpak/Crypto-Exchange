@@ -187,7 +187,8 @@ func TestValidateServer_Rules(t *testing.T) {
 		}, "verification.withdrawal_limits.*.3 names level 3"},
 
 		// The withdrawal destinations (#160).
-		"unknown bank ownership provider": {func(c *Configuration) { c.Identity.BankOwnership.Provider = "jibit" }, `identity.bank_ownership.provider is "jibit"; it must be none or stub`},
+		"unknown bank ownership provider": {func(c *Configuration) { c.Identity.BankOwnership.Provider = "finnotech" }, `identity.bank_ownership.provider is "finnotech"; it must be none, stub, or jibit`},
+		"jibit without its account":       {func(c *Configuration) { c.Identity.BankOwnership.Provider = BankOwnershipJibit }, `uses the Jibit account of identity.mobile_ownership`},
 		"bank ownership stub released":    {func(c *Configuration) { c.Identity.BankOwnership.Provider = BankOwnershipStub }, `identity.bank_ownership.provider is "stub"`},
 		"too many destinations":           {func(c *Configuration) { c.Withdrawals.MaxDestinations = 500 }, "withdrawals.max_destinations is 500; it must be from 1 to 200"},
 		"a negative wait": {func(c *Configuration) {
@@ -705,4 +706,64 @@ func TestValidateServer_PriceSignatures(t *testing.T) {
 	assert.Contains(t, problems[0], "price.verify_keys[1]")
 	c.Price.Signatures = "maybe"
 	assert.Contains(t, strings.Join(problemsOf(c), "\n"), "it must be on or off")
+}
+
+// The storage of the KYC documents (#72) needs a bucket and keys with an
+// endpoint; release mode reaches it over HTTPS.
+func TestValidate_KYCStorage(t *testing.T) {
+	problemsOf := func(s KYCStorageConfig) string {
+		p := &problems{}
+		kycStorageProblems(p, s)
+		return strings.Join(*p, "\n")
+	}
+	assert.Empty(t, problemsOf(KYCStorageConfig{}), "off")
+	assert.Empty(t, problemsOf(KYCStorageConfig{Endpoint: "minio:9000", Bucket: "kyc", AccessKey: "a", SecretKey: "s"}))
+	assert.Empty(t, problemsOf(KYCStorageConfig{Endpoint: "s3.ir-thr-at1.arvanstorage.ir", Bucket: "kyc", AccessKey: "a", SecretKey: "s"}))
+	assert.Contains(t, problemsOf(KYCStorageConfig{Endpoint: "minio:9000", AccessKey: "a", SecretKey: "s"}), "compliance.kyc.storage.bucket")
+	assert.Contains(t, problemsOf(KYCStorageConfig{Endpoint: "minio:9000", Bucket: "kyc"}), "KYC_STORAGE_ACCESS_KEY")
+	assert.Contains(t, problemsOf(KYCStorageConfig{Endpoint: "https://minio:9000", Bucket: "kyc", AccessKey: "a", SecretKey: "s"}), "without a scheme")
+
+	c := Configuration{}
+	c.Compliance.KYC.Storage = KYCStorageConfig{Endpoint: "minio:9000"}
+	p := &problems{}
+	c.releaseProblems(p)
+	assert.Contains(t, strings.Join(*p, "\n"), "compliance.kyc.storage.use_tls")
+}
+
+// Sumsub needs its keys, its webhook secret, its level, and https, and is a
+// feature of the international region (#72).
+func TestValidate_KYCProvider(t *testing.T) {
+	problemsOf := func(p KYCProviderConfig) string {
+		c := Configuration{}
+		c.Compliance.KYC.Providers = []KYCProviderConfig{{Name: "manual", Enabled: true}, p}
+		ps := &problems{}
+		kycProviderProblems(ps, &c)
+		return strings.Join(*ps, "\n")
+	}
+	ok := KYCProviderConfig{Name: "sumsub", Enabled: true, APIKey: "k", APISecret: "s", WebhookSecret: "w",
+		Endpoint: "https://api.sumsub.com", Level: "basic-kyc-level"}
+	assert.Empty(t, problemsOf(ok))
+	off := ok
+	off.Enabled, off.WebhookSecret = false, ""
+	assert.Empty(t, problemsOf(off), "off")
+	noSecret := ok
+	noSecret.WebhookSecret = ""
+	assert.Contains(t, problemsOf(noSecret), "SUMSUB_WEBHOOK_SECRET")
+	plain := ok
+	plain.Endpoint = "http://api.sumsub.com"
+	assert.Contains(t, problemsOf(plain), "https")
+	noLevel := ok
+	noLevel.Level = ""
+	assert.Contains(t, problemsOf(noLevel), ".level")
+
+	c := Configuration{}
+	c.Deployment.Region = "ir"
+	c.Compliance.KYC.Providers = []KYCProviderConfig{ok}
+	ps := &problems{}
+	c.regionProblems(ps, false)
+	assert.Contains(t, strings.Join(*ps, "\n"), "Sumsub as the KYC provider", "not in the ir region")
+	c.Deployment.Region = "international"
+	ps = &problems{}
+	c.regionProblems(ps, false)
+	assert.NotContains(t, strings.Join(*ps, "\n"), "Sumsub")
 }

@@ -1,0 +1,6 @@
+- KYC providers, with Sumsub ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)). See [With a provider](docs/api.md#with-a-provider).
+  - While `compliance.kyc.providers[sumsub]` is enabled, in the international region only, a new application is opened as a Sumsub applicant, and the user gives the documents to Sumsub's SDK with a token of `GET /user/kyc/session`. Manual review stays the default.
+  - `POST /kyc/webhooks/sumsub` takes Sumsub's webhooks, verified by the HMAC of the raw body under the webhook secret: a submission puts the application under review, an approval grants level 2, a final rejection rejects it, and a rejection that the user may answer sends it back to pending. A webhook must name the application and its applicant together; one of a decided application is acknowledged and changes nothing.
+  - The requests to Sumsub are signed with the app token and the secret key. `SUMSUB_API_SECRET` and `SUMSUB_WEBHOOK_SECRET` set the secrets; `compliance.kyc.providers[sumsub].level` names the level. An `ir` release refuses Sumsub.
+  - Migration 53: an application names `sumsub` and its applicant, once.
+  - The client follows Sumsub's documented API and is tested against a fake server; it must be checked against the account before production.

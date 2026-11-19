@@ -262,7 +262,9 @@ func (f fixture) rials(t *testing.T, balance string) (iban, irr string) {
 	ctx := context.Background()
 	book, ok := f.Destinations.(destinations.Store)
 	require.True(t, ok)
-	require.NoError(t, identity.SaveNationalID(ctx, f.DB, book.NationalIDs, f.user, "0499370899", "stub", "", time.Now()))
+	require.NoError(t, identity.Save(ctx, f.DB, book.NationalIDs, f.user, identity.Verified{
+		Person:   identity.Person{NationalID: "0499370899", BirthDate: time.Date(1990, 3, 21, 0, 0, 0, 0, time.UTC)},
+		Provider: "stub", At: time.Now()}))
 	d, err := book.Add(ctx, f.user, destinations.Request{Kind: destinations.KindIBAN, Number: makeIBAN("0540102680020817909002")}, origin)
 	require.NoError(t, err)
 	require.NoError(t, f.DB.QueryRow(`SELECT hk FROM currencies WHERE info->>'symbol' = 'IRR'`).Scan(&irr))
@@ -283,4 +285,122 @@ func makeIBAN(bban string) string {
 		rem = (rem*10 + int(c-'0')) % 97
 	}
 	return fmt.Sprintf("IR%02d%s", 98-rem, bban)
+}
+
+// chainProvider pays on chain by itself, as the TRON signer does, and
+// reports what the test sets.
+type chainProvider struct {
+	sent  []Transfer
+	state TransferState
+}
+
+func (c *chainProvider) Name() string { return "tron-signer" }
+
+func (c *chainProvider) Submit(_ context.Context, t Transfer) (string, error) {
+	c.sent = append(c.sent, t)
+	return "tx-" + t.IdempotencyKey, nil
+}
+
+func (c *chainProvider) Status(context.Context, Transfer) (TransferState, error) { return c.state, nil }
+
+// A crypto withdrawal on a network with a provider of its own is paid by
+// it, with its asset's contract and precision, and settled by its report;
+// an administrator cannot record it by hand (#68).
+func TestPayouts_AChainProviderPaysItsNetwork(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "")
+	now := time.Now()
+	p := f.payouts(config.PayoutsConfig{}, &now)
+	chain := &chainProvider{state: TransferState{Status: TransferPending}}
+	p.Chains = map[string]Provider{"tron": chain}
+	w, err := f.withdraw(f.request("100", "signer"))
+	require.NoError(t, err)
+
+	_, err = p.Run(ctx)
+	require.NoError(t, err)
+	pay := f.payoutsOf(w.ID)[0]
+	var provider string
+	require.NoError(t, f.DB.QueryRow(`SELECT provider FROM withdrawal_payouts WHERE id = $1`, pay.ID).Scan(&provider))
+	assert.Equal(t, "tron-signer", provider)
+	assert.Equal(t, PayoutSubmitted, pay.Status)
+	require.Len(t, chain.sent, 1)
+	sent := chain.sent[0]
+	assert.Equal(t, "tron", sent.Network)
+	assert.Equal(t, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", sent.Contract, "the asset by its contract")
+	assert.Equal(t, 6, sent.Decimals)
+	assert.Equal(t, w.ID+"-1", sent.IdempotencyKey)
+
+	_, err = p.Complete(ctx, pay.ID, "0x9f2c", admin)
+	require.ErrorIs(t, err, ErrPayoutAutomatic)
+	_, err = p.Fail(ctx, pay.ID, "lost", admin)
+	require.ErrorIs(t, err, ErrPayoutAutomatic)
+
+	_, err = p.Run(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, PayoutSubmitted, f.payoutsOf(w.ID)[0].Status, "pending at the signer")
+
+	chain.state = TransferState{Status: TransferCompleted, TrackingID: "tx-" + sent.IdempotencyKey}
+	_, err = p.Run(ctx)
+	require.NoError(t, err)
+	got, err := f.Get(ctx, f.user, w.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusCompleted, got.Status)
+	assert.Equal(t, "tx-"+sent.IdempotencyKey, got.Payouts[0].TrackingID)
+	available, locked := f.balanceOf(f.usdt)
+	assert.Equal(t, "899", available)
+	assert.Equal(t, "0", locked)
+	assert.Len(t, chain.sent, 1, "sent once")
+}
+
+// A payout that the chain provider never got is sent again with its key;
+// one that failed on chain is released to the user.
+func TestPayouts_AChainProviderNotReceivedThenFailed(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "")
+	now := time.Now()
+	p := f.payouts(config.PayoutsConfig{}, &now)
+	chain := &chainProvider{state: TransferState{Status: TransferNotReceived}}
+	p.Chains = map[string]Provider{"tron": chain}
+	w, err := f.withdraw(f.request("100", "signer-2"))
+	require.NoError(t, err)
+	_, err = p.Run(ctx)
+	require.NoError(t, err)
+	_, err = p.Run(ctx) // not received: back to planned, and sent again
+	require.NoError(t, err)
+	require.Len(t, chain.sent, 2)
+	assert.Equal(t, chain.sent[0].IdempotencyKey, chain.sent[1].IdempotencyKey, "the same key")
+
+	chain.state = TransferState{Status: TransferFailed, Reason: "the transaction failed on chain: OUT_OF_ENERGY"}
+	_, err = p.Run(ctx)
+	require.NoError(t, err)
+	got, err := f.Get(ctx, f.user, w.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusFailed, got.Status)
+	available, locked := f.balanceOf(f.usdt)
+	assert.Equal(t, "1000", available, "released")
+	assert.Equal(t, "0", locked)
+}
+
+// A payout planned with a provider that this instance does not have is
+// left to an instance that has it.
+func TestPayouts_AnUnknownProviderIsLeft(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, "")
+	now := time.Now()
+	withChain := f.payouts(config.PayoutsConfig{}, &now)
+	chain := &chainProvider{state: TransferState{Status: TransferPending}}
+	withChain.Chains = map[string]Provider{"tron": chain}
+	w, err := f.withdraw(f.request("100", "signer-3"))
+	require.NoError(t, err)
+	_, err = withChain.Run(ctx) // planned and sent by the signer
+	require.NoError(t, err)
+	_, err = f.DB.Exec(`UPDATE withdrawal_payouts SET status = 'planned' WHERE withdrawal_id = $1`, w.ID)
+	require.NoError(t, err)
+	require.NoError(t, rowseal.Reseal(ctx, f.DB, rowseal.WithdrawalPayouts, "withdrawal_id = $1", w.ID))
+
+	manualOnly := f.payouts(config.PayoutsConfig{}, &now)
+	moved, err := manualOnly.Run(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, moved)
+	assert.Equal(t, PayoutPlanned, f.payoutsOf(w.ID)[0].Status)
 }

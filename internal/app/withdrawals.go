@@ -15,6 +15,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
+	"github.com/mdastpak/crypto-exchange/internal/tronsigner"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
 )
@@ -23,8 +24,9 @@ import (
 // with the confirmations that send their codes: it runs after
 // useConfirmationSender, which sets the sender of those codes. Without the
 // confirmations, the destinations, or the verification levels, the routes
-// answer withdrawals_unavailable.
-func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration) error {
+// answer withdrawals_unavailable. rules, when set, are the AML rules that
+// evaluate each withdrawal (#73).
+func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration, rules *amlSetup) error {
 	confirmer, ok := h.User.Confirmations.(confirm.Service)
 	book, bookOK := h.User.Destinations.(withdrawals.DestinationBook)
 	levels, levelsOK := h.User.Verification.(withdrawals.LevelLimits)
@@ -50,6 +52,9 @@ func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration
 	}
 	s := withdrawals.Service{DB: db, Confirm: confirmer, Destinations: book, Levels: levels, Ledger: ledger.Ledger{DB: db},
 		ReviewAbove: review}
+	if rules != nil {
+		s.AML, s.FiatCountry = rules.engine, homeCountry(settings)
+	}
 	if store, ok := levels.(verification.Store); ok {
 		warnUnconfigured(db, store.Policy, review)
 	}
@@ -61,8 +66,9 @@ func useWithdrawals(h *InfraHandlers, db *sql.DB, settings *config.Configuration
 }
 
 // newPayouts returns the payouts of withdrawals (#70), by the manual
-// provider, and gives them to the admin routes. ok is false without the
-// withdrawals.
+// provider, and on TRON by the signer when custody.providers[] names one
+// (#68), and gives them to the admin routes. ok is false without the
+// withdrawals. A signer whose certificates do not load stops the server.
 func newPayouts(h *InfraHandlers, db *sql.DB, settings *config.Configuration) (withdrawals.Payouts, bool, error) {
 	book, ok := h.User.Destinations.(destinations.Store)
 	if !ok || h.User.Withdrawals == nil {
@@ -72,8 +78,12 @@ func newPayouts(h *InfraHandlers, db *sql.DB, settings *config.Configuration) (w
 	if err != nil {
 		return withdrawals.Payouts{}, false, fmt.Errorf("withdrawals.payouts.timezone: %w", err)
 	}
+	chains, err := signers(settings)
+	if err != nil {
+		return withdrawals.Payouts{}, false, err
+	}
 	p := withdrawals.Payouts{DB: db, Ledger: ledger.Ledger{DB: db}, Destinations: book, Provider: withdrawals.Manual{},
-		Settings: settings.Withdrawals.Payouts, Location: loc}
+		Chains: chains, Settings: settings.Withdrawals.Payouts, Location: loc}
 	h.Admin.Payouts = p
 	return p, true, nil
 }
@@ -177,4 +187,24 @@ func warnUnconfigured(db *sql.DB, policy verification.Policy, review map[string]
 				"and no %q default (#406)", c.Symbols[0], strings.Join(c.Symbols, " or "), config.AnyCurrency)
 		}
 	}
+}
+
+// signers are the signers that pay the withdrawals on chain, by network:
+// the TRON signer of an enabled custody provider with a signer url.
+func signers(settings *config.Configuration) (map[string]withdrawals.Provider, error) {
+	out := map[string]withdrawals.Provider{}
+	for i, c := range settings.Custody.Providers {
+		if !c.Enabled || c.Network != "tron" || c.Signer.URL == "" {
+			continue
+		}
+		if !strings.HasPrefix(c.Signer.URL, "https://") {
+			return nil, fmt.Errorf("custody.providers[%d].signer.url: the signer is reached over https", i)
+		}
+		tlsConfig, err := tronsigner.ClientTLS(c.Signer.CertFile, c.Signer.KeyFile, c.Signer.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("custody.providers[%d].signer: %w", i, err)
+		}
+		out["tron"] = tronsigner.NewClient(c.Signer.URL, tlsConfig)
+	}
+	return out, nil
 }

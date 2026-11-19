@@ -1,0 +1,6 @@
+- Sanctions screening against the OFAC list ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)). See [docs/aml.md](docs/aml.md#sanctions-screening).
+  - While the `ofac` provider of `compliance.sanctions` is enabled, `sdn.csv` and `alt.csv` are downloaded every `refresh_hours`, parsed with the other names and the addresses on chain of each entry, and stored as a version only when the list changed (migration 51, `sanctions_lists`, sealed, the body by its SHA-256). Every instance loads the newest version each minute; one changed in SQL is refused with its finding.
+  - The AML rules of type `SANCTIONS` that name `ofac` screen each withdrawal: its crypto destination against the addresses of the list, with the rule's action, and the user's first and last name by similarity from `name_match_threshold`, held for review at most, as a name alone does not tell a person. The names are read with the seal of the user's row. Without a list, or with one older than `max_list_age_hours`, the operations they screen are held for review.
+  - `sanctions_user` of the built-in rules holds for review instead of freezing.
+  - `GET /admin/aml/sanctions` shows the version in use and whether it is stale.
+  - The screening interface, `aml.Screener`, reports which rules a provider screens, and may take less than a rule's action; Chainalysis and TRM implement it.

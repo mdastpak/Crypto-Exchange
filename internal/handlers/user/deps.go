@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/agreements"
@@ -10,8 +11,11 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/balances"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
+	"github.com/mdastpak/crypto-exchange/internal/deposits"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
+	"github.com/mdastpak/crypto-exchange/internal/idcheck"
+	"github.com/mdastpak/crypto-exchange/internal/kyc"
 	"github.com/mdastpak/crypto-exchange/internal/ledger"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
@@ -77,6 +81,32 @@ type FavoriteStore interface {
 type RestrictionReader interface {
 	Active(ctx context.Context, userHK string) ([]restrictions.Restriction, error)
 	SecurityHold(ctx context.Context, userHK string) (*time.Time, error)
+}
+
+// IdentityService checks the identity of users (#158): idcheck.Service.
+type IdentityService interface {
+	Status(ctx context.Context, userHK string) (idcheck.Status, error)
+	Submit(ctx context.Context, userHK, nationalID, birthDate string, origin audit.Event) (idcheck.Status, error)
+}
+
+// KYCApplications are the user's KYC applications for level 2 (#72):
+// kyc.Service.
+type KYCApplications interface {
+	Current(ctx context.Context, userHK string) (kyc.Application, error)
+	Apply(ctx context.Context, userHK string, form kyc.Form, origin audit.Event) (kyc.Application, error)
+	Upload(ctx context.Context, userHK, id string, docType kyc.DocumentType, content []byte, origin audit.Event) (kyc.Document, error)
+	Submit(ctx context.Context, userHK, id string, origin audit.Event) (kyc.Application, error)
+	Session(ctx context.Context, userHK string) (kyc.Session, error)
+	Webhook(ctx context.Context, header http.Header, body []byte, origin audit.Event) error
+}
+
+// DepositAddresses are the user's deposit addresses (#68):
+// deposits.Service.
+type DepositAddresses interface {
+	Get(ctx context.Context, userHK, currencyHK, network string, origin audit.Event) (deposits.Address, error)
+	List(ctx context.Context, userHK string) ([]deposits.Address, error)
+	// History returns the user's newest deposits.
+	History(ctx context.Context, userHK string) ([]deposits.UserDeposit, error)
 }
 
 // BalanceReader reads the balances of a user and the history of their
