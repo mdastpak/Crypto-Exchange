@@ -2,6 +2,7 @@ package venues
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -13,6 +14,23 @@ type AssetMapping struct {
 	// Networks maps the venue's name of each network, such as TRX, to ours,
 	// such as tron. A network that is not here is not routable.
 	Networks map[string]string `yaml:"networks"`
+	// ReturnNetwork is our network on which the asset comes back to our
+	// wallet (#510); empty is the cheapest of Networks.
+	ReturnNetwork string `yaml:"return_network"`
+}
+
+// ReturnNetworks returns the venue's names of the networks on which the
+// asset may come back to our wallet: that of ReturnNetwork, or else all
+// of Networks, sorted.
+func (a AssetMapping) ReturnNetworks() []string {
+	var out []string
+	for vn, n := range a.Networks {
+		if a.ReturnNetwork == "" || n == a.ReturnNetwork {
+			out = append(out, vn)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Mapping maps the assets of one venue, by the venue's symbol, to ours. It

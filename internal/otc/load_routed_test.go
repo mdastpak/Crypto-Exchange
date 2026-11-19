@@ -41,15 +41,27 @@ func TestService_LoadTestRouted(t *testing.T) {
 	rule := routing.Rule{Name: "load", UseInventory: true}
 	for i, name := range []string{"binance", "nobitex"} {
 		settings.Venues.Exchanges[name] = config.VenueConfig{Enabled: true, FeeBPS: 10, SlippageBPS: 5,
-			Assets: map[string]config.VenueAsset{base: {Currency: base}, quote: {Currency: quote}}}
+			Assets: map[string]config.VenueAsset{base: {Currency: base, Networks: map[string]string{"BTC": "bitcoin"}},
+				quote: {Currency: quote, Networks: map[string]string{"TRX": "tron"}}}}
 		v := stub.New(name)
 		v.SetBalance(quote, shared.MustNewDecimalFromString("1000000"))
 		v.SetBalance(base, shared.MustNewDecimalFromString("20"))
 		v.AddInstrument(venues.Instrument{Symbol: base + quote, Base: base, Quote: quote, TickSize: shared.MustNewDecimalFromString("0.01"),
 			LotSize: shared.MustNewDecimalFromString("0.001"), MinQuantity: shared.MustNewDecimalFromString("0.001"),
 			MinNotional: shared.MustNewDecimalFromString("1"), Trading: true}, shared.MustNewDecimalFromString("65000"))
+		v.AddNetwork(base, venues.Network{Network: "BTC", DepositEnabled: true, WithdrawEnabled: true,
+			WithdrawFee: shared.MustNewDecimalFromString("0.00001")})
+		v.AddNetwork(quote, venues.Network{Network: "TRX", DepositEnabled: true, WithdrawEnabled: true,
+			WithdrawFee: shared.MustNewDecimalFromString("1")})
 		balances, err := v.Balances(ctx)
 		require.NoError(t, err)
+		networks := map[string][]venues.Network{}
+		for _, b := range balances {
+			list, err := v.Networks(ctx, b.Asset)
+			require.NoError(t, err)
+			networks[b.Asset] = list
+		}
+		require.NoError(t, venueState.SaveNetworks(ctx, name, networks, time.Now()))
 		instruments, err := v.Instruments(ctx)
 		require.NoError(t, err)
 		require.NoError(t, venueState.SaveInstruments(ctx, name, instruments, time.Now()))

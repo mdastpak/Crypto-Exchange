@@ -177,11 +177,22 @@ the execution requires.
 
 ## Cost
 
-The cost of a leg at a venue is `fee_bps` + `slippage_bps` of
-[`venues.exchanges.<name>`](configuration.md#venues), plus the venue's
-withdrawal fee on the trade's network. The withdrawal fee is taken over the
-leg's amount of the currency the venue gives. A leg of the inventory costs
-nothing. The cost of the route is the cost of its legs, weighted by their
+The cost of a leg at a venue is `fee_bps` + `slippage_bps` +
+`deposit_cost_bps` of [`venues.exchanges.<name>`](configuration.md#venues),
+plus a withdrawal fee of the currency the venue gives, taken over the leg's
+amount of it:
+
+- on the trade's network, when it has one;
+- otherwise on the way back to our wallet
+  ([#510](https://github.com/mdastpak/Crypto-Exchange/issues/510)): the
+  asset's `return_network`, or the cheapest of its mapped networks that a
+  fresh snapshot shows open for withdrawals. When no such network is known,
+  the venue is skipped with `return_network_unknown`, since a leg that cannot
+  be costed is not routed.
+
+So a venue whose fee and slippage alone are lower is not the cheapest when
+its withdrawal back costs more, and `max_cost_bps` counts that withdrawal.
+A leg of the inventory costs nothing. The cost of the route is the cost of its legs, weighted by their
 notional and rounded up to a hundredth of a basis point.
 
 ## Order of the sources

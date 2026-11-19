@@ -88,6 +88,15 @@ func TestVenues_Problems(t *testing.T) {
 		"two assets of one currency": {func(c *Configuration) {
 			venue(c, "binance", func(v *VenueConfig) { v.Assets["USDT2"] = VenueAsset{Currency: "usdt"} })
 		}, "venues.exchanges.binance.assets.USDT2.currency is usdt, which USDT maps to as well"},
+		"a deposit cost above the bound": {func(c *Configuration) { venue(c, "binance", func(v *VenueConfig) { v.DepositCostBPS = 1001 }) },
+			"venues.exchanges.binance.deposit_cost_bps is 1001; it must be from 0 to 1000"},
+		"a return network that is not mapped": {func(c *Configuration) {
+			venue(c, "binance", func(v *VenueConfig) {
+				a := v.Assets["USDT"]
+				a.ReturnNetwork = "bsc"
+				v.Assets["USDT"] = a
+			})
+		}, "venues.exchanges.binance.assets.USDT.return_network is bsc, which is not one of its networks"},
 		"two networks of one network": {func(c *Configuration) {
 			venue(c, "binance", func(v *VenueConfig) { v.Assets["USDT"].Networks["TRC20"] = "tron" })
 		}, "venues.exchanges.binance.assets.USDT.networks.TRX is tron, which TRC20 maps to as well"},

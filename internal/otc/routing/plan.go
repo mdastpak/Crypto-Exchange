@@ -127,6 +127,9 @@ type VenueMarket struct {
 	// FeeBPS and SlippageBPS are the configured costs of the venue
 	// (venues.exchanges.<name>.fee_bps and slippage_bps).
 	FeeBPS, SlippageBPS int
+	// DepositCostBPS is the amortized cost of moving to the venue what it
+	// spends (venues.exchanges.<name>.deposit_cost_bps, #510).
+	DepositCostBPS int
 	// Reasons are why the market may not take an order; none is routable.
 	Reasons []string
 }
@@ -139,6 +142,12 @@ type Funds struct {
 	WithdrawFee decimal.Decimal
 	// Reasons are why the currency is not routable; none is routable.
 	Reasons []string
+	// ReturnFee is, without a network asked for, the fee of moving the
+	// currency back to our wallet (#510): the cheapest open network, or the
+	// asset's return_network. ReturnReasons are why it is not known; a
+	// venue whose leg cannot be costed is not routed.
+	ReturnFee     decimal.Decimal
+	ReturnReasons []string
 }
 
 // Venues reads the state of the venues (#385).
@@ -440,7 +449,7 @@ func (r *Router) venue(ctx context.Context, rule Rule, v VenueRule, in Input) (s
 	}
 	skip(m.Reasons...)
 	s.symbol, s.minQuantity, s.minNotional = m.Symbol, m.MinQuantity, m.MinNotional
-	s.feeBPS = decimal.NewFromInt(int64(m.FeeBPS + m.SlippageBPS))
+	s.feeBPS = decimal.NewFromInt(int64(m.FeeBPS + m.SlippageBPS + m.DepositCostBPS))
 	switch {
 	case !m.Lot.IsPositive() || isMultiple(in.Lot, m.Lot):
 		s.step = in.Lot
@@ -466,6 +475,15 @@ func (r *Router) venue(ctx context.Context, rule Rule, v VenueRule, in Input) (s
 		}
 		skip(out.Reasons...)
 		s.withdrawFee = out.WithdrawFee
+	} else {
+		// What the venue gives still comes back to our wallet (#510): the
+		// leg costs that withdrawal too.
+		out, err := r.Venues.Funds(ctx, v.Venue, received, "")
+		if err != nil {
+			return s, err
+		}
+		skip(out.ReturnReasons...)
+		s.withdrawFee = out.ReturnFee
 	}
 
 	available := funds.Available
@@ -503,7 +521,9 @@ func (r *Router) venue(ctx context.Context, rule Rule, v VenueRule, in Input) (s
 }
 
 // legCost is the cost of a leg of q at a venue, in basis points of its
-// notional: the fee and the slippage, and the withdrawal fee over the leg.
+// notional: the fee, the slippage, and the deposit cost, and the
+// withdrawal fee, to the trade's network or back to our wallet, over the
+// leg.
 func legCost(s source, in Input, q decimal.Decimal) decimal.Decimal {
 	cost := s.feeBPS
 	if s.withdrawFee.IsPositive() && q.IsPositive() {

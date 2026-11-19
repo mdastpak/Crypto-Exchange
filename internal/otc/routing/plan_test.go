@@ -475,3 +475,68 @@ func TestValidate_RefusesWhatCannotRoute(t *testing.T) {
 	assert.NoError(t, Validate([]Rule{{Name: "a", Venues: []VenueRule{{Venue: "binance"}}}}, international))
 	assert.NoError(t, Validate([]Rule{{Name: "a", Venues: []VenueRule{{Venue: "nobitex"}}}}, &config.Configuration{}))
 }
+
+// TestPlan_AVenueLegCostsTheReturnToOurWallet covers #510: without a
+// network of its own, a leg at a venue costs, beside the fee and the
+// slippage, the withdrawal back to our wallet of what it buys, and the
+// deposit cost of the venue. A venue whose fee and slippage alone are
+// lower is not the cheapest once that is counted, a ceiling counts it, and
+// a venue that cannot bring the currency back is not routed.
+func TestPlan_AVenueLegCostsTheReturnToOurWallet(t *testing.T) {
+	ctx := context.Background()
+	base := func(returnFee string, reasons ...string) map[string]Funds {
+		return map[string]Funds{
+			"USDT": {Available: d("100000")},
+			"BTC":  {Available: d("2"), ReturnFee: d(returnFee), ReturnReasons: reasons},
+		}
+	}
+	cheap := market("BTCUSDT")
+	cheap.FeeBPS, cheap.SlippageBPS = 5, 0
+	dear := market("BTCUSDT")
+	dear.FeeBPS, dear.SlippageBPS = 10, 5
+	tests := []struct {
+		name       string
+		cheapFunds map[string]Funds
+		deposit    int
+		maxCost    int
+		want       string
+		cost       string
+		reason     string
+	}{
+		// 5 bps and 0.002 BTC back on 0.1 BTC (200 bps) against 15 bps
+		// and nothing back.
+		{name: "the return makes the cheaper fee dearer", cheapFunds: base("0.002"), want: "dear", cost: "15"},
+		{name: "a free return keeps the cheaper fee", cheapFunds: base("0"), want: "cheap", cost: "5"},
+		{name: "the deposit cost counts", cheapFunds: base("0"), deposit: 20, want: "dear", cost: "15"},
+		{name: "no return network, no leg", cheapFunds: base("0", ReasonReturnNetworkUnknown), want: "dear", cost: "15"},
+		{name: "the ceiling counts the return", cheapFunds: base("0.002"), maxCost: 100, want: "dear", cost: "15"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := cheap
+			c.DepositCostBPS = tt.deposit
+			v := fakeVenues{
+				markets: map[string]VenueMarket{"binance": c, "nobitex": dear},
+				funds:   map[string]map[string]Funds{"binance": tt.cheapFunds, "nobitex": base("0")},
+			}
+			rule := Rule{Name: "cheapest", Strategy: StrategyCheapest, MaxCostBPS: tt.maxCost,
+				Venues: []VenueRule{{Venue: "binance"}, {Venue: "nobitex"}}}
+			r := router(t, []Rule{rule}, v, fakeInventory{}, fakeUsage{})
+			e, err := r.Explain(ctx, input("buy", "0.1"))
+			require.NoError(t, err)
+			require.NotNil(t, e.Route, "reason %s", e.Reason)
+			want := map[string]string{"cheap": "binance", "dear": "nobitex"}[tt.want]
+			require.Len(t, e.Route.Legs, 1)
+			assert.Equal(t, want, e.Route.Legs[0].Venue)
+			assert.Equal(t, tt.cost, e.Route.CostBPS.String())
+		})
+	}
+
+	// A cheaper fee whose return costs more than the ceiling routes
+	// nothing when it is the only venue.
+	v := fakeVenues{markets: map[string]VenueMarket{"binance": cheap}, funds: map[string]map[string]Funds{"binance": base("0.002")}}
+	r := router(t, []Rule{{Name: "one", MaxCostBPS: 100, Venues: []VenueRule{{Venue: "binance"}}}}, v, fakeInventory{}, fakeUsage{})
+	_, err := r.Plan(ctx, input("buy", "0.1"))
+	var none *NoRoute
+	require.ErrorAs(t, err, &none)
+}

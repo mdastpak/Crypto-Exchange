@@ -12,6 +12,9 @@ import (
 const (
 	ReasonNotMapped     = "not_mapped"
 	ReasonVenueDisabled = "venue_disabled"
+	// ReasonReturnNetworkUnknown is a currency that no network mapped and
+	// open at the venue brings back to our wallet (#510).
+	ReasonReturnNetworkUnknown = "return_network_unknown"
 )
 
 // StateVenues reads the venues from their state (#385): the snapshots of
@@ -52,7 +55,7 @@ func (v StateVenues) Market(ctx context.Context, name, base, quote string) (Venu
 	if !enabled || !mapped {
 		return VenueMarket{Reasons: []string{ReasonVenueDisabled}}, nil
 	}
-	m := VenueMarket{FeeBPS: c.FeeBPS, SlippageBPS: c.SlippageBPS}
+	m := VenueMarket{FeeBPS: c.FeeBPS, SlippageBPS: c.SlippageBPS, DepositCostBPS: c.DepositCostBPS}
 	vb, _, okB := mapping.Venue(base, "")
 	vq, _, okQ := mapping.Venue(quote, "")
 	if !okB || !okQ {
@@ -97,6 +100,17 @@ func (v StateVenues) Funds(ctx context.Context, name, currency, network string) 
 		return Funds{}, err
 	}
 	f.Available = available.Decimal()
+	if network == "" {
+		fee, _, ok, err := v.State.ReturnFee(ctx, name, asset, mapping[asset].ReturnNetworks())
+		if err != nil {
+			return Funds{}, err
+		}
+		if ok {
+			f.ReturnFee = fee.Decimal()
+		} else {
+			f.ReturnReasons = []string{ReasonReturnNetworkUnknown}
+		}
+	}
 	if venueNetwork != "" {
 		fee, err := v.State.WithdrawFee(ctx, name, asset, venueNetwork)
 		if err != nil {

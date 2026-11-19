@@ -532,7 +532,7 @@ func MappingsOf(c config.VenuesConfig) map[string]venues.Mapping {
 	for _, name := range c.EnabledVenues() {
 		m := venues.Mapping{}
 		for asset, a := range c.Exchanges[name].Assets {
-			m[asset] = venues.AssetMapping{Currency: a.Currency, Networks: a.Networks}
+			m[asset] = venues.AssetMapping{Currency: a.Currency, Networks: a.Networks, ReturnNetwork: a.ReturnNetwork}
 		}
 		out[name] = m
 	}
@@ -560,6 +560,30 @@ func (s *Store) InstrumentOf(ctx context.Context, venue, base, quote string) (In
 		return Instrument{}, false, fmt.Errorf("venues: read the market %s/%s at %s: %w", base, quote, venue, err)
 	}
 	return in, true, nil
+}
+
+// ReturnFee returns the cheapest withdrawal fee of asset at venue on one
+// of networks (the venue's names), among those that a fresh snapshot shows
+// open for withdrawals (#510): the cost of moving it back to our wallet.
+// ok is false when none is.
+func (s *Store) ReturnFee(ctx context.Context, venue, asset string, networks []string) (fee shared.Decimal, network string, ok bool, err error) {
+	if len(networks) == 0 {
+		return fee, "", false, nil
+	}
+	var takenAt time.Time
+	err = s.DB.QueryRowContext(ctx, `SELECT withdraw_fee, network, taken_at FROM venue_networks
+		WHERE venue = $1 AND asset = $2 AND network = ANY ($3::text[]) AND withdraw_enabled
+		ORDER BY withdraw_fee, network LIMIT 1`, venue, asset, networks).Scan(&fee, &network, &takenAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fee, "", false, nil
+	}
+	if err != nil {
+		return fee, "", false, fmt.Errorf("venues: read the networks of %s at %s: %w", asset, venue, err)
+	}
+	if !s.fresh(s.Clock(ctx), takenAt) {
+		return fee, "", false, nil
+	}
+	return fee, network, true, nil
 }
 
 // WithdrawFee returns the fee of a withdrawal of asset on network at
