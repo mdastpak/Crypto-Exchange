@@ -34,6 +34,10 @@ const (
 // Routing routes the quotes and their executions by the rules (#386).
 type Routing struct {
 	Router *routing.Router
+	// Quotes is the router of the quotes, which may keep the venue state
+	// for a moment on this node (routing.Router.QuoteState, #509); nil is
+	// Router. The executions always plan with Router.
+	Quotes *routing.Router
 	// Region is the region of the release, which the rules match as the
 	// region of the user.
 	Region region.Region
@@ -179,7 +183,11 @@ func (s *Service) routeSteps(ctx context.Context, req Request, m currencies.Publ
 // quote.
 func (r *Routing) forQuote() *Routing {
 	c := *r
-	c.Router = r.Router.Memoized()
+	router := r.Router
+	if r.Quotes != nil {
+		router = r.Quotes
+	}
+	c.Router = router.Memoized()
 	return &c
 }
 

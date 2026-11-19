@@ -91,6 +91,7 @@ func otcRouting(db *sql.DB, settings *config.Configuration, levels verification.
 	}
 	return &otc.Routing{
 		Router: router, Region: settings.Region(),
+		Quotes: router.QuoteState(time.Duration(settings.OTC.Routing.QuoteStateMs) * time.Millisecond),
 		Level: func(ctx context.Context, userHK string) (int, error) {
 			st, err := levels.Level(ctx, db, userHK)
 			return int(st.Level), err

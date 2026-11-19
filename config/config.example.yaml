@@ -642,6 +642,9 @@ otc:
     max_slippage_bps: 50
     order_timeout_seconds: 60
     unknown_grace_seconds: 120
+    # How long each node keeps the venue state that it prices the quotes on,
+    # shared by every quote (#509); the executions read the state of now.
+    quote_state_ms: 1000
 
 # The anti-phishing code of users (#375), which every email to their
 # verified contacts shows. The exchange suggests a new one once it is

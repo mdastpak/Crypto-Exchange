@@ -73,14 +73,25 @@ daily cap reads its usage. Since
 the user's verification level once, and the state of each venue, the
 inventory, and the usage once: the later runs plan on what the first read,
 which is the same state a moment later. That is about ten queries for each
-venue of the matching rules, and a few more for the inventory, per quote,
-whatever the number of runs. The state read for one quote is never used for
-another, and the execution reads the state of now, so no node routes on a
-state older than the quote that read it.
+venue of the matching rules, and a few more for the inventory, whatever the
+number of runs.
+
+Each node also keeps what it read for the quotes for
+`otc.routing.quote_state_ms` (default 1000), shared by every quote, and
+concurrent quotes wait for one read, so the reads of the venues no longer
+grow with the rate of the quotes: at 1,000 quotes a second, a node reads
+each venue about once a second. A quote may therefore be priced on a state
+up to that old, which is well inside the freshness of the snapshots
+(`venues.state.max_age_seconds`). The execution never uses it: it plans
+again on the state of now, under its locks, and refuses with
+`quote_not_routable` a quote that the state no longer routes. A failed read
+is not kept.
 
 `TestService_LoadTestRouted` is the load test of the quotes with routing on:
 1,000 quotes a second over the bounded inventory and two venues read from
 PostgreSQL, each taking the inventory and a venue, with a p99 under 25 ms.
+Without the node's state, the shared CI runner saturated at about 670
+routed quotes a second, with a p99 of 650 ms.
 The load test step of the CI runs it next to the test without routing, each
 bounded by its own baseline on the base branch.
 

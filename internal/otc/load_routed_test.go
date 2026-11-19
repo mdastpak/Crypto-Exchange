@@ -61,14 +61,18 @@ func TestService_LoadTestRouted(t *testing.T) {
 	// The inventory may sell a little of the base, so that the quotes take
 	// the inventory and a venue, and are priced again with the venue's cost.
 	short := shared.MustNewDecimalFromString("0.004").Decimal()
+	router := &routing.Router{
+		Rules:     fixedRules{routing.RuleSet{Version: 1, Rules: rules}},
+		Venues:    routing.StateVenues{State: venueState, Config: func() *config.Configuration { return settings }},
+		Inventory: HouseInventory{DB: f.DB, Limits: map[string]InventoryLimit{strings.ToUpper(base): {MaxShort: &short}}},
+		Usage:     &routing.Store{DB: f.DB},
+	}
+	// As the server routes the quotes: on the venue state that each node
+	// keeps for otc.routing.quote_state_ms.
 	s.Route(&Routing{
-		Router: &routing.Router{
-			Rules:     fixedRules{routing.RuleSet{Version: 1, Rules: rules}},
-			Venues:    routing.StateVenues{State: venueState, Config: func() *config.Configuration { return settings }},
-			Inventory: HouseInventory{DB: f.DB, Limits: map[string]InventoryLimit{strings.ToUpper(base): {MaxShort: &short}}},
-			Usage:     &routing.Store{DB: f.DB},
-		},
-		Level: func(context.Context, string) (int, error) { return 2, nil },
+		Router: router,
+		Quotes: router.QuoteState(time.Duration(config.DefaultOTCRoutingQuoteStateMs) * time.Millisecond),
+		Level:  func(context.Context, string) (int, error) { return 2, nil },
 	})
 	q, err := s.Quote(ctx, Request{Account: Account{UserHK: f.user}, Market: "BTC/USDT", Side: SideBuy, Quantity: ptr("0.01")})
 	require.NoError(t, err)
