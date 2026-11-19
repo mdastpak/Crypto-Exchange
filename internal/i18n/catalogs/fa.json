@@ -343,6 +343,7 @@
   "PAYOUT_FAILED_TO_RECORD": "پرداخت ثبت نشد.",
   "PAYOUT_NOT_FOUND": "پرداخت یافت نشد.",
   "PAYOUT_NOT_OPEN": "این پرداخت در انتظار انجام نیست.",
+  "PAYOUT_AUTOMATIC": "این پرداخت را ارائه‌دهنده‌اش انجام و گزارش می‌کند",
   "PAYOUT_RETRIEVED": "پرداخت با موفقیت دریافت شد.",
   "PRICES_UNAVAILABLE": "قیمت‌های مرجع در حال حاضر در دسترس نیستند.",
   "PRICE_OVERRIDES_RETRIEVED": "قیمت‌های جایگزین دریافت شدند.",

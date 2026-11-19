@@ -90,9 +90,10 @@ func TestPayoutRoutes_RunWithoutInfrastructure(t *testing.T) {
 	assert.Equal(t, "Refused.", desk.reason)
 
 	for err, code := range map[error]string{
-		withdrawals.ErrPayoutNotFound: codePayoutNotFound,
-		withdrawals.ErrPayoutNotOpen:  codePayoutNotOpen,
-		rowseal.ErrUnverified:         codeRowUnverified,
+		withdrawals.ErrPayoutNotFound:  codePayoutNotFound,
+		withdrawals.ErrPayoutNotOpen:   codePayoutNotOpen,
+		withdrawals.ErrPayoutAutomatic: codePayoutAutomatic,
+		rowseal.ErrUnverified:          codeRowUnverified,
 	} {
 		desk.err = err
 		_, resp := servePayouts(t, h, admin, http.MethodPost, "/payouts/p1/complete", `{"tracking_id": "x"}`)

@@ -138,9 +138,11 @@ func (c *Config) Check() error {
 	return nil
 }
 
-func (c *Config) asset(symbol string) (*Asset, bool) {
+// asset is the asset of a request: by its symbol, or a token by its
+// contract, which the server names it by.
+func (c *Config) asset(name string) (*Asset, bool) {
 	for i := range c.Assets {
-		if c.Assets[i].Symbol == symbol {
+		if c.Assets[i].Symbol == name || (c.Assets[i].Contract != "" && c.Assets[i].Contract == name) {
 			return &c.Assets[i], true
 		}
 	}

@@ -6449,7 +6449,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "payout_not_open or row_unverified",
+                        "description": "payout_not_open, payout_automatic, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
@@ -6544,7 +6544,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "payout_not_open or row_unverified",
+                        "description": "payout_not_open, payout_automatic, or row_unverified",
                         "schema": {
                             "$ref": "#/definitions/models.APIResponse"
                         }
