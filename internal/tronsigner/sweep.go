@@ -55,6 +55,11 @@ type sweepRecord struct {
 	To      string  `json:"to,omitempty"`
 	TopUp   *sentTx `json:"top_up,omitempty"`
 	Tx      *sentTx `json:"tx,omitempty"`
+	// PriorTopUps and PriorTxs are the top-ups and the sweeps signed
+	// before the current ones, each expired untaken by the chain's view:
+	// one of them taken after all still counts (#550).
+	PriorTopUps []string `json:"prior_top_ups,omitempty"`
+	PriorTxs    []string `json:"prior_txs,omitempty"`
 }
 
 func (r *sweepRecord) public(key string) Sweep {
@@ -68,52 +73,29 @@ func (r *sweepRecord) public(key string) Sweep {
 	return out
 }
 
-// The states of a sent transaction.
-const (
-	txPending = iota
-	txFinal
-	txFailed
-	txExpired
-)
-
-// track tells where a sent transaction is: pending, final after the
-// confirmations, failed on chain, or expired untaken. One that no block
-// has is sent again while the network may take it.
-func (s *Signer) track(ctx context.Context, t *sentTx) (int, string, error) {
-	receipt, err := s.node.Receipt(ctx, t.ID)
+// track tells where a sent transaction, with those signed before it for
+// the same step, is, by the chain's view (#550): final once solidified,
+// failed on chain, expired untaken, or pending. One that no block has is
+// sent again while the network may take it.
+func (s *Signer) track(ctx context.Context, t *sentTx, prior []string) (int, string, error) {
+	v, err := s.settle(ctx, append(append([]string{}, prior...), t.ID), t.Expiration)
 	if err != nil {
 		return txPending, "", err
 	}
-	switch {
-	case !receipt.Found:
-		if s.now().After(t.Expiration.Add(expiryMargin)) {
-			return txExpired, "", nil
+	if v.state == txPending && !v.inBlock && s.now().Before(t.Expiration) {
+		raw, err := hex.DecodeString(t.Tx)
+		if err != nil {
+			return txPending, "", err
 		}
-		if s.now().Before(t.Expiration) {
-			raw, err := hex.DecodeString(t.Tx)
-			if err != nil {
-				return txPending, "", err
-			}
-			tx, err := tron.DecodeTx(raw)
-			if err != nil {
-				return txPending, "", err
-			}
-			if err := s.node.Broadcast(ctx, tx); err != nil {
-				return txPending, "", err
-			}
+		tx, err := tron.DecodeTx(raw)
+		if err != nil {
+			return txPending, "", err
 		}
-		return txPending, "", nil
-	case !receipt.Success:
-		return txFailed, receipt.Result, nil
+		if err := s.node.Broadcast(ctx, tx); err != nil {
+			return txPending, "", err
+		}
 	}
-	head, err := s.node.Head(ctx)
-	if err != nil {
-		return txPending, "", err
-	}
-	if head.Number-receipt.Block+1 >= s.cfg.Confirmations {
-		return txFinal, "", nil
-	}
-	return txPending, "", nil
+	return v.state, v.reason, nil
 }
 
 // send signs a payment with key, records it in the state, and broadcasts
@@ -199,7 +181,7 @@ func (s *Signer) finish(rec *sweepRecord, status, reason string) error {
 // step takes a pending sweep a step further.
 func (s *Signer) step(ctx context.Context, rec *sweepRecord, asset *Asset, key *secp256k1.PrivateKey, from tron.Address) error {
 	if rec.Tx != nil {
-		state, reason, err := s.track(ctx, rec.Tx)
+		state, reason, err := s.track(ctx, rec.Tx, rec.PriorTxs)
 		switch {
 		case err != nil:
 			return err
@@ -210,11 +192,13 @@ func (s *Signer) step(ctx context.Context, rec *sweepRecord, asset *Asset, key *
 		case state == txPending:
 			return nil
 		}
-		// Expired untaken: built again from the balance below.
+		// Expired untaken: built again from the balance below; the one of
+		// before is still tracked.
+		rec.PriorTxs = append(rec.PriorTxs, rec.Tx.ID)
 		rec.Tx, rec.Amount, rec.To = nil, "", ""
 	}
 	if rec.TopUp != nil {
-		state, reason, err := s.track(ctx, rec.TopUp)
+		state, reason, err := s.track(ctx, rec.TopUp, rec.PriorTopUps)
 		switch {
 		case err != nil:
 			return err
@@ -223,6 +207,7 @@ func (s *Signer) step(ctx context.Context, rec *sweepRecord, asset *Asset, key *
 		case state == txPending:
 			return nil
 		case state == txExpired:
+			rec.PriorTopUps = append(rec.PriorTopUps, rec.TopUp.ID)
 			rec.TopUp = nil
 		}
 	}

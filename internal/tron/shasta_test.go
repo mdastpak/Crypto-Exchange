@@ -25,8 +25,13 @@ func TestShasta(t *testing.T) {
 	head, err := n.Head(ctx)
 	require.NoError(t, err)
 	require.Positive(t, head.Number)
+	assert.WithinDuration(t, time.Now(), head.Time, 5*time.Minute, "the head's time is the chain's")
+	solid, err := n.SolidHead(ctx)
+	require.NoError(t, err)
+	assert.Less(t, solid.Number, head.Number+1)
+	assert.False(t, solid.Time.After(head.Time), "the solid head is not ahead of the head")
 	var found *Transfer
-	for number := head.Number - 1; number > head.Number-200 && found == nil; number-- {
+	for number := solid.Number - 1; number > solid.Number-200 && found == nil; number-- {
 		b, err := n.Block(ctx, number)
 		require.NoError(t, err)
 		next, err := n.Block(ctx, number+1)
@@ -48,6 +53,10 @@ func TestShasta(t *testing.T) {
 	receipt, err := n.Receipt(ctx, found.TxID)
 	require.NoError(t, err)
 	assert.True(t, receipt.Found)
+	solidReceipt, err := n.SolidReceipt(ctx, found.TxID)
+	require.NoError(t, err)
+	assert.True(t, solidReceipt.Found, "below the solid head, it is solidified")
+	assert.Equal(t, receipt.Block, solidReceipt.Block)
 	assert.True(t, receipt.Success, "only successful transfers are read")
 	balance, err := n.Balance(ctx, found.To)
 	require.NoError(t, err)

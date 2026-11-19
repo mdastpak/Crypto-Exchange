@@ -148,6 +148,7 @@ func TestSweep_FailedExpiredAndRestart(t *testing.T) {
 
 	node.mine(sw.TxID)
 	node.failed[sw.TxID] = "FAILED"
+	node.advance(18)
 	sw, err = restarted.Sweep(ctx, SweepRequest{Key: "a", Index: 3, Asset: "TRX"})
 	require.NoError(t, err)
 	assert.Equal(t, StatusFailed, sw.Status)

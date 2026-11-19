@@ -17,9 +17,11 @@ import (
 // Block is a block, with the transfers of TRX and TRC20 tokens that it
 // holds.
 type Block struct {
-	Number    int64
-	ID        string
-	ParentID  string
+	Number   int64
+	ID       string
+	ParentID string
+	// Time is when the block was produced, by the chain.
+	Time      time.Time
 	Transfers []Transfer
 }
 
@@ -89,6 +91,8 @@ type blockJSON struct {
 		RawData struct {
 			Number     int64  `json:"number"`
 			ParentHash string `json:"parentHash"`
+			// Timestamp is in milliseconds.
+			Timestamp int64 `json:"timestamp"`
 		} `json:"raw_data"`
 	} `json:"block_header"`
 	Transactions []struct {
@@ -112,15 +116,24 @@ type blockJSON struct {
 }
 
 // Head returns the newest block, without its transfers.
-func (n Node) Head(ctx context.Context) (Block, error) {
+func (n Node) Head(ctx context.Context) (Block, error) { return n.head(ctx, "/wallet/getnowblock") }
+
+// SolidHead returns the newest solidified block, which no reorg can undo:
+// one that two thirds of the producers built on.
+func (n Node) SolidHead(ctx context.Context) (Block, error) {
+	return n.head(ctx, "/walletsolidity/getnowblock")
+}
+
+func (n Node) head(ctx context.Context, path string) (Block, error) {
 	var b blockJSON
-	if err := n.post(ctx, "/wallet/getnowblock", struct{}{}, &b); err != nil {
+	if err := n.post(ctx, path, struct{}{}, &b); err != nil {
 		return Block{}, err
 	}
-	if b.BlockID == "" {
-		return Block{}, fmt.Errorf("tron: getnowblock answered no block")
+	if b.BlockID == "" || b.BlockHeader.RawData.Timestamp <= 0 {
+		return Block{}, fmt.Errorf("tron: %s answered no block", path)
 	}
-	return Block{Number: b.BlockHeader.RawData.Number, ID: b.BlockID, ParentID: b.BlockHeader.RawData.ParentHash}, nil
+	return Block{Number: b.BlockHeader.RawData.Number, ID: b.BlockID, ParentID: b.BlockHeader.RawData.ParentHash,
+		Time: time.UnixMilli(b.BlockHeader.RawData.Timestamp).UTC()}, nil
 }
 
 type infoJSON struct {
@@ -148,7 +161,8 @@ func (n Node) Block(ctx context.Context, number int64) (Block, error) {
 	if b.BlockID == "" || b.BlockHeader.RawData.Number != number {
 		return Block{}, fmt.Errorf("tron: block %d not found", number)
 	}
-	out := Block{Number: number, ID: b.BlockID, ParentID: b.BlockHeader.RawData.ParentHash}
+	out := Block{Number: number, ID: b.BlockID, ParentID: b.BlockHeader.RawData.ParentHash,
+		Time: time.UnixMilli(b.BlockHeader.RawData.Timestamp).UTC()}
 	for _, tx := range b.Transactions {
 		if len(tx.Ret) == 0 || tx.Ret[0].ContractRet != "SUCCESS" || len(tx.RawData.Contract) != 1 {
 			continue
@@ -229,10 +243,21 @@ type Receipt struct {
 	Result string
 }
 
-// Receipt returns what the chain did with transaction id.
+// Receipt returns what the chain did with transaction id, by the node's
+// newest blocks, which a reorg may still undo.
 func (n Node) Receipt(ctx context.Context, id string) (Receipt, error) {
+	return n.receipt(ctx, "/wallet/gettransactioninfobyid", id)
+}
+
+// SolidReceipt returns what the solidified chain did with transaction id:
+// found there, it is final.
+func (n Node) SolidReceipt(ctx context.Context, id string) (Receipt, error) {
+	return n.receipt(ctx, "/walletsolidity/gettransactioninfobyid", id)
+}
+
+func (n Node) receipt(ctx context.Context, path, id string) (Receipt, error) {
 	var info infoJSON
-	if err := n.post(ctx, "/wallet/gettransactioninfobyid", map[string]string{"value": id}, &info); err != nil {
+	if err := n.post(ctx, path, map[string]string{"value": id}, &info); err != nil {
 		return Receipt{}, err
 	}
 	if info.ID == "" || info.BlockNumber == 0 {

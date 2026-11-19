@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -45,9 +46,10 @@ type Config struct {
 	StatePath string `yaml:"state_path"`
 	// FeeLimitSun is the most TRX, in sun, that a token payment may burn.
 	FeeLimitSun int64 `yaml:"fee_limit_sun"`
-	// Confirmations is how many blocks make a payment final: 19.
-	Confirmations int64   `yaml:"confirmations"`
-	Assets        []Asset `yaml:"assets"`
+	// StaleAfterSeconds is how old the node's head may be before nothing
+	// is decided on its answers (#550): 60.
+	StaleAfterSeconds int     `yaml:"stale_after_seconds"`
+	Assets            []Asset `yaml:"assets"`
 	// Sweeps move the deposits from the deposit addresses to the hot
 	// wallet, or to ColdAddress while the hot wallet holds its HotCap.
 	Sweeps struct {
@@ -123,8 +125,8 @@ func (c *Config) Check() error {
 	if c.FeeLimitSun <= 0 {
 		problems = append(problems, errors.New("fee_limit_sun must be positive"))
 	}
-	if c.Confirmations <= 0 {
-		c.Confirmations = 19
+	if c.StaleAfterSeconds <= 0 {
+		c.StaleAfterSeconds = 60
 	}
 	if c.Sweeps.ColdAddress != "" {
 		if a, err := tron.ParseAddress(c.Sweeps.ColdAddress); err != nil {
@@ -189,3 +191,5 @@ func (c *Config) asset(name string) (*Asset, bool) {
 	}
 	return nil, false
 }
+
+func (c *Config) staleAfter() time.Duration { return time.Duration(c.StaleAfterSeconds) * time.Second }

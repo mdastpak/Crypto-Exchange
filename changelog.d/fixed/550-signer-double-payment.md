@@ -1,0 +1,5 @@
+- The TRON signer could pay a withdrawal twice when its node lagged behind the network: it took a transaction that the node did not find as never taken once its own clock passed the expiration, and signed the payment again, though the network had taken the first ([#550](https://github.com/mdastpak/Crypto-Exchange/issues/550)). See [the signer](docs/custody.md#the-api).
+  - A payment is now final once a solidified block holds it, and never taken only when the solidified head's own time is past its expiration and no block holds any transaction signed for its key.
+  - While the node's head is older than `stale_after_seconds` (60), nothing is decided. `confirmations` is no longer a setting.
+  - A payment signed again keeps the transactions signed before. One of them taken after all completes the payment.
+  - The sweeps' top-ups and transfers follow the same rules.
