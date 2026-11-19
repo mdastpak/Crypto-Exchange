@@ -22,6 +22,16 @@ state_path: "/var/lib/tron-signer/state.json"
 # The most TRX, in sun, that a token payment may burn: 30 TRX.
 fee_limit_sun: 30000000
 confirmations: 19
+# The sweeps of the deposit addresses (docs/custody.md#sweeps).
+sweeps:
+  # The cold storage, which this seed does not hold: an asset is swept
+  # there when the hot wallet would hold more than its hot_cap.
+  cold_address: ""
+  # The TRX, in sun, that a deposit address needs for a token sweep's fee,
+  # which the hot wallet sends it first: 30 TRX.
+  top_up_sun: 30000000
+  # The TRX, in sun, that a TRX sweep leaves on the address: 1 TRX.
+  reserve_sun: 1000000
 # The assets that the hot wallet pays, with their caps in the smallest unit
 # (6 decimals for both): any other asset is refused.
 assets:
@@ -33,3 +43,6 @@ assets:
     contract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
     max_per_transfer: "50000000000"   # 50,000 USDT
     max_per_day: "250000000000"       # 250,000 USDT
+    # The most USDT that the hot wallet keeps; more is swept to the cold
+    # storage. Requires sweeps.cold_address.
+    # hot_cap: "500000000000"         # 500,000 USDT

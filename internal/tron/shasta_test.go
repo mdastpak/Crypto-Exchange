@@ -45,5 +45,17 @@ func TestShasta(t *testing.T) {
 		t.Skip("no transfer in the last 200 blocks of Shasta")
 	}
 	assert.Positive(t, found.Amount.Sign())
+	receipt, err := n.Receipt(ctx, found.TxID)
+	require.NoError(t, err)
+	assert.True(t, receipt.Found)
+	assert.True(t, receipt.Success, "only successful transfers are read")
+	balance, err := n.Balance(ctx, found.To)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, balance.Sign(), 0)
+	if found.Token != (Address{}) {
+		tokens, err := n.TokenBalance(ctx, found.Token, found.To)
+		require.NoError(t, err)
+		t.Logf("%s holds %s of %s", found.To, tokens, found.Token)
+	}
 	t.Logf("transfer %s: %s from %s to %s (token %s)", found.TxID, found.Amount, found.From, found.To, found.Token)
 }

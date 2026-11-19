@@ -46,10 +46,48 @@ type fakeNode struct {
 	inBlock   map[string]int64
 	failed    map[string]string
 	refuseAll bool
+	// trx and tokens are the balances, by address and by token and
+	// address, which the test sets.
+	trx    map[string]*big.Int
+	tokens map[string]map[string]*big.Int
+}
+
+func (n *fakeNode) Balance(_ context.Context, a tron.Address) (*big.Int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if v, ok := n.trx[a.String()]; ok {
+		return new(big.Int).Set(v), nil
+	}
+	return new(big.Int), nil
+}
+
+func (n *fakeNode) TokenBalance(_ context.Context, token, a tron.Address) (*big.Int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if v, ok := n.tokens[token.String()][a.String()]; ok {
+		return new(big.Int).Set(v), nil
+	}
+	return new(big.Int), nil
+}
+
+func (n *fakeNode) setTRX(a string, v int64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.trx[a] = big.NewInt(v)
+}
+
+func (n *fakeNode) setToken(token, a string, v int64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.tokens[token] == nil {
+		n.tokens[token] = map[string]*big.Int{}
+	}
+	n.tokens[token][a] = big.NewInt(v)
 }
 
 func newNode() *fakeNode {
-	return &fakeNode{head: 1000, inBlock: map[string]int64{}, failed: map[string]string{}}
+	return &fakeNode{head: 1000, inBlock: map[string]int64{}, failed: map[string]string{}, trx: map[string]*big.Int{},
+		tokens: map[string]map[string]*big.Int{}}
 }
 
 func (n *fakeNode) Head(context.Context) (tron.Block, error) {

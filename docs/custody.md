@@ -8,7 +8,8 @@ The custody of crypto currencies on chain, TRON first ([#68](https://github.com/
 | [The deposit watcher](api.md#deposits): confirmations, reorgs, holds | Done |
 | The signer, `cmd/tron-signer` | Done |
 | [Withdrawals paid by the signer](api.md#withdrawals) | Done |
-| Sweeps to the hot wallet, and from it to cold storage | To come |
+| [Sweeps](#sweeps) by the signer, to the hot wallet or the cold storage | Done |
+| Sweeps started by the server for the credited deposits | To come |
 
 ## Keys
 
@@ -60,6 +61,8 @@ The signer serves TLS 1.3 only, and requires a client certificate signed by `tls
 | `GET /v1/hot-wallet` | `{"address"}`: the address that pays |
 | `POST /v1/payments` | `{"key", "to", "asset", "amount"}`: pays `amount`, in the smallest unit, of `asset` to `to`, once by `key`. It answers the payment: `key`, `tx_id`, `status`, `expires_at` |
 | `GET /v1/payments/{key}` | Where a payment is |
+| `POST /v1/sweeps` | `{"key", "index", "asset"}`: takes the [sweep](#sweeps) of `asset` from deposit address `index` a step further, once by `key`, and answers where it is |
+| `GET /v1/sweeps/{key}` | Where a sweep is, without taking it further |
 
 A payment is `pending` until its transaction has `confirmations` (19) confirmations and is then `completed`. It is `failed` when its transaction failed on chain, such as a token transfer that ran out of energy, and `not_received` when its transaction expired, 10 minutes after it was signed, and no block has it.
 
@@ -78,3 +81,16 @@ A node that does not answer is `502`. A payment that was recorded is then answer
 ### Its state
 
 `state_path` keeps every payment by its key, with its signed transaction, and what each day used of the caps. A payment is recorded before it is broadcast, and the file is replaced whole, written to a new file that is synced and renamed, so that a crash leaves either state. Run one instance: two would each count their own caps.
+
+## Sweeps
+
+A sweep moves the whole balance of an asset from a deposit address to the hot wallet. The signer signs it with the address's own key, `m/44'/195'/0'/0/<index>`, and each call of `POST /v1/sweeps` with its key takes it a step further:
+
+1. **Top-up.** A token sweep needs TRX for its fee. When the address holds less than `sweeps.top_up_sun` (the fee limit by default), the hot wallet first sends it the difference, and the sweep waits until that transaction is final.
+2. **The sweep.** The address sends its whole balance of the token, or of TRX less `sweeps.reserve_sun`, and the sweep waits until that transaction is final. It is then `completed`, with the `amount` and where it went (`to`).
+
+Sweep one asset of an address at a time, its tokens before its TRX: a TRX sweep would take the TRX that a token sweep was topped up with, and the token sweep would then fail. An address that holds nothing of the asset completes at once, with `amount` 0. A transaction that expired untaken is signed again from the balance. One that failed on chain fails the sweep, and a new key sweeps again. The payments' caps do not apply, because a sweep only pays the custody's own addresses.
+
+**Hot and cold.** An asset with a `hot_cap` is swept to `sweeps.cold_address` when the hot wallet would hold more than its cap. The cold storage is not derived from the signer's seed, so the signer can send to it but never from it. An asset without a cap always goes to the hot wallet, and `hot_cap` requires `cold_address`.
+
+The hot wallet's top-ups are no deposits: set the server's `hot_wallet_address` to the address that `-xpub` prints, which the [deposit watcher](api.md#deposits) ignores.

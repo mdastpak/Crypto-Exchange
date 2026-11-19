@@ -271,3 +271,40 @@ func (n Node) Broadcast(ctx context.Context, t Tx) error {
 	}
 	return fmt.Errorf("%w: %s %s", ErrBroadcast, out.Code, msg)
 }
+
+// Balance returns the TRX of an address, in sun; 0 for an account that
+// does not exist yet.
+func (n Node) Balance(ctx context.Context, a Address) (*big.Int, error) {
+	var out struct {
+		Balance int64 `json:"balance"`
+	}
+	if err := n.post(ctx, "/wallet/getaccount", map[string]any{"address": a.String(), "visible": true}, &out); err != nil {
+		return nil, err
+	}
+	return big.NewInt(out.Balance), nil
+}
+
+// TokenBalance returns the balance of a TRC20 token of an address, in its
+// smallest unit, by its balanceOf(address).
+func (n Node) TokenBalance(ctx context.Context, token, a Address) (*big.Int, error) {
+	var out struct {
+		Result struct {
+			Result  bool   `json:"result"`
+			Message string `json:"message"`
+		} `json:"result"`
+		ConstantResult []string `json:"constant_result"`
+	}
+	param := "000000000000000000000000" + hex.EncodeToString(a[1:])
+	if err := n.post(ctx, "/wallet/triggerconstantcontract", map[string]any{"owner_address": a.String(),
+		"contract_address": token.String(), "function_selector": "balanceOf(address)", "parameter": param, "visible": true}, &out); err != nil {
+		return nil, err
+	}
+	if !out.Result.Result || len(out.ConstantResult) != 1 {
+		return nil, fmt.Errorf("tron: balanceOf of %s failed: %s", token, out.Result.Message)
+	}
+	raw, err := hex.DecodeString(out.ConstantResult[0])
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("tron: balanceOf of %s answered no amount", token)
+	}
+	return new(big.Int).SetBytes(raw), nil
+}
