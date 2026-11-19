@@ -167,6 +167,11 @@ type VenueConfig struct {
 	// (#386) is their sum and the withdrawal fee of the network.
 	FeeBPS      int `yaml:"fee_bps"`
 	SlippageBPS int `yaml:"slippage_bps"`
+	// DepositCostBPS is the cost, amortized in basis points of the
+	// notional, of moving to the venue what it spends (#510): the fee and
+	// the float of our deposits there. It is added to the cost of every leg
+	// routed there; 0 leaves it out.
+	DepositCostBPS int `yaml:"deposit_cost_bps"`
 }
 
 // VenueAsset maps an asset of a venue to our currency, and its networks, by
@@ -174,6 +179,10 @@ type VenueConfig struct {
 type VenueAsset struct {
 	Currency string            `yaml:"currency"`
 	Networks map[string]string `yaml:"networks"`
+	// ReturnNetwork is our network, one of Networks, on which the asset
+	// comes back to our wallet after a trade at the venue (#510). Empty
+	// takes the cheapest network of Networks that the venue withdraws on.
+	ReturnNetwork string `yaml:"return_network"`
 }
 
 // DefaultVenueRequestsPerMinute is the share of a venue's limit that a
@@ -309,6 +318,9 @@ func venueConfigProblems(p *problems, name string, e VenueConfig, proxyURL strin
 	if e.SlippageBPS < 0 || e.SlippageBPS > MaxVenueCostBPS {
 		p.add(key+".slippage_bps", "is %d; it must be from 0 to %d", e.SlippageBPS, MaxVenueCostBPS)
 	}
+	if e.DepositCostBPS < 0 || e.DepositCostBPS > MaxVenueCostBPS {
+		p.add(key+".deposit_cost_bps", "is %d; it must be from 0 to %d", e.DepositCostBPS, MaxVenueCostBPS)
+	}
 	if e.TimeoutSeconds < 1 || e.TimeoutSeconds > MaxVenueTimeoutSeconds {
 		p.add(key+".timeout_seconds", "is %d; it must be from 1 to %d", e.TimeoutSeconds, MaxVenueTimeoutSeconds)
 	}
@@ -355,6 +367,11 @@ func venueAssetProblems(p *problems, key string, assets map[string]VenueAsset) {
 				p.add(akey+".networks."+vn, "is %s, which %s maps to as well", n, other)
 			}
 			byNetwork[n] = vn
+		}
+		if a.ReturnNetwork != "" {
+			if _, ok := byNetwork[a.ReturnNetwork]; !ok {
+				p.add(akey+".return_network", "is %s, which is not one of its networks", a.ReturnNetwork)
+			}
 		}
 	}
 }

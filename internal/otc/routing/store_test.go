@@ -226,6 +226,41 @@ func TestStateVenues_ReadTheSnapshotsOfAVenue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{ReasonNotMapped}, f.Reasons)
 
+	// Without a network, the cost of bringing the currency back to our
+	// wallet (#510): the cheapest open network, or none known.
+	f, err = v.Funds(ctx, "binance", "BTC", "")
+	require.NoError(t, err)
+	assert.Empty(t, f.ReturnReasons)
+	assert.True(t, f.ReturnFee.Equal(d("0.0002")))
+	f, err = v.Funds(ctx, "binance", "USDT", "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{ReasonReturnNetworkUnknown}, f.ReturnReasons, "a currency with no network cannot come back")
+	v.Mappings["binance"]["BTC"] = venues.AssetMapping{Currency: "BTC", Networks: map[string]string{"BTC": "bitcoin", "BSC": "bsc"}}
+	require.NoError(t, st.SaveNetworks(ctx, "binance", map[string][]venues.Network{"BTC": {
+		{Network: "BTC", DepositEnabled: true, WithdrawEnabled: true, WithdrawFee: sd("0.0002")},
+		{Network: "BSC", DepositEnabled: true, WithdrawEnabled: true, WithdrawFee: sd("0.00001")},
+		{Network: "LN", DepositEnabled: true, WithdrawEnabled: true, WithdrawFee: sd("0")},
+	}}, clock))
+	f, err = v.Funds(ctx, "binance", "BTC", "")
+	require.NoError(t, err)
+	assert.True(t, f.ReturnFee.Equal(d("0.00001")), "the cheapest mapped network: %s", f.ReturnFee)
+	v.Mappings["binance"]["BTC"] = venues.AssetMapping{Currency: "BTC", Networks: map[string]string{"BTC": "bitcoin", "BSC": "bsc"},
+		ReturnNetwork: "bitcoin"}
+	f, err = v.Funds(ctx, "binance", "BTC", "")
+	require.NoError(t, err)
+	assert.True(t, f.ReturnFee.Equal(d("0.0002")), "the return network of the asset: %s", f.ReturnFee)
+	require.NoError(t, st.SaveNetworks(ctx, "binance", map[string][]venues.Network{"BTC": {
+		{Network: "BTC", DepositEnabled: true, WithdrawEnabled: false, WithdrawFee: sd("0.0002")},
+		{Network: "BSC", DepositEnabled: true, WithdrawEnabled: true, WithdrawFee: sd("0.00001")},
+	}}, clock))
+	f, err = v.Funds(ctx, "binance", "BTC", "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{ReasonReturnNetworkUnknown}, f.ReturnReasons, "its return network is suspended")
+	c.Venues.Exchanges["binance"] = config.VenueConfig{Enabled: true, FeeBPS: 10, SlippageBPS: 4, DepositCostBPS: 3}
+	m, err = v.Market(ctx, "binance", "BTC", "USDT")
+	require.NoError(t, err)
+	assert.Equal(t, 3, m.DepositCostBPS)
+
 	// Past the age of the snapshots, nothing is routable.
 	clock = clock.Add(2 * time.Minute)
 	f, err = v.Funds(ctx, "binance", "USDT", "")

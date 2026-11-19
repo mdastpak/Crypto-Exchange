@@ -52,13 +52,18 @@ func newRoutedWorld(t *testing.T, price string, names ...string) *routedWorld {
 		name := n + "_" + strings.ToLower(suffix())
 		w.names = append(w.names, name)
 		w.config.Venues.Exchanges[name] = config.VenueConfig{Enabled: true, FeeBPS: 10, SlippageBPS: 5,
-			Assets: map[string]config.VenueAsset{base: {Currency: base}, quote: {Currency: quote}}}
+			Assets: map[string]config.VenueAsset{base: {Currency: base, Networks: map[string]string{"BTC": "bitcoin"}},
+				quote: {Currency: quote, Networks: map[string]string{"TRX": "tron"}}}}
 		v := stub.New(name)
 		v.SetBalance(quote, shared.MustNewDecimalFromString("100000"))
 		v.SetBalance(base, shared.MustNewDecimalFromString("2"))
 		v.AddInstrument(venues.Instrument{Symbol: base + quote, Base: base, Quote: quote, TickSize: shared.MustNewDecimalFromString("0.01"),
 			LotSize: shared.MustNewDecimalFromString("0.001"), MinQuantity: shared.MustNewDecimalFromString("0.001"),
 			MinNotional: shared.MustNewDecimalFromString("1"), Trading: true}, shared.MustNewDecimalFromString(price))
+		// The withdrawals back to our wallet (#510) are free here: the cost
+		// of a leg is that of the venue.
+		v.AddNetwork(base, venues.Network{Network: "BTC", DepositEnabled: true, WithdrawEnabled: true})
+		v.AddNetwork(quote, venues.Network{Network: "TRX", DepositEnabled: true, WithdrawEnabled: true})
 		w.venues[name] = v
 		w.snapshot(t, name)
 		rule.Venues = append(rule.Venues, routing.VenueRule{Venue: name, Priority: i})
@@ -85,8 +90,15 @@ func (w *routedWorld) snapshot(t *testing.T, name string) {
 	require.NoError(t, err)
 	instruments, err := v.Instruments(ctx)
 	require.NoError(t, err)
+	networks := map[string][]venues.Network{}
+	for _, b := range balances {
+		list, err := v.Networks(ctx, b.Asset)
+		require.NoError(t, err)
+		networks[b.Asset] = list
+	}
 	require.NoError(t, w.state.SaveInstruments(ctx, name, instruments, time.Now()))
 	require.NoError(t, w.state.SaveBalances(ctx, name, balances, time.Now()))
+	require.NoError(t, w.state.SaveNetworks(ctx, name, networks, time.Now()))
 }
 
 // driver drives the orders of the venue name, as node.
