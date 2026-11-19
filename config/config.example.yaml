@@ -937,6 +937,14 @@ custody:
       # The first block that the deposit watcher reads when it has read
       # none; 0 is the newest block.
       start_block: 0
+      # The signer that pays the withdrawals on TRON (docs/custody.md),
+      # over mutual TLS; without its url, an administrator pays them by
+      # hand.
+      signer:
+        url: ""
+        cert_file: ""
+        key_file: ""
+        ca_file: ""
       sanctions_screening: true
 
     # Internal ledger (off-chain settlement)

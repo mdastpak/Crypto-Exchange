@@ -1195,6 +1195,19 @@ type CustodyProviderConfig struct {
 	// StartBlock is the first block that the deposit watcher reads when it
 	// has read none (#68); 0 starts from the newest block.
 	StartBlock int64 `yaml:"start_block"`
+	// Signer is the signer that pays the withdrawals of the network from
+	// the hot wallet, cmd/tron-signer on TRON (#68); without its url, an
+	// administrator pays them by hand.
+	Signer SignerConfig `yaml:"signer"`
+}
+
+// SignerConfig is how the server reaches a signer of the custody: over
+// mutual TLS, with its client certificate, and the CA of the signer's.
+type SignerConfig struct {
+	URL      string `yaml:"url"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file"`
 }
 
 // FiatProviderConfig holds configuration for a fiat provider

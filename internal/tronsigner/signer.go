@@ -29,8 +29,10 @@ type Node interface {
 // Request asks the signer to pay Amount of Asset to To, once by Key.
 type Request struct {
 	// Key names the payment: the same key never pays twice.
-	Key   string `json:"key"`
-	To    string `json:"to"`
+	Key string `json:"key"`
+	To  string `json:"to"`
+	// Asset is the symbol of an asset of the configuration, or a token's
+	// contract: TRX, or TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t for USDT.
 	Asset string `json:"asset"`
 	// Amount is in the smallest unit of the asset, such as 1500000 for
 	// 1.5 USDT.

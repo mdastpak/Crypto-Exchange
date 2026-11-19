@@ -7,7 +7,7 @@ The custody of crypto currencies on chain, TRON first ([#68](https://github.com/
 | [Deposit addresses](api.md#deposit-addresses), derived from an xpub | Done |
 | [The deposit watcher](api.md#deposits): confirmations, reorgs, holds | Done |
 | The signer, `cmd/tron-signer` | Done |
-| Withdrawals paid by the signer | To come |
+| [Withdrawals paid by the signer](api.md#withdrawals) | Done |
 | Sweeps to the hot wallet, and from it to cold storage | To come |
 
 ## Keys
@@ -23,7 +23,7 @@ The server is given only the xpub of the deposit account (`custody.providers[].x
 
 ## The signer
 
-`cmd/tron-signer` is a service of its own, on its own host, which the server calls over mutual TLS. It holds the seed, and signs the hot wallet's payments: it builds each transaction itself, in the protobuf of the protocol, so that a node that lies cannot make it sign another transfer than the one it was asked for, signs it, and broadcasts it.
+`cmd/tron-signer` is a service of its own, on its own host, which the server calls over mutual TLS to pay the withdrawals on TRON: `custody.providers[].signer` names its `url` (`https://` only), the server's client certificate and key, and the CA of the signer's certificate. It holds the seed, and signs the hot wallet's payments: it builds each transaction itself, in the protobuf of the protocol, so that a node that lies cannot make it sign another transfer than the one it was asked for, signs it, and broadcasts it.
 
 ```bash
 go build -o tron-signer ./cmd/tron-signer

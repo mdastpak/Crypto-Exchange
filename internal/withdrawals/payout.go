@@ -103,6 +103,11 @@ type Transfer struct {
 	Currency    string
 	Amount      shared.Decimal
 	Destination destinations.Resolved
+	// Network, Contract, and Decimals are those of a payout on chain: the
+	// token's contract, empty for the native asset, and its precision.
+	Network  string
+	Contract string
+	Decimals int
 }
 
 // The states of a transfer at its provider.
@@ -233,6 +238,9 @@ var (
 	// ErrPayoutNotOpen refuses to complete or fail a payout that is not
 	// planned or submitted.
 	ErrPayoutNotOpen = errors.New("the payout is not planned or submitted")
+	// ErrPayoutAutomatic refuses an administrator who records a payout
+	// that its provider pays and reports by itself.
+	ErrPayoutAutomatic = errors.New("the payout is paid by its provider, which reports it")
 )
 
 // List returns the payouts of status, oldest first, at most limit, for

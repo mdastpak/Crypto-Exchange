@@ -24,6 +24,9 @@ import (
 const (
 	codePayoutNotFound = "payout_not_found"
 	codePayoutNotOpen  = "payout_not_open"
+	// codePayoutAutomatic refuses to record by hand a payout that its
+	// provider pays and reports, such as the TRON signer (#68).
+	codePayoutAutomatic = "payout_automatic"
 )
 
 // payoutCompletion records a payout as paid.
@@ -135,7 +138,7 @@ func (h *AdminHandler) GetPayout(c *gin.Context) {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "step_up_required"
 // @Failure 404 {object} models.APIResponse "payout_not_found"
-// @Failure 409 {object} models.APIResponse "payout_not_open or row_unverified"
+// @Failure 409 {object} models.APIResponse "payout_not_open, payout_automatic, or row_unverified"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/payouts/{id}/complete [post]
 func (h *AdminHandler) CompletePayout(c *gin.Context) {
@@ -174,7 +177,7 @@ func (h *AdminHandler) CompletePayout(c *gin.Context) {
 // @Failure 401 {object} models.APIResponse
 // @Failure 403 {object} models.APIResponse "step_up_required"
 // @Failure 404 {object} models.APIResponse "payout_not_found"
-// @Failure 409 {object} models.APIResponse "payout_not_open or row_unverified"
+// @Failure 409 {object} models.APIResponse "payout_not_open, payout_automatic, or row_unverified"
 // @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
 // @Router /api/v1/admin/payouts/{id}/fail [post]
 func (h *AdminHandler) FailPayout(c *gin.Context) {
@@ -209,6 +212,8 @@ func sendPayoutError(c *gin.Context, err error) {
 		helpers.SendError(c, http.StatusNotFound, codePayoutNotFound, i18n.M("PAYOUT_NOT_FOUND"), nil)
 	case errors.Is(err, withdrawals.ErrPayoutNotOpen):
 		helpers.SendError(c, http.StatusConflict, codePayoutNotOpen, i18n.M("PAYOUT_NOT_OPEN"), nil)
+	case errors.Is(err, withdrawals.ErrPayoutAutomatic):
+		helpers.SendError(c, http.StatusConflict, codePayoutAutomatic, i18n.M("PAYOUT_AUTOMATIC"), nil)
 	case errors.Is(err, rowseal.ErrUnverified):
 		helpers.SendError(c, http.StatusConflict, codeRowUnverified, i18n.M("ROW_UNVERIFIED"), nil)
 	case errors.Is(err, destinations.ErrNoKeys):
