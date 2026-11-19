@@ -93,6 +93,17 @@ func TestClient_PaysThroughTheSigner(t *testing.T) {
 		assert.ErrorIs(t, err, withdrawals.ErrTransferRefused, name)
 	}
 
+	// A sweep through the client.
+	from := depositAddress(t, s, 4)
+	node.setTRX(from, 5_000_000)
+	sw, err := client.Sweep(ctx, SweepRequest{Key: "sweep-4", Index: 4, Asset: "TRX"})
+	require.NoError(t, err)
+	assert.Equal(t, StatusPending, sw.Status)
+	assert.Equal(t, from, sw.Address)
+	assert.NotEmpty(t, sw.TxID)
+	_, err = client.Sweep(ctx, SweepRequest{Key: "sweep-5", Index: 4, Asset: "BTC"})
+	assert.ErrorIs(t, err, ErrSweepRefused)
+
 	// A signer that is not reached leaves the result unknown.
 	down := NewClient("https://127.0.0.1:1", &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13})
 	_, err = down.Submit(ctx, trx)

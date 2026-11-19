@@ -48,6 +48,20 @@ type Config struct {
 	// Confirmations is how many blocks make a payment final: 19.
 	Confirmations int64   `yaml:"confirmations"`
 	Assets        []Asset `yaml:"assets"`
+	// Sweeps move the deposits from the deposit addresses to the hot
+	// wallet, or to ColdAddress while the hot wallet holds its HotCap.
+	Sweeps struct {
+		// ColdAddress is the cold storage, which this seed does not hold.
+		ColdAddress string `yaml:"cold_address"`
+		// TopUpSun is the TRX, in sun, that a deposit address needs for a
+		// token sweep's fee, which the hot wallet sends it first.
+		TopUpSun int64 `yaml:"top_up_sun"`
+		// ReserveSun is the TRX, in sun, that a TRX sweep leaves on the
+		// address for the bandwidth of the transfer.
+		ReserveSun int64 `yaml:"reserve_sun"`
+
+		cold tron.Address
+	} `yaml:"sweeps"`
 }
 
 // Asset is an asset that the hot wallet pays, with its caps in the
@@ -58,8 +72,13 @@ type Asset struct {
 	Contract       string `yaml:"contract"`
 	MaxPerTransfer string `yaml:"max_per_transfer"`
 	MaxPerDay      string `yaml:"max_per_day"`
+	// HotCap is the most of the asset, in the smallest unit, that the hot
+	// wallet keeps: a sweep that would take it above goes to the cold
+	// storage. Empty keeps every sweep in the hot wallet.
+	HotCap string `yaml:"hot_cap"`
 
 	token    tron.Address
+	hotCap   *big.Int
 	perOne   *big.Int
 	perDay   *big.Int
 	isNative bool
@@ -107,6 +126,19 @@ func (c *Config) Check() error {
 	if c.Confirmations <= 0 {
 		c.Confirmations = 19
 	}
+	if c.Sweeps.ColdAddress != "" {
+		if a, err := tron.ParseAddress(c.Sweeps.ColdAddress); err != nil {
+			problems = append(problems, fmt.Errorf("sweeps.cold_address: %w", err))
+		} else {
+			c.Sweeps.cold = a
+		}
+	}
+	if c.Sweeps.TopUpSun <= 0 {
+		c.Sweeps.TopUpSun = c.FeeLimitSun
+	}
+	if c.Sweeps.ReserveSun < 0 {
+		problems = append(problems, errors.New("sweeps.reserve_sun must not be negative"))
+	}
 	if len(c.Assets) == 0 {
 		problems = append(problems, errors.New("assets names no asset"))
 	}
@@ -128,6 +160,15 @@ func (c *Config) Check() error {
 		var ok1, ok2 bool
 		a.perOne, ok1 = new(big.Int).SetString(a.MaxPerTransfer, 10)
 		a.perDay, ok2 = new(big.Int).SetString(a.MaxPerDay, 10)
+		if a.HotCap != "" {
+			limit, ok := new(big.Int).SetString(a.HotCap, 10)
+			if !ok || limit.Sign() <= 0 {
+				problems = append(problems, fmt.Errorf("assets[%d].hot_cap is a positive integer in the smallest unit", i))
+			} else if c.Sweeps.ColdAddress == "" {
+				problems = append(problems, fmt.Errorf("assets[%d].hot_cap needs sweeps.cold_address", i))
+			}
+			a.hotCap = limit
+		}
 		if !ok1 || !ok2 || a.perOne.Sign() <= 0 || a.perDay.Cmp(a.perOne) < 0 {
 			problems = append(problems, fmt.Errorf("assets[%d]: max_per_transfer and max_per_day are positive integers in the smallest unit, the day at least the transfer", i))
 		}

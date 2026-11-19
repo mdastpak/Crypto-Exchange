@@ -22,6 +22,8 @@ import (
 // Node is the chain as the signer uses it: tron.Node.
 type Node interface {
 	Head(ctx context.Context) (tron.Block, error)
+	Balance(ctx context.Context, a tron.Address) (*big.Int, error)
+	TokenBalance(ctx context.Context, token, a tron.Address) (*big.Int, error)
 	Receipt(ctx context.Context, id string) (tron.Receipt, error)
 	Broadcast(ctx context.Context, t tron.Tx) error
 }
@@ -68,7 +70,8 @@ type record struct {
 }
 
 type state struct {
-	Payments map[string]*record `json:"payments"`
+	Payments map[string]*record      `json:"payments"`
+	Sweeps   map[string]*sweepRecord `json:"sweeps"`
 }
 
 // Errors of the signer.
@@ -87,9 +90,12 @@ type Signer struct {
 	cfg  *Config
 	node Node
 	key  *secp256k1.PrivateKey
-	hot  tron.Address
-	xpub string
-	now  func() time.Time
+	// deposits is the key of the account of the deposit addresses, which
+	// the sweeps sign with.
+	deposits *tron.ExtendedPrivateKey
+	hot      tron.Address
+	xpub     string
+	now      func() time.Time
 
 	mu    sync.Mutex
 	state state
@@ -120,8 +126,8 @@ func New(cfg *Config, node Node, seed []byte, now func() time.Time) (*Signer, er
 	if now == nil {
 		now = time.Now
 	}
-	s := &Signer{cfg: cfg, node: node, key: key, hot: tron.AddressOf(key.PubKey()), xpub: deposits.Public().String(), now: now,
-		state: state{Payments: map[string]*record{}}}
+	s := &Signer{cfg: cfg, node: node, key: key, deposits: deposits, hot: tron.AddressOf(key.PubKey()), xpub: deposits.Public().String(), now: now,
+		state: state{Payments: map[string]*record{}, Sweeps: map[string]*sweepRecord{}}}
 	raw, err := os.ReadFile(cfg.StatePath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -133,6 +139,9 @@ func New(cfg *Config, node Node, seed []byte, now func() time.Time) (*Signer, er
 		}
 		if s.state.Payments == nil {
 			s.state.Payments = map[string]*record{}
+		}
+		if s.state.Sweeps == nil {
+			s.state.Sweeps = map[string]*sweepRecord{}
 		}
 	}
 	return s, nil

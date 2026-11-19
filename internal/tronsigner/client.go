@@ -170,3 +170,49 @@ func (c Client) call(ctx context.Context, method, path string, body []byte) (Pay
 	e.Payment.Reason = e.Error
 	return e.Payment, resp.StatusCode, nil
 }
+
+// ErrSweepRefused is a sweep that the signer refused: an asset it does not
+// sweep, an index that is not one, or a key of another sweep.
+var ErrSweepRefused = errors.New("tron-signer: the sweep is refused")
+
+// Sweep asks the signer to take a sweep a step further, and returns where
+// it is.
+func (c Client) Sweep(ctx context.Context, r SweepRequest) (Sweep, error) {
+	body, err := json.Marshal(r)
+	if err != nil {
+		return Sweep{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/v1/sweeps", bytes.NewReader(body))
+	if err != nil {
+		return Sweep{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return Sweep{}, fmt.Errorf("tron-signer: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return Sweep{}, err
+	}
+	var out struct {
+		Sweep
+		Error string `json:"error"`
+		Inner *Sweep `json:"sweep"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return Sweep{}, errors.New("tron-signer: an answer that is not JSON")
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return out.Sweep, nil
+	case http.StatusUnprocessableEntity, http.StatusConflict:
+		return Sweep{}, fmt.Errorf("%w: %s", ErrSweepRefused, out.Error)
+	}
+	sw := Sweep{Key: r.Key}
+	if out.Inner != nil {
+		sw = *out.Inner
+	}
+	return sw, fmt.Errorf("tron-signer: the signer answered %d: %s", resp.StatusCode, out.Error)
+}

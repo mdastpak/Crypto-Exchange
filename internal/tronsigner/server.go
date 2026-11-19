@@ -23,6 +23,8 @@ import (
 //	GET  /v1/hot-wallet       the address that pays
 //	POST /v1/payments         pay a Request, once by its key
 //	GET  /v1/payments/{key}   where a payment is
+//	POST /v1/sweeps           take a SweepRequest a step further
+//	GET  /v1/sweeps/{key}     where a sweep is
 func Handler(s *Signer, allowed []string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/hot-wallet", func(w http.ResponseWriter, _ *http.Request) {
@@ -42,6 +44,21 @@ func Handler(s *Signer, allowed []string) http.Handler {
 	mux.HandleFunc("GET /v1/payments/{key}", func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.Status(r.Context(), r.PathValue("key"))
 		answer(w, r.PathValue("key"), p, err)
+	})
+	mux.HandleFunc("POST /v1/sweeps", func(w http.ResponseWriter, r *http.Request) {
+		var req SweepRequest
+		dec := json.NewDecoder(io.LimitReader(r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			write(w, http.StatusBadRequest, map[string]string{"error": "the body is not a sweep"})
+			return
+		}
+		sw, err := s.Sweep(r.Context(), req)
+		answerSweep(w, req.Key, sw, err)
+	})
+	mux.HandleFunc("GET /v1/sweeps/{key}", func(w http.ResponseWriter, r *http.Request) {
+		sw, err := s.SweepStatus(r.PathValue("key"))
+		answerSweep(w, r.PathValue("key"), sw, err)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The TLS handshake verified the certificate against the client
@@ -73,6 +90,22 @@ func answer(w http.ResponseWriter, key string, p Payment, err error) {
 			return
 		}
 		write(w, http.StatusBadGateway, map[string]string{"error": "the node did not answer", "code": "node"})
+	}
+}
+
+func answerSweep(w http.ResponseWriter, key string, sw Sweep, err error) {
+	switch {
+	case err == nil:
+		write(w, http.StatusOK, sw)
+	case errors.Is(err, ErrRefused):
+		write(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error(), "code": "refused"})
+	case errors.Is(err, ErrKeyReused):
+		write(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "key_reused"})
+	case errors.Is(err, ErrNotFound):
+		write(w, http.StatusNotFound, map[string]string{"error": err.Error(), "code": "not_found"})
+	default:
+		log.Printf("tron-signer: sweep %q: %v", key, err) //nolint:gosec // G706: the key is quoted, so it cannot forge a line.
+		write(w, http.StatusBadGateway, map[string]any{"error": "the node did not answer", "code": "node", "sweep": sw})
 	}
 }
 
