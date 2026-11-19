@@ -216,9 +216,11 @@ func (s *Signer) Pay(ctx context.Context, r Request) (Payment, error) {
 		if rec.Digest != digest(r) {
 			return Payment{}, ErrKeyReused
 		}
-		p, err := s.status(ctx, r.Key, rec)
+		p, inBlock, err := s.status(ctx, r.Key, rec)
 		if err != nil || p.Status != StatusNotReceived {
-			if err == nil && p.Status == StatusPending && now.Before(rec.Expiration) {
+			// Sent again only while no block has it and the network may
+			// still take it.
+			if err == nil && p.Status == StatusPending && !inBlock && now.Before(rec.Expiration) {
 				err = s.rebroadcast(ctx, rec)
 			}
 			return p, err
@@ -284,18 +286,21 @@ func (s *Signer) Status(ctx context.Context, key string) (Payment, error) {
 	if !ok {
 		return Payment{}, ErrNotFound
 	}
-	return s.status(ctx, key, rec)
+	p, _, err := s.status(ctx, key, rec)
+	return p, err
 }
 
 // expiryMargin is how long after its expiration a transaction that no
 // block has is known never to be taken.
 const expiryMargin = time.Minute
 
-func (s *Signer) status(ctx context.Context, key string, rec *record) (Payment, error) {
+// status tells where a payment is, and whether a block has its
+// transaction.
+func (s *Signer) status(ctx context.Context, key string, rec *record) (Payment, bool, error) {
 	p := Payment{Key: key, TxID: rec.TxID, Status: StatusPending, ExpiresAt: rec.Expiration}
 	receipt, err := s.node.Receipt(ctx, rec.TxID)
 	if err != nil {
-		return p, err
+		return p, false, err
 	}
 	switch {
 	case !receipt.Found:
@@ -307,11 +312,11 @@ func (s *Signer) status(ctx context.Context, key string, rec *record) (Payment, 
 	default:
 		head, err := s.node.Head(ctx)
 		if err != nil {
-			return p, err
+			return p, true, err
 		}
 		if head.Number-receipt.Block+1 >= s.cfg.Confirmations {
 			p.Status = StatusCompleted
 		}
 	}
-	return p, nil
+	return p, receipt.Found, nil
 }
