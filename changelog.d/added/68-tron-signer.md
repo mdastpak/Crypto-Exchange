@@ -1,0 +1,5 @@
+- The signer of the TRON custody, `cmd/tron-signer` ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). See [docs/custody.md](docs/custody.md).
+  - It runs apart from the server and holds the BIP32 seed, encrypted by a key of Vault's Transit engine and decrypted once at the start with `VAULT_TOKEN`. The hot wallet is `m/44'/195'/1'/0/0`, which the server's xpub of the deposit account cannot derive; `-xpub` prints that xpub and the hot wallet's address.
+  - It serves TLS 1.3 to clients with a certificate of its client CA and an allowed name: `POST /v1/payments` pays an asset to an address once by its key, and `GET /v1/payments/{key}` tells where the payment is: pending, completed after 19 confirmations, failed on chain, or not received once its transaction expired untaken, which the same key signs again.
+  - It builds each transaction itself, in the protobuf of the protocol, rather than signing what a node built, and refuses an asset it does not pay, an address that is not one, and any amount above the caps of one payment and of the day.
+  - Payments are recorded by key in its state file before they are broadcast.

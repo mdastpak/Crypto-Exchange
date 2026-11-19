@@ -2,12 +2,14 @@ package tron
 
 import (
 	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
 	"errors"
 	"fmt"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"golang.org/x/crypto/ripemd160" //nolint:staticcheck,gosec // G507: BIP32 names a parent key by its HASH160, which RIPEMD-160 is part of.
 )
 
 // The deposit addresses are derived by BIP32 from the extended public key
@@ -25,6 +27,10 @@ type ExtendedPublicKey struct {
 	key       *secp256k1.PublicKey
 	chainCode [32]byte
 	depth     byte
+	// parent is the fingerprint of the parent key, and index the index of
+	// the key under it, which its serialization carries.
+	parent [4]byte
+	index  uint32
 }
 
 // ErrXPub is a string that is not an extended public key.
@@ -43,7 +49,8 @@ func ParseXPub(s string) (*ExtendedPublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrXPub, err)
 	}
-	x := &ExtendedPublicKey{key: key, depth: raw[4]}
+	x := &ExtendedPublicKey{key: key, depth: raw[4], index: binary.BigEndian.Uint32(raw[9:13])}
+	copy(x.parent[:], raw[5:9])
 	copy(x.chainCode[:], raw[13:45])
 	return x, nil
 }
@@ -75,7 +82,8 @@ func (x *ExtendedPublicKey) Child(i uint32) (*ExtendedPublicKey, error) {
 		return nil, fmt.Errorf("tron: child %d is invalid; use the next index", i)
 	}
 	point.ToAffine()
-	child := &ExtendedPublicKey{key: secp256k1.NewPublicKey(&point.X, &point.Y), depth: x.depth + 1}
+	child := &ExtendedPublicKey{key: secp256k1.NewPublicKey(&point.X, &point.Y), depth: x.depth + 1,
+		parent: fingerprint(x.key), index: i}
 	copy(child.chainCode[:], sum[32:])
 	return child, nil
 }
@@ -107,4 +115,24 @@ func (x *ExtendedPublicKey) Derive(i uint32) (string, string, error) {
 		return "", "", err
 	}
 	return a.String(), DerivationPath(i), nil
+}
+
+// fingerprint is the first four bytes of the HASH160 of a public key.
+func fingerprint(k *secp256k1.PublicKey) [4]byte {
+	sha := sha256.Sum256(k.SerializeCompressed())
+	h := ripemd160.New() //nolint:gosec // G406: BIP32 fixes HASH160 for the fingerprint, which identifies and protects nothing.
+	h.Write(sha[:])
+	return [4]byte(h.Sum(nil)[:4])
+}
+
+// String serializes x as an xpub.
+func (x *ExtendedPublicKey) String() string {
+	raw := make([]byte, 0, 78)
+	raw = append(raw, xpubVersion[:]...)
+	raw = append(raw, x.depth)
+	raw = append(raw, x.parent[:]...)
+	raw = binary.BigEndian.AppendUint32(raw, x.index)
+	raw = append(raw, x.chainCode[:]...)
+	raw = append(raw, x.key.SerializeCompressed()...)
+	return base58Check(raw)
 }
