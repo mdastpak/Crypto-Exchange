@@ -379,7 +379,7 @@ delisting:
 market_data:
   enabled: false               # Run the jobs; off answers only the probes
   mode: dry_run                # dry_run (collect and check, write nothing) or live
-  health_addr: ":8081"         # /system/live and /system/ready
+  health_addr: ":8081"         # /system/live, /system/ready, and /metrics; keep it internal
   poll_seconds: 5              # How often each worker looks for due jobs
   lease_seconds: 60            # How soon another worker takes over a dead worker's job
   max_concurrent_jobs: 4       # Runs of one worker at once

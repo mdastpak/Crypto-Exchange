@@ -271,6 +271,46 @@ var (
 		Name: "otc_route_legs_total",
 		Help: "Legs of the OTC routes found, by stage (quote, execution), source (inventory, venue), and venue.",
 	}, []string{"stage", "source", "venue"})
+	// MarketJobRuns counts the runs of the jobs of cmd/market-worker (#545),
+	// by job and outcome: succeeded, failed, or interrupted (paused, or
+	// stopped with the worker). The label is job_name, since Prometheus
+	// gives job to the scrape target.
+	MarketJobRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "market_job_runs_total",
+		Help: "Runs of the market worker's jobs, by job and outcome (succeeded, failed, interrupted).",
+	}, []string{"job_name", "outcome"})
+	// MarketJobDuration is the time of a run of a job, whatever its outcome.
+	MarketJobDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "market_job_run_duration_seconds",
+		Help:    "Time of a run of a market worker's job, by job.",
+		Buckets: []float64{.05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 300, 900, 3600},
+	}, []string{"job_name"})
+	// MarketJobLastSuccess is the Unix time of the last run of a job that
+	// succeeded on this worker. A job runs on one worker at a time, so the
+	// newest over the workers is max by (job_name).
+	MarketJobLastSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "market_job_last_success_timestamp_seconds",
+		Help: "Unix time of the last successful run of a market worker's job on this worker.",
+	}, []string{"job_name"})
+	// MarketJobInterval is the time between two runs of a job, so that an
+	// alert can compare the age of its last success with its own pace.
+	MarketJobInterval = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "market_job_interval_seconds",
+		Help: "Time between two runs of a market worker's job.",
+	}, []string{"job_name"})
+	// VenueCalls counts the calls to the APIs of the venues, by venue, call,
+	// and outcome: ok, or the kind of the error (retryable, rejected,
+	// unknown_outcome), or canceled.
+	VenueCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "venue_calls_total",
+		Help: "Calls to the API of a venue, by venue, call, and outcome (ok, retryable, rejected, unknown_outcome, canceled).",
+	}, []string{"venue", "call", "outcome"})
+	// VenueCallDuration is the time of a call to a venue, retries included.
+	VenueCallDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "venue_call_duration_seconds",
+		Help:    "Time of a call to the API of a venue, its retries included, by venue and call.",
+		Buckets: []float64{.025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30},
+	}, []string{"venue", "call"})
 )
 
 func init() {
@@ -284,6 +324,7 @@ func init() {
 		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceSignatureFailures, PriceDelivery, ConversionFailures,
 		DelistingNoticesUnprepared, DelistingNoticeBroadcasts, DelistingNoticeRecipientsPending, DelistingNoticeOldestPending, DelistingNoticeFailures,
 		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin, OTCRoutes, OTCRouteLegs,
+		MarketJobRuns, MarketJobDuration, MarketJobLastSuccess, MarketJobInterval, VenueCalls, VenueCallDuration,
 	)
 }
 

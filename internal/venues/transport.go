@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/marketdata/source"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 )
 
 // Classifier reads the venue's own error of an answer that is not 2xx: its
@@ -27,7 +29,9 @@ type Caller struct {
 
 // Call makes r for op and decodes a 2xx answer into out, keeping numbers
 // as json.Number.
-func (c Caller) Call(ctx context.Context, op string, r source.Request, out any) error {
+func (c Caller) Call(ctx context.Context, op string, r source.Request, out any) (err error) {
+	started := time.Now()
+	defer func() { c.observe(op, started, err) }()
 	body, err := c.Client.Do(ctx, r)
 	if err != nil {
 		return c.wrap(op, r, err)
@@ -86,4 +90,26 @@ func DefaultKind(status int) Kind {
 		return KindRetryable
 	}
 	return KindRejected
+}
+
+// observe records a call on the metrics of the venues (#545). op is one of
+// the connector's own names, so its labels stay few.
+func (c Caller) observe(op string, started time.Time, err error) {
+	metrics.VenueCallDuration.WithLabelValues(c.Venue, op).Observe(time.Since(started).Seconds())
+	metrics.VenueCalls.WithLabelValues(c.Venue, op, callOutcome(err)).Inc()
+}
+
+// callOutcome is the outcome label of a call that returned err.
+func callOutcome(err error) string {
+	var e *Error
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.As(err, &e) && e.Kind != "":
+		return string(e.Kind)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "canceled"
+	default:
+		return string(KindRetryable)
+	}
 }

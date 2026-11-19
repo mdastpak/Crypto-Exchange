@@ -89,6 +89,18 @@ const (
 	interrupted
 )
 
+// String is the outcome as the metrics label it.
+func (o outcome) String() string {
+	switch o {
+	case succeeded:
+		return "succeeded"
+	case failed:
+		return "failed"
+	default:
+		return "interrupted"
+	}
+}
+
 // release gives the lease up and schedules the next run. It changes nothing
 // when token no longer holds the lease, since the job belongs to another
 // worker then.
