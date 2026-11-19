@@ -543,6 +543,10 @@
   "DEPOSITS_UNAVAILABLE": "واریز موقتاً در دسترس نیست.",
   "DEPOSIT_ADDRESS_RETRIEVED": "آدرس واریز دریافت شد",
   "DEPOSIT_ADDRESSES_RETRIEVED": "آدرس‌های واریز دریافت شد",
+  "DEPOSITS_RETRIEVED": "واریزها دریافت شد",
+  "DEPOSIT_CREDITED": "واریز به حساب منظور شد",
+  "DEPOSIT_NOT_FOUND": "واریز یافت نشد",
+  "DEPOSIT_NOT_HELD": "این واریز در انتظار بررسی نیست",
   "DEPOSIT_NETWORK_UNSUPPORTED": "واریز در این شبکه پشتیبانی نمی‌شود.",
   "DEPOSITS_CLOSED": "واریز این ارز در این شبکه بسته است."
 }

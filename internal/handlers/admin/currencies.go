@@ -52,7 +52,10 @@ type AdminHandler struct {
 	// provider is off.
 	Sanctions SanctionsStatus
 	// KYC are the KYC applications to review (#72); nil answers 503.
-	KYC          KYCReviews
+	KYC KYCReviews
+	// Deposits are the deposits on chain (#68); nil answers 503 while no
+	// network watches deposits.
+	Deposits     DepositReviews
 	Restrictions RestrictionStore
 	Controls     ControlStore
 	Delistings   DelistingStore

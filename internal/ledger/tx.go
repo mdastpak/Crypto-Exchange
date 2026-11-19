@@ -16,6 +16,10 @@ import (
 // requests by it.
 const RefWithdrawal = "withdrawal"
 
+// RefDeposit is the type of the reference of the entries of a deposit on
+// chain (#68): detected, credited, or failed.
+const RefDeposit = "deposit"
+
 // Tx is the ledger within a transaction of the caller, for an operation
 // that must commit together with other writes, or after checks that must
 // hold until it commits: a withdrawal request, its row, and the lock of its
@@ -40,6 +44,22 @@ func (t Tx) Lock(ctx context.Context, key string, a Account, amount Amount, ref 
 // holds a transaction needs no second connection of the pool (#405).
 func (t Tx) Balance(ctx context.Context, a Account, currency shared.UUID) (balance.Balance, error) {
 	return balanceIn(ctx, t.tx, a, currency)
+}
+
+// DetectDeposit is Ledger.DetectDeposit within the transaction: a deposit
+// on chain (#68) that is recorded with its row.
+func (t Tx) DetectDeposit(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
+	return t.record(ctx, depositDetected(key, a, amount, ref))
+}
+
+// CreditDeposit is Ledger.CreditDeposit within the transaction.
+func (t Tx) CreditDeposit(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
+	return t.record(ctx, depositCredited(key, a, amount, ref))
+}
+
+// FailDeposit is Ledger.FailDeposit within the transaction.
+func (t Tx) FailDeposit(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
+	return t.record(ctx, depositFailed(key, a, amount, ref))
 }
 
 // Release is Ledger.Release within the transaction.

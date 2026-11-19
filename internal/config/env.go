@@ -393,6 +393,13 @@ var envVars = []EnvVar{
 			}
 		}
 	}),
+	providerVar("TRONGRID_API_KEY", "custody.providers[tron].api_key", func(c *Configuration, v string) {
+		for i := range c.Custody.Providers {
+			if c.Custody.Providers[i].Network == "tron" {
+				c.Custody.Providers[i].APIKey = v
+			}
+		}
+	}),
 	providerVar("ONFIDO_API_KEY", "compliance.kyc.providers[onfido].api_key", func(c *Configuration, v string) {
 		for i := range c.Compliance.KYC.Providers {
 			if c.Compliance.KYC.Providers[i].Name == "onfido" {

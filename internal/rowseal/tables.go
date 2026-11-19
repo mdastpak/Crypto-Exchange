@@ -285,6 +285,19 @@ var (
 		text("user_id"), text("sub_account_id"), text("currency_hk"), text("network"), text("address"),
 		text("derivation_path"), text("index"), text("active"), timestamptz("created_at"),
 	}, SealedFromStart: true}
+	// Deposits covers a deposit on chain (#68): its user, currency, network,
+	// transaction and log, amount, status, block, and hold. A deposit raised
+	// or moved to another user in SQL is refused before it is credited.
+	Deposits = &Table{Name: "deposits", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("currency_hk"), text("network"), text("tx_hash"), text("log_index"), text("address"),
+		text("from_address"), text("amount"), text("status"), text("block_height"), text("block_hash"), text("hold_reason"),
+		timestamptz("detected_at"), timestamptz("credited_at"),
+	}, SealedFromStart: true}
+	// ChainCursors covers how far the watcher of a network has read (#68):
+	// a cursor moved in SQL would skip the deposits of the blocks between.
+	ChainCursors = &Table{Name: "chain_cursors", Key: "network", KeyType: "text", Columns: []Column{
+		text("block_number"), text("block_id"),
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
 	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
@@ -484,7 +497,7 @@ var Tables = []*Table{
 	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
 	SanctionsLists,
 	KYCApplications, KYCDocuments,
-	DepositAddresses,
+	DepositAddresses, Deposits, ChainCursors,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

@@ -10,6 +10,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/delisting"
+	"github.com/mdastpak/crypto-exchange/internal/deposits"
 	"github.com/mdastpak/crypto-exchange/internal/domain/currency"
 	"github.com/mdastpak/crypto-exchange/internal/domain/market"
 	"github.com/mdastpak/crypto-exchange/internal/kyc"
@@ -58,6 +59,13 @@ type WithdrawalReviews interface {
 	Review(ctx context.Context, status withdrawals.Status, limit int) ([]withdrawals.Withdrawal, error)
 	Approve(ctx context.Context, id, adminHK string, origin audit.Event) (withdrawals.Withdrawal, error)
 	Reject(ctx context.Context, id, adminHK, reason string, origin audit.Event) (withdrawals.Withdrawal, error)
+}
+
+// DepositReviews are the deposits on chain that administrators review
+// (#68): deposits.Reviews.
+type DepositReviews interface {
+	List(ctx context.Context, f deposits.Filter) ([]deposits.Deposit, error)
+	Credit(ctx context.Context, id string, origin audit.Event) (deposits.Deposit, error)
 }
 
 // AMLDesk is where administrators read the AML rules and work the alerts

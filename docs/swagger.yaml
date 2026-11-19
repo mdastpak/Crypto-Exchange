@@ -1609,6 +1609,99 @@ definitions:
         example: tron
         type: string
     type: object
+  deposits.Deposit:
+    properties:
+      address:
+        type: string
+      amount:
+        example: "25.5"
+        type: string
+      block_hash:
+        type: string
+      block_height:
+        type: integer
+      credited_at:
+        type: string
+      currency_hk:
+        type: string
+      detected_at:
+        type: string
+      from_address:
+        type: string
+      hold_reason:
+        $ref: '#/definitions/deposits.Hold'
+      id:
+        type: string
+      log_index:
+        description: |-
+          LogIndex is the index of the transfer's event in its transaction; -1
+          for a transfer of the native asset.
+        type: integer
+      network:
+        example: tron
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/deposits.Status'
+        example: CREDITED
+      tx_hash:
+        type: string
+      user_id:
+        type: string
+    type: object
+  deposits.Hold:
+    enum:
+    - below_minimum
+    - deposits_closed
+    - restricted
+    - aml
+    type: string
+    x-enum-varnames:
+    - HoldBelowMinimum
+    - HoldDepositsClosed
+    - HoldRestricted
+    - HoldAML
+  deposits.Status:
+    enum:
+    - DETECTED
+    - CONFIRMED
+    - CREDITED
+    - FAILED
+    type: string
+    x-enum-varnames:
+    - StatusDetected
+    - StatusConfirmed
+    - StatusCredited
+    - StatusFailed
+  deposits.UserDeposit:
+    properties:
+      address:
+        type: string
+      amount:
+        example: "25.5"
+        type: string
+      block_height:
+        type: integer
+      credited_at:
+        type: string
+      currency_hk:
+        type: string
+      detected_at:
+        type: string
+      id:
+        type: string
+      network:
+        example: tron
+        type: string
+      on_hold:
+        type: boolean
+      status:
+        allOf:
+        - $ref: '#/definitions/deposits.Status'
+        example: CREDITED
+      tx_hash:
+        type: string
+    type: object
   destinations.Destination:
     properties:
       bank:
@@ -7541,6 +7634,125 @@ paths:
       summary: Release a previous symbol of a currency
       tags:
       - admin currencies
+  /api/v1/admin/deposits:
+    get:
+      description: 'The newest deposits on chain (#68), at most 200, with the user''s
+        user_id and, for a held one, its hold_reason: below_minimum (FAILED), or deposits_closed,
+        restricted, or aml (CONFIRMED, still pending in the user''s balance). held=true
+        lists only those on hold. A deposit that fails its seal answers 409 row_unverified.'
+      parameters:
+      - description: The user
+        format: uuid
+        in: query
+        name: user_id
+        type: string
+      - description: The status
+        enum:
+        - DETECTED
+        - CONFIRMED
+        - CREDITED
+        - FAILED
+        in: query
+        name: status
+        type: string
+      - description: Only the deposits on hold
+        in: query
+        name: held
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.Deposit'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List deposits
+      tags:
+      - admin deposits
+  /api/v1/admin/deposits/{id}/credit:
+    post:
+      description: 'Credits a deposit on hold (#68), after review: one held at confirmation,
+        whose amount moves from pending to available, or one below the minimum, which
+        is first recorded as pending. A deposit dropped by a reorg cannot be credited.
+        A sensitive route: it needs a step-up. Audited as admin.deposit_credit, with
+        the hold.'
+      parameters:
+      - description: The deposit
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/deposits.Deposit'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: step_up_required
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: deposit_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: deposit_not_held or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Credit a held deposit
+      tags:
+      - admin deposits
   /api/v1/admin/integrity/findings:
     get:
       description: 'The protected rows (accounts, contacts, sessions) that did not
@@ -13099,6 +13311,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a deposit address
+      tags:
+      - user-deposits
+  /api/v1/user/deposits:
+    get:
+      description: 'The user''s newest deposits on chain (#68), at most 200: DETECTED
+        while their block has too few confirmations (19 on TRON) and the amount is
+        pending in the balance, CREDITED once available, FAILED when a reorg dropped
+        the transaction or the amount was below the minimum, and CONFIRMED with on_hold
+        while support reviews it. Why a deposit is held is not told.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.UserDeposit'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the deposits
       tags:
       - user-deposits
   /api/v1/user/favorites:

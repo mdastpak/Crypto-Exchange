@@ -107,7 +107,8 @@ Each rule that hit raises its own alert, with what it saw (`trigger_data`), the 
 ### Where the rules run
 
 - **Withdrawals** evaluate at both steps, with the request's country and the destination: at step one, so that no code is sent for a withdrawal that would be refused, and at step two, which records it.
-- **Deposits and trades** call the same `aml.Engine.Evaluate` in their transaction, with the operation; their paths ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68) for deposits, and the OTC trades) wire it in.
+- **Deposits** on chain evaluate once their block is confirmed, in the transaction that credits them, with the address they came from as the counterparty, which the sanctions rules screen. `REVIEW` holds the deposit, pending in the user's balance, until an administrator credits it; `BLOCK` and `FREEZE` hold it too, after the refusal is recorded, as the funds are already in custody ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), see [deposits](api.md#deposits)).
+- **Trades** call the same `aml.Engine.Evaluate` in their transaction, with the operation, once the path of the OTC trades wires it in.
 
 ## The batch
 

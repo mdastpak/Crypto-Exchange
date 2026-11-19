@@ -56,6 +56,10 @@ var adminRoutes = map[string]admin.RouteClass{
 	"POST /withdrawals/:id/approve": admin.RouteSensitive,
 	"POST /withdrawals/:id/reject":  admin.RouteSensitive,
 
+	// Crediting a deposit held at its confirmation (#68), which moves it
+	// from pending to the user's available balance.
+	"POST /deposits/:id/credit": admin.RouteSensitive,
+
 	// Deciding a KYC application (#72): an approval raises the user to
 	// level 2.
 	"POST /kyc/applications/:id/approve": admin.RouteSensitive,

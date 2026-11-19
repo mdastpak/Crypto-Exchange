@@ -54,12 +54,12 @@ func TestAdminRoutes_EveryChangeIsClassified(t *testing.T) {
 		}
 		sensitive++
 		named := false
-		for _, part := range []string{"/platform/controls", "/restrictions", "/delistings", "/migrations", "/capabilities/", "/reseal", "/notifications/sms", "/networks/", "/markets/", "/withdrawals/", "/payouts/", "/price-override", "/venues/holds/", "/otc/routing/rules", "/kyc/applications/"} {
+		for _, part := range []string{"/platform/controls", "/restrictions", "/delistings", "/migrations", "/capabilities/", "/reseal", "/notifications/sms", "/networks/", "/markets/", "/withdrawals/", "/payouts/", "/price-override", "/venues/holds/", "/otc/routing/rules", "/kyc/applications/", "/deposits/"} {
 			named = named || strings.Contains(key, part)
 		}
 		assert.True(t, named, key)
 	}
-	assert.Equal(t, 26, sensitive)
+	assert.Equal(t, 27, sensitive)
 	assert.Equal(t, admin.RouteUnclassified, adminRouteClass(http.MethodPost, adminRoutePrefix+"/new-route"))
 }
 

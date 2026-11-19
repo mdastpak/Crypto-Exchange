@@ -105,6 +105,32 @@ func (h *UserHandler) ListDepositAddresses(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, i18n.M("DEPOSIT_ADDRESSES_RETRIEVED"), list)
 }
 
+// @Summary List the deposits
+// @Description The user's newest deposits on chain (#68), at most 200: DETECTED while their block has too few confirmations (19 on TRON) and the amount is pending in the balance, CREDITED once available, FAILED when a reorg dropped the transaction or the amount was below the minimum, and CONFIRMED with on_hold while support reviews it. Why a deposit is held is not told.
+// @Tags user-deposits
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.APIResponse{info=[]deposits.UserDeposit}
+// @Failure 401 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "row_unverified"
+// @Failure 503 {object} models.APIResponse "deposits_unavailable"
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/user/deposits [get]
+func (h *UserHandler) ListDeposits(c *gin.Context) {
+	userHK, ok := h.depositsCaller(c)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionTimeout)
+	defer cancel()
+	list, err := h.Deposits.History(ctx, userHK)
+	if err != nil {
+		sendDepositError(c, userHK, err)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("DEPOSITS_RETRIEVED"), list)
+}
+
 func sendDepositError(c *gin.Context, userHK string, err error) {
 	switch {
 	case restrictions.Send(c, err), verification.Send(c, err):
@@ -117,7 +143,7 @@ func sendDepositError(c *gin.Context, userHK string, err error) {
 	case errors.Is(err, rowseal.ErrUnverified):
 		helpers.SendError(c, http.StatusConflict, "row_unverified", i18n.M("ROW_UNVERIFIED"), nil)
 	default:
-		log.Printf("Failed to give user %s a deposit address: %v", userHK, err)
+		log.Printf("Failed to serve the deposits of user %s: %v", userHK, err)
 		helpers.SendResponse(c, http.StatusInternalServerError, i18n.M("INTERNAL_ERROR"), nil)
 	}
 }
