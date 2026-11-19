@@ -171,6 +171,23 @@ func (e *Engine) Enforce(ctx context.Context, db *sql.DB, d Decision, origin aud
 	return ErrRefused
 }
 
+// Refuse records a decision whose operation is refused though its action
+// would only hold it for review: an operation that cannot wait for a
+// person, such as an OTC trade at its quoted price (#552). It records the
+// operation as refused with its alerts, freezes the account only for a
+// freeze, notifies, and returns ErrRefused.
+func (e *Engine) Refuse(ctx context.Context, db *sql.DB, d Decision, origin audit.Event) error {
+	if d.Action == ActionNone || d.Action == ActionAlert {
+		return fmt.Errorf("aml: Refuse of a decision that holds nothing")
+	}
+	notices, err := e.enforce(ctx, db, d, system(origin))
+	if err != nil {
+		return err
+	}
+	e.Notify(ctx, notices)
+	return ErrRefused
+}
+
 func (e *Engine) enforce(ctx context.Context, db *sql.DB, d Decision, origin audit.Event) ([]Notice, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {

@@ -260,6 +260,10 @@ var executeRefusals = map[string]struct {
 	otc.CodeMarketInactive:       {http.StatusConflict, i18n.Key("OTC_MARKET_INACTIVE")},
 	otc.CodeMarketNotQuoted:      {http.StatusNotFound, i18n.Key("OTC_MARKET_UNAVAILABLE")},
 	otc.CodeQuoteNotRoutable:     {http.StatusConflict, i18n.Key("OTC_QUOTE_NOT_ROUTABLE")},
+	// The AML rules of the trades (#552): the user is not told which rule.
+	otc.CodeTradeRefusedCompliance:    {http.StatusForbidden, i18n.Key("OTC_TRADE_REFUSED_COMPLIANCE")},
+	otc.CodeTradeUnderReview:          {http.StatusForbidden, i18n.Key("OTC_TRADE_UNDER_REVIEW")},
+	otc.CodeTradeScreeningUnavailable: {http.StatusServiceUnavailable, i18n.Key("OTC_TRADE_SCREENING_UNAVAILABLE")},
 }
 
 func sendExecuteError(c *gin.Context, userHK string, err error) {

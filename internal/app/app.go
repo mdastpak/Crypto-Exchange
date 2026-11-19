@@ -370,7 +370,7 @@ func run() error {
 			workers = append(workers, startSanctions(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
 		}
 	}
-	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config, relay.Nudge); err != nil {
+	if err := useOTC(handlers, services.Postgres.DB, services.Redis.Client, &config.Config, relay.Nudge, amlRules); err != nil {
 		return err
 	}
 	payouts, err := startPayouts(handlers, services.Postgres.DB, &config.Config)

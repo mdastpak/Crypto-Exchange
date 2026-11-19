@@ -1,0 +1,5 @@
+- The AML rules of the trades never ran: an OTC execution did not call the engine, so a rule with `applies_to: [trade]` was stored and listed as active but never fired ([#552](https://github.com/mdastpak/Crypto-Exchange/issues/552)). See [where the rules run](docs/aml.md#where-the-rules-run).
+  - Each OTC trade is now evaluated in its execution's transaction, by what the user gives.
+  - `REVIEW` refuses the trade with `trade_under_review`, as a quoted trade cannot wait for a person. `BLOCK` and `FREEZE` refuse it with `trade_refused_compliance`, and `FREEZE` also freezes the account. Each refusal is recorded with its alerts after the trade rolls back.
+  - `ALERT` records its alert with the trade.
+  - While the rules cannot be evaluated, the trade is refused with `trade_screening_unavailable`.

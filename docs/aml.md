@@ -108,7 +108,7 @@ Each rule that hit raises its own alert, with what it saw (`trigger_data`), the 
 
 - **Withdrawals** evaluate at both steps, with the request's country and the destination: at step one, so that no code is sent for a withdrawal that would be refused, and at step two, which records it.
 - **Deposits** on chain evaluate once their block is confirmed, in the transaction that credits them, with the address they came from as the counterparty, which the sanctions rules screen. `REVIEW` holds the deposit, pending in the user's balance, until an administrator credits it; `BLOCK` and `FREEZE` hold it too, after the refusal is recorded, as the funds are already in custody ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), see [deposits](api.md#deposits)).
-- **Trades** call the same `aml.Engine.Evaluate` in their transaction, with the operation, once the path of the OTC trades wires it in.
+- **Trades** of the OTC desk evaluate in the transaction of their execution, by what the user gives, valued in USDT ([#552](https://github.com/mdastpak/Crypto-Exchange/issues/552)). A quoted trade cannot wait for a person, so `REVIEW` refuses it too, with its own code: `403 trade_under_review`. `BLOCK` and `FREEZE` refuse it with `403 trade_refused_compliance`, and `FREEZE` also freezes the account. In each case the trade rolls back, and the refusal and its alerts are recorded on their own. `ALERT` records its alert with the trade, which settles. While the rules cannot be evaluated, the trade is refused with `503 trade_screening_unavailable`. The quote is consumed either way, as for any refusal of an execution.
 
 ## The batch
 

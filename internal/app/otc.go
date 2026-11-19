@@ -28,7 +28,7 @@ import (
 // instance needs. The executions of the quotes (#62) share the store, so a
 // quote is taken once on any instance, and nudge the outbox relay with
 // committed after each trade.
-func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings *config.Configuration, committed func()) error {
+func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings *config.Configuration, committed func(), rules *amlSetup) error {
 	levels, ok := h.User.Verification.(verification.Store)
 	if h.Prices == nil || h.Public == nil || h.Public.Markets == nil || !ok {
 		return nil
@@ -61,6 +61,10 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 		DB: db, Store: store, Ledger: ledger.Ledger{DB: db}, Verification: levels, Limits: limits, Committed: committed,
 		RequireLimits: settings.Server.Mode == "release",
 		Legal:         func() config.LegalConfig { return settings.Legal },
+	}
+	// The AML rules of the trades (#552), while compliance.aml is on.
+	if rules != nil {
+		executor.AML = rules.engine
 	}
 	h.User.Trades = executor
 	if settings.OTC.Routing.Enabled {

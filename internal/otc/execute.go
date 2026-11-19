@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/agreements"
+	"github.com/mdastpak/crypto-exchange/internal/aml"
 	"github.com/mdastpak/crypto-exchange/internal/audit"
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
@@ -55,14 +56,21 @@ var idempotencyKey = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,100}$`)
 
 // The codes of the refusals of an execution, beside those of the quotes.
 const (
-	CodeQuoteNotFound          = "quote_not_found"
-	CodeQuoteExpired           = "quote_expired"
-	CodeQuoteInvalid           = "quote_invalid"
-	CodeQuoteNotSettleable     = "quote_not_settleable"
-	CodeInventoryLimit         = "otc_inventory_limit"
-	CodeIdempotencyKeyReused   = "idempotency_key_reused"
-	CodeAgreementsPending      = "terms_update_required"
-	codeInvalidExecutionFields = "quote_id: a UUID; idempotency_key: 1 to 100 letters, digits, dots, colons, underscores, or hyphens"
+	CodeQuoteNotFound        = "quote_not_found"
+	CodeQuoteExpired         = "quote_expired"
+	CodeQuoteInvalid         = "quote_invalid"
+	CodeQuoteNotSettleable   = "quote_not_settleable"
+	CodeInventoryLimit       = "otc_inventory_limit"
+	CodeIdempotencyKeyReused = "idempotency_key_reused"
+	CodeAgreementsPending    = "terms_update_required"
+	// CodeTradeRefusedCompliance is a trade that an AML rule refused, and
+	// CodeTradeUnderReview one that a rule would hold for review, which a
+	// quoted trade cannot wait for (#552). CodeTradeScreeningUnavailable is
+	// a trade refused while the rules cannot be evaluated.
+	CodeTradeRefusedCompliance    = "trade_refused_compliance"
+	CodeTradeUnderReview          = "trade_under_review"
+	CodeTradeScreeningUnavailable = "trade_screening_unavailable"
+	codeInvalidExecutionFields    = "quote_id: a UUID; idempotency_key: 1 to 100 letters, digits, dots, colons, underscores, or hyphens"
 )
 
 // ErrAgreementsPending refuses the trade of a user who has not accepted
@@ -201,9 +209,19 @@ type Executor struct {
 	// (#387), in the transaction of the trade. A route with a venue leg is
 	// refused without it.
 	Routed RoutedOrders
+	// AML evaluates the rules of the trades (#552) in the transaction of
+	// each; nil evaluates none, as while compliance.aml is off.
+	AML TradeScreening
 
 	// fail injects a failure after a step, for the tests.
 	fail func(step string) error
+}
+
+// TradeScreening evaluates the AML rules of a trade: *aml.Engine.
+type TradeScreening interface {
+	Evaluate(ctx context.Context, tx *sql.Tx, ev aml.Event) (aml.Decision, error)
+	Refuse(ctx context.Context, db *sql.DB, d aml.Decision, origin audit.Event) error
+	Notify(ctx context.Context, notices []aml.Notice)
 }
 
 // RoutedOrders plans the routed orders of a trade (routed.Planner).
@@ -325,6 +343,10 @@ func (e *Executor) run(ctx context.Context, r ExecuteRequest, digest []byte, ori
 	}
 
 	id := shared.NewUUID().String()
+	notices, err := e.screen(ctx, tx, r, s, id, origin)
+	if err != nil {
+		return Execution{}, err
+	}
 	account, err := ledgerAccount(r.Account)
 	if err != nil {
 		return Execution{}, err
@@ -385,7 +407,50 @@ func (e *Executor) run(ctx context.Context, r ExecuteRequest, digest []byte, ori
 	if err := tx.Commit(); err != nil {
 		return Execution{}, fmt.Errorf("otc: commit the trade: %w", err)
 	}
+	if len(notices) > 0 {
+		e.AML.Notify(ctx, notices)
+	}
 	return Execution{Trade: t}, nil
+}
+
+// screen evaluates the AML rules of the trade in its transaction, by what
+// the user gives (#552). A rule that refuses the trade, or that would hold
+// it for review, which a quoted trade cannot wait for, refuses it: the
+// transaction rolls back, and the refusal is recorded on its own, with the
+// freeze of the account that a rule asks. An alert is recorded with the
+// trade, and its notices are returned for after the commit. While the
+// rules cannot be evaluated, the trade is refused.
+func (e *Executor) screen(ctx context.Context, tx *sql.Tx, r ExecuteRequest, s settlement, id string, origin audit.Event) ([]aml.Notice, error) {
+	if e.AML == nil {
+		return nil, nil
+	}
+	d, err := e.AML.Evaluate(ctx, tx, aml.Event{Kind: aml.KindTrade, Ref: id, UserHK: r.Account.UserHK,
+		CurrencyHK: s.give.currency.String(), Symbol: s.give.symbol, Amount: s.give.amount.Decimal()})
+	if errors.Is(err, aml.ErrUnavailable) {
+		log.Printf("An OTC trade of user %s is refused: the AML rules cannot be evaluated: %v", r.Account.UserHK, err)
+		return nil, &Refusal{Code: CodeTradeScreeningUnavailable}
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case d.Action.Refuses(), d.Action == aml.ActionReview:
+		// The trade's locks are released before the refusal is recorded,
+		// in a transaction of its own (#405).
+		_ = tx.Rollback()
+		code := CodeTradeRefusedCompliance
+		if d.Action == aml.ActionReview {
+			code = CodeTradeUnderReview
+		}
+		if err := e.AML.Refuse(ctx, e.DB, d, origin); !errors.Is(err, aml.ErrRefused) {
+			// Refused all the same; the answer does not say why.
+			log.Printf("SECURITY: an OTC trade of user %s refused by the AML rules (%s) was not recorded: %v", r.Account.UserHK, d.Action, err)
+		}
+		return nil, &Refusal{Code: code}
+	case len(d.Hits) > 0:
+		return aml.Record(ctx, tx, d, origin)
+	}
+	return nil, nil
 }
 
 // tradedMarket is the market of a trade, read under a share lock in the
