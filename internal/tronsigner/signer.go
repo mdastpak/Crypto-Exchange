@@ -83,6 +83,10 @@ var (
 	ErrKeyReused = errors.New("tron-signer: the key names another payment")
 	// ErrNotFound is a key that names no payment.
 	ErrNotFound = errors.New("tron-signer: no such payment")
+	// ErrRunning is a signer that another one, on the same state, runs
+	// already: two would each pay a key once, and each count a cap of its
+	// own (#551).
+	ErrRunning = errors.New("tron-signer: another signer runs on this state")
 )
 
 // Signer signs the payments of the hot wallet.
@@ -99,6 +103,8 @@ type Signer struct {
 
 	mu    sync.Mutex
 	state state
+	// lock is the lock of the state, which the signer holds while it runs.
+	lock *os.File
 }
 
 // keyPattern is the shape of a key: the server's idempotency keys.
@@ -126,15 +132,24 @@ func New(cfg *Config, node Node, seed []byte, now func() time.Time) (*Signer, er
 	if now == nil {
 		now = time.Now
 	}
+	// One signer on the state at a time: the lock is taken before the
+	// state is read, and held until Close.
+	lock, err := lockFile(cfg.StatePath + ".lock")
+	if err != nil {
+		return nil, err
+	}
 	s := &Signer{cfg: cfg, node: node, key: key, deposits: deposits, hot: tron.AddressOf(key.PubKey()), xpub: deposits.Public().String(), now: now,
 		state: state{Payments: map[string]*record{}, Sweeps: map[string]*sweepRecord{}}}
+	s.lock = lock
 	raw, err := os.ReadFile(cfg.StatePath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
+		_ = lock.Close()
 		return nil, err
 	default:
 		if err := json.Unmarshal(raw, &s.state); err != nil {
+			_ = lock.Close()
 			return nil, fmt.Errorf("tron-signer: the state %s does not read: %w", cfg.StatePath, err)
 		}
 		if s.state.Payments == nil {
@@ -145,6 +160,17 @@ func New(cfg *Config, node Node, seed []byte, now func() time.Time) (*Signer, er
 		}
 	}
 	return s, nil
+}
+
+// Close releases the lock of the state, for another signer to start on
+// it.
+func (s *Signer) Close() error {
+	if s.lock == nil {
+		return nil
+	}
+	err := s.lock.Close()
+	s.lock = nil
+	return err
 }
 
 // DepositXPub is the xpub of the account of the deposit addresses,

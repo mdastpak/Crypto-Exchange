@@ -16,8 +16,12 @@ seed:
   transit_key: "tron-seed"
   # The seed, encrypted by the Transit key: "vault:v1:...".
   ciphertext_file: "/etc/tron-signer/seed.enc"
+  # The only CA that Vault's certificate may be signed by; empty uses the
+  # system's CAs. vault_addr and node_url must be https, or http to the
+  # loopback.
+  vault_ca_file: ""
 # The payments signed, by key, and the caps that each day used. One signer
-# writes it: run a single instance.
+# runs on it: it locks state_path.lock, and a second one refuses to start.
 state_path: "/var/lib/tron-signer/state.json"
 # The most TRX, in sun, that a token payment may burn: 30 TRX.
 fee_limit_sun: 30000000

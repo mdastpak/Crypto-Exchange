@@ -140,6 +140,7 @@ func TestSweep_FailedExpiredAndRestart(t *testing.T) {
 	first := sw.TxID
 
 	c.at = c.at.Add(tron.Lifetime + 2*time.Minute)
+	require.NoError(t, s.Close(), "stopped before the next one starts")
 	restarted := newSigner(t, cfg, node, c)
 	sw, err = restarted.Sweep(ctx, SweepRequest{Key: "a", Index: 3, Asset: "TRX"})
 	require.NoError(t, err)

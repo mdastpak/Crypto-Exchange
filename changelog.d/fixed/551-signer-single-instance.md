@@ -1,0 +1,4 @@
+- The TRON signer refuses to start while another one runs on its state, and no longer reaches Vault or the node over plain HTTP ([#551](https://github.com/mdastpak/Crypto-Exchange/issues/551)). See [the signer's state](docs/custody.md#its-state).
+  - It locks `state_path.lock` for as long as it runs: two signers on one state would each pay a key once, and each count a cap of its own. `docs/custody.md` has the runbook for moving it to another host.
+  - `seed.vault_addr` and `node_url` must be `https://`, or `http://` to the loopback. They carry the Vault token and the seed, and the TronGrid key and the signed transactions.
+  - `seed.vault_ca_file` pins the CA of Vault's certificate.

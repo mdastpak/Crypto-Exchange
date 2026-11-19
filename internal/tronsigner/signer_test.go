@@ -135,14 +135,14 @@ func (n *fakeNode) advance(blocks int64) {
 
 func testConfig(t *testing.T) *Config {
 	t.Helper()
-	c := &Config{Listen: ":0", NodeURL: "http://node", StatePath: filepath.Join(t.TempDir(), "state.json"), FeeLimitSun: 30_000_000,
+	c := &Config{Listen: ":0", NodeURL: "https://node.example", StatePath: filepath.Join(t.TempDir(), "state.json"), FeeLimitSun: 30_000_000,
 		Assets: []Asset{
 			{Symbol: "TRX", MaxPerTransfer: "1000000000", MaxPerDay: "1500000000"},
 			{Symbol: "USDT", Contract: usdtContract, MaxPerTransfer: "5000000000", MaxPerDay: "8000000000"},
 		}}
 	c.TLS.CertFile, c.TLS.KeyFile, c.TLS.ClientCAFile = "c", "k", "ca"
 	c.TLS.AllowedClients = []string{"exchange-server"}
-	c.Seed.VaultAddr, c.Seed.TransitKey, c.Seed.CiphertextFile = "http://vault", "tron-seed", "seed.enc"
+	c.Seed.VaultAddr, c.Seed.TransitKey, c.Seed.CiphertextFile = "https://vault.example", "tron-seed", "seed.enc"
 	require.NoError(t, c.Check())
 	return c
 }
@@ -155,6 +155,7 @@ func newSigner(t *testing.T, cfg *Config, node Node, c *clock) *Signer {
 	t.Helper()
 	s, err := New(cfg, node, seed, c.now)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -290,6 +291,7 @@ func TestSigner_StateSurvivesARestart(t *testing.T) {
 	require.NotEmpty(t, p.TxID, "recorded before the broadcast")
 
 	node.refuseAll = false
+	require.NoError(t, s.Close(), "stopped before the next one starts")
 	restarted := newSigner(t, cfg, node, c)
 	again, err := restarted.Pay(ctx, Request{Key: "k1", To: customer, Asset: "TRX", Amount: "1000000000"})
 	require.NoError(t, err)
