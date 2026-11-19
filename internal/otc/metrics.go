@@ -6,6 +6,7 @@ import (
 
 	"github.com/mdastpak/crypto-exchange/internal/currencies"
 	"github.com/mdastpak/crypto-exchange/internal/metrics"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/restrictions"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
@@ -46,6 +47,36 @@ func (m *Metrics) quoted(market string, side Side, parts Components) {
 	}
 	margin, _ := parts.MarginBPS.Float64()
 	metrics.OTCQuotedMargin.WithLabelValues(m.label(market), string(side)).Observe(margin)
+}
+
+// The stages of a routing, as labels of OTCRoutes.
+const (
+	stageQuote     = "quote"
+	stageExecution = "execution"
+)
+
+// recordRoute counts a routing of stage on the process metrics (#509): the
+// route found and its legs, or why there is none.
+func recordRoute(stage string, route *routing.Route, err error) {
+	if err != nil {
+		var r *Refusal
+		result := "error"
+		if errors.As(err, &r) {
+			result = r.Code
+			if (r.Code == CodeNoRoute || r.Code == CodeQuoteNotRoutable) && r.Limit != "" {
+				result = r.Limit
+			}
+		}
+		metrics.OTCRoutes.WithLabelValues(stage, "none", result).Inc()
+		return
+	}
+	if route == nil {
+		return
+	}
+	metrics.OTCRoutes.WithLabelValues(stage, route.Rule, "routed").Inc()
+	for _, l := range route.Legs {
+		metrics.OTCRouteLegs.WithLabelValues(stage, l.Source, l.Venue).Inc()
+	}
 }
 
 // outcome is the label of a result: quoted, the code of a refusal, or

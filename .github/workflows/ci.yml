@@ -150,7 +150,8 @@ jobs:
       # its p99 bounds the change's at one and a half times the base's when
       # that is above the 10 ms target (#486): a shared runner that is slow
       # that day is slow for both. A base that cannot run gives no baseline,
-      # and the target holds alone.
+      # and the target holds alone. The pattern also runs the load test
+      # with routing on (#509, 25 ms), bounded by its own rounds of the base.
       - name: Load tests
         env:
           LOAD_TESTS: "1"

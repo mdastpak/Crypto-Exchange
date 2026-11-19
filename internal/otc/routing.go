@@ -34,6 +34,10 @@ const (
 // Routing routes the quotes and their executions by the rules (#386).
 type Routing struct {
 	Router *routing.Router
+	// Quotes is the router of the quotes, which may keep the venue state
+	// for a moment on this node (routing.Router.QuoteState, #509); nil is
+	// Router. The executions always plan with Router.
+	Quotes *routing.Router
 	// Region is the region of the release, which the rules match as the
 	// region of the user.
 	Region region.Region
@@ -140,13 +144,26 @@ func (h HouseInventory) Capacity(ctx context.Context, currencyHK, symbol string)
 func (s *Service) route(ctx context.Context, req Request, m currencies.PublicMarket, r rules, mid decimal.Decimal,
 	size func(routeBPS decimal.Decimal) (decimal.Decimal, decimal.Decimal, Components, error),
 	quantity, px decimal.Decimal, parts Components) (decimal.Decimal, decimal.Decimal, Components, error) {
+	quantity, px, parts, err := s.routeSteps(ctx, req, m, r, mid, size, quantity, px, parts)
+	recordRoute(stageQuote, parts.Route, err)
+	return quantity, px, parts, err
+}
+
+// routeSteps is route. The user's level is read once, and the router
+// reads the state of the venues once (#509): every step plans on the
+// state that the first read.
+func (s *Service) routeSteps(ctx context.Context, req Request, m currencies.PublicMarket, r rules, mid decimal.Decimal,
+	size func(routeBPS decimal.Decimal) (decimal.Decimal, decimal.Decimal, Components, error),
+	quantity, px decimal.Decimal, parts Components) (decimal.Decimal, decimal.Decimal, Components, error) {
+	rt := s.routing.forQuote()
+	in, err := rt.input(ctx, req.Account.UserHK, m, req.Side, quantity, mid, r.lot, req.Network)
+	if err != nil {
+		return quantity, px, parts, err
+	}
 	charged := decimal.Zero
 	for range maxRouteSteps {
-		in, err := s.routing.input(ctx, req.Account.UserHK, m, req.Side, quantity, mid, r.lot, req.Network)
-		if err != nil {
-			return quantity, px, parts, err
-		}
-		route, err := s.routing.plan(ctx, in, CodeNoRoute)
+		in.Quantity = quantity
+		route, err := rt.plan(ctx, in, CodeNoRoute)
 		if err != nil {
 			return quantity, px, parts, err
 		}
@@ -162,11 +179,24 @@ func (s *Service) route(ctx context.Context, req Request, m currencies.PublicMar
 	return quantity, px, parts, &Refusal{Code: CodeNoRoute, Limit: routing.ReasonCostTooHigh}
 }
 
+// forQuote returns a copy of r whose router reads the state once, for one
+// quote.
+func (r *Routing) forQuote() *Routing {
+	c := *r
+	router := r.Router
+	if r.Quotes != nil {
+		router = r.Quotes
+	}
+	c.Router = router.Memoized()
+	return &c
+}
+
 // reroute plans the route of a quote again at its execution, against the
 // state of now, and refuses the quote when there is none, or when it
 // costs more than the quote charged. The trade records the route of the
 // execution, which the routed orders (#387) place.
-func (e *Executor) reroute(ctx context.Context, q *Quote, m tradedMarket) error {
+func (e *Executor) reroute(ctx context.Context, q *Quote, m tradedMarket) (err error) {
+	defer func() { recordRoute(stageExecution, q.Components.Route, err) }()
 	quoted := q.Components.Route
 	if quoted == nil {
 		// Quoted before routing was switched on.

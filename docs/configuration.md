@@ -647,6 +647,7 @@ The [OTC quotes](api.md#otc-quotes) ([#61](https://github.com/mdastpak/Crypto-Ex
 | `routing.max_slippage_bps` | `50` | From 1 to 1000. The [slippage guard](otc-routing.md#routed-orders) of a routed order ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)): a buy's limit is at most the reference price × (1 + it), and a sell's at least the reference × (1 − it). |
 | `routing.order_timeout_seconds` | `60` | From 5 to 3600. How long a routed order may stay open at its venue. Then it is cancelled, and what it did not fill is routed again. |
 | `routing.unknown_grace_seconds` | `120` | From 10 to 3600. How long a routed order whose answer was lost is looked up by its client id before it is placed again, since a venue may not show a new order at once. |
+| `routing.quote_state_ms` | `1000` | From 100 to 5000. How long each node keeps the venue state, inventory capacity, and venue usage that it prices the quotes on, shared by every quote ([#509](https://github.com/mdastpak/Crypto-Exchange/issues/509)). The executions always read the state of now. Keep it well under `venues.state.max_age_seconds`. |
 
 Each market prices `reference × (1 ± (spread_bps / 2 + hedge_cost_bps + margin_bps + risk_premium_bps + slippage))`, plus for a buy and minus for a sell. Every part is in basis points of the reference, from 0 to 5000, and their sum must stay under 5000, so that a sell has a positive price.
 

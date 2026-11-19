@@ -256,6 +256,21 @@ var (
 		Help:    "Margin of the OTC quotes given, in basis points of the reference, by market and side.",
 		Buckets: []float64{0, 5, 10, 20, 30, 50, 75, 100, 150, 200, 500},
 	}, []string{"market", "side"})
+	// OTCRoutes counts the routings of the OTC trades (#509), by stage
+	// (quote or execution), rule, and outcome: routed, or the reason that
+	// there is no route. A trade with no route has the rule "none". The
+	// rules and the reasons are few: an operator writes the rules.
+	OTCRoutes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "otc_route_total",
+		Help: "Routings of OTC trades, by stage (quote, execution), rule, and outcome: routed, or the reason of no route.",
+	}, []string{"stage", "rule", "outcome"})
+	// OTCRouteLegs counts the legs of the routes found (#509), by stage,
+	// source (inventory or venue), and venue: where the liquidity comes
+	// from.
+	OTCRouteLegs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "otc_route_legs_total",
+		Help: "Legs of the OTC routes found, by stage (quote, execution), source (inventory, venue), and venue.",
+	}, []string{"stage", "source", "venue"})
 )
 
 func init() {
@@ -268,7 +283,7 @@ func init() {
 		PriceTicks, PriceTicksRejected, PriceProviderLag, PriceProviderAge, PriceProviderConnected, PriceProviderFallback,
 		PriceAggregation, PriceMarketLive, PriceMarketSources, PricePublisherLeader, PricePublishErrors, PriceSignatureFailures, PriceDelivery, ConversionFailures,
 		DelistingNoticesUnprepared, DelistingNoticeBroadcasts, DelistingNoticeRecipientsPending, DelistingNoticeOldestPending, DelistingNoticeFailures,
-		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin,
+		OTCQuotes, OTCQuoteDuration, OTCQuotedMargin, OTCRoutes, OTCRouteLegs,
 	)
 }
 

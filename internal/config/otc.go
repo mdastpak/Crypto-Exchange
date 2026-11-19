@@ -37,6 +37,11 @@ const (
 	MinOTCRoutingUnknownGraceSeconds = 10
 	MaxOTCRoutingUnknownGraceSeconds = 3600
 	DefaultOTCRoutingUnknownGrace    = 120
+	// The bounds and default of how long a node keeps the venue state that
+	// it prices the quotes on (#509), in milliseconds.
+	MinOTCRoutingQuoteStateMs     = 100
+	MaxOTCRoutingQuoteStateMs     = 5000
+	DefaultOTCRoutingQuoteStateMs = 1000
 )
 
 // OTCConfig configures the OTC quotes (#61). See
@@ -80,6 +85,10 @@ type OTCRoutingConfig struct {
 	// is looked up before it is placed again: a venue may not show an
 	// order at once.
 	UnknownGraceSeconds int `yaml:"unknown_grace_seconds"`
+	// QuoteStateMs is how long a node keeps what it read of the venues'
+	// state, the inventory, and the usage to price the quotes (#509),
+	// shared by every quote. The execution reads the state of now.
+	QuoteStateMs int `yaml:"quote_state_ms"`
 }
 
 // OTCMarket prices the quotes of one market. A buy is quoted at
@@ -149,6 +158,9 @@ func (c *Configuration) applyOTCDefaults() {
 	if o.Routing.UnknownGraceSeconds == 0 {
 		o.Routing.UnknownGraceSeconds = DefaultOTCRoutingUnknownGrace
 	}
+	if o.Routing.QuoteStateMs == 0 {
+		o.Routing.QuoteStateMs = DefaultOTCRoutingQuoteStateMs
+	}
 }
 
 var otcMarketSymbol = regexp.MustCompile(`^[A-Z0-9]{1,15}/[A-Z0-9]{1,15}$`)
@@ -176,6 +188,7 @@ func (c *Configuration) otcProblems(p *problems) {
 		{"otc.routing.max_slippage_bps", o.Routing.MaxSlippageBPS, MinOTCRoutingSlippageBPS, MaxOTCRoutingSlippageBPS},
 		{"otc.routing.order_timeout_seconds", o.Routing.OrderTimeoutSeconds, MinOTCRoutingOrderTimeoutSeconds, MaxOTCRoutingOrderTimeoutSeconds},
 		{"otc.routing.unknown_grace_seconds", o.Routing.UnknownGraceSeconds, MinOTCRoutingUnknownGraceSeconds, MaxOTCRoutingUnknownGraceSeconds},
+		{"otc.routing.quote_state_ms", o.Routing.QuoteStateMs, MinOTCRoutingQuoteStateMs, MaxOTCRoutingQuoteStateMs},
 	} {
 		if b.value < b.lo || b.value > b.hi {
 			p.add(b.key, "is %d; it must be from %d to %d", b.value, b.lo, b.hi)

@@ -3,12 +3,15 @@ package otc
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/domain/shared"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -168,4 +171,57 @@ func TestExecutor_RoutesAgainAtExecution(t *testing.T) {
 	require.ErrorAs(t, err, &r)
 	assert.Equal(t, CodeQuoteNotRoutable, r.Code)
 	assert.Equal(t, "no_routed_orders", r.Limit)
+}
+
+// countedVenue is oneVenue that counts its reads.
+type countedVenue struct {
+	oneVenue
+	reads *atomic.Int64
+}
+
+func (v countedVenue) Market(ctx context.Context, venue, base, quote string) (routing.VenueMarket, error) {
+	v.reads.Add(1)
+	return v.oneVenue.Market(ctx, venue, base, quote)
+}
+
+func (v countedVenue) Funds(ctx context.Context, venue, currency, network string) (routing.Funds, error) {
+	v.reads.Add(1)
+	return v.oneVenue.Funds(ctx, venue, currency, network)
+}
+
+// TestService_AQuoteReadsTheStateOnce covers #509: a quote re-priced with
+// the cost of its route reads the user's level and each venue's state
+// once, and counts its routing on the metrics; a quote with no route
+// counts its reason.
+func TestService_AQuoteReadsTheStateOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newService(t)
+	r := withRouting(t, f, "100000")
+	var reads, levels atomic.Int64
+	r.Router.Venues = countedVenue{oneVenue: oneVenue{"100000"}, reads: &reads}
+	r.Level = func(context.Context, string) (int, error) { levels.Add(1); return 2, nil }
+	routed := testutil.ToFloat64(metrics.OTCRoutes.WithLabelValues(stageQuote, "binance", "routed"))
+	legs := testutil.ToFloat64(metrics.OTCRouteLegs.WithLabelValues(stageQuote, routing.SourceVenue, "binance"))
+	alice := Account{UserHK: shared.NewUUID().String()}
+
+	q, err := f.Quote(ctx, Request{Account: alice, Market: "BTC/USDT", Side: SideBuy, Quantity: ptr("0.5")})
+	require.NoError(t, err)
+	assertDec(t, "30", q.Components.RouteBPS, "the quote was re-priced with its route")
+	assert.Equal(t, int64(1), levels.Load(), "the level is read once per quote")
+	// The market, the funds of the quote currency that it spends, and of the
+	// base that it gets: once each, however many times the router ran.
+	assert.LessOrEqual(t, reads.Load(), int64(3), "each venue's state is read once per quote")
+	assert.Equal(t, routed+1, testutil.ToFloat64(metrics.OTCRoutes.WithLabelValues(stageQuote, "binance", "routed")))
+	assert.Equal(t, legs+1, testutil.ToFloat64(metrics.OTCRouteLegs.WithLabelValues(stageQuote, routing.SourceVenue, "binance")))
+
+	before := reads.Load()
+	_, err = f.Quote(ctx, Request{Account: alice, Market: "BTC/USDT", Side: SideBuy, Quantity: ptr("0.5")})
+	require.NoError(t, err)
+	assert.Greater(t, reads.Load(), before, "the next quote reads the state again")
+
+	none := testutil.ToFloat64(metrics.OTCRoutes.WithLabelValues(stageQuote, "none", routing.ReasonInsufficientLiquidity))
+	r.Router.Venues = oneVenue{"10000"}
+	_, err = f.Quote(ctx, Request{Account: alice, Market: "BTC/USDT", Side: SideBuy, Quantity: ptr("0.5")})
+	assert.Equal(t, CodeNoRoute, refusalCode(t, err))
+	assert.Equal(t, none+1, testutil.ToFloat64(metrics.OTCRoutes.WithLabelValues(stageQuote, "none", routing.ReasonInsufficientLiquidity)))
 }
