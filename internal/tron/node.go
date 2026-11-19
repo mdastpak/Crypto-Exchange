@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -125,7 +126,9 @@ func (n Node) Head(ctx context.Context) (Block, error) {
 type infoJSON struct {
 	ID          string `json:"id"`
 	BlockNumber int64  `json:"blockNumber"`
-	Receipt     struct {
+	// Result is FAILED for a transaction that failed.
+	Result  string `json:"result"`
+	Receipt struct {
 		Result string `json:"result"`
 	} `json:"receipt"`
 	Log []struct {
@@ -211,4 +214,60 @@ func (n Node) TxBlock(ctx context.Context, txID string) (int64, bool, error) {
 		return 0, false, nil
 	}
 	return info.BlockNumber, true, nil
+}
+
+// Receipt is what the chain did with a transaction.
+type Receipt struct {
+	// Found is false for a transaction in no block yet, or never taken.
+	Found bool
+	Block int64
+	// Success is false for a transaction that failed in its block, such as
+	// a token transfer that reverted or ran out of energy: it moved
+	// nothing, though it may have burned its fee.
+	Success bool
+	// Result is the chain's word for a failure, such as REVERT.
+	Result string
+}
+
+// Receipt returns what the chain did with transaction id.
+func (n Node) Receipt(ctx context.Context, id string) (Receipt, error) {
+	var info infoJSON
+	if err := n.post(ctx, "/wallet/gettransactioninfobyid", map[string]string{"value": id}, &info); err != nil {
+		return Receipt{}, err
+	}
+	if info.ID == "" || info.BlockNumber == 0 {
+		return Receipt{}, nil
+	}
+	r := Receipt{Found: true, Block: info.BlockNumber, Success: true}
+	switch {
+	case info.Result == "FAILED":
+		r.Success, r.Result = false, "FAILED"
+	case info.Receipt.Result != "" && info.Receipt.Result != "SUCCESS":
+		r.Success, r.Result = false, info.Receipt.Result
+	}
+	return r, nil
+}
+
+// ErrBroadcast is a transaction that the node refused.
+var ErrBroadcast = errors.New("tron: the node refused the transaction")
+
+// Broadcast sends a signed transaction to the network. One that the node
+// already has is sent.
+func (n Node) Broadcast(ctx context.Context, t Tx) error {
+	var out struct {
+		Result  bool   `json:"result"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := n.post(ctx, "/wallet/broadcasthex", map[string]string{"transaction": hex.EncodeToString(t.Encode())}, &out); err != nil {
+		return err
+	}
+	if out.Result || out.Code == "DUP_TRANSACTION_ERROR" {
+		return nil
+	}
+	msg := out.Message
+	if raw, err := hex.DecodeString(msg); err == nil {
+		msg = string(raw)
+	}
+	return fmt.Errorf("%w: %s %s", ErrBroadcast, out.Code, msg)
 }
