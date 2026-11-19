@@ -139,6 +139,41 @@ func TestStore_AVersionChangedInSQLRoutesNothing(t *testing.T) {
 	assert.ErrorIs(t, err, rowseal.ErrUnverified)
 }
 
+// TestCache_AVersionChangedAfterItWasCachedFailsWithinTheWindow covers
+// #511: a cached version changed in SQL, even with its row_version set
+// back, fails its seal on every node within one TTL, rather than only on a
+// node that starts after the change.
+func TestCache_AVersionChangedAfterItWasCachedFailsWithinTheWindow(t *testing.T) {
+	s, db := newStore(t)
+	ctx := context.Background()
+	v, err := s.Save(ctx, venueRules, "start", admin())
+	require.NoError(t, err)
+	clock := time.Now()
+	now := func() time.Time { return clock }
+	nodes := []*Router{}
+	for range 2 {
+		c := &Cache{Store: &Store{DB: s.DB}, TTL: 5 * time.Second, Now: now}
+		r := &Router{Rules: c, Venues: openVenues(), Inventory: noInventory}
+		_, err := r.Plan(ctx, input("buy", "0.5"))
+		require.NoError(t, err, "the node caches the saved version")
+		nodes = append(nodes, r)
+	}
+
+	_, err = db.Exec(`UPDATE otc_routing_rules SET rules = '[{"name":"own","use_inventory":true}]',
+		row_version = row_version WHERE version = $1`, v.Version)
+	require.NoError(t, err)
+	clock = clock.Add(4 * time.Second)
+	for _, r := range nodes {
+		_, err := r.Plan(ctx, input("buy", "0.5"))
+		require.NoError(t, err, "within the window, the node keeps the rules it read")
+	}
+	clock = clock.Add(2 * time.Second)
+	for i, r := range nodes {
+		_, err := r.Plan(ctx, input("buy", "0.5"))
+		assert.ErrorIs(t, err, rowseal.ErrUnverified, "node %d fails closed past the window", i)
+	}
+}
+
 // TestUsage_AddsUpPerVenueAndDay covers the daily usage that the limits
 // read, and a usage lowered in SQL, which is refused.
 func TestUsage_AddsUpPerVenueAndDay(t *testing.T) {

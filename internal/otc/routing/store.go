@@ -212,10 +212,13 @@ func AddUsage(ctx context.Context, tx *sql.Tx, venue, currencyHK string, day tim
 }
 
 // Cache keeps the active rules of one node. After its TTL it reads the
-// number of the highest version, one small query, and reads the rules
-// again only when it changed: a new version applies on every node within
-// the TTL, without a restart. A read that fails, or a version that fails
-// its seal, fails the routing, never routes by the rules held before.
+// number of the highest version and the stamp of its row, one small
+// query, and reads the rules again only when either changed: a new
+// version applies on every node within the TTL, without a restart, and a
+// version changed in SQL after it was cached (#511) is read again and
+// fails its seal on every node within the TTL. A read that fails, or a
+// version that fails its seal, fails the routing, never routes by the
+// rules held before.
 type Cache struct {
 	Store *Store
 	TTL   time.Duration
@@ -224,8 +227,27 @@ type Cache struct {
 
 	mu      sync.Mutex
 	set     RuleSet
+	stamp   string
 	checked time.Time
 	loaded  bool
+}
+
+// latestStamp is the number of the highest version and the stamp of its
+// row: its row_version and its xmin, the transaction that last wrote it,
+// which any UPDATE changes, even one that sets row_version back. 0 and ""
+// when there is none.
+func latestStamp(ctx context.Context, q querier) (int64, string, error) {
+	var v int64
+	var stamp string
+	err := q.QueryRowContext(ctx, `SELECT version, row_version::text || ':' || xmin::text FROM otc_routing_rules
+		ORDER BY version DESC LIMIT 1`).Scan(&v, &stamp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("routing: read the version of the rules: %w", err)
+	}
+	return v, stamp, nil
 }
 
 // NewCache returns the cache of the store's rules, kept for ttl.
@@ -246,12 +268,12 @@ func (c *Cache) Active(ctx context.Context) (RuleSet, error) {
 	if c.loaded && now.Sub(c.checked) < c.TTL {
 		return c.set, nil
 	}
-	version, err := latestVersion(ctx, c.Store.DB)
+	version, stamp, err := latestStamp(ctx, c.Store.DB)
 	if err != nil {
 		c.loaded = false
 		return RuleSet{}, err
 	}
-	if !c.loaded || version != c.set.Version {
+	if !c.loaded || version != c.set.Version || stamp != c.stamp {
 		set := RuleSet{}
 		if version != 0 {
 			v, err := readVersion(ctx, c.Store.DB, version, c.Store.config())
@@ -261,7 +283,7 @@ func (c *Cache) Active(ctx context.Context) (RuleSet, error) {
 			}
 			set = v.RuleSet
 		}
-		c.set = set
+		c.set, c.stamp = set, stamp
 	}
 	c.checked, c.loaded = now, true
 	return c.set, nil

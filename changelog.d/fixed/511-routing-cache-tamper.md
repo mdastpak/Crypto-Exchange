@@ -1,0 +1,1 @@
+- A version of the OTC routing rules changed in SQL after the nodes cached it now fails closed on every node within `otc.routing.cache_seconds`: the cache compares the stamp of the version's row, not only its number ([#511](https://github.com/mdastpak/Crypto-Exchange/issues/511)).
