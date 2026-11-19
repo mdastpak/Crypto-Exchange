@@ -89,7 +89,7 @@ A sweep moves the whole balance of an asset from a deposit address to the hot wa
 1. **Top-up.** A token sweep needs TRX for its fee. When the address holds less than `sweeps.top_up_sun` (the fee limit by default), the hot wallet first sends it the difference, and the sweep waits until that transaction is final.
 2. **The sweep.** The address sends its whole balance of the token, or of TRX less `sweeps.reserve_sun`, and the sweep waits until that transaction is final. It is then `completed`, with the `amount` and where it went (`to`).
 
-An address that holds nothing of the asset completes at once, with `amount` 0. A transaction that expired untaken is signed again from the balance. One that failed on chain fails the sweep, and a new key sweeps again. The payments' caps do not apply, because a sweep only pays the custody's own addresses.
+Sweep one asset of an address at a time, its tokens before its TRX: a TRX sweep would take the TRX that a token sweep was topped up with, and the token sweep would then fail. An address that holds nothing of the asset completes at once, with `amount` 0. A transaction that expired untaken is signed again from the balance. One that failed on chain fails the sweep, and a new key sweeps again. The payments' caps do not apply, because a sweep only pays the custody's own addresses.
 
 **Hot and cold.** An asset with a `hot_cap` is swept to `sweeps.cold_address` when the hot wallet would hold more than its cap. The cold storage is not derived from the signer's seed, so the signer can send to it but never from it. An asset without a cap always goes to the hot wallet, and `hot_cap` requires `cold_address`.
 
