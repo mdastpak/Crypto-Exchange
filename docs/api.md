@@ -1603,7 +1603,28 @@ Each user has one deposit address per network, which every currency of the netwo
 | `POST /user/deposit-addresses` | `{"currency_hk", "network"}`: the user's address of the network, given at the first request and the same after. The user must be allowed crypto deposits by their level (`403 verification_required`) and restrictions, the currency must take deposits on the network (`409 deposits_closed`), and the network must have an xpub (`400 deposit_network_unsupported`). Closed by the deposits lockdown. Audited as `user.deposit_address` when it is given |
 | `GET /user/deposit-addresses` | The user's addresses |
 
-Without a network that has an xpub, the routes answer `503 deposits_unavailable`. The deposits to the addresses are credited by the watcher of the network, which is still to come.
+Without a network that has an xpub, the routes answer `503 deposits_unavailable`.
+
+### Deposits
+
+The watcher of each network finds the deposits to the addresses ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). On TRON it reads every block from a node with the HTTP API of TronGrid (the first of `rpc_endpoints`, with `TRONGRID_API_KEY`): the successful transfers of TRX, and the TRC20 `Transfer` events of the listed tokens, such as USDT by its contract. A transfer from the hot or the cold wallet, such as the fee of a sweep, is no deposit. A deposit is one per transaction and event (`log_index`, -1 for TRX), so a block read twice credits nothing twice.
+
+| Status | |
+| --- | --- |
+| `DETECTED` | In its block, pending in the user's balance (`pending_deposit`) |
+| `CREDITED` | Once its block has `confirmations_required` confirmations (19 on TRON, the deposit's block included) and is still in the chain: the amount is available |
+| `CONFIRMED` | Confirmed and on hold: still pending, until support credits it |
+| `FAILED` | Below the network's `min_deposit`, never pending; or dropped from the chain by a reorg, when it leaves the pending balance |
+
+A confirmed deposit is held when the deposits of its currency or network are closed (`deposits_closed`), when the user's deposits are restricted (`restricted`), or when the [AML rules](aml.md) review or refuse it (`aml`); a refusal is recorded first, with the freeze it asks for. The holds are audited as `deposit.held`.
+
+Each block is recorded in one transaction with the cursor of the network, which must be the block's parent: a block that is not is a reorg, and the watcher reads again from `reorg_depth` blocks back. A deposit found in another block moves to it; one whose block is no longer in the chain, and whose transaction is in none, fails, and is pending again if the transaction comes back. Every instance runs the watcher every `block_poll_interval_seconds`, paused with the scheduler and with the deposits lockdown; the locked cursor lets one record each block. A network without a cursor starts at `start_block`, or at the newest block. The deposits and the cursors are [sealed](data-protection.md#row-seals): a deposit raised or moved in SQL is refused with its finding, and credits nothing, and a cursor moved in SQL stops the watcher.
+
+| Route | |
+| --- | --- |
+| `GET /user/deposits` | The user's 200 newest deposits, with `on_hold` but not why |
+| `GET /admin/deposits` | The 200 newest deposits, with the user and the `hold_reason`; filtered by `user_id`, `status`, and `held=true` |
+| `POST /admin/deposits/{id}/credit` | Credits a held deposit after review, one below the minimum included; not one dropped by a reorg (`409 deposit_not_held`). Sensitive: it needs a step-up. Audited as `admin.deposit_credit` |
 
 ## KYC applications
 

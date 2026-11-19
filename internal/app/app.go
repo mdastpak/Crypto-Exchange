@@ -331,10 +331,6 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
-	// The deposit addresses of the custody (#68).
-	if err := useDeposits(handlers, services.Postgres.DB, &config.Config); err != nil {
-		return err
-	}
 	// The KYC applications for level 2 (#72).
 	if err := useKYC(handlers, services.Postgres.DB, &config.Config); err != nil {
 		return err
@@ -346,6 +342,17 @@ func run() error {
 	}
 	if err := useWithdrawals(handlers, services.Postgres.DB, &config.Config, amlRules); err != nil {
 		return err
+	}
+	// The deposit addresses of the custody, and the watchers of the
+	// deposits to them (#68), which the AML rules evaluate.
+	watches, err := useDeposits(handlers, services.Postgres.DB, &config.Config, amlRules)
+	if err != nil {
+		return err
+	}
+	for _, d := range watches {
+		workers = append(workers, startDepositWatch(d, func() bool {
+			return watcher.Paused(platform.FeatureScheduler) || watcher.Paused(platform.FeatureDeposits)
+		}))
 	}
 	if amlRules != nil {
 		workers = append(workers, startAMLBatch(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
@@ -1415,6 +1422,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/aml/alerts/:id", ih.Admin.GetAMLAlert)
 		adminGroup.POST("/aml/alerts/:id/transition", ih.Admin.TransitionAMLAlert)
 		adminGroup.GET("/aml/sanctions", ih.Admin.GetSanctionsStatus)
+		// The deposits on chain (#68).
+		adminGroup.GET("/deposits", ih.Admin.ListDeposits)
+		adminGroup.POST("/deposits/:id/credit", ih.Admin.CreditDeposit)
 		// The KYC review (#72).
 		adminGroup.GET("/kyc/applications", ih.Admin.ListKYCApplications)
 		adminGroup.GET("/kyc/applications/:id", ih.Admin.GetKYCApplication)
@@ -1543,6 +1553,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// The deposit addresses of the custody (#68).
 		activeGroup.GET("/deposit-addresses", ih.User.ListDepositAddresses)
 		activeGroup.POST("/deposit-addresses", gate.Require(platform.FeatureDeposits), ih.User.GetDepositAddress)
+		activeGroup.GET("/deposits", ih.User.ListDeposits)
 		activeGroup.GET("/withdrawals", ih.User.ListWithdrawals)
 		activeGroup.GET("/withdrawals/:id", ih.User.GetWithdrawal)
 		activeGroup.POST("/withdrawals/:id/cancel", ih.User.CancelWithdrawal)

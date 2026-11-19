@@ -297,6 +297,11 @@ const (
 	// A user was given a deposit address on a network (#68), derived from
 	// the extended public key of the custody.
 	ActionUserDepositAddress = "user.deposit_address"
+	// A confirmed deposit was held rather than credited (#68): below the
+	// minimum, deposits closed, the user's deposits restricted, or the AML
+	// rules. An administrator credited a held deposit after review.
+	ActionDepositHeld        = "deposit.held"
+	ActionAdminDepositCredit = "admin.deposit_credit"
 )
 
 // Target types.
@@ -324,6 +329,8 @@ const (
 	TargetAMLRule = "aml_rule"
 	// TargetAMLAlert is an AML alert (#73), by its id.
 	TargetAMLAlert = "aml_alert"
+	// TargetDeposit is a deposit on chain (#68), by its id.
+	TargetDeposit = "deposit"
 	// TargetKYCApplication is a KYC application (#72), by its id; its
 	// documents are named in the changes.
 	TargetKYCApplication = "kyc_application"

@@ -2730,6 +2730,186 @@
                 }
             }
         },
+        "/api/v1/admin/deposits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The newest deposits on chain (#68), at most 200, with the user's user_id and, for a held one, its hold_reason: below_minimum (FAILED), or deposits_closed, restricted, or aml (CONFIRMED, still pending in the user's balance). held=true lists only those on hold. A deposit that fails its seal answers 409 row_unverified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin deposits"
+                ],
+                "summary": "List deposits",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The user",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "DETECTED",
+                            "CONFIRMED",
+                            "CREDITED",
+                            "FAILED"
+                        ],
+                        "type": "string",
+                        "description": "The status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only the deposits on hold",
+                        "name": "held",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.Deposit"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/deposits/{id}/credit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Credits a deposit on hold (#68), after review: one held at confirmation, whose amount moves from pending to available, or one below the minimum, which is first recorded as pending. A deposit dropped by a reorg cannot be credited. A sensitive route: it needs a step-up. Audited as admin.deposit_credit, with the hold.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin deposits"
+                ],
+                "summary": "Credit a held deposit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The deposit",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/deposits.Deposit"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "step_up_required",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "deposit_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "deposit_not_held or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/integrity/findings": {
             "get": {
                 "security": [
@@ -11068,6 +11248,70 @@
                 }
             }
         },
+        "/api/v1/user/deposits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's newest deposits on chain (#68), at most 200: DETECTED while their block has too few confirmations (19 on TRON) and the amount is pending in the balance, CREDITED once available, FAILED when a reorg dropped the transaction or the amount was below the minimum, and CONFIRMED with on_hold while support reviews it. Why a deposit is held is not told.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-deposits"
+                ],
+                "summary": "List the deposits",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.UserDeposit"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/favorites": {
             "get": {
                 "security": [
@@ -16577,6 +16821,139 @@
                 "network": {
                     "type": "string",
                     "example": "tron"
+                }
+            }
+        },
+        "deposits.Deposit": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "string",
+                    "example": "25.5"
+                },
+                "block_hash": {
+                    "type": "string"
+                },
+                "block_height": {
+                    "type": "integer"
+                },
+                "credited_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "hold_reason": {
+                    "$ref": "#/definitions/deposits.Hold"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "log_index": {
+                    "description": "LogIndex is the index of the transfer's event in its transaction; -1\nfor a transfer of the native asset.",
+                    "type": "integer"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                },
+                "status": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/deposits.Status"
+                        }
+                    ],
+                    "example": "CREDITED"
+                },
+                "tx_hash": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "deposits.Hold": {
+            "type": "string",
+            "enum": [
+                "below_minimum",
+                "deposits_closed",
+                "restricted",
+                "aml"
+            ],
+            "x-enum-varnames": [
+                "HoldBelowMinimum",
+                "HoldDepositsClosed",
+                "HoldRestricted",
+                "HoldAML"
+            ]
+        },
+        "deposits.Status": {
+            "type": "string",
+            "enum": [
+                "DETECTED",
+                "CONFIRMED",
+                "CREDITED",
+                "FAILED"
+            ],
+            "x-enum-varnames": [
+                "StatusDetected",
+                "StatusConfirmed",
+                "StatusCredited",
+                "StatusFailed"
+            ]
+        },
+        "deposits.UserDeposit": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "string",
+                    "example": "25.5"
+                },
+                "block_height": {
+                    "type": "integer"
+                },
+                "credited_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "detected_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                },
+                "on_hold": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/deposits.Status"
+                        }
+                    ],
+                    "example": "CREDITED"
+                },
+                "tx_hash": {
+                    "type": "string"
                 }
             }
         },

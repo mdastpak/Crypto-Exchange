@@ -217,7 +217,8 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		SanctionsLists.Name:   "NULL",
 		KYCApplications.Name:  "user_id",
 		DepositAddresses.Name: "user_id",
-		KYCDocuments.Name:     "(SELECT k.user_id FROM kyc_applications k WHERE k.id = kyc_documents.application_id)",
+		Deposits.Name:         "user_id", ChainCursors.Name: "NULL",
+		KYCDocuments.Name: "(SELECT k.user_id FROM kyc_applications k WHERE k.id = kyc_documents.application_id)",
 	}[t.Name]
 	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)

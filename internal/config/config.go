@@ -1192,6 +1192,9 @@ type CustodyProviderConfig struct {
 	// which the deposit addresses are derived (#68): m/44'/195'/0' on
 	// TRON. Never an extended private key: the server holds none.
 	XPub string `yaml:"xpub"`
+	// StartBlock is the first block that the deposit watcher reads when it
+	// has read none (#68); 0 starts from the newest block.
+	StartBlock int64 `yaml:"start_block"`
 }
 
 // FiatProviderConfig holds configuration for a fiat provider

@@ -932,8 +932,11 @@ custody:
       fee_asset_id: "TRX"
       hot_wallet_address: ""
       cold_wallet_address: ""
-      block_poll_interval_seconds: 10
+      block_poll_interval_seconds: 3
       reorg_depth: 19
+      # The first block that the deposit watcher reads when it has read
+      # none; 0 is the newest block.
+      start_block: 0
       sanctions_screening: true
 
     # Internal ledger (off-chain settlement)

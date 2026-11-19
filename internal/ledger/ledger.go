@@ -190,30 +190,42 @@ type entry struct {
 // DetectDeposit records a deposit to a that is detected on its network but
 // not credited yet: pending, not owned.
 func (l Ledger) DetectDeposit(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
-	return l.record(ctx, entry{kind: KindDepositDetected, key: key, ref: ref,
+	return l.record(ctx, depositDetected(key, a, amount, ref))
+}
+
+func depositDetected(key string, a Account, amount Amount, ref Ref) entry {
+	return entry{kind: KindDepositDetected, key: key, ref: ref,
 		moves:    []move{{a, amount.Currency, balance.BalanceChangePendingDep, amount.Value}},
 		postings: []posting{{AccountDepositsPending, amount.Currency, amount.Value.Neg()}},
-	})
+	}
 }
 
 // CreditDeposit credits a detected deposit to a: the pending amount becomes
 // available, and custody now holds it.
 func (l Ledger) CreditDeposit(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
-	return l.record(ctx, entry{kind: KindDepositCredited, key: key, ref: ref,
+	return l.record(ctx, depositCredited(key, a, amount, ref))
+}
+
+func depositCredited(key string, a Account, amount Amount, ref Ref) entry {
+	return entry{kind: KindDepositCredited, key: key, ref: ref,
 		moves: []move{{a, amount.Currency, balance.BalanceChangeDeposit, amount.Value}},
 		postings: []posting{
 			{AccountDepositsPending, amount.Currency, amount.Value},
 			{AccountCustody, amount.Currency, amount.Value.Neg()},
 		},
-	})
+	}
 }
 
 // FailDeposit drops a detected deposit that will not be credited.
 func (l Ledger) FailDeposit(ctx context.Context, key string, a Account, amount Amount, ref Ref) (Result, error) {
-	return l.record(ctx, entry{kind: KindDepositFailed, key: key, ref: ref,
+	return l.record(ctx, depositFailed(key, a, amount, ref))
+}
+
+func depositFailed(key string, a Account, amount Amount, ref Ref) entry {
+	return entry{kind: KindDepositFailed, key: key, ref: ref,
 		moves:    []move{{a, amount.Currency, balance.BalanceChangeDepositFailed, amount.Value}},
 		postings: []posting{{AccountDepositsPending, amount.Currency, amount.Value}},
-	})
+	}
 }
 
 // Lock reserves available funds of a for an order or a withdrawal.

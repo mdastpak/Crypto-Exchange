@@ -29,6 +29,34 @@ func (f fakeDeposits) List(context.Context, string) ([]deposits.Address, error) 
 	return []deposits.Address{}, f.err
 }
 
+func (f fakeDeposits) History(context.Context, string) ([]deposits.UserDeposit, error) {
+	return []deposits.UserDeposit{{Network: "tron", Status: deposits.StatusDetected}}, f.err
+}
+
+func TestDepositHistory(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	serve := func(h *UserHandler) (int, map[string]any) {
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			auth.SetClaims(c, &auth.Claims{UUID: uuid.NewString(), SessionID: uuid.NewString(), Role: auth.RoleUser})
+		})
+		r.GET("/deposits", h.ListDeposits)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/deposits", nil))
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+		return w.Code, resp
+	}
+	status, resp := serve(&UserHandler{Deposits: fakeDeposits{}})
+	assert.Equal(t, http.StatusOK, status)
+	assert.Len(t, resp["info"], 1)
+	status, resp = serve(&UserHandler{Deposits: fakeDeposits{err: rowseal.ErrUnverified}})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, "row_unverified", resp["code"])
+	status, _ = serve(&UserHandler{})
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+}
+
 func TestDepositRoutes_RunWithoutInfrastructure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	serve := func(h *UserHandler, method, body string) (int, map[string]any) {

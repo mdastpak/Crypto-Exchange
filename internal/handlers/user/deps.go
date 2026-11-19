@@ -105,6 +105,8 @@ type KYCApplications interface {
 type DepositAddresses interface {
 	Get(ctx context.Context, userHK, currencyHK, network string, origin audit.Event) (deposits.Address, error)
 	List(ctx context.Context, userHK string) ([]deposits.Address, error)
+	// History returns the user's newest deposits.
+	History(ctx context.Context, userHK string) ([]deposits.UserDeposit, error)
 }
 
 // BalanceReader reads the balances of a user and the history of their
