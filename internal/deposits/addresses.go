@@ -115,8 +115,15 @@ func (s Service) Get(ctx context.Context, userHK, currencyHK, network string, or
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Address{}, err
 	}
-	// One index at a time per network, over every instance.
+	// One index at a time per network, over every instance. The user's
+	// row is only share-locked, so two first requests of the user may both
+	// get here: the second finds the address of the first.
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('deposit_addresses:' || $1))`, network); err != nil {
+		return Address{}, err
+	}
+	if a, err := current(ctx, tx, userHK, network); err == nil {
+		return a, tx.Commit()
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Address{}, err
 	}
 	var next int64

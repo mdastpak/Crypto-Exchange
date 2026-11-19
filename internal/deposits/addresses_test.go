@@ -137,3 +137,28 @@ func TestAddress_ChangedInSQL_Refused(t *testing.T) {
 	require.ErrorIs(t, err, rowseal.ErrUnverified)
 	assert.NotEmpty(t, a.Address)
 }
+
+// Two first requests of a user at once get one address (#68).
+func TestGet_ConcurrentFirstRequests(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	alice := f.user("alice@example.com")
+	results := make(chan error, 8)
+	addresses := make(chan string, 8)
+	for range 8 {
+		go func() {
+			a, err := f.Get(ctx, alice, f.usdt, "tron", audit.Event{})
+			results <- err
+			addresses <- a.Address
+		}()
+	}
+	seen := map[string]bool{}
+	for range 8 {
+		require.NoError(t, <-results)
+		seen[<-addresses] = true
+	}
+	assert.Len(t, seen, 1)
+	var n int
+	require.NoError(t, f.DB.QueryRow(`SELECT COUNT(*) FROM deposit_addresses WHERE user_id = $1`, alice).Scan(&n))
+	assert.Equal(t, 1, n)
+}
