@@ -196,6 +196,16 @@ func Save(ctx context.Context, q rowseal.Querier, sealer Sealer, userHK string, 
 			return ErrNationalIDTaken
 		}
 	}
+	// In the caller's transaction, a unique violation of a national ID that
+	// another account verified at the same time would abort the whole
+	// transaction, which the caller still uses to record the refusal: the
+	// savepoint undoes the insert alone.
+	_, inTx := q.(*sql.Tx)
+	if inTx {
+		if _, err := q.ExecContext(ctx, `SAVEPOINT national_id`); err != nil {
+			return err
+		}
+	}
 	_, err = q.ExecContext(ctx, `INSERT INTO user_national_ids (user_hk, national_id_sealed, verified_at, provider, provider_ref,
 			national_id_bidx, birth_date_sealed)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
@@ -205,10 +215,20 @@ func Save(ctx context.Context, q rowseal.Querier, sealer Sealer, userHK string, 
 			updated_at = NOW()`, userHK, sealed, v.At, v.Provider, v.Ref, index, birth)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "user_national_ids_bidx" {
+		if inTx {
+			if _, rbErr := q.ExecContext(ctx, `ROLLBACK TO SAVEPOINT national_id`); rbErr != nil {
+				return rbErr
+			}
+		}
 		return ErrNationalIDTaken
 	}
 	if err != nil {
 		return fmt.Errorf("failed to store the national ID: %w", err)
+	}
+	if inTx {
+		if _, err := q.ExecContext(ctx, `RELEASE SAVEPOINT national_id`); err != nil {
+			return err
+		}
 	}
 	return rowseal.Reseal(ctx, q, rowseal.UserNationalIDs, "user_hk = $1", userHK)
 }
