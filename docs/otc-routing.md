@@ -53,10 +53,14 @@ are used only by the explain endpoint.
   refused rather than routed by rules that the administrators did not save.
 - **Every node, no restart.** Each instance keeps the active version for
   `otc.routing.cache_seconds` (default 5). After that, it reads the number
-  of the highest version, which is one small query. It reads the rules again
-  only when that number changed. A new version therefore reaches every
-  instance within the cache window. The version number itself serves as the
-  generation of the cache, so no Redis key is needed.
+  of the highest version and the stamp of its row (its `row_version` and
+  the transaction that last wrote it), which is one small query. It reads
+  the rules again only when either changed. A new version therefore reaches
+  every instance within the cache window, and a cached version changed in
+  SQL is read again and fails its seal on every instance within the window
+  ([#511](https://github.com/mdastpak/Crypto-Exchange/issues/511)), rather
+  than only on an instance that starts after the change. The version number
+  itself serves as the generation of the cache, so no Redis key is needed.
 - **Region ([#272](https://github.com/mdastpak/Crypto-Exchange/issues/272)).**
   An international release refuses a rule that names an Iranian venue, such
   as `nobitex`, both when the rule is saved and when it is read.
