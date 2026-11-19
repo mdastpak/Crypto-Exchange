@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/mdastpak/crypto-exchange/internal/withdrawals"
 )
 
@@ -51,7 +53,7 @@ func ClientTLS(certFile, keyFile, caFile string) (*tls.Config, error) {
 
 // NewClient returns the client of the signer at url, with tlsConfig.
 func NewClient(url string, tlsConfig *tls.Config) Client {
-	return Client{URL: strings.TrimRight(url, "/"), HTTP: &http.Client{Timeout: 30 * time.Second,
+	return Client{URL: strings.TrimRight(url, "/"), HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: redirect.Refuse,
 		Transport: &http.Transport{TLSClientConfig: tlsConfig}}}
 }
 

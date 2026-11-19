@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
 )
 
 // Sumsub is the Sumsub provider (#72), by its documented API: requests
@@ -93,7 +95,7 @@ func (s *Sumsub) do(ctx context.Context, method, pathQuery string, in, out any) 
 	req.Header.Set("X-App-Access-Sig", s.sign(ts, method, pathQuery, body))
 	client := s.Client
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: redirect.Refuse}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

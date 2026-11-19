@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/deposits"
 	"github.com/mdastpak/crypto-exchange/internal/tron"
@@ -54,7 +56,7 @@ func useDeposits(h *InfraHandlers, db *sql.DB, settings *config.Configuration, r
 		}
 		networks["tron"] = x
 		w := &deposits.Watcher{DB: db, Network: "tron",
-			Chain:         tronChain{tron.Node{BaseURL: node, APIKey: p.APIKey, Client: &http.Client{Timeout: 20 * time.Second}}},
+			Chain:         tronChain{tron.Node{BaseURL: node, APIKey: p.APIKey, Client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: redirect.Refuse}}},
 			Confirmations: int64(orDefault(p.ConfirmationsRequired, 19)), ReorgDepth: int64(orDefault(p.ReorgDepth, 19)),
 			Start: p.StartBlock, MaxBlocks: 200, Ignore: map[string]bool{}}
 		for _, a := range []string{p.HotWalletAddress, p.ColdWalletAddress} {

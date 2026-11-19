@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/helpers"
 	"github.com/mdastpak/crypto-exchange/internal/kyc"
@@ -38,7 +40,7 @@ func useKYC(h *InfraHandlers, db *sql.DB, settings *config.Configuration) error 
 	// keeps Sumsub to the international region.
 	if p := settings.KYCProvider(); p != nil {
 		s.Provider = &kyc.Sumsub{BaseURL: p.Endpoint, AppToken: p.APIKey, SecretKey: p.APISecret, WebhookSecret: p.WebhookSecret,
-			Level: p.Level, Client: &http.Client{Timeout: time.Duration(max(p.Timeout, 10)) * time.Second}}
+			Level: p.Level, Client: &http.Client{Timeout: time.Duration(max(p.Timeout, 10)) * time.Second, CheckRedirect: redirect.Refuse}}
 		log.Printf("KYC applications are verified by %s", s.Provider.Name())
 	}
 	h.User.KYC, h.Admin.KYC = s, s

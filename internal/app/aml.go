@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	files "github.com/mdastpak/crypto-exchange/config"
 	"github.com/mdastpak/crypto-exchange/internal/aml"
 	"github.com/mdastpak/crypto-exchange/internal/config"
@@ -147,7 +149,10 @@ const sanctionsReload = time.Minute
 func startSanctions(setup *amlSetup, db *sql.DB, paused func() bool) worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	client := &http.Client{Timeout: setup.timeout}
+	// The list carries no credential, and its publisher serves it from
+	// another host (treasury.gov answers with a redirect), so redirects
+	// are followed, but never to plain http.
+	client := &http.Client{Timeout: setup.timeout, CheckRedirect: redirect.HTTPSOnly}
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(sanctionsReload)

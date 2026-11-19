@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/mdastpak/crypto-exchange/internal/tron"
 	"github.com/mdastpak/crypto-exchange/internal/tronsigner"
 )
@@ -36,11 +38,11 @@ func run(path string, xpub bool) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	seed, err := tronsigner.UnwrapSeed(ctx, &http.Client{Timeout: 20 * time.Second}, cfg, os.Getenv("VAULT_TOKEN"))
+	seed, err := tronsigner.UnwrapSeed(ctx, &http.Client{Timeout: 20 * time.Second, CheckRedirect: redirect.Refuse}, cfg, os.Getenv("VAULT_TOKEN"))
 	if err != nil {
 		return err
 	}
-	node := tron.Node{BaseURL: cfg.NodeURL, APIKey: os.Getenv("TRONGRID_API_KEY"), Client: &http.Client{Timeout: 20 * time.Second}}
+	node := tron.Node{BaseURL: cfg.NodeURL, APIKey: os.Getenv("TRONGRID_API_KEY"), Client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: redirect.Refuse}}
 	signer, err := tronsigner.New(cfg, node, seed, nil)
 	clear(seed)
 	if err != nil {

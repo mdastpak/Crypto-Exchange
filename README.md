@@ -273,7 +273,7 @@ Run the unit tests, which need no infrastructure:
 ```bash
 go test ./internal/domain/... ./internal/auth/... ./internal/middleware/... ./internal/helpers/... ./internal/config/... \
   ./internal/assetregistry/... ./internal/clientip/... ./internal/contact/... ./internal/pagination/... ./internal/totp/... \
-  ./internal/i18n/... ./internal/geoip/... ./internal/sites/... ./internal/userauth/... ./internal/passwordhash/... \
+  ./internal/i18n/... ./internal/geoip/... ./internal/sites/... ./internal/userauth/... ./internal/passwordhash/... ./internal/redirect/... \
   ./internal/testutil/openapitest/... ./internal/testutil/tcpproxy/... ./pkg/...
 ```
 
@@ -378,6 +378,8 @@ internal/platform/      Maintenance and feature lockdowns: controls, watcher, ro
 internal/price/         Price engine: provider streams with REST fallback, VWAP, TWAP, MAD outliers,
                         quorum, the Redis cache and the publishing of the prices, the reader
 internal/priceoverride/ The prices that administrators set in place of the engine's, sealed
+internal/redirect/      The redirect policies of the outbound HTTP clients: none for a client
+                        with a credential, https only for one without
 internal/redisutil/     Durable Redis writes, hash slots, and following cluster failovers
 internal/recovery/      Backup and restore checks: WAL archiving age, restored-database
                         verification

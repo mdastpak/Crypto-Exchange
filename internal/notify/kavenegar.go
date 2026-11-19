@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/mdastpak/crypto-exchange/internal/config"
 )
 
@@ -62,7 +64,7 @@ func NewKavenegarDeliverer(cfg config.KavenegarConfig) (*KavenegarDeliverer, err
 		reminderTemplate:   cfg.AntiPhishingReminderTemplate,
 		delistingTemplate:  cfg.DelistingNoticeTemplate,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
-		client:             &http.Client{Timeout: timeout},
+		client:             &http.Client{Timeout: timeout, CheckRedirect: redirect.Refuse},
 	}, nil
 }
 

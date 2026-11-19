@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/mdastpak/crypto-exchange/internal/config"
 )
 
@@ -79,7 +81,7 @@ func NewSMSIRDeliverer(cfg config.SMSIRConfig) (*SMSIRDeliverer, error) {
 		reminderTemplate:   cfg.AntiPhishingReminderTemplateID,
 		delistingTemplate:  cfg.DelistingNoticeTemplateID,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
-		client:             &http.Client{Timeout: timeout},
+		client:             &http.Client{Timeout: timeout, CheckRedirect: redirect.Refuse},
 	}, nil
 }
 
