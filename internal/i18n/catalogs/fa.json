@@ -539,5 +539,10 @@
   "KYC_SESSION_CREATED": "نشست احراز هویت ایجاد شد",
   "KYC_WEBHOOK_ACCEPTED": "وب‌هوک پذیرفته شد",
   "KYC_WEBHOOK_UNSIGNED": "وب‌هوک امضا نشده است.",
-  "KYC_PROVIDER_FLOW": "این درخواست توسط ارائه‌دهنده احراز هویت بررسی می‌شود."
+  "KYC_PROVIDER_FLOW": "این درخواست توسط ارائه‌دهنده احراز هویت بررسی می‌شود.",
+  "DEPOSITS_UNAVAILABLE": "واریز موقتاً در دسترس نیست.",
+  "DEPOSIT_ADDRESS_RETRIEVED": "آدرس واریز دریافت شد",
+  "DEPOSIT_ADDRESSES_RETRIEVED": "آدرس‌های واریز دریافت شد",
+  "DEPOSIT_NETWORK_UNSUPPORTED": "واریز در این شبکه پشتیبانی نمی‌شود.",
+  "DEPOSITS_CLOSED": "واریز این ارز در این شبکه بسته است."
 }

@@ -1,0 +1,5 @@
+- Deposit addresses, TRON first ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). See [deposit addresses](docs/api.md#deposit-addresses).
+  - `POST /user/deposit-addresses` gives a user their address of a network, which every currency of the network shares, such as TRX and USDT on TRON, and `GET /user/deposit-addresses` lists them. The user must be allowed crypto deposits, and the currency must take deposits on the network.
+  - An address is derived by BIP32 from the extended public key of the custody's account (`custody.providers[].xpub`, `m/44'/195'/0'/0/<index>` on TRON), with the next index of the network, so the server holds no private key. An extended private key, or an xpub that does not parse, stops the server.
+  - Migration 54: a deposit address names its network, and is unique by network and address and by network and index; a user has one active address per network. The rows are sealed: an address swapped in SQL is refused.
+  - `internal/tron`: TRON addresses in base58check and hex, and the public derivation, checked against BIP32 test vector 1.

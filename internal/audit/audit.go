@@ -294,6 +294,9 @@ const (
 	// A KYC provider's webhook moved an application (#72): submitted at
 	// the provider, approved, rejected, or sent back for new documents.
 	ActionKYCProviderVerdict = "kyc.provider_verdict"
+	// A user was given a deposit address on a network (#68), derived from
+	// the extended public key of the custody.
+	ActionUserDepositAddress = "user.deposit_address"
 )
 
 // Target types.

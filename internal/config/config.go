@@ -1188,6 +1188,10 @@ type CustodyProviderConfig struct {
 	BlockPollInterval     int      `yaml:"block_poll_interval_seconds"`
 	ReorgDepth            int      `yaml:"reorg_depth"`
 	SanctionsScreening    bool     `yaml:"sanctions_screening"`
+	// XPub is the extended public key of the account of the network, from
+	// which the deposit addresses are derived (#68): m/44'/195'/0' on
+	// TRON. Never an extended private key: the server holds none.
+	XPub string `yaml:"xpub"`
 }
 
 // FiatProviderConfig holds configuration for a fiat provider

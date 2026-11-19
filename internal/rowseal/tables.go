@@ -278,6 +278,13 @@ var (
 		text("application_id"), text("type"), text("status"), text("file_size"), text("mime_type"),
 		text("storage_path"), sealedBytes("content_digest"), timestamptz("created_at"),
 	}, SealedFromStart: true}
+	// DepositAddresses covers a deposit address of a user (#68): its owner,
+	// network, address, and the index it is derived by. An address swapped
+	// in SQL would credit another user's deposits.
+	DepositAddresses = &Table{Name: "deposit_addresses", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("user_id"), text("sub_account_id"), text("currency_hk"), text("network"), text("address"),
+		text("derivation_path"), text("index"), text("active"), timestamptz("created_at"),
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
 	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
@@ -477,6 +484,7 @@ var Tables = []*Table{
 	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
 	SanctionsLists,
 	KYCApplications, KYCDocuments,
+	DepositAddresses,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

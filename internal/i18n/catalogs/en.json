@@ -539,5 +539,10 @@
   "KYC_SESSION_CREATED": "Verification session created",
   "KYC_WEBHOOK_ACCEPTED": "Webhook accepted",
   "KYC_WEBHOOK_UNSIGNED": "The webhook is not signed.",
-  "KYC_PROVIDER_FLOW": "This application is verified by the verification provider."
+  "KYC_PROVIDER_FLOW": "This application is verified by the verification provider.",
+  "DEPOSITS_UNAVAILABLE": "Deposits are temporarily unavailable.",
+  "DEPOSIT_ADDRESS_RETRIEVED": "Deposit address retrieved",
+  "DEPOSIT_ADDRESSES_RETRIEVED": "Deposit addresses retrieved",
+  "DEPOSIT_NETWORK_UNSUPPORTED": "Deposits are not available on this network.",
+  "DEPOSITS_CLOSED": "Deposits of this currency on this network are closed."
 }
