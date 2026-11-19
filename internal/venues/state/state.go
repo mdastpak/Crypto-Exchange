@@ -345,6 +345,9 @@ type Reservation struct {
 	Amount        shared.Decimal `json:"amount"`
 	ReferenceType string         `json:"reference_type"`
 	ReferenceID   string         `json:"reference_id"`
+	// Released is set on a reservation that is released but still counts,
+	// as no snapshot is newer than its release (#500).
+	Released bool `json:"released,omitempty"`
 }
 
 // Reserve reserves r.Amount of the balance of r.Asset at r.Venue for its
@@ -377,21 +380,22 @@ func (s *Store) ReserveIn(ctx context.Context, tx *sql.Tx, r Reservation) (Reser
 		return Reservation{}, fmt.Errorf("venues: a reservation needs a positive amount and a reference")
 	}
 	var free shared.Decimal
-	err := tx.QueryRowContext(ctx, `SELECT free FROM venue_balances WHERE venue = $1 AND asset = $2 FOR UPDATE`,
-		r.Venue, r.Asset).Scan(&free)
+	var takenAt time.Time
+	err := tx.QueryRowContext(ctx, `SELECT free, taken_at FROM venue_balances WHERE venue = $1 AND asset = $2 FOR UPDATE`,
+		r.Venue, r.Asset).Scan(&free, &takenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Reservation{}, fmt.Errorf("%w: %s", ErrNotRoutable, ReasonNoBalance)
 	}
 	if err != nil {
 		return Reservation{}, fmt.Errorf("venues: lock the balance of %s at %s: %w", r.Asset, r.Venue, err)
 	}
-	open, reserved, err := openReservations(ctx, tx, r.Venue, r.Asset)
+	open, reserved, err := openReservations(ctx, tx, r.Venue, r.Asset, takenAt)
 	if err != nil {
 		return Reservation{}, err
 	}
 	for _, o := range open {
 		if o.ReferenceType == r.ReferenceType && o.ReferenceID == r.ReferenceID {
-			if !o.Amount.Equal(r.Amount) {
+			if o.Released || !o.Amount.Equal(r.Amount) {
 				return Reservation{}, ErrReferenceReused
 			}
 			return o, nil
@@ -425,13 +429,22 @@ func (s *Store) ReserveIn(ctx context.Context, tx *sql.Tx, r Reservation) (Reser
 	return r, nil
 }
 
-// openReservations returns the open reservations of a balance, each
-// checked against its seal, and their sum. A reservation changed in SQL is
-// refused: the balance cannot be planned on until it is reviewed.
-func openReservations(ctx context.Context, q querier, venue, asset string) ([]Reservation, shared.Decimal, error) {
+// openReservations returns the reservations that still count against a
+// balance whose snapshot was taken at takenAt, each checked against its
+// seal, and their sum. A reservation changed in SQL is refused: the balance
+// cannot be planned on until it is reviewed.
+//
+// A reservation counts while it is open, and also once released until a
+// snapshot newer than its release (#500): an order that filled spent the
+// funds at the venue, but the snapshot taken before the fill still shows
+// them free. The release is marked after the venue confirmed the order's
+// end, and a snapshot's time is read before the venue is called, both on
+// the database's clock (#502), so a snapshot taken after the release shows
+// what the order spent. A release at the snapshot's very time still counts.
+func openReservations(ctx context.Context, q querier, venue, asset string, takenAt time.Time) ([]Reservation, shared.Decimal, error) {
 	sum := shared.Decimal{}
 	rows, err := q.QueryContext(ctx, `SELECT `+rowseal.VenueReservations.Fields("")+` FROM venue_reservations
-		WHERE venue = $1 AND asset = $2 AND released_at IS NULL`, venue, asset)
+		WHERE venue = $1 AND asset = $2 AND (released_at IS NULL OR released_at >= $3)`, venue, asset, takenAt)
 	if err != nil {
 		return nil, sum, fmt.Errorf("venues: read the reservations of %s at %s: %w", asset, venue, err)
 	}
@@ -452,14 +465,16 @@ func openReservations(ctx context.Context, q querier, venue, asset string) ([]Re
 		}
 		sum = sum.Add(amount)
 		out = append(out, Reservation{ID: r.Key, Venue: venue, Asset: asset, Amount: amount,
-			ReferenceType: r.Values[t.Index("reference_type")].String, ReferenceID: r.Values[t.Index("reference_id")].String})
+			ReferenceType: r.Values[t.Index("reference_type")].String, ReferenceID: r.Values[t.Index("reference_id")].String,
+			Released: r.Values[t.Index("released_at")].Valid})
 	}
 	return out, sum, rows.Err()
 }
 
-// Release ends a reservation, once its order filled or failed: its amount
-// is free to plan on again. A reservation already released is left as it
-// is.
+// Release ends a reservation, once its order filled or failed. Its amount
+// is free to plan on again from the first balance snapshot taken after the
+// release, which shows what the order spent (#500); until then it still
+// counts. A reservation already released is left as it is.
 func (s *Store) Release(ctx context.Context, id string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -502,14 +517,15 @@ func (s *Store) ReleaseIn(ctx context.Context, tx *sql.Tx, id string) error {
 // reservations: what the router may still plan on.
 func (s *Store) Available(ctx context.Context, venue, asset string) (shared.Decimal, error) {
 	var free shared.Decimal
-	err := s.DB.QueryRowContext(ctx, `SELECT free FROM venue_balances WHERE venue = $1 AND asset = $2`, venue, asset).Scan(&free)
+	var takenAt time.Time
+	err := s.DB.QueryRowContext(ctx, `SELECT free, taken_at FROM venue_balances WHERE venue = $1 AND asset = $2`, venue, asset).Scan(&free, &takenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return shared.Decimal{}, nil
 	}
 	if err != nil {
 		return shared.Decimal{}, fmt.Errorf("venues: read the balance of %s at %s: %w", asset, venue, err)
 	}
-	_, reserved, err := openReservations(ctx, s.DB, venue, asset)
+	_, reserved, err := openReservations(ctx, s.DB, venue, asset, takenAt)
 	if err != nil {
 		return shared.Decimal{}, err
 	}

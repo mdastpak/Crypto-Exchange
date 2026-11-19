@@ -135,6 +135,11 @@ func TestReserve_ReferencesAndRelease(t *testing.T) {
 	require.NoError(t, f.Release(ctx, first.ID), "a release is idempotent")
 	available, err := f.Available(ctx, "binance", "USDT")
 	require.NoError(t, err)
+	assert.Equal(t, "40", available.String(), "a release counts until a newer snapshot (#500)")
+	f.clock = f.clock.Add(time.Second)
+	f.balance(t, "100")
+	available, err = f.Available(ctx, "binance", "USDT")
+	require.NoError(t, err)
 	assert.Equal(t, "100", available.String())
 	r.Amount = dec("60")
 	_, err = f.Reserve(ctx, r)
@@ -149,6 +154,51 @@ func TestReserve_ReferencesAndRelease(t *testing.T) {
 
 	_, err = f.Reserve(ctx, Reservation{Venue: "binance", Asset: "BTC", Amount: dec("1"), ReferenceType: "route", ReferenceID: "4"})
 	require.ErrorIs(t, err, ErrNotRoutable, "no balance at the venue")
+}
+
+// TestReserve_AReleaseCountsUntilANewerSnapshot covers #500: a routing
+// whose order filled releases its reservation at once, but the snapshot
+// taken before the fill still shows the funds it spent as free. A second
+// routing must not plan on them until a snapshot newer than the release.
+func TestReserve_AReleaseCountsUntilANewerSnapshot(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.balance(t, "100")
+	first, err := f.Reserve(ctx, Reservation{Venue: "binance", Asset: "USDT", Amount: dec("70"), ReferenceType: "route", ReferenceID: "1"})
+	require.NoError(t, err)
+
+	// The order fills 70 at the venue, and the router releases it after the
+	// stale snapshot.
+	f.clock = f.clock.Add(time.Second)
+	require.NoError(t, f.Release(ctx, first.ID))
+	second := Reservation{Venue: "binance", Asset: "USDT", Amount: dec("50"), ReferenceType: "route", ReferenceID: "2"}
+	_, err = f.Reserve(ctx, second)
+	require.ErrorIs(t, err, ErrInsufficient, "the stale snapshot does not free what the fill spent")
+	available, err := f.Available(ctx, "binance", "USDT")
+	require.NoError(t, err)
+	assert.Equal(t, "30", available.String())
+	states, err := f.Overview(ctx, map[string]venues.Mapping{"binance": mapping})
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	require.Len(t, states[0].Balances, 1)
+	assert.Equal(t, "70", states[0].Balances[0].Reserved.String(), "the overview counts it too")
+
+	// A snapshot at the very time of the release may not show the fill yet.
+	f.balance(t, "100")
+	_, err = f.Reserve(ctx, second)
+	require.ErrorIs(t, err, ErrInsufficient)
+
+	// The next snapshot shows the 30 left, and the release no longer counts.
+	f.clock = f.clock.Add(time.Second)
+	f.balance(t, "30")
+	available, err = f.Available(ctx, "binance", "USDT")
+	require.NoError(t, err)
+	assert.Equal(t, "30", available.String())
+	_, err = f.Reserve(ctx, second)
+	require.ErrorIs(t, err, ErrInsufficient, "the venue holds 30")
+	second.Amount = dec("30")
+	_, err = f.Reserve(ctx, second)
+	require.NoError(t, err)
 }
 
 // TestRoutable_AStaleSnapshotIsNotRoutable covers the second criterion: a

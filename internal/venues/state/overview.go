@@ -148,7 +148,7 @@ func (s *Store) venue(ctx context.Context, name string, mapping venues.Mapping) 
 				b.Booked = booked[hk.String()]
 			}
 		}
-		_, reserved, err := openReservations(ctx, s.DB, name, b.Asset)
+		_, reserved, err := openReservations(ctx, s.DB, name, b.Asset, b.TakenAt)
 		unverified := errors.Is(err, rowseal.ErrUnverified)
 		if err != nil && !unverified {
 			return VenueState{}, err
