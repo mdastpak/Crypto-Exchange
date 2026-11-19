@@ -1673,6 +1673,33 @@ definitions:
     - StatusConfirmed
     - StatusCredited
     - StatusFailed
+  deposits.Sweep:
+    properties:
+      amount:
+        example: "25000000"
+        type: string
+      created_at:
+        type: string
+      currency_hk:
+        type: string
+      deposit_address_id:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      reason:
+        type: string
+      status:
+        example: completed
+        type: string
+      to:
+        type: string
+      top_up_tx_id:
+        type: string
+      tx_id:
+        type: string
+    type: object
   deposits.UserDeposit:
     properties:
       address:
@@ -10688,6 +10715,61 @@ paths:
       summary: Step up with a fresh authenticator code
       tags:
       - admin sign-in
+  /api/v1/admin/sweeps:
+    get:
+      description: 'The newest sweeps of the deposit addresses to the hot wallet or
+        the cold storage (#68), at most 200, of a status or of any: pending while
+        the signer moves them, completed with the amount in the smallest unit, where
+        it went, and its transactions, or failed with a reason. A sweep that fails
+        its seal answers 409 row_unverified.'
+      parameters:
+      - description: The status
+        enum:
+        - pending
+        - completed
+        - failed
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.Sweep'
+                  type: array
+              type: object
+        "400":
+          description: validation_failed
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List sweeps
+      tags:
+      - admin deposits
   /api/v1/admin/users/{hk}/restrictions:
     get:
       description: 'The restrictions of a user, newest first, at most 200: every one,

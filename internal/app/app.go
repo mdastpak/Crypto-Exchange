@@ -354,6 +354,16 @@ func run() error {
 			return watcher.Paused(platform.FeatureScheduler) || watcher.Paused(platform.FeatureDeposits)
 		}))
 	}
+	// The sweeps of the credited deposits, by the signer (#68).
+	sweeper, sweepEvery, err := useSweeper(services.Postgres.DB, &config.Config)
+	if err != nil {
+		return err
+	}
+	if sweeper != nil && len(watches) > 0 {
+		workers = append(workers, startSweeper(sweeper, sweepEvery, func() bool {
+			return watcher.Paused(platform.FeatureScheduler) || watcher.Paused(platform.FeatureDeposits)
+		}))
+	}
 	if amlRules != nil {
 		workers = append(workers, startAMLBatch(amlRules, services.Postgres.DB, func() bool { return watcher.Paused(platform.FeatureScheduler) }))
 		if amlRules.sanctions != nil {
@@ -1425,6 +1435,7 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// The deposits on chain (#68).
 		adminGroup.GET("/deposits", ih.Admin.ListDeposits)
 		adminGroup.POST("/deposits/:id/credit", ih.Admin.CreditDeposit)
+		adminGroup.GET("/sweeps", ih.Admin.ListSweeps)
 		// The KYC review (#72).
 		adminGroup.GET("/kyc/applications", ih.Admin.ListKYCApplications)
 		adminGroup.GET("/kyc/applications/:id", ih.Admin.GetKYCApplication)

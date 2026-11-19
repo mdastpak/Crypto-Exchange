@@ -545,6 +545,7 @@
   "DEPOSIT_ADDRESS_RETRIEVED": "آدرس واریز دریافت شد",
   "DEPOSIT_ADDRESSES_RETRIEVED": "آدرس‌های واریز دریافت شد",
   "DEPOSITS_RETRIEVED": "واریزها دریافت شد",
+  "SWEEPS_RETRIEVED": "انتقال‌ها به کیف پول دریافت شد",
   "DEPOSIT_CREDITED": "واریز به حساب منظور شد",
   "DEPOSIT_NOT_FOUND": "واریز یافت نشد",
   "DEPOSIT_NOT_HELD": "این واریز در انتظار بررسی نیست",

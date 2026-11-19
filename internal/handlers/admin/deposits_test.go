@@ -19,14 +19,20 @@ import (
 )
 
 type fakeDepositReviews struct {
-	err    error
-	filter deposits.Filter
-	origin audit.Event
+	err         error
+	filter      deposits.Filter
+	origin      audit.Event
+	sweepStatus string
 }
 
 func (f *fakeDepositReviews) List(_ context.Context, filter deposits.Filter) ([]deposits.Deposit, error) {
 	f.filter = filter
 	return []deposits.Deposit{}, f.err
+}
+
+func (f *fakeDepositReviews) Sweeps(_ context.Context, status string) ([]deposits.Sweep, error) {
+	f.sweepStatus = status
+	return []deposits.Sweep{}, f.err
 }
 
 func (f *fakeDepositReviews) Credit(_ context.Context, id string, origin audit.Event) (deposits.Deposit, error) {
@@ -42,6 +48,7 @@ func TestDepositReviewRoutes_RunWithoutInfrastructure(t *testing.T) {
 		r.Use(func(c *gin.Context) { auth.SetClaims(c, &auth.Claims{UUID: admin, Role: auth.RoleAdmin}) })
 		r.GET("/deposits", h.ListDeposits)
 		r.POST("/deposits/:id/credit", h.CreditDeposit)
+		r.GET("/sweeps", h.ListSweeps)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
 		var resp map[string]any
@@ -69,6 +76,11 @@ func TestDepositReviewRoutes_RunWithoutInfrastructure(t *testing.T) {
 		status, _ = serve(&AdminHandler{Deposits: &fakeDepositReviews{err: err}}, http.MethodPost, "/deposits/"+id+"/credit")
 		assert.Equal(t, want, status, err.Error())
 	}
+	status, _ = serve(h, http.MethodGet, "/sweeps?status=failed")
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, deposits.SweepFailed, reviews.sweepStatus)
+	status, _ = serve(h, http.MethodGet, "/sweeps?status=lost")
+	assert.Equal(t, http.StatusBadRequest, status)
 	status, resp := serve(&AdminHandler{}, http.MethodGet, "/deposits")
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 	assert.Equal(t, codeDepositsUnavailable, resp["code"])
