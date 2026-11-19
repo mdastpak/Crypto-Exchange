@@ -19,6 +19,8 @@ Every connector implements `venues.Venue`:
 | `InternalTransfer`, `GetTransfer` | Moves between the main account and a sub-account, by our transfer id. |
 | `Whitelisted(asset, network, address, tag)` | Whether an address is on the withdrawal whitelist of our account. |
 
+A connector may also implement `venues.BookReader`: `BestPrices(symbol)` reads the highest bid and lowest ask of a market, zero for an empty side ([#515](https://github.com/mdastpak/Crypto-Exchange/issues/515)). The routed orders check it before they place an order ([pre-check](otc-routing.md#routed-orders)). A dry run reads it as it is.
+
 What a venue does not offer, or not in its mode, answers `venues.ErrUnsupported`, and `Supports(capability)` says so beforehand: `withdraw`, `deposit_address`, `networks`, `internal_transfer`, `withdrawal_whitelist`.
 
 Each connector speaks the venue's own symbols and units, such as `BTCUSDT` or `btc-rls`. Which of our currencies and networks an asset is, comes from `venues.exchanges.<name>.assets`, never from its symbol: two venues may call one token by different names, or two tokens by one.
@@ -67,6 +69,7 @@ Binance spot, at `https://api.binance.com`, or its testnet at `https://testnet.b
 - **Clock.** The timestamp is of the venue's clock: the offset is read from `/api/v3/time`, kept for ten minutes, and read again when the venue refuses a timestamp (`-1021`).
 - **Orders.** `newClientOrderId` is our id, 1 to 36 of letters, digits, and `.:/_-`. `GetOrder` reads `/api/v3/order` by `origClientOrderId`; `-2013` is `ErrNotFound`. A refused cancel (`-2011`) is a rejection, as Binance answers it for an unknown order and a done one alike: the caller reads the order.
 - **Errors.** `-1007` and `-1006` ("execution status unknown") are `unknown_outcome` on a change; `-1021`, `-1003`, `-1008`, `-1001`, 429, and 418 are `retryable`; any other 4xx is `rejected`, with the code. A key or signature refused (`-1022`, `-2014`, `-2015`) drops the cached credentials.
+- **Best prices.** `BestPrices` reads the public `/api/v3/ticker/bookTicker` of the symbol, unsigned, without the key.
 - **Live only.** The testnet has no `/sapi`, so it supports none of the capabilities. Live mode reads the networks from `/sapi/v1/capital/config/getall`, withdraws with `withdrawOrderId` as our id and finds the withdrawal in the history by it, reads deposit addresses, moves funds between sub-accounts with `/sapi/v1/sub-account/universalTransfer` and `clientTranId` (which needs the key of the master account), and reads the whitelist from the withdrawal address book (`whiteStatus`).
 
 ## Nobitex
@@ -75,6 +78,7 @@ Nobitex, at `https://apiv2.nobitex.ir`. Only a release of the `ir` region may en
 
 - **Authentication.** The token travels as `Authorization: Token …`.
 - **Orders.** `/market/orders/add` with `clientOrderId`, 1 to 32 of letters, digits, `_`, and `-`, as our id; `/market/orders/status` finds it by that id. The symbol is `src-dst` as Nobitex names its markets, such as `btc-rls`, and rial markets are in rials.
+- **Best prices.** `BestPrices` reads `bestBuy` and `bestSell` of the market in the public `/market/stats`. A market that is not listed is `ErrNotFound`, and a closed one has an empty book.
 - **Errors.** Nobitex answers a refused request with `status: failed` and a code, often on HTTP 200: that is a rejection, with its code. An order it does not have (`NotFound`) is `ErrNotFound`.
 - **What it lacks.** Nobitex has no testnet, so a Nobitex venue runs `live` or `dry_run`. It has no withdrawals without a one-time code, no sub-accounts, no list of networks, and no whitelist API, so those capabilities are absent. It publishes no filters of its markets, so the steps and minimums of `Instruments` are zero, which is unknown.
 

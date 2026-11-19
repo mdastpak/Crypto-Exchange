@@ -261,6 +261,15 @@ func (d *Driver) place(ctx context.Context, h held) error {
 		// yet that the lost placement did not happen (#478).
 		return d.wait(ctx, h, followWait)
 	}
+	if r, ok := d.Venue.(venues.BookReader); ok {
+		// The pre-check of #515: an order whose limit the book already
+		// passed would rest until its deadline. A book that cannot be read
+		// does not hold the order: the limit still guards its price.
+		if b, err := r.BestPrices(ctx, h.Symbol); err == nil && !marketable(h.Side, h.Limit, b) {
+			log.Printf("routed: the book of %s at %s is past the limit of the order %s; it is routed elsewhere", h.Symbol, h.Venue, h.ID)
+			return d.close(ctx, h, StatusFailed, ReasonNotMarketable, true)
+		}
+	}
 	placed, err := d.Venue.PlaceOrder(ctx, venues.OrderRequest{
 		ClientID: h.ClientID, Symbol: h.Symbol, Side: venues.Side(h.Side), Type: venues.OrderLimit,
 		Quantity: shared.Decimal(h.Quantity), Price: shared.Decimal(h.Limit),
@@ -288,6 +297,18 @@ func (d *Driver) place(ctx context.Context, h held) error {
 	default:
 		return d.wait(ctx, h, retryWait)
 	}
+}
+
+// marketable reports whether an order at limit can fill against the book:
+// a buy when the lowest ask is at most its limit, a sell when the highest
+// bid is at least it. An empty side is not marketable.
+func marketable(side string, limit decimal.Decimal, b venues.Book) bool {
+	if side == string(venues.SideSell) {
+		bid := b.Bid.Decimal()
+		return bid.IsPositive() && !bid.LessThan(limit)
+	}
+	ask := b.Ask.Decimal()
+	return ask.IsPositive() && !ask.GreaterThan(limit)
 }
 
 var venueCode = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)

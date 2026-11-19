@@ -281,3 +281,14 @@ func TestBinanceLive_ReportsTheFeesOfCompletedWithdrawals(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, none, "a testnet has no withdrawals")
 }
+
+// TestBinance_ReadsTheBestPrices covers the pre-check of #515: the public
+// book ticker of a symbol.
+func TestBinance_ReadsTheBestPrices(t *testing.T) {
+	b, _ := newConnector(t, venues.ModeTestnet)
+	book, err := b.BestPrices(context.Background(), "BTCUSDT")
+	require.NoError(t, err)
+	assert.Equal(t, "BTCUSDT", book.Symbol)
+	assert.Equal(t, "59990", book.Bid.String())
+	assert.Equal(t, "60010", book.Ask.String())
+}

@@ -126,6 +126,13 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "GET /api/v3/exchangeInfo":
 		f.answer(w, f.fixture("exchange_info.json"))
 		return
+	case "GET /api/v3/ticker/bookTicker":
+		if r.Header.Get("X-MBX-APIKEY") != "" || r.URL.Query().Get("signature") != "" {
+			f.t.Error("the book ticker is public: nothing of the key is sent")
+		}
+		f.answer(w, map[string]string{"symbol": r.URL.Query().Get("symbol"), "bidPrice": "59990.00000000", "bidQty": "1.2",
+			"askPrice": "60010.00000000", "askQty": "0.8"})
+		return
 	}
 	q, ok := f.signed(w, r)
 	if !ok {

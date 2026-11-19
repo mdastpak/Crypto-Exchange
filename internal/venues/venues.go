@@ -234,6 +234,22 @@ type FeeReporter interface {
 	Fees(ctx context.Context, since time.Time) ([]Fee, error)
 }
 
+// Book is the best prices of a market at a venue: its highest bid and
+// lowest ask, zero for a side with no orders.
+type Book struct {
+	Symbol string         `json:"symbol"`
+	Bid    shared.Decimal `json:"bid"`
+	Ask    shared.Decimal `json:"ask"`
+}
+
+// BookReader is a venue that reads the best prices of a market (#515), so
+// that an order whose limit the market already passed is routed elsewhere
+// at once instead of resting until its deadline. A venue without it, or
+// that answers ErrUnsupported, is not pre-checked.
+type BookReader interface {
+	BestPrices(ctx context.Context, symbol string) (Book, error)
+}
+
 // Venue is an external exchange, through our account at it. Every method
 // is safe for concurrent use. A capability that the venue, or its mode,
 // does not offer answers ErrUnsupported; Supports says so beforehand.

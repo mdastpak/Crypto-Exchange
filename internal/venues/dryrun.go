@@ -41,6 +41,15 @@ func (d *DryRun) Fees(ctx context.Context, since time.Time) ([]Fee, error) {
 	return nil, nil
 }
 
+// BestPrices reads the book of the venue, a read that a dry run makes as
+// it is; ErrUnsupported when the venue reads none.
+func (d *DryRun) BestPrices(ctx context.Context, symbol string) (Book, error) {
+	if r, ok := d.Venue.(BookReader); ok {
+		return r.BestPrices(ctx, symbol)
+	}
+	return Book{}, ErrUnsupported
+}
+
 func (d *DryRun) PlaceOrder(_ context.Context, req OrderRequest) (Order, error) {
 	if req.ClientID == "" {
 		return Order{}, d.rejected("place_order", "the order has no client id")
