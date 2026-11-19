@@ -7,12 +7,16 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // probeTimeout bounds the check of PostgreSQL in the readiness probe.
 const probeTimeout = 2 * time.Second
 
-// probes answers the health probes of the worker. Liveness answers 200 while
+// probes answers the health probes and the metrics of the worker. Liveness answers 200 while
 // the process runs. Readiness answers 200 while PostgreSQL answers, and 503
 // once the worker stops or while PostgreSQL does not, so that an
 // orchestrator can tell a worker that cannot do its work.
@@ -42,6 +46,9 @@ func (p *probes) handler() http.Handler {
 		}
 		writeStatus(w, http.StatusOK, "ready")
 	})
+	// The counters that the jobs record in this process, such as
+	// row_seal_findings_total, and the metrics of the jobs (#545).
+	mux.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
 	return mux
 }
 

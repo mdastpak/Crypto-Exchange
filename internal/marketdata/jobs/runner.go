@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/mdastpak/crypto-exchange/internal/marketdata"
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 )
 
 // ErrLeaseLost stops a run whose lease another worker took, for example
@@ -175,9 +176,17 @@ func NewRunner(db *sql.DB, opts Options, specs ...Spec) (*Runner, error) {
 		}
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
-	return &Runner{leases: leases{db}, store: marketdata.NewStore(db), opts: opts, specs: specs,
+	r := &Runner{leases: leases{db}, store: marketdata.NewStore(db), opts: opts, specs: specs,
 		slots: make(chan struct{}, opts.MaxConcurrent), ctx: ctx, cancel: cancel,
-		stop: make(chan struct{}), done: make(chan struct{})}, nil
+		stop: make(chan struct{}), done: make(chan struct{})}
+	// The pace of each job that this node runs, against which an alert
+	// measures the age of its last success.
+	for _, spec := range specs {
+		if r.reaches(spec.Job) {
+			metrics.MarketJobInterval.WithLabelValues(spec.Job.Name()).Set(spec.Interval.Seconds())
+		}
+	}
+	return r, nil
 }
 
 // Start looks for due jobs every poll interval until Stop.
@@ -340,7 +349,13 @@ func (r *Runner) execute(spec Spec, token int64) {
 		r.opts.Logger.Printf("market data job %s: releasing its lease; it is due again once the lease passes: %v", name, err)
 	}
 
-	took := time.Since(started).Round(time.Millisecond)
+	elapsed := time.Since(started)
+	metrics.MarketJobDuration.WithLabelValues(name).Observe(elapsed.Seconds())
+	metrics.MarketJobRuns.WithLabelValues(name, how.String()).Inc()
+	if how == succeeded {
+		metrics.MarketJobLastSuccess.WithLabelValues(name).SetToCurrentTime()
+	}
+	took := elapsed.Round(time.Millisecond)
 	if runErr != nil {
 		r.opts.Logger.Printf("market data job %s (%s) failed after %s, %d read, %d written: %v", name, r.opts.Mode, took, read, written, runErr)
 		return

@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mdastpak/crypto-exchange/internal/metrics"
 )
 
 func get(t *testing.T, h http.Handler, path string) (int, string) {
@@ -113,4 +115,16 @@ func TestServe_StopsTheJobsAtShutdown(t *testing.T) {
 	err = serve(ctx, srv, p)
 	assert.True(t, stopped)
 	assert.ErrorContains(t, err, "runs cancelled at shutdown")
+}
+
+// The worker serves the shared registry: a seal finding recorded by one of
+// its jobs, and the metrics of the jobs, can be scraped (#545).
+func TestProbes_ServeTheMetrics(t *testing.T) {
+	p := &probes{ping: func(context.Context) error { return nil }}
+	metrics.SealFindings.WithLabelValues("otc_routed_orders", "mismatch").Inc()
+	metrics.MarketJobRuns.WithLabelValues("venue_state:binance", "succeeded").Inc()
+	code, body := get(t, p.handler(), "/metrics")
+	assert.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, `row_seal_findings_total{check="mismatch",table="otc_routed_orders"}`)
+	assert.Contains(t, body, `market_job_runs_total{job_name="venue_state:binance",outcome="succeeded"}`)
 }
