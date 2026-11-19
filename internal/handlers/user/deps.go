@@ -11,6 +11,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/balances"
 	"github.com/mdastpak/crypto-exchange/internal/confirm"
 	"github.com/mdastpak/crypto-exchange/internal/contactclaim"
+	"github.com/mdastpak/crypto-exchange/internal/deposits"
 	"github.com/mdastpak/crypto-exchange/internal/destinations"
 	"github.com/mdastpak/crypto-exchange/internal/favorites"
 	"github.com/mdastpak/crypto-exchange/internal/idcheck"
@@ -97,6 +98,13 @@ type KYCApplications interface {
 	Submit(ctx context.Context, userHK, id string, origin audit.Event) (kyc.Application, error)
 	Session(ctx context.Context, userHK string) (kyc.Session, error)
 	Webhook(ctx context.Context, header http.Header, body []byte, origin audit.Event) error
+}
+
+// DepositAddresses are the user's deposit addresses (#68):
+// deposits.Service.
+type DepositAddresses interface {
+	Get(ctx context.Context, userHK, currencyHK, network string, origin audit.Event) (deposits.Address, error)
+	List(ctx context.Context, userHK string) ([]deposits.Address, error)
 }
 
 // BalanceReader reads the balances of a user and the history of their

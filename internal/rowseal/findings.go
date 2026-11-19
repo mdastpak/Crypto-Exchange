@@ -214,9 +214,10 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		VenueReservations.Name: "NULL", VenueHolds.Name: "NULL",
 		OTCRoutingRules.Name: "NULL", OTCRoutingUsage.Name: "NULL", OTCRoutedOrders.Name: "NULL",
 		AMLRules.Name: "NULL", AMLRuleHistory.Name: "NULL", AMLEvents.Name: "user_hk", AMLAlerts.Name: "user_id",
-		SanctionsLists.Name:  "NULL",
-		KYCApplications.Name: "user_id",
-		KYCDocuments.Name:    "(SELECT k.user_id FROM kyc_applications k WHERE k.id = kyc_documents.application_id)",
+		SanctionsLists.Name:   "NULL",
+		KYCApplications.Name:  "user_id",
+		DepositAddresses.Name: "user_id",
+		KYCDocuments.Name:     "(SELECT k.user_id FROM kyc_applications k WHERE k.id = kyc_documents.application_id)",
 	}[t.Name]
 	if owner == "" {
 		return "", fmt.Errorf("the owner of a row of %s is not known", t.Name)

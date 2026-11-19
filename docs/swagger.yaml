@@ -1598,6 +1598,17 @@ definitions:
           already, which only support can follow.
         type: integer
     type: object
+  deposits.Address:
+    properties:
+      address:
+        example: TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7
+        type: string
+      created_at:
+        type: string
+      network:
+        example: tron
+        type: string
+    type: object
   destinations.Destination:
     properties:
       bank:
@@ -5104,6 +5115,18 @@ definitions:
           is the main account.
         format: uuid
         type: string
+    type: object
+  user.depositAddressRequest:
+    properties:
+      currency_hk:
+        format: uuid
+        type: string
+      network:
+        example: tron
+        type: string
+    required:
+    - currency_hk
+    - network
     type: object
   user.executeRequest:
     properties:
@@ -12977,6 +13000,107 @@ paths:
       summary: Convert a holding of a migrating currency
       tags:
       - user-currencies
+  /api/v1/user/deposit-addresses:
+    get:
+      description: The user's deposit addresses, one per network (#68).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/deposits.Address'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the deposit addresses
+      tags:
+      - user-deposits
+    post:
+      consumes:
+      - application/json
+      description: 'The user''s deposit address of a currency on a network (#68),
+        given at the first request and the same after: every currency of a network
+        shares it, such as TRX and USDT on TRON. It is derived from the extended public
+        key of the custody, so the server holds no private key. The user must be allowed
+        crypto deposits by their level and restrictions, and the currency must take
+        deposits on the network (409 deposits_closed). Closed by the deposits lockdown.
+        Audited as user.deposit_address when it is given.'
+      parameters:
+      - description: The currency and its network
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.depositAddressRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/deposits.Address'
+              type: object
+        "400":
+          description: validation_failed or deposit_network_unsupported
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: verification_required, account_frozen, operation_restricted,
+            or asset_restricted
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: currency_not_found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: deposits_closed or row_unverified
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: deposits_unavailable or feature_locked
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a deposit address
+      tags:
+      - user-deposits
   /api/v1/user/favorites:
     get:
       description: 'The favorite currencies and trading pairs of the signed-in user,

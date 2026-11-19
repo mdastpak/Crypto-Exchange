@@ -58,7 +58,7 @@ A backend for a cryptocurrency exchange, written in Go. It provides OTP-based si
 | OTC routing rules | Implemented | Versioned, audited rules pick the inventory, one venue, or a weighted split across venues for each OTC trade, by market, side, network, notional, region, and verification level, within each venue's balance share, reserve, daily limit, and a cost ceiling. A quote is priced with the cost of its route and refused when there is none; the execution routes again against fresh state. Every instance applies a new version within its cache window ([#386](https://github.com/mdastpak/Crypto-Exchange/issues/386)). Each venue leg becomes a limit order at its venue within a slippage guard, placed once by its own client id, followed to its fill in the ledger, and past its deadline cancelled and its remainder routed again ([#387](https://github.com/mdastpak/Crypto-Exchange/issues/387)). See [docs/otc-routing.md](docs/otc-routing.md). |
 | AML rules and sanctions screening | Implemented | `config/aml_rules.yaml` is synced into sealed rules with a version per change, which evaluate each withdrawal in its transaction: velocity, structuring, high-risk and cross-border countries, unusual withdrawals, and dormant accounts, with amounts in USDT at the price engine's price, held for review without one. Withdrawal destinations are screened against the OFAC list, downloaded on a schedule and stored sealed, and users' names by similarity, held for review. A rule holds a withdrawal for review, refuses it, or refuses it and freezes the account; a batch at an interval catches the patterns that no single operation completed, and administrators work the alerts (`/admin/aml/*`). Deposits and trades call the same evaluation once their paths wire it; Chainalysis and TRM implement the same screening interface ([#73](https://github.com/mdastpak/Crypto-Exchange/issues/73)). See [docs/aml.md](docs/aml.md). |
 | KYC applications | Implemented | A user at level 1 applies for level 2 with a form and documents (`/user/kyc`), which administrators review (`/admin/kyc`), or, in the international region, which Sumsub verifies through its SDK and its signed webhooks: an approval raises the user to level 2 in the same transaction. The form is sealed with the field key, and each document is encrypted by the server before it is stored in S3-compatible storage, with its digest under the row's seal; administrators open a document through a link signed for them for a minute, and every reading is audited ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)). See [KYC applications](docs/api.md#kyc-applications). |
-| Custody, KYC/AML services | Planned | [Phase 1 epic](https://github.com/mdastpak/Crypto-Exchange/issues/85) |
+| Custody | Partial | Each user gets one deposit address per network, TRON first, which TRX and USDT share (`/user/deposit-addresses`): derived from the extended public key of the custody, so the server holds no private key, and sealed. The deposit watcher, the signer, withdrawals on chain, and sweeps are still to come ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). See [deposit addresses](docs/api.md#deposit-addresses). |
 | Spot trading, derivatives | Planned | [Phase 2](https://github.com/mdastpak/Crypto-Exchange/issues/86) and [Phase 3](https://github.com/mdastpak/Crypto-Exchange/issues/87) epics |
 
 ## Architecture
@@ -344,6 +344,7 @@ internal/db/            PostgreSQL and Redis clients, SQL migrations
 internal/dberr/         Busy-database refusals of a request, answered as 503 database_busy
 internal/delisting/     Delistings of currencies: lifecycle steps, applied once by every instance
 internal/denylink/      "This was not me" links that deny a confirmation and secure the account
+internal/deposits/      Deposit addresses of the custody, derived from its xpub
 internal/destinations/  Withdrawal destinations: own cards, IBANs, accounts, and addresses
 internal/domain/        Exchange domain model: currency, market, order, trade, balance,
                         account, kyc, custody, shared types
@@ -395,6 +396,7 @@ internal/ssl/           Where local signing keys go; the key files are ignored
 internal/testutil/      Test helpers: PostgreSQL and Redis databases, OpenAPI contract
                         checks, users, a field sealer, and network proxies
 internal/totp/          Time-based one-time passwords (RFC 6238)
+internal/tron/          TRON: addresses, BIP32 public derivation from the xpub
 internal/tracing/       OpenTelemetry spans of requests, queries, commands, and publishes
 internal/userauth/      The account password of users, the second step of their sign-in
 internal/venues/        Connectors of the external exchanges for the OTC trades: Binance,

@@ -10913,6 +10913,161 @@
                 }
             }
         },
+        "/api/v1/user/deposit-addresses": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's deposit addresses, one per network (#68).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-deposits"
+                ],
+                "summary": "List the deposit addresses",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.Address"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The user's deposit address of a currency on a network (#68), given at the first request and the same after: every currency of a network shares it, such as TRX and USDT on TRON. It is derived from the extended public key of the custody, so the server holds no private key. The user must be allowed crypto deposits by their level and restrictions, and the currency must take deposits on the network (409 deposits_closed). Closed by the deposits lockdown. Audited as user.deposit_address when it is given.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-deposits"
+                ],
+                "summary": "Get a deposit address",
+                "parameters": [
+                    {
+                        "description": "The currency and its network",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.depositAddressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/deposits.Address"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed or deposit_network_unsupported",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "verification_required, account_frozen, operation_restricted, or asset_restricted",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "currency_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "deposits_closed or row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable or feature_locked",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/favorites": {
             "get": {
                 "security": [
@@ -16409,6 +16564,22 @@
                 }
             }
         },
+        "deposits.Address": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
+                }
+            }
+        },
         "destinations.Destination": {
             "type": "object",
             "properties": {
@@ -21004,6 +21175,23 @@
                     "description": "SubAccountID converts the holding of a sub-account of the user; empty\nis the main account.",
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "user.depositAddressRequest": {
+            "type": "object",
+            "required": [
+                "currency_hk",
+                "network"
+            ],
+            "properties": {
+                "currency_hk": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "network": {
+                    "type": "string",
+                    "example": "tron"
                 }
             }
         },

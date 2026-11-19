@@ -331,6 +331,10 @@ func run() error {
 	handlers.Public.OTPSender = otpSender
 	handlers.User.OTPSender = otpSender
 	useConfirmationSender(handlers, otpSender)
+	// The deposit addresses of the custody (#68).
+	if err := useDeposits(handlers, services.Postgres.DB, &config.Config); err != nil {
+		return err
+	}
 	// The KYC applications for level 2 (#72).
 	if err := useKYC(handlers, services.Postgres.DB, &config.Config); err != nil {
 		return err
@@ -1536,6 +1540,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		// Withdrawals (#70): a request starts a confirmation, and runs once
 		// it is confirmed. The code store limits the codes it sends.
 		activeGroup.POST("/withdrawals", gate.Require(platform.FeatureWithdrawals), ih.User.RequestWithdrawal)
+		// The deposit addresses of the custody (#68).
+		activeGroup.GET("/deposit-addresses", ih.User.ListDepositAddresses)
+		activeGroup.POST("/deposit-addresses", gate.Require(platform.FeatureDeposits), ih.User.GetDepositAddress)
 		activeGroup.GET("/withdrawals", ih.User.ListWithdrawals)
 		activeGroup.GET("/withdrawals/:id", ih.User.GetWithdrawal)
 		activeGroup.POST("/withdrawals/:id/cancel", ih.User.CancelWithdrawal)

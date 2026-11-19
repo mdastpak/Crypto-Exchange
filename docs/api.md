@@ -1594,6 +1594,17 @@ The check of a user's identity ([#158](https://github.com/mdastpak/Crypto-Exchan
 
 The route has the rate limit of a code request and needs the profile changes to be open. Audited as `user.identity_check`, with the check, the provider, and its reference, never the values. A check is a sealed row of `identity_checks`, and the verified national ID a sealed row of `user_national_ids` ([data protection](data-protection.md#row-seals)).
 
+## Deposit addresses
+
+Each user has one deposit address per network, which every currency of the network shares, such as TRX and USDT on TRON ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). It is derived by BIP32 from the extended public key of the custody's account, `m/44'/195'/0'/0/<index>` on TRON, with the next index of the network, so the server holds no private key: the signer holds the seed. The address is recorded and sealed: one swapped in SQL is refused, as it would credit another user's deposits.
+
+| Route | |
+| --- | --- |
+| `POST /user/deposit-addresses` | `{"currency_hk", "network"}`: the user's address of the network, given at the first request and the same after. The user must be allowed crypto deposits by their level (`403 verification_required`) and restrictions, the currency must take deposits on the network (`409 deposits_closed`), and the network must have an xpub (`400 deposit_network_unsupported`). Closed by the deposits lockdown. Audited as `user.deposit_address` when it is given |
+| `GET /user/deposit-addresses` | The user's addresses |
+
+Without a network that has an xpub, the routes answer `503 deposits_unavailable`. The deposits to the addresses are credited by the watcher of the network, which is still to come.
+
 ## KYC applications
 
 A user at level 1, whose identity is verified ([Identity](#identity)), applies for level 2 with a KYC application ([#72](https://github.com/mdastpak/Crypto-Exchange/issues/72)): a form, documents, and a review by an administrator. Personal data is never stored or logged in plaintext: the form is sealed with the field key, and each document is encrypted by the server before it is stored in the S3-compatible storage of [`compliance.kyc.storage`](configuration.md#settings-reserved-for-roadmap-features), which encrypts it again (SSE-S3). The name of a file is not kept. Without the storage or the data keys, the routes answer `503 kyc_unavailable`.
