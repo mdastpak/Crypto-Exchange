@@ -64,9 +64,17 @@ The signer serves TLS 1.3 only, and requires a client certificate signed by `tls
 | `POST /v1/sweeps` | `{"key", "index", "asset"}`: takes the [sweep](#sweeps) of `asset` from deposit address `index` a step further, once by `key`, and answers where it is |
 | `GET /v1/sweeps/{key}` | Where a sweep is, without taking it further |
 
-A payment is `pending` until its transaction has `confirmations` (19) confirmations and is then `completed`. It is `failed` when its transaction failed on chain, such as a token transfer that ran out of energy, and `not_received` when its transaction expired, 10 minutes after it was signed, and no block has it.
+A payment is `pending` until a solidified block holds its transaction, which no reorg can undo, and is then `completed`. It is `failed` when its transaction failed on chain in a solidified block, such as a token transfer that ran out of energy. It is `not_received` when its transaction expired untaken.
 
 `POST` with the key of a payment answers that payment, and broadcasts its transaction again while the network may still take it. If the transaction expired and was never taken, the same key signs a new one. A key of another payment answers `409 key_reused`.
+
+**Expiry is the chain's, not the clock's** ([#550](https://github.com/mdastpak/Crypto-Exchange/issues/550)). A transaction expires 10 minutes after it is signed. A node that lags behind the network answers "not found" for a transaction the network already took, so the signer decides from the chain alone:
+
+- A payment is `not_received` only when the solidified head's own time is a minute past the expiration and no block holds any transaction ever signed for its key. The signer's clock plays no part in it.
+- While the node's head is older than `stale_after_seconds` (60) by the signer's clock, nothing is decided: the payment stays `pending`, and the signer logs that the node is stale.
+- A payment signed again keeps every transaction signed before for its key (`previous_tx_ids`). If one of them is taken after all, it completes the payment, and nothing more is signed.
+
+The sweeps follow the same rules for their top-ups and transfers.
 
 The signer refuses, with `422 refused`:
 

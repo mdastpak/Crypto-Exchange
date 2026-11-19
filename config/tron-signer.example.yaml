@@ -21,7 +21,10 @@ seed:
 state_path: "/var/lib/tron-signer/state.json"
 # The most TRX, in sun, that a token payment may burn: 30 TRX.
 fee_limit_sun: 30000000
-confirmations: 19
+# How old the node's head may be, by the signer's clock, before nothing
+# is decided on its answers: a lagging node answers "not found" for what
+# the network already took (#550).
+stale_after_seconds: 60
 # The sweeps of the deposit addresses (docs/custody.md#sweeps).
 sweeps:
   # The cold storage, which this seed does not hold: an asset is swept

@@ -50,6 +50,38 @@ type fakeNode struct {
 	// address, which the test sets.
 	trx    map[string]*big.Int
 	tokens map[string]map[string]*big.Int
+	// now is the test's clock; the head's time is lag behind it, and the
+	// solidified head is solidDepth blocks below the head.
+	now        func() time.Time
+	lag        time.Duration
+	solidDepth int64
+}
+
+func (n *fakeNode) clock() time.Time {
+	if n.now == nil {
+		return time.Now()
+	}
+	return n.now()
+}
+
+func (n *fakeNode) SolidHead(context.Context) (tron.Block, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return tron.Block{Number: n.head - n.solidDepth, ID: "00000000000003d6" + strings.Repeat("cd", 24),
+		Time: n.clock().Add(-n.lag - time.Duration(n.solidDepth)*3*time.Second)}, nil
+}
+
+func (n *fakeNode) SolidReceipt(_ context.Context, id string) (tron.Receipt, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	b, ok := n.inBlock[id]
+	if !ok || b > n.head-n.solidDepth {
+		return tron.Receipt{}, nil
+	}
+	if r, bad := n.failed[id]; bad {
+		return tron.Receipt{Found: true, Block: b, Result: r}, nil
+	}
+	return tron.Receipt{Found: true, Block: b, Success: true}, nil
 }
 
 func (n *fakeNode) Balance(_ context.Context, a tron.Address) (*big.Int, error) {
@@ -87,13 +119,13 @@ func (n *fakeNode) setToken(token, a string, v int64) {
 
 func newNode() *fakeNode {
 	return &fakeNode{head: 1000, inBlock: map[string]int64{}, failed: map[string]string{}, trx: map[string]*big.Int{},
-		tokens: map[string]map[string]*big.Int{}}
+		tokens: map[string]map[string]*big.Int{}, solidDepth: 18}
 }
 
 func (n *fakeNode) Head(context.Context) (tron.Block, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return tron.Block{Number: n.head, ID: "00000000000003e8" + strings.Repeat("ab", 24)}, nil
+	return tron.Block{Number: n.head, ID: "00000000000003e8" + strings.Repeat("ab", 24), Time: n.clock().Add(-n.lag)}, nil
 }
 
 func (n *fakeNode) Receipt(_ context.Context, id string) (tron.Receipt, error) {
@@ -153,6 +185,9 @@ func (c *clock) now() time.Time { return c.at }
 
 func newSigner(t *testing.T, cfg *Config, node Node, c *clock) *Signer {
 	t.Helper()
+	if f, ok := node.(*fakeNode); ok {
+		f.now = c.now
+	}
 	s, err := New(cfg, node, seed, c.now)
 	require.NoError(t, err)
 	return s
@@ -270,6 +305,10 @@ func TestSigner_ExpiredAndFailed(t *testing.T) {
 	require.NoError(t, err)
 	node.mine(other.TxID)
 	node.failed[other.TxID] = "OUT_OF_ENERGY"
+	st, err = s.Status(ctx, "k2")
+	require.NoError(t, err)
+	assert.Equal(t, StatusPending, st.Status, "failed in a block that a reorg may still undo")
+	node.advance(18)
 	st, err = s.Status(ctx, "k2")
 	require.NoError(t, err)
 	assert.Equal(t, StatusFailed, st.Status)

@@ -1886,7 +1886,7 @@ Both are sensitive routes: they need a [step-up](#post-adminstep-up). `409 payou
 
 **The TRON signer** pays the withdrawals on TRON when `custody.providers[].signer` names it ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68), see [custody](custody.md#the-signer)). A payout records its provider when it is planned, `tron-signer` for these, and is sent to it with its key, the destination's address, and the asset by its contract (`TRX` for the native one), in the smallest unit of its precision from the registry. Each pass asks the signer where its submitted payouts are:
 
-- **Completed:** the payout completes once its transaction has 19 confirmations, with the hash as `tracking_id`.
+- **Completed:** the payout completes once a solidified block holds its transaction, with the hash as `tracking_id`.
 - **Failed:** a transaction that failed on chain fails the payout, as above.
 - **Not received:** a transaction that expired untaken, or a payout that the signer never recorded, is sent again with the same key.
 - **Refused:** a payout that the signer refuses, by its caps or its assets, fails.

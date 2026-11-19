@@ -22,6 +22,8 @@ import (
 // Node is the chain as the signer uses it: tron.Node.
 type Node interface {
 	Head(ctx context.Context) (tron.Block, error)
+	SolidHead(ctx context.Context) (tron.Block, error)
+	SolidReceipt(ctx context.Context, id string) (tron.Receipt, error)
 	Balance(ctx context.Context, a tron.Address) (*big.Int, error)
 	TokenBalance(ctx context.Context, token, a tron.Address) (*big.Int, error)
 	Receipt(ctx context.Context, id string) (tron.Receipt, error)
@@ -67,7 +69,14 @@ type record struct {
 	TxID       string    `json:"tx_id"`
 	Tx         string    `json:"tx"`
 	Expiration time.Time `json:"expiration"`
+	// PreviousTxIDs are the transactions signed for the key before TxID,
+	// each expired untaken by the chain's view: one of them taken after
+	// all is still the payment (#550).
+	PreviousTxIDs []string `json:"previous_tx_ids,omitempty"`
 }
+
+// ids are the transactions ever signed for the payment, the newest last.
+func (r *record) ids() []string { return append(append([]string{}, r.PreviousTxIDs...), r.TxID) }
 
 type state struct {
 	Payments map[string]*record      `json:"payments"`
@@ -236,7 +245,9 @@ func (s *Signer) Pay(ctx context.Context, r Request) (Payment, error) {
 			}
 			return p, err
 		}
-		// Expired untaken: signed again below, in the same day's count.
+		// Expired untaken by the chain's view: signed again below, in the
+		// same day's count, and the transaction of before is kept.
+		rec.PreviousTxIDs = append(rec.PreviousTxIDs, rec.TxID)
 	} else {
 		if amount.Cmp(asset.perOne) > 0 {
 			return Payment{}, fmt.Errorf("%w: above the cap of one payment of %s", ErrRefused, r.Asset)
@@ -261,11 +272,16 @@ func (s *Signer) Pay(ctx context.Context, r Request) (Payment, error) {
 		return Payment{}, fmt.Errorf("%w: %w", ErrRefused, err)
 	}
 	tx = tx.Sign(s.key)
+	previous := rec.TxID
 	rec.TxID, rec.Tx, rec.Expiration = tx.ID(), hex.EncodeToString(tx.Encode()), tx.Expiration
 	s.state.Payments[r.Key] = rec
 	if err := s.save(); err != nil {
 		if !seen {
 			delete(s.state.Payments, r.Key)
+		} else {
+			// Not recorded: the payment stays the transaction of before.
+			rec.TxID = previous
+			rec.PreviousTxIDs = rec.PreviousTxIDs[:len(rec.PreviousTxIDs)-1]
 		}
 		return Payment{}, fmt.Errorf("tron-signer: record the payment: %w", err)
 	}
@@ -301,33 +317,21 @@ func (s *Signer) Status(ctx context.Context, key string) (Payment, error) {
 	return p, err
 }
 
-// expiryMargin is how long after its expiration a transaction that no
-// block has is known never to be taken.
-const expiryMargin = time.Minute
-
-// status tells where a payment is, and whether a block has its
-// transaction.
+// status tells where a payment is, by the chain's view of every
+// transaction signed for it, and whether a block has one.
 func (s *Signer) status(ctx context.Context, key string, rec *record) (Payment, bool, error) {
 	p := Payment{Key: key, TxID: rec.TxID, Status: StatusPending, ExpiresAt: rec.Expiration}
-	receipt, err := s.node.Receipt(ctx, rec.TxID)
+	v, err := s.settle(ctx, rec.ids(), rec.Expiration)
 	if err != nil {
 		return p, false, err
 	}
-	switch {
-	case !receipt.Found:
-		if s.now().After(rec.Expiration.Add(expiryMargin)) {
-			p.Status = StatusNotReceived
-		}
-	case !receipt.Success:
-		p.Status, p.Reason = StatusFailed, "the transaction failed on chain: "+receipt.Result
-	default:
-		head, err := s.node.Head(ctx)
-		if err != nil {
-			return p, true, err
-		}
-		if head.Number-receipt.Block+1 >= s.cfg.Confirmations {
-			p.Status = StatusCompleted
-		}
+	switch v.state {
+	case txFinal:
+		p.Status, p.TxID = StatusCompleted, v.id
+	case txFailed:
+		p.Status, p.TxID, p.Reason = StatusFailed, v.id, "the transaction failed on chain: "+v.reason
+	case txExpired:
+		p.Status = StatusNotReceived
 	}
-	return p, receipt.Found, nil
+	return p, v.inBlock, nil
 }
