@@ -9,7 +9,7 @@ The custody of crypto currencies on chain, TRON first ([#68](https://github.com/
 | The signer, `cmd/tron-signer` | Done |
 | [Withdrawals paid by the signer](api.md#withdrawals) | Done |
 | [Sweeps](#sweeps) by the signer, to the hot wallet or the cold storage | Done |
-| Sweeps started by the server for the credited deposits | To come |
+| [Sweeps started by the server](#the-servers-sweeps) for the credited deposits | Done |
 
 ## Keys
 
@@ -94,3 +94,14 @@ Sweep one asset of an address at a time, its tokens before its TRX: a TRX sweep 
 **Hot and cold.** An asset with a `hot_cap` is swept to `sweeps.cold_address` when the hot wallet would hold more than its cap. The cold storage is not derived from the signer's seed, so the signer can send to it but never from it. An asset without a cap always goes to the hot wallet, and `hot_cap` requires `cold_address`.
 
 The hot wallet's top-ups are no deposits: set the server's `hot_wallet_address` to the address that `-xpub` prints, which the [deposit watcher](api.md#deposits) ignores.
+
+### The server's sweeps
+
+With the signer configured, every instance asks it to sweep every `custody.providers[].sweep_interval_seconds` (300), paused with the scheduler and with the deposits lockdown:
+
+1. **Pending sweeps.** Each pending sweep is taken a step further. The signer is asked between transactions, and its answer is recorded on the sweep: the top-up and the sweep's transactions, and at the end the amount and where it went. The signer must name the address that the server derived for the index. One that names another holds a different seed: the sweep fails, logged as `SECURITY`.
+2. **New sweeps.** An address with deposits credited since its last completed sweep of the asset gets a sweep, one at a time per address, which the database holds, and its tokens before its TRX. An asset whose sweep failed waits an hour, so that a sweep that keeps failing does not burn its fees at every pass. A sweep with nothing to move completes at once.
+
+The sweeps are sealed: one marked completed in SQL is refused with its finding. `GET /admin/sweeps` lists the 200 newest, filtered by `status` (`pending`, `completed`, `failed`).
+
+The TRX that the top-ups and the sweeps burn is a cost of the custody, which the ledger does not book yet: the reconciliation of custody with the books comes with the settlement ([#67](https://github.com/mdastpak/Crypto-Exchange/issues/67)).

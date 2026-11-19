@@ -193,18 +193,28 @@ func warnUnconfigured(db *sql.DB, policy verification.Policy, review map[string]
 // the TRON signer of an enabled custody provider with a signer url.
 func signers(settings *config.Configuration) (map[string]withdrawals.Provider, error) {
 	out := map[string]withdrawals.Provider{}
+	c, ok, err := tronSigner(settings)
+	if ok {
+		out["tron"] = c
+	}
+	return out, err
+}
+
+// tronSigner is the client of the TRON signer of an enabled custody
+// provider with a signer url; false without one.
+func tronSigner(settings *config.Configuration) (tronsigner.Client, bool, error) {
 	for i, c := range settings.Custody.Providers {
 		if !c.Enabled || c.Network != "tron" || c.Signer.URL == "" {
 			continue
 		}
 		if !strings.HasPrefix(c.Signer.URL, "https://") {
-			return nil, fmt.Errorf("custody.providers[%d].signer.url: the signer is reached over https", i)
+			return tronsigner.Client{}, false, fmt.Errorf("custody.providers[%d].signer.url: the signer is reached over https", i)
 		}
 		tlsConfig, err := tronsigner.ClientTLS(c.Signer.CertFile, c.Signer.KeyFile, c.Signer.CAFile)
 		if err != nil {
-			return nil, fmt.Errorf("custody.providers[%d].signer: %w", i, err)
+			return tronsigner.Client{}, false, fmt.Errorf("custody.providers[%d].signer: %w", i, err)
 		}
-		out["tron"] = tronsigner.NewClient(c.Signer.URL, tlsConfig)
+		return tronsigner.NewClient(c.Signer.URL, tlsConfig), true, nil
 	}
-	return out, nil
+	return tronsigner.Client{}, false, nil
 }
