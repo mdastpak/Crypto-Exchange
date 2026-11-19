@@ -5965,6 +5965,214 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/otc/routed-orders": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The orders that cover the venue legs of the OTC trades at the venues (#387), the newest first, each with its transitions, so that an administrator sees every order left to a review (status=manual_review) and why, without the logs (#513). An order changed outside the backend is listed with sealed false and the id of its integrity finding: no node drives it, and it cannot be resolved until it is re-sealed after a review. The unsealed columns, the lease and the deadlines, are shown apart. Filter by status, venue, and trade; limit is at most 200.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin otc"
+                ],
+                "summary": "List the routed orders of the OTC trades",
+                "parameters": [
+                    {
+                        "enum": [
+                            "planned",
+                            "placed",
+                            "partially_filled",
+                            "filled",
+                            "failed",
+                            "cancelled",
+                            "manual_review",
+                            "resolved"
+                        ],
+                        "type": "string",
+                        "description": "The status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The venue",
+                        "name": "venue",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The trade",
+                        "name": "trade_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "At most this many orders, 50 by default, at most 200",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/routed.Item"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/otc/routed-orders/{id}/resolve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ends a routed order in manual_review as resolved (#513). handled records that a person took care of it, such as a hedge placed by hand; nothing is placed. retry routes its remainder again, at any venue, as orders of new attempts, up to 10 per leg; only an order left for no_route or attempts_exhausted can be retried, as its venue order is over, and the others answer 409 not_retryable, so that an order that may still be open at the venue is checked there first. The note is required. The order's seal is checked: one changed outside the backend answers 409 row_unverified until it is re-sealed. A lockdown of otc_routing refuses a retry. Audited as admin.otc_routed_order_resolve. The route needs a step-up.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin otc"
+                ],
+                "summary": "Resolve a routed order left to a review",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "The order's id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The resolution, and what was done",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/admin.ResolveRoutedOrderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "$ref": "#/definitions/routed.Resolution"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/otc/routing/explain": {
             "post": {
                 "security": [
@@ -15182,6 +15390,28 @@ const docTemplate = `{
                 }
             }
         },
+        "admin.ResolveRoutedOrderRequest": {
+            "type": "object",
+            "required": [
+                "action",
+                "note"
+            ],
+            "properties": {
+                "action": {
+                    "description": "Action is handled, after the order was taken care of by hand, or\nretry, to route its remainder again.",
+                    "type": "string",
+                    "enum": [
+                        "handled",
+                        "retry"
+                    ]
+                },
+                "note": {
+                    "description": "Note says what was done or checked, such as the hedge placed by hand.",
+                    "type": "string",
+                    "maxLength": 1000
+                }
+            }
+        },
         "admin.RestrictionList": {
             "type": "object",
             "properties": {
@@ -20412,6 +20642,155 @@ const docTemplate = `{
                 "ScopeOperation",
                 "ScopeAsset"
             ]
+        },
+        "routed.EventItem": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "from_status": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "node": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "to_status": {
+                    "type": "string"
+                }
+            }
+        },
+        "routed.Item": {
+            "type": "object",
+            "properties": {
+                "attempt": {
+                    "type": "integer"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routed.EventItem"
+                    }
+                },
+                "filled": {
+                    "type": "number"
+                },
+                "filled_quote": {
+                    "type": "number"
+                },
+                "finding_id": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "leg": {
+                    "type": "integer"
+                },
+                "limit_price": {
+                    "type": "number"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "number"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "reference_price": {
+                    "type": "number"
+                },
+                "remaining": {
+                    "type": "number"
+                },
+                "sealed": {
+                    "description": "Sealed is false for an order changed outside the backend: its\nvalues are shown as the row has them, a node does not drive it, and\nit cannot be resolved until its integrity finding, FindingID, is\nre-sealed after a review.",
+                    "type": "boolean"
+                },
+                "side": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "trade_id": {
+                    "type": "string"
+                },
+                "unsealed": {
+                    "description": "Unsealed are the columns that the seal does not cover.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/routed.Unsealed"
+                        }
+                    ]
+                },
+                "venue": {
+                    "type": "string"
+                },
+                "venue_order_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "routed.Resolution": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routed.Item"
+                    }
+                },
+                "note": {
+                    "type": "string"
+                },
+                "order": {
+                    "$ref": "#/definitions/routed.Item"
+                }
+            }
+        },
+        "routed.Unsealed": {
+            "type": "object",
+            "properties": {
+                "lease_holder": {
+                    "type": "string"
+                },
+                "lease_until": {
+                    "type": "string"
+                },
+                "next_attempt_at": {
+                    "type": "string"
+                },
+                "placed_at": {
+                    "type": "string"
+                },
+                "uncertain_since": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
         },
         "routing.Explanation": {
             "type": "object",

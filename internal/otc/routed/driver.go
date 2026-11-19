@@ -472,7 +472,7 @@ func (d *Driver) finish(ctx context.Context, tx *sql.Tx, h held, status, reason 
 	var children []Order
 	if reroute && h.Remaining().IsPositive() {
 		var err error
-		children, err = d.rerouted(ctx, tx, h)
+		children, err = rerouted(ctx, tx, d.Planner, d.Reroute, h, MaxAttempts, true)
 		var none *routing.NoRoute
 		switch {
 		case errors.As(err, &none), errors.Is(err, ErrNotRoutable):
@@ -515,11 +515,13 @@ func (d *Driver) finish(ctx context.Context, tx *sql.Tx, h held, status, reason 
 
 var errAttempts = errors.New("routed: the attempts of the leg are exhausted")
 
-// rerouted plans the orders of the remainder of h, at other venues, in tx.
-// A remainder that the route gives to the inventory needs no order: the
-// trade already took it from the inventory's positions.
-func (d *Driver) rerouted(ctx context.Context, tx *sql.Tx, h held) ([]Order, error) {
-	if d.Reroute == nil {
+// rerouted plans the orders of the remainder of h in tx, attempts below
+// limit: without the venues that the leg already went to when exclude,
+// as the driver routes a remainder, or at any venue, as a review retries
+// one (#513). A remainder that the route gives to the inventory needs no
+// order: the trade already took it from the inventory's positions.
+func rerouted(ctx context.Context, tx *sql.Tx, p *Planner, reroute Reroute, h held, limit int, exclude bool) ([]Order, error) {
+	if reroute == nil || p == nil {
 		return nil, &routing.NoRoute{Reason: "no_router"}
 	}
 	var next int
@@ -527,25 +529,27 @@ func (d *Driver) rerouted(ctx context.Context, tx *sql.Tx, h held) ([]Order, err
 		h.TradeID, h.Leg).Scan(&next); err != nil {
 		return nil, err
 	}
-	if next >= MaxAttempts {
+	if next >= limit {
 		return nil, errAttempts
 	}
-	var exclude []string
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT venue FROM otc_routed_orders WHERE trade_id = $1::uuid AND leg = $2 ORDER BY venue`,
-		h.TradeID, h.Leg)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
+	var excluded []string
+	if exclude {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT venue FROM otc_routed_orders WHERE trade_id = $1::uuid AND leg = $2 ORDER BY venue`,
+			h.TradeID, h.Leg)
+		if err != nil {
 			return nil, err
 		}
-		exclude = append(exclude, v)
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			excluded = append(excluded, v)
+		}
+		rows.Close()
 	}
-	rows.Close()
-	t, err := d.Reroute(ctx, h.Order, h.Remaining(), exclude)
+	t, err := reroute(ctx, h.Order, h.Remaining(), excluded)
 	if err != nil {
 		return nil, err
 	}
@@ -554,10 +558,10 @@ func (d *Driver) rerouted(ctx context.Context, tx *sql.Tx, h held) ([]Order, err
 		if l.Source != routing.SourceVenue {
 			continue
 		}
-		if next >= MaxAttempts {
+		if next >= limit {
 			return nil, errAttempts
 		}
-		o, err := d.Planner.plan(ctx, tx, t, h.Leg, next, &h.ID, l)
+		o, err := p.plan(ctx, tx, t, h.Leg, next, &h.ID, l)
 		if err != nil {
 			return nil, err
 		}

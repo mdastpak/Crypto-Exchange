@@ -96,6 +96,9 @@ var adminRoutes = map[string]admin.RouteClass{
 	// (#386); explaining a route places nothing.
 	"PUT /otc/routing/rules":    admin.RouteSensitive,
 	"POST /otc/routing/explain": admin.RouteRead,
+	// Resolving a routed order left to a review (#513): it ends a hedge,
+	// or places new orders at the venues.
+	"POST /otc/routed-orders/:id/resolve": admin.RouteSensitive,
 
 	// The market data catalog: public prices of other exchanges, which the
 	// jobs can fetch again.

@@ -1405,6 +1405,9 @@ func registerAPI(g *gin.RouterGroup, ih *InfraHandlers, rl *middleware.RateLimit
 		adminGroup.GET("/otc/routing/rules", ih.Admin.GetRoutingRules)
 		adminGroup.PUT("/otc/routing/rules", ih.Admin.SaveRoutingRules)
 		adminGroup.POST("/otc/routing/explain", ih.Admin.ExplainRoute)
+		// The routed orders, and the review of those left to a person (#513).
+		adminGroup.GET("/otc/routed-orders", ih.Admin.ListRoutedOrders)
+		adminGroup.POST("/otc/routed-orders/:id/resolve", ih.Admin.ResolveRoutedOrder)
 		adminGroup.PUT("/currencies/:hk", ih.Admin.UpdateCurrency)
 		adminGroup.DELETE("/currencies/:hk", ih.Admin.DeleteCurrency)
 		adminGroup.POST("/currencies/:hk/restore", ih.Admin.RestoreCurrency)
