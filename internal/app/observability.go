@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/metrics"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/otc"
 	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
 	"github.com/mdastpak/crypto-exchange/internal/venues/state"
 
@@ -88,6 +89,19 @@ func registerServiceGauges(services *models.InfraServices, handlers *InfraHandle
 				if !errors.As(err, &already) {
 					errs = append(errs, err)
 				}
+			}
+		}
+	}
+	// The positions of the OTC inventory against its limits (#515), read
+	// from the database: every instance reports the same.
+	if services.Postgres != nil && services.Postgres.DB != nil && len(config.Config.OTC.Markets) > 0 {
+		limits, err := otc.ParseInventoryLimits(config.Config.OTC.InventoryLimits)
+		if err != nil {
+			errs = append(errs, err)
+		} else if err := metrics.Registry.Register(otc.NewInventoryCollector(services.Postgres.DB, limits)); err != nil {
+			var already prometheus.AlreadyRegisteredError
+			if !errors.As(err, &already) {
+				errs = append(errs, err)
 			}
 		}
 	}

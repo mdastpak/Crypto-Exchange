@@ -80,3 +80,18 @@ func TestNobitex_ReadsTheWalletsAndADepositAddress(t *testing.T) {
 	assert.True(t, n.Supports(venues.CapabilityDepositAddress))
 	assert.Equal(t, venues.ModeLive, n.Mode())
 }
+
+// TestNobitex_ReadsTheBestPrices covers the pre-check of #515: bestBuy and
+// bestSell of /market/stats.
+func TestNobitex_ReadsTheBestPrices(t *testing.T) {
+	n, _ := newConnector(t, "")
+	book, err := n.BestPrices(context.Background(), "btc-usdt")
+	require.NoError(t, err)
+	assert.Equal(t, "60000", book.Bid.String())
+	assert.Equal(t, "60010", book.Ask.String())
+	_, err = n.BestPrices(context.Background(), "eth-usdt")
+	require.ErrorIs(t, err, venues.ErrNotFound)
+	closed, err := n.BestPrices(context.Background(), "shib-rls")
+	require.NoError(t, err)
+	assert.True(t, closed.Bid.IsZero() && closed.Ask.IsZero(), "a closed market without prices has an empty book")
+}

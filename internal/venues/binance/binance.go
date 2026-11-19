@@ -694,7 +694,28 @@ func (b *Binance) Whitelisted(ctx context.Context, asset, network, address, tag 
 	return false, nil
 }
 
+// BestPrices implements venues.BookReader (#515) with the public
+// /api/v3/ticker/bookTicker of the symbol.
+func (b *Binance) BestPrices(ctx context.Context, symbol string) (venues.Book, error) {
+	const op = "best_prices"
+	var body struct {
+		Symbol   string `json:"symbol"`
+		BidPrice string `json:"bidPrice"`
+		AskPrice string `json:"askPrice"`
+	}
+	if err := b.do(ctx, op, http.MethodGet, "api/v3/ticker/bookTicker", url.Values{"symbol": {symbol}}, false, true, &body); err != nil {
+		return venues.Book{}, err
+	}
+	bid, errB := shared.NewDecimalFromString(body.BidPrice)
+	ask, errA := shared.NewDecimalFromString(body.AskPrice)
+	if errB != nil || errA != nil || bid.IsNegative() || ask.IsNegative() || body.Symbol != symbol {
+		return venues.Book{}, &venues.Error{Venue: b.name, Op: op, Kind: venues.KindRetryable, Err: errors.New("the book ticker is not one of the symbol")}
+	}
+	return venues.Book{Symbol: symbol, Bid: bid, Ask: ask}, nil
+}
+
 var (
 	_ venues.Venue       = (*Binance)(nil)
 	_ venues.FeeReporter = (*Binance)(nil)
+	_ venues.BookReader  = (*Binance)(nil)
 )

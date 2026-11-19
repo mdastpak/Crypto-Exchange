@@ -284,6 +284,14 @@ sealed `otc_routed_orders` table.
   `otc.routing.unknown_grace_seconds` before the order is placed again,
   because a venue may not show a new order at once. A venue that still
   refuses the id after that leaves the order to a review.
+- **The pre-check.** Before an order is placed, a venue whose connector
+  reads its book (`venues.BookReader`) is asked for its best prices
+  ([#515](https://github.com/mdastpak/Crypto-Exchange/issues/515)). If the
+  lowest ask is above a buy's limit, or the highest bid is below a sell's,
+  the order would rest until its deadline. Instead it fails as
+  `not_marketable`, without being placed. Its quantity is routed again at
+  once, without that venue, as after a refusal. A book that cannot be read
+  does not hold the order, because its limit still guards its price.
 - **Fills.** Each lookup posts what the order filled since the last one, in
   one transaction. It posts `venue_fill` in the ledger: the venue gets what
   it bought and gives what it spent, and the inventory the reverse. It moves
@@ -298,12 +306,20 @@ sealed `otc_routed_orders` table.
   by the trade's rules, without the venues that already failed the leg, as
   a new order of the next attempt. A route of the remainder to the inventory
   needs no order. After 3 attempts, or with no route, the order is left to a
-  review, and the inventory keeps what nothing covered.
+  review, and the inventory keeps what nothing covered. That quantity is not
+  checked against `otc.inventory_limits`, which a trade checks only on the
+  inventory's own share. The gauges `otc_inventory_position`,
+  `otc_inventory_limit`, and `otc_inventory_beyond_limit` show a position
+  that this puts past its limits, and an alert fires on it
+  ([#515](https://github.com/mdastpak/Crypto-Exchange/issues/515)). Hedge it
+  by hand and resolve the order, or retry it
+  ([review](#review-of-the-routed-orders)).
 - **Statuses.**
   - `planned`, `placed`, and `partially_filled` are driven.
   - `filled` and `cancelled` are ended. A cancelled order's reason is
     `timed_out` or `venue_rejected`.
-  - `failed` was refused by the venue.
+  - `failed` was refused by the venue (`venue_rejected`), or never placed
+    because its book was past its limit (`not_marketable`).
   - `manual_review` needs a person. Its reason is one of these codes:
     `no_route`, `attempts_exhausted`, `duplicate_unresolved`,
     `order_missing`, `fill_invalid`, or `price_beyond_limit`.

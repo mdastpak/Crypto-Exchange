@@ -68,6 +68,9 @@ const (
 	ReasonMissing           = "order_missing"
 	ReasonFillInvalid       = "fill_invalid"
 	ReasonBeyondLimit       = "price_beyond_limit"
+	// ReasonNotMarketable fails an order that was never placed: the book
+	// of the venue was already past its limit (#515).
+	ReasonNotMarketable = "not_marketable"
 )
 
 // MaxAttempts bounds the orders of one leg of a trade: the first and the

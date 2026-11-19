@@ -31,6 +31,7 @@ type Venue struct {
 	whitelist   map[string]bool
 	prices      map[string]shared.Decimal
 	loseNext    bool
+	book        bool
 	rejectNext  string
 }
 
@@ -318,4 +319,30 @@ func (v *Venue) Whitelisted(_ context.Context, asset, network, address, _ string
 	return v.whitelist[asset+"|"+network+"|"+address], nil
 }
 
-var _ venues.Venue = (*Venue)(nil)
+// ShowBook makes BestPrices answer the price of each market as its bid
+// and ask (#515); before it, BestPrices is ErrUnsupported, as a venue
+// that reads no book.
+func (v *Venue) ShowBook() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.book = true
+}
+
+// BestPrices implements venues.BookReader.
+func (v *Venue) BestPrices(_ context.Context, symbol string) (venues.Book, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.book {
+		return venues.Book{}, venues.ErrUnsupported
+	}
+	p, ok := v.prices[symbol]
+	if !ok {
+		return venues.Book{}, &venues.Error{Venue: v.name, Op: "best_prices", Kind: venues.KindRejected, Err: venues.ErrNotFound}
+	}
+	return venues.Book{Symbol: symbol, Bid: p, Ask: p}, nil
+}
+
+var (
+	_ venues.Venue      = (*Venue)(nil)
+	_ venues.BookReader = (*Venue)(nil)
+)

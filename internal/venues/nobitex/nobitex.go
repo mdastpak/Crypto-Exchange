@@ -399,4 +399,36 @@ func (n *Nobitex) Whitelisted(context.Context, string, string, string, string) (
 	return false, venues.ErrUnsupported
 }
 
-var _ venues.Venue = (*Nobitex)(nil)
+// BestPrices implements venues.BookReader (#515) with the bestBuy and
+// bestSell of the market in the public /market/stats.
+func (n *Nobitex) BestPrices(ctx context.Context, symbol string) (venues.Book, error) {
+	const op = "best_prices"
+	var body struct {
+		envelope
+		Stats map[string]struct {
+			BestBuy  json.RawMessage `json:"bestBuy"`
+			BestSell json.RawMessage `json:"bestSell"`
+		} `json:"stats"`
+	}
+	if err := n.do(ctx, op, http.MethodGet, "market/stats", nil, false, true, &body); err != nil {
+		return venues.Book{}, err
+	}
+	if err := n.failed(op, body.envelope); err != nil {
+		return venues.Book{}, err
+	}
+	s, ok := body.Stats[symbol]
+	if !ok {
+		return venues.Book{}, &venues.Error{Venue: n.name, Op: op, Kind: venues.KindRejected, Err: venues.ErrNotFound}
+	}
+	a := amounts{op: op, venue: n.name}
+	b := venues.Book{Symbol: symbol, Bid: a.read(s.BestBuy), Ask: a.read(s.BestSell)}
+	if a.err != nil {
+		return venues.Book{}, a.err
+	}
+	return b, nil
+}
+
+var (
+	_ venues.Venue      = (*Nobitex)(nil)
+	_ venues.BookReader = (*Nobitex)(nil)
+)
