@@ -1,0 +1,2 @@
+- A released venue reservation counts against its balance until a balance snapshot newer than the release ([#500](https://github.com/mdastpak/Crypto-Exchange/issues/500)). A routed order that filled no longer frees, at once, funds that the stale snapshot still shows as free, so another routing cannot plan on them before the venue's next balance snapshot. An order that ended with no fill keeps its amount reserved for one snapshot interval at most.
+  - Migration 58 adds the index `venue_reservations_released`.

@@ -331,7 +331,8 @@ sealed `otc_routed_orders` table.
 
   Every transition is kept in the append-only `otc_routed_order_events`,
   with the node and its lease token. Every ended order releases its
-  reservation. A reason is a code, never the venue's own text.
+  reservation, which still counts until the venue's next balance snapshot
+  ([`venues.md`](venues.md), #500). A reason is a code, never the venue's own text.
 - **The kill switch.** A lockdown of `otc_routing`
   ([`api.md`](api.md#maintenance-and-lockdowns)) stops every order where it is, and
   refuses, with the lockdown's `503`, new trades whose route has a venue leg.
