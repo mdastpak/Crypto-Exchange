@@ -298,6 +298,13 @@ var (
 	ChainCursors = &Table{Name: "chain_cursors", Key: "network", KeyType: "text", Columns: []Column{
 		text("block_number"), text("block_id"),
 	}, SealedFromStart: true}
+	// Sweeps covers the sweeps of the deposit addresses (#68): one marked
+	// completed in SQL would hide funds left on an address, and one moved
+	// to another address would sweep that one.
+	Sweeps = &Table{Name: "sweeps", Key: "id", KeyType: "uuid", Columns: []Column{
+		text("deposit_address_id"), text("currency_hk"), text("sweep_key"), text("status"), text("amount"),
+		text("to_address"), text("top_up_tx_id"), text("tx_id"), timestamptz("created_at"),
+	}, SealedFromStart: true}
 	// OperationConfirmations covers what a confirmation confirms, how, and
 	// whether it was confirmed, consumed, or denied by its link (#161,
 	// #374): one marked confirmed in SQL runs nothing, and a denial cleared
@@ -497,7 +504,7 @@ var Tables = []*Table{
 	AMLRules, AMLRuleHistory, AMLEvents, AMLAlerts,
 	SanctionsLists,
 	KYCApplications, KYCDocuments,
-	DepositAddresses, Deposits, ChainCursors,
+	DepositAddresses, Deposits, ChainCursors, Sweeps,
 }
 
 // AuditEvents covers every column of an audit event (#337), so that an

@@ -66,6 +66,7 @@ type WithdrawalReviews interface {
 type DepositReviews interface {
 	List(ctx context.Context, f deposits.Filter) ([]deposits.Deposit, error)
 	Credit(ctx context.Context, id string, origin audit.Event) (deposits.Deposit, error)
+	Sweeps(ctx context.Context, status string) ([]deposits.Sweep, error)
 }
 
 // AMLDesk is where administrators read the AML rules and work the alerts

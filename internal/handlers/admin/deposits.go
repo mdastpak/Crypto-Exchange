@@ -120,6 +120,40 @@ func (h *AdminHandler) CreditDeposit(c *gin.Context) {
 	helpers.SendResponse(c, http.StatusOK, i18n.M("DEPOSIT_CREDITED"), d)
 }
 
+// @Summary List sweeps
+// @Description The newest sweeps of the deposit addresses to the hot wallet or the cold storage (#68), at most 200, of a status or of any: pending while the signer moves them, completed with the amount in the smallest unit, where it went, and its transactions, or failed with a reason. A sweep that fails its seal answers 409 row_unverified.
+// @Tags admin deposits
+// @Produce json
+// @Security BearerAuth
+// @Param status query string false "The status" Enums(pending,completed,failed)
+// @Success 200 {object} models.APIResponse{info=[]deposits.Sweep}
+// @Failure 400 {object} models.APIResponse "validation_failed"
+// @Failure 401 {object} models.APIResponse
+// @Failure 409 {object} models.APIResponse "row_unverified"
+// @Failure 503 {object} models.APIResponse "deposits_unavailable"
+// @Failure default {object} models.APIResponse "Any other error, in the envelope with a code"
+// @Router /api/v1/admin/sweeps [get]
+func (h *AdminHandler) ListSweeps(c *gin.Context) {
+	if !h.depositsConfigured(c) {
+		return
+	}
+	status := c.Query("status")
+	switch status {
+	case "", deposits.SweepPending, deposits.SweepCompleted, deposits.SweepFailed:
+	default:
+		sendValidationErrors(c, fieldErrors{"status": "is not a status of a sweep"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	list, err := h.Deposits.Sweeps(ctx, status)
+	if err != nil {
+		sendDepositError(c, err)
+		return
+	}
+	helpers.SendResponse(c, http.StatusOK, i18n.M("SWEEPS_RETRIEVED"), list)
+}
+
 func sendDepositError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, deposits.ErrDepositNotFound):
