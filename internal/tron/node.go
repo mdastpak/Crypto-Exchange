@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
 )
 
 // Block is a block, with the transfers of TRX and TRC20 tokens that it
@@ -63,7 +65,7 @@ func (n Node) post(ctx context.Context, path string, in, out any) error {
 	}
 	client := n.Client
 	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
+		client = &http.Client{Timeout: 20 * time.Second, CheckRedirect: redirect.Refuse}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

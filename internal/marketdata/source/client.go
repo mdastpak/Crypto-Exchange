@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
 )
 
 // UserAgent identifies the worker to the sources, without personal data.
@@ -141,7 +143,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	return &Client{
 		opts:    opts,
 		base:    base,
-		http:    &http.Client{Transport: transport, Timeout: opts.Timeout},
+		http:    &http.Client{Transport: transport, Timeout: opts.Timeout, CheckRedirect: redirect.Refuse},
 		breaker: breaker{failures: opts.BreakerFailures, cooldown: opts.BreakerCooldown, now: time.Now},
 		sleep:   sleepCtx,
 	}, nil

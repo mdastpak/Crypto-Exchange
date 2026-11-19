@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdastpak/crypto-exchange/internal/redirect"
+
 	"github.com/google/uuid"
 )
 
@@ -49,7 +51,7 @@ const jibitAttempts = 3
 func NewJibit(endpoint, apiKey, secretKey string, timeout time.Duration) *Jibit {
 	return &Jibit{
 		endpoint: strings.TrimRight(endpoint, "/"), apiKey: apiKey, secretKey: secretKey,
-		client:     &http.Client{Timeout: timeout},
+		client:     &http.Client{Timeout: timeout, CheckRedirect: redirect.Refuse},
 		retryDelay: 200 * time.Millisecond,
 	}
 }
