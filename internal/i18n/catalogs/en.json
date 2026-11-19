@@ -545,6 +545,7 @@
   "DEPOSIT_ADDRESS_RETRIEVED": "Deposit address retrieved",
   "DEPOSIT_ADDRESSES_RETRIEVED": "Deposit addresses retrieved",
   "DEPOSITS_RETRIEVED": "Deposits retrieved",
+  "SWEEPS_RETRIEVED": "Sweeps retrieved",
   "DEPOSIT_CREDITED": "Deposit credited",
   "DEPOSIT_NOT_FOUND": "Deposit not found",
   "DEPOSIT_NOT_HELD": "The deposit is not on hold",

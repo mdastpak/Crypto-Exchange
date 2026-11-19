@@ -217,7 +217,7 @@ func rowOwner(ctx context.Context, tx *sql.Tx, t *Table, rowKey string) (string,
 		SanctionsLists.Name:   "NULL",
 		KYCApplications.Name:  "user_id",
 		DepositAddresses.Name: "user_id",
-		Deposits.Name:         "user_id", ChainCursors.Name: "NULL",
+		Deposits.Name:         "user_id", ChainCursors.Name: "NULL", Sweeps.Name: "NULL",
 		KYCDocuments.Name: "(SELECT k.user_id FROM kyc_applications k WHERE k.id = kyc_documents.application_id)",
 	}[t.Name]
 	if owner == "" {

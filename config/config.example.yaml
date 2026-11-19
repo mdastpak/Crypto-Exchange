@@ -940,6 +940,9 @@ custody:
       # The signer that pays the withdrawals on TRON (docs/custody.md),
       # over mutual TLS; without its url, an administrator pays them by
       # hand.
+      # How often the server asks the signer to sweep the credited
+      # deposits, in seconds.
+      sweep_interval_seconds: 300
       signer:
         url: ""
         cert_file: ""

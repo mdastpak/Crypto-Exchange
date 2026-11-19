@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/deposits"
 	"github.com/mdastpak/crypto-exchange/internal/tron"
+	"github.com/mdastpak/crypto-exchange/internal/tronsigner"
 	"github.com/mdastpak/crypto-exchange/internal/verification"
 )
 
@@ -153,6 +155,80 @@ func startDepositWatch(d depositWatch, paused func() bool) worker {
 		}
 	}()
 	return worker{"deposits of " + d.watcher.Network, func(stopCtx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-stopCtx.Done():
+			return stopCtx.Err()
+		}
+	}}
+}
+
+// signerSweeps is the TRON signer as the sweeper asks it.
+type signerSweeps struct{ client tronsigner.Client }
+
+func (s signerSweeps) Sweep(ctx context.Context, key string, index uint32, asset string) (deposits.SweepState, error) {
+	sw, err := s.client.Sweep(ctx, tronsigner.SweepRequest{Key: key, Index: index, Asset: asset})
+	if errors.Is(err, tronsigner.ErrSweepRefused) {
+		return deposits.SweepState{}, fmt.Errorf("%w: %w", deposits.ErrSweepRefused, err)
+	}
+	if err != nil {
+		return deposits.SweepState{}, err
+	}
+	return deposits.SweepState{Status: sw.Status, Address: sw.Address, Amount: sw.Amount, To: sw.To,
+		TopUpTxID: sw.TopUpTxID, TxID: sw.TxID, Reason: sw.Reason}, nil
+}
+
+// useSweeper returns the sweeper of the TRON deposits, which the signer
+// sweeps every custody.providers[].sweep_interval_seconds (300), or nil
+// without a signer.
+func useSweeper(db *sql.DB, settings *config.Configuration) (*deposits.Sweeper, time.Duration, error) {
+	client, ok, err := tronSigner(settings)
+	if err != nil || !ok {
+		return nil, 0, err
+	}
+	interval := 300
+	for _, p := range settings.Custody.Providers {
+		if p.Enabled && p.Network == "tron" && p.SweepInterval > 0 {
+			interval = p.SweepInterval
+		}
+	}
+	return &deposits.Sweeper{DB: db, Network: "tron", Signer: signerSweeps{client}, RetryAfter: time.Hour},
+		time.Duration(interval) * time.Second, nil
+}
+
+// startSweeper runs the sweeper every interval while neither the
+// scheduler nor the deposits are paused. Each instance runs it; an address
+// has one pending sweep at a time.
+func startSweeper(s *deposits.Sweeper, interval time.Duration, paused func() bool) worker {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if paused() {
+				continue
+			}
+			runCtx, stop := context.WithTimeout(ctx, interval)
+			res, err := s.Run(runCtx)
+			stop()
+			if err != nil {
+				log.Printf("Error sweeping the deposits of %s: %v", s.Network, err)
+			}
+			if res.Started+res.Completed+res.Failed > 0 {
+				log.Printf("Sweeps of %s: %d started, %d completed, %d failed", s.Network, res.Started, res.Completed, res.Failed)
+			}
+		}
+	}()
+	return worker{"sweeps of " + s.Network, func(stopCtx context.Context) error {
 		cancel()
 		select {
 		case <-done:

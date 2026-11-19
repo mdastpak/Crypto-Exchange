@@ -1,0 +1,4 @@
+- The server sweeps the credited TRON deposits through the signer ([#68](https://github.com/mdastpak/Crypto-Exchange/issues/68)). See [the server's sweeps](docs/custody.md#the-servers-sweeps).
+  - Every `sweep_interval_seconds`, an address with deposits credited since its last completed sweep of the asset gets a sweep, one at a time per address and its tokens first. The signer takes it a step further at each pass, and the server records where it is.
+  - A sweep for which the signer names another address than the server derived fails, logged as a security event. An asset whose sweep failed waits an hour before it is swept again.
+  - Migration 56: the sweeps, one pending per address, sealed from their first version. `GET /admin/sweeps` lists them.

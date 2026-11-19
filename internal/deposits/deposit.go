@@ -205,6 +205,11 @@ type Reviews struct {
 // List is List on the database.
 func (r Reviews) List(ctx context.Context, f Filter) ([]Deposit, error) { return List(ctx, r.DB, f) }
 
+// Sweeps is Sweeps on the database.
+func (r Reviews) Sweeps(ctx context.Context, status string) ([]Sweep, error) {
+	return Sweeps(ctx, r.DB, status)
+}
+
 // Credit is Credit on the database.
 func (r Reviews) Credit(ctx context.Context, id string, origin audit.Event) (Deposit, error) {
 	return Credit(ctx, r.DB, id, origin)

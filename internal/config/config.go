@@ -1199,6 +1199,9 @@ type CustodyProviderConfig struct {
 	// the hot wallet, cmd/tron-signer on TRON (#68); without its url, an
 	// administrator pays them by hand.
 	Signer SignerConfig `yaml:"signer"`
+	// SweepInterval is how often the server asks the signer to sweep the
+	// credited deposits (#68), in seconds; 300 when 0.
+	SweepInterval int `yaml:"sweep_interval_seconds"`
 }
 
 // SignerConfig is how the server reaches a signer of the custody: over

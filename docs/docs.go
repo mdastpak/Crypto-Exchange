@@ -7389,6 +7389,89 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/sweeps": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The newest sweeps of the deposit addresses to the hot wallet or the cold storage (#68), at most 200, of a status or of any: pending while the signer moves them, completed with the amount in the smallest unit, where it went, and its transactions, or failed with a reason. A sweep that fails its seal answers 409 row_unverified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin deposits"
+                ],
+                "summary": "List sweeps",
+                "parameters": [
+                    {
+                        "enum": [
+                            "pending",
+                            "completed",
+                            "failed"
+                        ],
+                        "type": "string",
+                        "description": "The status",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/models.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "info": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/deposits.Sweep"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation_failed",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "row_unverified",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "deposits_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Any other error, in the envelope with a code",
+                        "schema": {
+                            "$ref": "#/definitions/models.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/users/{hk}/restrictions": {
             "get": {
                 "security": [
@@ -16918,6 +17001,46 @@ const docTemplate = `{
                 "StatusCredited",
                 "StatusFailed"
             ]
+        },
+        "deposits.Sweep": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "25000000"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency_hk": {
+                    "type": "string"
+                },
+                "deposit_address_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "completed"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "top_up_tx_id": {
+                    "type": "string"
+                },
+                "tx_id": {
+                    "type": "string"
+                }
+            }
         },
         "deposits.UserDeposit": {
             "type": "object",
