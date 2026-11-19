@@ -271,6 +271,9 @@ const (
 	// An administrator saved a new version of the OTC routing rules
 	// (#386).
 	ActionAdminOTCRoutingRules = "admin.otc_routing_rules"
+	// An administrator resolved a routed order left to a review (#513):
+	// handled by hand, or its remainder routed again.
+	ActionAdminOTCRoutedOrderResolve = "admin.otc_routed_order_resolve"
 	// The AML rules file changed a rule, added one, or retired one (#73),
 	// at the sync of startup.
 	ActionAMLRuleSync = "aml.rule_sync"
@@ -325,6 +328,9 @@ const (
 	// TargetOTCRoutingRules is a version of the OTC routing rules (#386),
 	// by its number.
 	TargetOTCRoutingRules = "otc_routing_rules"
+	// TargetOTCRoutedOrder is a routed order of an OTC trade (#387), by
+	// its id.
+	TargetOTCRoutedOrder = "otc_routed_order"
 	// TargetAMLRule is an AML rule (#73), by its code.
 	TargetAMLRule = "aml_rule"
 	// TargetAMLAlert is an AML alert (#73), by its id.

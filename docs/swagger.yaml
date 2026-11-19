@@ -276,6 +276,25 @@ definitions:
     required:
     - reason
     type: object
+  admin.ResolveRoutedOrderRequest:
+    properties:
+      action:
+        description: |-
+          Action is handled, after the order was taken care of by hand, or
+          retry, to route its remainder again.
+        enum:
+        - handled
+        - retry
+        type: string
+      note:
+        description: Note says what was done or checked, such as the hedge placed
+          by hand.
+        maxLength: 1000
+        type: string
+    required:
+    - action
+    - note
+    type: object
   admin.RestrictionList:
     properties:
       items:
@@ -4252,6 +4271,107 @@ definitions:
     - ScopeAccount
     - ScopeOperation
     - ScopeAsset
+  routed.EventItem:
+    properties:
+      at:
+        type: string
+      from_status:
+        type: string
+      id:
+        type: integer
+      node:
+        type: string
+      reason:
+        type: string
+      to_status:
+        type: string
+    type: object
+  routed.Item:
+    properties:
+      attempt:
+        type: integer
+      client_id:
+        type: string
+      created_at:
+        type: string
+      events:
+        items:
+          $ref: '#/definitions/routed.EventItem'
+        type: array
+      filled:
+        type: number
+      filled_quote:
+        type: number
+      finding_id:
+        type: integer
+      id:
+        type: string
+      leg:
+        type: integer
+      limit_price:
+        type: number
+      parent_id:
+        type: string
+      quantity:
+        type: number
+      reason:
+        type: string
+      reference_price:
+        type: number
+      remaining:
+        type: number
+      sealed:
+        description: |-
+          Sealed is false for an order changed outside the backend: its
+          values are shown as the row has them, a node does not drive it, and
+          it cannot be resolved until its integrity finding, FindingID, is
+          re-sealed after a review.
+        type: boolean
+      side:
+        type: string
+      status:
+        type: string
+      symbol:
+        type: string
+      trade_id:
+        type: string
+      unsealed:
+        allOf:
+        - $ref: '#/definitions/routed.Unsealed'
+        description: Unsealed are the columns that the seal does not cover.
+      venue:
+        type: string
+      venue_order_id:
+        type: string
+    type: object
+  routed.Resolution:
+    properties:
+      action:
+        type: string
+      children:
+        items:
+          $ref: '#/definitions/routed.Item'
+        type: array
+      note:
+        type: string
+      order:
+        $ref: '#/definitions/routed.Item'
+    type: object
+  routed.Unsealed:
+    properties:
+      lease_holder:
+        type: string
+      lease_until:
+        type: string
+      next_attempt_at:
+        type: string
+      placed_at:
+        type: string
+      uncertain_since:
+        type: string
+      updated_at:
+        type: string
+    type: object
   routing.Explanation:
     properties:
       reason:
@@ -9774,6 +9894,154 @@ paths:
       summary: Choose how SMS is routed
       tags:
       - admin notifications
+  /api/v1/admin/otc/routed-orders:
+    get:
+      description: 'The orders that cover the venue legs of the OTC trades at the
+        venues (#387), the newest first, each with its transitions, so that an administrator
+        sees every order left to a review (status=manual_review) and why, without
+        the logs (#513). An order changed outside the backend is listed with sealed
+        false and the id of its integrity finding: no node drives it, and it cannot
+        be resolved until it is re-sealed after a review. The unsealed columns, the
+        lease and the deadlines, are shown apart. Filter by status, venue, and trade;
+        limit is at most 200.'
+      parameters:
+      - description: The status
+        enum:
+        - planned
+        - placed
+        - partially_filled
+        - filled
+        - failed
+        - cancelled
+        - manual_review
+        - resolved
+        in: query
+        name: status
+        type: string
+      - description: The venue
+        in: query
+        name: venue
+        type: string
+      - description: The trade
+        format: uuid
+        in: query
+        name: trade_id
+        type: string
+      - description: At most this many orders, 50 by default, at most 200
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  items:
+                    $ref: '#/definitions/routed.Item'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List the routed orders of the OTC trades
+      tags:
+      - admin otc
+  /api/v1/admin/otc/routed-orders/{id}/resolve:
+    post:
+      consumes:
+      - application/json
+      description: 'Ends a routed order in manual_review as resolved (#513). handled
+        records that a person took care of it, such as a hedge placed by hand; nothing
+        is placed. retry routes its remainder again, at any venue, as orders of new
+        attempts, up to 10 per leg; only an order left for no_route or attempts_exhausted
+        can be retried, as its venue order is over, and the others answer 409 not_retryable,
+        so that an order that may still be open at the venue is checked there first.
+        The note is required. The order''s seal is checked: one changed outside the
+        backend answers 409 row_unverified until it is re-sealed. A lockdown of otc_routing
+        refuses a retry. Audited as admin.otc_routed_order_resolve. The route needs
+        a step-up.'
+      parameters:
+      - description: The order's id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The resolution, and what was done
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/admin.ResolveRoutedOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/models.APIResponse'
+            - properties:
+                info:
+                  $ref: '#/definitions/routed.Resolution'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+        default:
+          description: Any other error, in the envelope with a code
+          schema:
+            $ref: '#/definitions/models.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Resolve a routed order left to a review
+      tags:
+      - admin otc
   /api/v1/admin/otc/routing/explain:
     post:
       consumes:

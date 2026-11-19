@@ -13,6 +13,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/config"
 	"github.com/mdastpak/crypto-exchange/internal/metrics"
 	"github.com/mdastpak/crypto-exchange/internal/models"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
 	"github.com/mdastpak/crypto-exchange/internal/venues/state"
 
 	"github.com/gin-gonic/gin"
@@ -87,6 +88,16 @@ func registerServiceGauges(services *models.InfraServices, handlers *InfraHandle
 				if !errors.As(err, &already) {
 					errs = append(errs, err)
 				}
+			}
+		}
+	}
+	// The routed orders of the OTC trades (#513), read from the database:
+	// every instance reports the same.
+	if services.Postgres != nil && services.Postgres.DB != nil && config.Config.OTC.Routing.Enabled {
+		if err := metrics.Registry.Register(routed.NewCollector(services.Postgres.DB)); err != nil {
+			var already prometheus.AlreadyRegisteredError
+			if !errors.As(err, &already) {
+				errs = append(errs, err)
 			}
 		}
 	}

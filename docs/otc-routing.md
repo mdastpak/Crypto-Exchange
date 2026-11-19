@@ -307,6 +307,9 @@ sealed `otc_routed_orders` table.
   - `manual_review` needs a person. Its reason is one of these codes:
     `no_route`, `attempts_exhausted`, `duplicate_unresolved`,
     `order_missing`, `fill_invalid`, or `price_beyond_limit`.
+  - `resolved` was left to a review and resolved by an administrator
+    ([review](#review-of-the-routed-orders)). It keeps the reason that it
+    needed a person.
   - The withdrawal states are those of
     [#388](https://github.com/mdastpak/Crypto-Exchange/issues/388).
 
@@ -323,12 +326,62 @@ sealed `otc_routed_orders` table.
 - **A changed row.** An order that fails its seal is not driven. It waits
   until it is reviewed.
 
+### Review of the routed orders
+
+An administrator sees every order that needs a person, and why, without the
+logs ([#513](https://github.com/mdastpak/Crypto-Exchange/issues/513)).
+
+- **The list.** `GET /api/v1/admin/otc/routed-orders?status=manual_review`
+  lists the orders, the newest first, each with its transitions. Filter by
+  `status`, `venue`, and `trade_id`.
+  - An order that fails its seal is listed with `sealed: false` and the id
+    of its integrity finding. Re-seal it after a review
+    ([`data-protection.md`](data-protection.md#integrity-findings)), which
+    needs two administrators. Until then no node drives it and it cannot be
+    resolved.
+  - The columns that the seal does not cover are shown apart, under
+    `unsealed`: `placed_at`, `next_attempt_at`, `uncertain_since`, and the
+    lease. A change of them in SQL can only delay a deadline.
+- **Resolving.** `POST /api/v1/admin/otc/routed-orders/{id}/resolve` ends an
+  order in `manual_review` as `resolved`. It needs a step-up and a note,
+  and is audited as `admin.otc_routed_order_resolve`. It locks the order's
+  row and checks its seal first. It writes the order, its event, its outbox
+  message, and the audit event in one transaction, so two administrators,
+  on any nodes, cannot resolve one order twice.
+  - `handled` records that a person took care of the order, such as a
+    hedge placed by hand, or a remainder left to the inventory on purpose.
+    Nothing is placed.
+  - `retry` routes the remainder again by the trade's rules, at any venue,
+    including those the leg already went to, as orders of new attempts. It
+    allows at most 10 orders per leg. Only an order left for `no_route` or
+    `attempts_exhausted` can be retried, because its venue order is over.
+    The others may still be open at the venue, or their fills do not add
+    up, so they answer `409 not_retryable`: check the venue, then resolve
+    them as `handled`. A lockdown of `otc_routing` refuses a retry. An
+    instance without `otc.routing.enabled` answers `503
+    routing_unavailable`.
+- **Metrics.** Every instance with `otc.routing.enabled` exports the gauges
+  below, read from the database, so every instance reports the same. A read
+  serves the scrapes for 15 seconds.
+
+  | Metric | Labels | What |
+  | --- | --- | --- |
+  | `otc_routed_orders` | `venue`, `status` | Orders that a node still drives (`planned`, `placed`, `partially_filled`) or that wait for a person (`manual_review`). |
+  | `otc_routed_order_oldest_seconds` | `venue`, `status` | Seconds since the oldest of them was planned. |
+  | `otc_routed_order_unhedged` | `venue`, `status`, `quote` | What they have not filled, at their reference price, in the venue's quote asset: the notional the inventory still carries. |
+  | `otc_routed_order_fill_seconds` | `venue`, `quantile` | Seconds from the plan of an order to its fill, over the orders filled in the last hour: `0.5`, `0.95`, and `1` for the slowest. |
+  | `otc_routed_orders_unverified` | | Orders with an open integrity finding. |
+
+  See the alerts in [`observability.md`](observability.md#alerts).
+
 ## Admin API
 
 | Route | Description |
 | --- | --- |
 | `GET /api/v1/admin/otc/routing/rules` | The highest version, with who saved it and why, and whether `otc.routing.enabled` routes by it. |
 | `PUT /api/v1/admin/otc/routing/rules` | Saves `{"rules": [...], "reason": "..."}` as a new version. Each problem answers `400` with its field, such as `rules[0].venues[1].venue`. Needs a step-up. |
+| `GET /api/v1/admin/otc/routed-orders` | The routed orders, each with its transitions, whether it passes its seal, and its unsealed columns ([review](#review-of-the-routed-orders)). |
+| `POST /api/v1/admin/otc/routed-orders/{id}/resolve` | Resolves an order left to a review: `{"action": "handled" \| "retry", "note": "..."}`. Needs a step-up. |
 | `POST /api/v1/admin/otc/routing/explain` | Explains a trade without placing anything. The body has `market`, `side`, `quantity`, `price`, and optionally `level`, `network`, and `region`. The answer lists each rule in order, why it matched or not, what each source of a matching rule can fill and at what cost, and the route of the first rule that gives one, or the reason there is none. It reads the latest version, not the cache. |
 
 See [`api.md`](api.md#otc-routing-rules) for the full answers.

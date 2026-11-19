@@ -17,6 +17,7 @@ import (
 	"github.com/mdastpak/crypto-exchange/internal/models"
 	"github.com/mdastpak/crypto-exchange/internal/notify"
 	"github.com/mdastpak/crypto-exchange/internal/otc"
+	"github.com/mdastpak/crypto-exchange/internal/otc/routed"
 	"github.com/mdastpak/crypto-exchange/internal/otc/routing"
 	"github.com/mdastpak/crypto-exchange/internal/otp"
 	"github.com/mdastpak/crypto-exchange/internal/platform"
@@ -106,6 +107,11 @@ type AdminHandler struct {
 	// Without them, the routes answer routing_unavailable.
 	RoutingRules   RoutingRules
 	RouteExplainer RouteExplainer
+
+	// RoutedOrders lists the routed orders and resolves those left to a
+	// review (#513). Its retries need otc.routing.enabled, which gives it
+	// the planner and the router of the instance.
+	RoutedOrders RoutedOrders
 }
 
 // NewHandler returns the handler with the stores of the services in is. A
@@ -128,6 +134,7 @@ func NewHandler(is *models.InfraServices) *AdminHandler {
 		h.Venues = state.New(db, state.OptionsOf(is.Settings().Venues.State))
 		rules := &routing.Store{DB: db, Config: is.Settings}
 		h.RoutingRules = rules
+		h.RoutedOrders = &routed.Review{DB: db}
 		if router, err := otc.NewRouter(db, is.Settings, rules, rules); err == nil {
 			h.RouteExplainer = router
 		} else {

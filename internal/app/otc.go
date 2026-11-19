@@ -71,9 +71,17 @@ func useOTC(h *InfraHandlers, db *sql.DB, client redis.UniversalClient, settings
 		s.Route(r)
 		executor.Routing = r
 		host, _ := os.Hostname()
-		executor.Routed = &routed.Planner{
+		planner := &routed.Planner{
 			State: state.New(db, state.OptionsOf(settings.Venues.State)), Node: "server/" + host,
 			Settings: func() routed.Settings { return routed.SettingsOf(settings) },
+		}
+		executor.Routed = planner
+		// The review retries an order left to a person with this
+		// instance's planner and router (#513).
+		if h.Admin != nil {
+			if review, ok := h.Admin.RoutedOrders.(*routed.Review); ok {
+				review.Planner, review.Reroute = planner, otc.RerouteOf(db, r)
+			}
 		}
 	}
 	return nil
