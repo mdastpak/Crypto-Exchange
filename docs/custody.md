@@ -80,7 +80,22 @@ A node that does not answer is `502`. A payment that was recorded is then answer
 
 ### Its state
 
-`state_path` keeps every payment by its key, with its signed transaction, and what each day used of the caps. A payment is recorded before it is broadcast, and the file is replaced whole, written to a new file that is synced and renamed, so that a crash leaves either state. Run one instance: two would each count their own caps.
+`state_path` keeps every payment by its key, with its signed transaction, and what each day used of the caps. A payment is recorded before it is broadcast, and the file is replaced whole, written to a new file that is synced and renamed, so that a crash leaves either state.
+
+**One signer.** Two signers would each pay a key once, so twice, and each count a cap of its own. The signer takes an exclusive lock on `state_path.lock` before it reads the state, holds it while it runs, and refuses to start while another process holds it ([#551](https://github.com/mdastpak/Crypto-Exchange/issues/551)). A second signer on another host, with a state of its own, is not a supported way to run it: there is no fail-over between signers.
+
+**Moving the signer to another host** is an operator's step:
+
+1. Stop the signer, and check that it stopped: a payment in flight is in its state.
+2. Copy `state_path` to the new host, to the same path of its configuration.
+3. Start the signer there, with the same seed and configuration. It resumes every payment and sweep of the state.
+4. Point the server's `custody.providers[].signer.url` at the new host.
+
+Never start the new one while the old one may still run.
+
+### Its connections
+
+`seed.vault_addr` and `node_url` must be `https://`; plain `http://` is accepted to the loopback only, such as a Vault agent or a node on the same host. The first carries the Vault token and the seed, and the second the TronGrid key and every signed transaction ([#551](https://github.com/mdastpak/Crypto-Exchange/issues/551)). With `seed.vault_ca_file`, Vault's certificate must be signed by that CA alone.
 
 ## Sweeps
 

@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
+	"net/url"
 	"os"
 
 	"go.yaml.in/yaml/v3"
@@ -39,6 +41,9 @@ type Config struct {
 		VaultAddr      string `yaml:"vault_addr"`
 		TransitKey     string `yaml:"transit_key"`
 		CiphertextFile string `yaml:"ciphertext_file"`
+		// VaultCAFile, when set, is the only CA that Vault's certificate
+		// may be signed by.
+		VaultCAFile string `yaml:"vault_ca_file"`
 	} `yaml:"seed"`
 	// StatePath is the file of the payments that it signed, by key, and
 	// what each day used of the caps.
@@ -117,6 +122,15 @@ func (c *Config) Check() error {
 	need(c.Seed.TransitKey, "seed.transit_key")
 	need(c.Seed.CiphertextFile, "seed.ciphertext_file")
 	need(c.StatePath, "state_path")
+	// The seed and the Vault token, and the TronGrid key with every signed
+	// transaction, never cross plain HTTP but to this host (#551).
+	for name, v := range map[string]string{"seed.vault_addr": c.Seed.VaultAddr, "node_url": c.NodeURL} {
+		if v != "" {
+			if err := secureURL(v); err != nil {
+				problems = append(problems, fmt.Errorf("%s: %w", name, err))
+			}
+		}
+	}
 	if len(c.TLS.AllowedClients) == 0 {
 		problems = append(problems, errors.New("tls.allowed_clients names no client"))
 	}
@@ -188,4 +202,26 @@ func (c *Config) asset(name string) (*Asset, bool) {
 		}
 	}
 	return nil, false
+}
+
+// secureURL accepts an https URL, and an http one to the loopback only.
+func secureURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return errors.New("is not a URL")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+		return errors.New("must be https: plain http is accepted to the loopback only")
+	}
+	return errors.New("must be https")
 }

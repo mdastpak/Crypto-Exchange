@@ -36,7 +36,11 @@ func run(path string, xpub bool) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	seed, err := tronsigner.UnwrapSeed(ctx, &http.Client{Timeout: 20 * time.Second}, cfg, os.Getenv("VAULT_TOKEN"))
+	vault, err := tronsigner.VaultClient(cfg)
+	if err != nil {
+		return err
+	}
+	seed, err := tronsigner.UnwrapSeed(ctx, vault, cfg, os.Getenv("VAULT_TOKEN"))
 	if err != nil {
 		return err
 	}
@@ -46,6 +50,7 @@ func run(path string, xpub bool) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = signer.Close() }()
 	if xpub {
 		fmt.Printf("xpub (custody.providers[].xpub): %s\nhot wallet (custody.providers[].hot_wallet_address): %s\n",
 			signer.DepositXPub(), signer.HotWallet())

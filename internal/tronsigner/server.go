@@ -134,6 +134,25 @@ func ServerTLS(cfg *Config) (*tls.Config, error) {
 		MinVersion: tls.VersionTLS13}, nil
 }
 
+// VaultClient is the client of Vault: with seed.vault_ca_file, Vault's
+// certificate must be signed by that CA alone.
+func VaultClient(cfg *Config) (*http.Client, error) {
+	client := &http.Client{Timeout: 20 * time.Second}
+	if cfg.Seed.VaultCAFile == "" {
+		return client, nil
+	}
+	ca, err := os.ReadFile(cfg.Seed.VaultCAFile)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("tron-signer: %s holds no certificate", cfg.Seed.VaultCAFile)
+	}
+	client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+	return client, nil
+}
+
 // UnwrapSeed decrypts the seed with Vault's Transit engine: the ciphertext
 // of the file, "vault:v1:...", by the key, with the token.
 func UnwrapSeed(ctx context.Context, client *http.Client, cfg *Config, token string) ([]byte, error) {
